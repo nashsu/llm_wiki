@@ -1,9 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import ReactMarkdown from "react-markdown"
-import { Bot, User, FileText } from "lucide-react"
+import { Bot, User, FileText, Paperclip } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { readFile } from "@/commands/fs"
+import { readFile, listDirectory } from "@/commands/fs"
 import type { DisplayMessage } from "@/stores/chat-store"
+import type { FileNode } from "@/types/wiki"
+
+// Module-level cache of source file names
+let cachedSourceFiles: string[] = []
+
+export function useSourceFiles() {
+  const project = useWikiStore((s) => s.project)
+
+  useEffect(() => {
+    if (!project) return
+    listDirectory(`${project.path}/raw/sources`)
+      .then((tree) => {
+        cachedSourceFiles = flattenNames(tree)
+      })
+      .catch(() => {
+        cachedSourceFiles = []
+      })
+  }, [project])
+
+  return cachedSourceFiles
+}
+
+function flattenNames(nodes: FileNode[]): string[] {
+  const names: string[] = []
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      names.push(...flattenNames(node.children))
+    } else if (!node.is_dir) {
+      names.push(node.name)
+    }
+  }
+  return names
+}
 
 interface ChatMessageProps {
   message: DisplayMessage
@@ -62,14 +95,18 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  // Extract [[wikilinks]] and render them as clickable
-  const processed = processWikiLinks(content)
+  const sourceFiles = cachedSourceFiles
+
+  // Process the content: replace [[wikilinks]], @filename, and bare source filenames
+  const processed = useMemo(
+    () => processContent(content, sourceFiles),
+    [content, sourceFiles]
+  )
 
   return (
     <div className="chat-markdown prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
       <ReactMarkdown
         components={{
-          // Render wiki links embedded as special markers
           a: ({ href, children }) => {
             if (href?.startsWith("wikilink:")) {
               const pageName = href.slice("wikilink:".length)
@@ -79,14 +116,12 @@ function MarkdownContent({ content }: { content: string }) {
               const fileName = href.slice("sourceref:".length)
               return <SourceRef fileName={fileName} />
             }
-            // All other links: render as non-navigating styled text
             return (
               <span className="text-primary underline cursor-default" title={href}>
                 {children}
               </span>
             )
           },
-          // Compact code blocks
           pre: ({ children, ...props }) => (
             <pre className="rounded bg-background/50 p-2 text-xs overflow-x-auto" {...props}>{children}</pre>
           ),
@@ -99,12 +134,13 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 /**
- * Process special link syntax in LLM responses:
- * - [[page-name]] → [page-name](wikilink:page-name)
- * - @filename.pdf → [@filename.pdf](sourceref:filename.pdf)
+ * Process content to create clickable links:
+ * 1. [[wikilinks]] → markdown links with wikilink: protocol
+ * 2. @filename → markdown links with sourceref: protocol
+ * 3. Bare source filenames mentioned in text → markdown links with sourceref: protocol
  */
-function processWikiLinks(text: string): string {
-  // Process [[wikilinks]]
+function processContent(text: string, sourceFiles: string[]): string {
+  // Step 1: Process [[wikilinks]]
   let result = text.replace(
     /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
     (_match, pageName: string, displayText?: string) => {
@@ -113,14 +149,24 @@ function processWikiLinks(text: string): string {
     }
   )
 
-  // Process @filename references (but not inside markdown links or code blocks)
-  // Match @filename at word boundary, supporting extensions like .pdf, .md, .txt
+  // Step 2: Process @filename (with or without extension)
   result = result.replace(
-    /(?<!\[)@([\w.-]+\.[\w]+)/g,
-    (_match, fileName: string) => {
-      return `[@${fileName}](sourceref:${fileName})`
+    /@([\w.+\-]+)/g,
+    (_match, name: string) => {
+      return `[@${name}](sourceref:${name})`
     }
   )
+
+  // Step 3: Replace bare source filenames that appear in the text
+  // Sort by length (longest first) to avoid partial matches
+  const sortedFiles = [...sourceFiles].sort((a, b) => b.length - a.length)
+  for (const fileName of sortedFiles) {
+    // Skip if already inside a markdown link
+    // Use a regex that matches the filename but not inside []() syntax
+    const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const pattern = new RegExp(`(?<!\\]\\(sourceref:)(?<!\\[@?)\\b(${escaped})\\b`, "g")
+    result = result.replace(pattern, `[@$1](sourceref:$1)`)
+  }
 
   return result
 }
@@ -135,28 +181,48 @@ function SourceRef({ fileName }: { fileName: string }) {
     e.preventDefault()
     e.stopPropagation()
     if (!project) return
-    const path = `${project.path}/raw/sources/${fileName}`
-    // Switch to wiki view first, then set file and content
-    setActiveView("wiki")
-    // Small delay to ensure view has switched before setting file
-    await new Promise((r) => setTimeout(r, 50))
-    setSelectedFile(path)
-    try {
-      const content = await readFile(path)
-      setFileContent(content)
-    } catch {
-      setFileContent(`Unable to load: ${fileName}`)
+
+    // Try exact match first, then search with the name as given
+    const candidates = [
+      `${project.path}/raw/sources/${fileName}`,
+    ]
+
+    // If fileName has no extension, try to find a matching file
+    if (!fileName.includes(".")) {
+      for (const sf of cachedSourceFiles) {
+        const stem = sf.replace(/\.[^.]+$/, "")
+        if (stem === fileName || sf.startsWith(fileName)) {
+          candidates.unshift(`${project.path}/raw/sources/${sf}`)
+        }
+      }
     }
+
+    setActiveView("wiki")
+
+    for (const path of candidates) {
+      try {
+        const content = await readFile(path)
+        setSelectedFile(path)
+        setFileContent(content)
+        return
+      } catch {
+        // try next
+      }
+    }
+
+    // Fallback: just set the path even if we can't read it
+    setSelectedFile(candidates[0])
+    setFileContent(`Unable to load: ${fileName}`)
   }, [project, fileName, setSelectedFile, setFileContent, setActiveView])
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      className="inline-flex items-center gap-0.5 rounded bg-accent/50 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-accent"
+      className="inline-flex items-center gap-0.5 rounded bg-accent/50 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-accent transition-colors"
       title={`Open source: ${fileName}`}
     >
-      <span className="text-muted-foreground">@</span>
+      <Paperclip className="inline h-3 w-3" />
       {fileName}
     </button>
   )
@@ -170,7 +236,6 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
   const [exists, setExists] = useState<boolean | null>(null)
   const resolvedPath = useRef<string | null>(null)
 
-  // Check if the page exists on mount
   useEffect(() => {
     if (!project) return
     const candidates = [
@@ -215,7 +280,6 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
     }
   }, [setSelectedFile, setFileContent, setActiveView])
 
-  // Page doesn't exist — render as plain text (not clickable)
   if (exists === false) {
     return (
       <span className="inline text-muted-foreground" title={`Page not found: ${pageName}`}>
@@ -226,6 +290,7 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-primary underline decoration-primary/30 hover:bg-primary/10 hover:decoration-primary"
       title={`Open wiki page: ${pageName}`}

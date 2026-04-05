@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react"
 import { BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { ChatMessage, StreamingMessage } from "./chat-message"
+import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput } from "./chat-input"
 import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -11,6 +11,7 @@ import { listDirectory, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 
 export function ChatPanel() {
+  useSourceFiles() // Keep source file cache warm
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const streamingContent = useChatStore((s) => s.streamingContent)
