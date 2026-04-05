@@ -8,6 +8,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile } from "@/commands/fs"
+import { searchWiki } from "@/lib/search"
 import type { FileNode } from "@/types/wiki"
 
 export function ChatPanel() {
@@ -42,7 +43,7 @@ export function ChatPanel() {
       addMessage("user", text)
       setStreaming(true)
 
-      // Build system prompt with wiki context + source file list
+      // Build system prompt with wiki context: search for relevant pages and include their content
       const systemMessages: LLMMessage[] = []
       if (project) {
         const [index, purpose] = await Promise.all([
@@ -50,7 +51,42 @@ export function ChatPanel() {
           readFile(`${project.path}/purpose.md`).catch(() => ""),
         ])
 
-        // Get list of actual source files the user uploaded
+        // Search wiki for pages relevant to the question
+        const searchResults = await searchWiki(project.path, text)
+
+        // Read the full content of top relevant pages (max 10 to fit context)
+        const relevantPages: { title: string; path: string; content: string }[] = []
+        for (const result of searchResults.slice(0, 10)) {
+          try {
+            const content = await readFile(result.path)
+            const relativePath = result.path.replace(project.path + "/", "")
+            relevantPages.push({ title: result.title, path: relativePath, content })
+          } catch {
+            // skip unreadable pages
+          }
+        }
+
+        // If search found nothing, read all wiki pages (for small wikis)
+        if (relevantPages.length === 0) {
+          try {
+            const wikiTree = await listDirectory(`${project.path}/wiki`)
+            const allFiles = flattenMdFiles(wikiTree)
+            for (const file of allFiles.slice(0, 15)) {
+              try {
+                const content = await readFile(file.path)
+                const relativePath = file.path.replace(project.path + "/", "")
+                const title = file.name.replace(".md", "")
+                relevantPages.push({ title, path: relativePath, content })
+              } catch {
+                // skip
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        // Get source file list
         let sourceFileList = ""
         try {
           const sourceTree = await listDirectory(`${project.path}/raw/sources`)
@@ -62,25 +98,32 @@ export function ChatPanel() {
           sourceFileList = "(No source files yet)"
         }
 
+        // Build the wiki context with actual page content
+        const pagesContext = relevantPages.length > 0
+          ? relevantPages.map((p) =>
+              `### ${p.title} (${p.path})\n\n${p.content}`
+            ).join("\n\n---\n\n")
+          : "(No wiki pages found)"
+
         systemMessages.push({
           role: "system",
           content: [
-            "You are a knowledgeable wiki assistant. Answer questions based ONLY on the wiki's actual content.",
+            "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
             "",
-            "## Citation Rules (CRITICAL)",
-            "- Your answers are derived from the user's uploaded source documents.",
-            "- If the wiki doesn't have enough information to answer, say so honestly.",
-            "- You may use [[wikilink]] syntax to reference wiki pages in the index.",
-            "- At the VERY END of your response, add an HTML comment listing ONLY the source files you actually used:",
+            "## Rules",
+            "- Answer based ONLY on the wiki page content provided below. Do not make up information.",
+            "- If the provided pages don't contain enough information, say so honestly.",
+            "- Use [[wikilink]] syntax to reference wiki pages you cite.",
+            "- At the VERY END of your response, add a hidden comment listing source files used:",
             "  <!-- sources: file1.pdf, file2.md -->",
-            "- Use EXACT file names from the Source Files list. Only include files your answer actually draws from.",
-            "- This comment MUST be the last line of your response. Do NOT skip it.",
+            "- Use EXACT file names from the Source Files list below.",
             "",
             "Use markdown formatting for clarity.",
             "",
             purpose ? `## Wiki Purpose\n${purpose}` : "",
-            `## Source Files (user's uploaded documents)\n${sourceFileList}`,
+            `## Source Files\n${sourceFileList}`,
             index ? `## Wiki Index\n${index}` : "",
+            `## Relevant Wiki Pages (use these to answer)\n\n${pagesContext}`,
           ].filter(Boolean).join("\n"),
         })
       }
@@ -192,4 +235,16 @@ function flattenFileNames(nodes: FileNode[]): string[] {
     }
   }
   return names
+}
+
+function flattenMdFiles(nodes: FileNode[]): FileNode[] {
+  const files: FileNode[] = []
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      files.push(...flattenMdFiles(node.children))
+    } else if (!node.is_dir && node.name.endsWith(".md")) {
+      files.push(node)
+    }
+  }
+  return files
 }
