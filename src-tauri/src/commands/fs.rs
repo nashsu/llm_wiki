@@ -94,6 +94,18 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
 }
 
 #[tauri::command]
+pub fn copy_file(source: String, destination: String) -> Result<(), String> {
+    let dest = Path::new(&destination);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
+    }
+    fs::copy(&source, &destination)
+        .map_err(|e| format!("Failed to copy '{}' to '{}': {}", source, destination, e))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn create_directory(path: String) -> Result<(), String> {
     fs::create_dir_all(&path)
         .map_err(|e| format!("Failed to create directory '{}': {}", path, e))

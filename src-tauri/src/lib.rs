@@ -10,6 +10,7 @@ pub fn run() {
             commands::fs::read_file,
             commands::fs::write_file,
             commands::fs::list_directory,
+            commands::fs::copy_file,
             commands::fs::create_directory,
             commands::project::create_project,
             commands::project::open_project,

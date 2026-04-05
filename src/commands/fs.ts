@@ -13,6 +13,13 @@ export async function listDirectory(path: string): Promise<FileNode[]> {
   return invoke<FileNode[]>("list_directory", { path })
 }
 
+export async function copyFile(
+  source: string,
+  destination: string
+): Promise<void> {
+  return invoke("copy_file", { source, destination })
+}
+
 export async function createDirectory(path: string): Promise<void> {
   return invoke<void>("create_directory", { path })
 }

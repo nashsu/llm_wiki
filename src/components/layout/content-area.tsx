@@ -1,10 +1,10 @@
 import { useEffect, useCallback, useRef } from "react"
-import { Group, Panel, Separator } from "react-resizable-panels"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { ChatBar } from "./chat-bar"
 import { SettingsView } from "@/components/settings/settings-view"
+import { SourcesView } from "@/components/sources/sources-view"
 
 export function ContentArea() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
@@ -47,6 +47,10 @@ export function ContentArea() {
     return <SettingsView />
   }
 
+  if (activeView === "sources") {
+    return <SourcesView />
+  }
+
   const isMarkdown = selectedFile?.endsWith(".md")
 
   const editorContent = (
@@ -82,14 +86,12 @@ export function ContentArea() {
   }
 
   return (
-    <Group orientation="vertical" className="h-full">
-      <Panel defaultSize={60} minSize={30}>
-        {editorContent}
-      </Panel>
-      <Separator className="h-1.5 cursor-row-resize bg-border/40 transition-colors hover:bg-primary/30" />
-      <Panel defaultSize={40} minSize={20}>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+      <div className="flex-1 overflow-hidden">{editorContent}</div>
+      <div className="h-1.5 shrink-0 cursor-row-resize bg-border/40 transition-colors hover:bg-primary/30" />
+      <div className="h-64 shrink-0 overflow-hidden">
         <ChatBar />
-      </Panel>
-    </Group>
+      </div>
+    </div>
   )
 }
