@@ -63,26 +63,26 @@ function nodeSize(linkCount: number, maxLinks: number): number {
 
 // --- Inner components ---
 
+// Cache computed node positions so re-renders don't re-layout
+const positionCache = new Map<string, { x: number; y: number }>()
+let lastLayoutDataKey = ""
+
 function GraphLoader({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const loadGraph = useLoadGraph()
-  const loadGraphRef = useRef(loadGraph)
-  loadGraphRef.current = loadGraph
-  // Track data identity to avoid re-layout on unrelated re-renders
-  const lastDataKey = useRef("")
 
   useEffect(() => {
-    // Only rebuild if nodes/edges data actually changed
-    const dataKey = nodes.map((n) => n.id).join(",") + "|" + edges.map((e) => `${e.source}-${e.target}`).join(",")
-    if (dataKey === lastDataKey.current) return
-    lastDataKey.current = dataKey
+    const dataKey = nodes.map((n) => n.id).sort().join(",") + "|" + edges.length
+    const needsLayout = dataKey !== lastLayoutDataKey
 
     const graph = new Graph()
     const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1)
 
     for (const node of nodes) {
+      // Reuse cached positions if available, otherwise random
+      const cached = positionCache.get(node.id)
       graph.addNode(node.id, {
-        x: Math.random() * 100,
-        y: Math.random() * 100,
+        x: cached?.x ?? Math.random() * 100,
+        y: cached?.y ?? Math.random() * 100,
         size: nodeSize(node.linkCount, maxLinks),
         color: nodeColor(node.type),
         label: node.label,
@@ -112,7 +112,8 @@ function GraphLoader({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] 
       }
     }
 
-    if (nodes.length > 1) {
+    // Only run expensive ForceAtlas2 layout when data actually changed
+    if (needsLayout && nodes.length > 1) {
       const settings = forceAtlas2.inferSettings(graph)
       forceAtlas2.assign(graph, {
         iterations: 150,
@@ -124,10 +125,16 @@ function GraphLoader({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] 
           barnesHutOptimize: nodes.length > 50,
         },
       })
+      lastLayoutDataKey = dataKey
+
+      // Cache computed positions
+      graph.forEachNode((nodeId, attrs) => {
+        positionCache.set(nodeId, { x: attrs.x, y: attrs.y })
+      })
     }
 
-    loadGraphRef.current(graph)
-  }, [nodes, edges])
+    loadGraph(graph)
+  }, [loadGraph, nodes, edges])
 
   return null
 }
