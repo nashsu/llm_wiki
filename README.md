@@ -34,7 +34,9 @@
 - **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
-- **4-Phase Query Retrieval** — tokenized search → graph expansion → budget control → cited context assembly
+- **Vector Semantic Search** — optional embedding-based retrieval via LanceDB, supports any OpenAI-compatible endpoint
+- **Persistent Ingest Queue** — serial processing with crash recovery, cancel, retry, and progress visualization
+- **Folder Import** — recursive folder import preserving directory structure, folder context as LLM classification hint
 - **Deep Research** — LLM-optimized search topics, multi-query web search, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
@@ -111,6 +113,10 @@ Step 2 (Generation): LLM takes analysis → generates wiki files
 
 Additional ingest enhancements beyond the original:
 - **SHA256 incremental cache** — source file content is hashed before ingest; unchanged files are skipped automatically, saving LLM tokens and time
+- **Persistent ingest queue** — serial processing prevents concurrent LLM calls; queue persisted to disk, survives app restart; failed tasks auto-retry up to 3 times
+- **Folder import** — recursive folder import preserving directory structure; folder path passed to LLM as classification context (e.g., "papers > energy" helps categorize content)
+- **Queue visualization** — Activity Panel shows progress bar, pending/processing/failed tasks with cancel and retry buttons
+- **Auto-embedding** — when vector search is enabled, new pages are automatically embedded after ingest
 - **Source traceability** — every generated wiki page includes a `sources: []` field in YAML frontmatter, linking back to the raw source files that contributed to it
 - **overview.md auto-update** — global summary page regenerated on every ingest to reflect the latest state of the wiki
 - **Guaranteed source summary** — fallback ensures a source summary page is always created, even if the LLM omits it
@@ -179,7 +185,7 @@ Not in the original. The system **automatically analyzes graph structure** to su
 
 ### 7. Optimized Query Retrieval Pipeline
 
-The original describes a simple query where the LLM reads relevant pages. We built a **4-phase retrieval pipeline** with budget control:
+The original describes a simple query where the LLM reads relevant pages. We built a **multi-lane retrieval pipeline** with optional vector search and budget control:
 
 ```
 Phase 1: Tokenized Search
@@ -188,10 +194,16 @@ Phase 1: Tokenized Search
   - Title match bonus (+10 score)
   - Searches both wiki/ and raw/sources/
 
+Phase 1.5: Vector Semantic Search (optional)
+  - Embedding via any OpenAI-compatible /v1/embeddings endpoint
+  - Stored in LanceDB (Rust backend) for fast ANN retrieval
+  - Cosine similarity finds semantically related pages even without keyword overlap
+  - Results merged into search: boosts existing matches + adds new discoveries
+
 Phase 2: Graph Expansion
   - Top search results used as seed nodes
   - 4-signal relevance model finds related pages
-  - Discovers connections the keyword search missed
+  - 2-hop traversal with decay for deeper connections
 
 Phase 3: Budget Control
   - Configurable context window: 4K → 1M tokens
@@ -203,6 +215,8 @@ Phase 4: Context Assembly
   - System prompt includes: purpose.md, language rules, citation format, index.md
   - LLM instructed to cite pages by number: [1], [2], etc.
 ```
+
+**Vector Search** is fully optional — disabled by default, enabled in Settings with independent endpoint, API key, and model configuration. When disabled, the pipeline falls back to tokenized search + graph expansion. Benchmark: overall recall improved from 58.2% to 71.4% with vector search enabled.
 
 ### 8. Multi-Conversation Chat with Persistence
 
@@ -315,6 +329,8 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 - **Path normalization** — unified `normalizePath()` used across 22+ files, backslash → forward slash
 - **Unicode-safe string handling** — char-based slicing instead of byte-based (prevents crashes on CJK filenames)
+- **macOS close-to-hide** — close button hides window (app stays running in background), click dock icon to restore, Cmd+Q to quit
+- **Windows/Linux close confirmation** — confirmation dialog before quitting to prevent accidental data loss
 - **Tauri v2** — native desktop on macOS, Windows, Linux
 - **GitHub Actions CI/CD** — automated builds for macOS (ARM + Intel), Windows (.msi), Linux (.deb / .AppImage)
 
@@ -337,7 +353,8 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | UI | shadcn/ui + Tailwind CSS v4 |
 | Editor | Milkdown (ProseMirror-based WYSIWYG) |
 | Graph | sigma.js + graphology + ForceAtlas2 |
-| Search | Custom tokenized search + graph relevance |
+| Search | Tokenized search + graph relevance + optional vector (LanceDB) |
+| Vector DB | LanceDB (Rust, embedded, optional) |
 | PDF | pdf-extract |
 | Office | docx-rs + calamine |
 | i18n | react-i18next |
