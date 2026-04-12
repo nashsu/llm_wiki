@@ -1,5 +1,5 @@
 use lancedb::connect;
-use lancedb::query::{ExecutableQuery, QueryBase, VectorQuery};
+use lancedb::query::{ExecutableQuery, QueryBase};
 use arrow_array::{Float32Array, RecordBatch, StringArray, FixedSizeListArray, ArrayRef};
 use arrow_schema::{DataType, Field, Schema};
 use serde::{Deserialize, Serialize};
