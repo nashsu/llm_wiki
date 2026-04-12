@@ -160,6 +160,21 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         parseStream: parseOpenAiLine,
       }
 
+    case "minimax":
+      return {
+        url: "https://api.minimax.io/v1/chat/completions",
+        headers: {
+          "Content-Type": JSON_CONTENT_TYPE,
+          Authorization: `Bearer ${apiKey}`,
+        },
+        buildBody: (messages) => ({
+          ...buildOpenAiBody(messages),
+          model,
+          temperature: 1.0,
+        }),
+        parseStream: parseOpenAiLine,
+      }
+
     case "custom":
       return {
         url: `${customEndpoint}/chat/completions`,
