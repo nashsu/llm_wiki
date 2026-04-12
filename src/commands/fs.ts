@@ -49,3 +49,7 @@ export async function createProject(
 export async function openProject(path: string): Promise<WikiProject> {
   return invoke<WikiProject>("open_project", { path })
 }
+
+export async function clipServerStatus(): Promise<string> {
+  return invoke<string>("clip_server_status")
+}

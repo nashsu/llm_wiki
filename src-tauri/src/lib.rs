@@ -2,6 +2,11 @@ mod clip_server;
 mod commands;
 mod types;
 
+#[tauri::command]
+fn clip_server_status() -> String {
+    clip_server::get_daemon_status().to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     clip_server::start_clip_server();
@@ -22,6 +27,7 @@ pub fn run() {
             commands::fs::create_directory,
             commands::project::create_project,
             commands::project::open_project,
+            clip_server_status,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
             commands::vectorstore::vector_delete,

@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::thread;
 use tiny_http::{Header, Method, Response, Server};
 
@@ -6,17 +7,68 @@ static CURRENT_PROJECT: Mutex<String> = Mutex::new(String::new());
 static ALL_PROJECTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (name, path)
 static PENDING_CLIPS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (projectPath, filePath)
 
+/// Daemon status: 0=starting, 1=running, 2=port_conflict, 3=error
+static DAEMON_STATUS: AtomicU8 = AtomicU8::new(0);
+
+const PORT: u16 = 19827;
+const MAX_BIND_RETRIES: u32 = 3;
+const MAX_RESTART_RETRIES: u32 = 10;
+const BIND_RETRY_DELAY_SECS: u64 = 2;
+const RESTART_DELAY_SECS: u64 = 5;
+
+/// Get current daemon status as a string
+pub fn get_daemon_status() -> &'static str {
+    match DAEMON_STATUS.load(Ordering::Relaxed) {
+        0 => "starting",
+        1 => "running",
+        2 => "port_conflict",
+        _ => "error",
+    }
+}
+
 pub fn start_clip_server() {
     thread::spawn(|| {
-        let server = match Server::http("127.0.0.1:19827") {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to start clip server: {}", e);
-                return;
-            }
-        };
+        let mut restart_count: u32 = 0;
 
-        println!("Clip server listening on http://127.0.0.1:19827");
+        loop {
+            // Try to bind the port with retries
+            let server = {
+                let mut last_err = String::new();
+                let mut bound = None;
+                for attempt in 1..=MAX_BIND_RETRIES {
+                    match Server::http(format!("127.0.0.1:{}", PORT)) {
+                        Ok(s) => {
+                            bound = Some(s);
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = format!("{}", e);
+                            eprintln!(
+                                "[Clip Server] Bind attempt {}/{} failed: {}",
+                                attempt, MAX_BIND_RETRIES, e
+                            );
+                            if attempt < MAX_BIND_RETRIES {
+                                thread::sleep(std::time::Duration::from_secs(BIND_RETRY_DELAY_SECS));
+                            }
+                        }
+                    }
+                }
+                match bound {
+                    Some(s) => s,
+                    None => {
+                        eprintln!(
+                            "[Clip Server] Port {} unavailable after {} attempts: {}",
+                            PORT, MAX_BIND_RETRIES, last_err
+                        );
+                        DAEMON_STATUS.store(2, Ordering::Relaxed); // port_conflict
+                        return; // Don't retry on port conflict — needs user action
+                    }
+                }
+            };
+
+            DAEMON_STATUS.store(1, Ordering::Relaxed); // running
+            restart_count = 0; // Reset on successful bind
+            println!("[Clip Server] Listening on http://127.0.0.1:{}", PORT);
 
         for mut request in server.incoming_requests() {
             let cors_headers = vec![
@@ -162,6 +214,25 @@ pub fn start_clip_server() {
                     let _ = request.respond(response);
                 }
             }
+        }
+
+            // Server loop exited (shouldn't happen normally)
+            DAEMON_STATUS.store(3, Ordering::Relaxed); // error
+            restart_count += 1;
+
+            if restart_count >= MAX_RESTART_RETRIES {
+                eprintln!(
+                    "[Clip Server] Exceeded max restarts ({}). Giving up.",
+                    MAX_RESTART_RETRIES
+                );
+                return;
+            }
+
+            eprintln!(
+                "[Clip Server] Crashed. Restarting in {}s (attempt {}/{})",
+                RESTART_DELAY_SECS, restart_count, MAX_RESTART_RETRIES
+            );
+            thread::sleep(std::time::Duration::from_secs(RESTART_DELAY_SECS));
         }
     });
 }
