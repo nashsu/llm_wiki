@@ -48,13 +48,37 @@ pub fn read_file(path: String) -> Result<String, String> {
         }
         _ => {
             // Try reading as text; if it fails (binary), return a friendly message
-            match fs::read_to_string(&path) {
-                Ok(content) => Ok(content),
-                Err(_) => {
-                    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    Ok(format!("[Binary file: {} ({:.1} KB)]",
-                        p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1024.0))
+            // Fixed: support UTF-8, UTF-16 LE/BE with BOM, and lossy fallback
+            let bytes = match fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Ok(format!("[Error reading file: {}]", e));
                 }
+            };
+            let content = if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+                // UTF-8 BOM
+                String::from_utf8_lossy(&bytes[3..]).into_owned()
+            } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+                // UTF-16 LE BOM
+                let stripped: Vec<u16> = bytes[2..].chunks(2).filter_map(|c| {
+                    if c.len() == 2 { Some(u16::from_le_bytes([c[0], c[1]])) } else { None }
+                }).collect();
+                String::from_utf16_lossy(&stripped)
+            } else if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+                // UTF-16 BE BOM
+                let stripped: Vec<u16> = bytes[2..].chunks(2).filter_map(|c| {
+                    if c.len() == 2 { Some(u16::from_be_bytes([c[0], c[1]])) } else { None }
+                }).collect();
+                String::from_utf16_lossy(&stripped)
+            } else {
+                String::from_utf8_lossy(&bytes).into_owned()
+            };
+            if content.trim().is_empty() {
+                let size = bytes.len() as f64;
+                Ok(format!("[Empty file: {} ({:.1} KB)]",
+                    p.file_name().unwrap_or_default().to_string_lossy(), size / 1024.0))
+            } else {
+                Ok(content)
             }
         }
     }
