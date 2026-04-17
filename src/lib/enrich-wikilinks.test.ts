@@ -102,22 +102,43 @@ describe("enrichWithWikilinks — language directive is built at call time", () 
   })
 })
 
-describe("enrichWithWikilinks — short-response guard", () => {
-  it("does NOT overwrite when LLM returns <50% of original length", async () => {
-    const longContent = "x".repeat(1000)
-    mockReadFile.mockResolvedValue(longContent)
+describe("enrichWithWikilinks — JSON-based substitution", () => {
+  it("does NOT overwrite when LLM response is not parseable JSON", async () => {
+    // The v2 implementation expects a JSON `{links:[...]}` object; anything
+    // else produces zero substitutions and writeFile is never called.
+    mockReadFile.mockResolvedValue("some real page content with Transformer and Attention mentioned")
     mockStreamChatReturns("too short")
 
     await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it("writes back when enriched response is long enough", async () => {
-    mockReadFile.mockResolvedValue("hello world, this is long enough content for the guard to pass")
-    mockStreamChatReturns("hello [[world]], this is long enough content for the guard to pass")
+  it("writes back when LLM returns a valid JSON substitution list", async () => {
+    mockReadFile.mockResolvedValue(
+      "Transformer is the backbone. Attention is core.",
+    )
+    mockStreamChatReturns(
+      JSON.stringify({
+        links: [
+          { term: "Transformer", target: "transformer" },
+          { term: "Attention", target: "attention" },
+        ],
+      }),
+    )
 
     await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
     expect(mockWriteFile).toHaveBeenCalledOnce()
+    const written = vi.mocked(mockWriteFile).mock.calls[0][1] as string
+    expect(written).toContain("[[Transformer]]")
+    expect(written).toContain("[[Attention]]")
+  })
+
+  it("does NOT overwrite when LLM returns an empty links list", async () => {
+    mockReadFile.mockResolvedValue("a page that matches no index term")
+    mockStreamChatReturns(JSON.stringify({ links: [] }))
+
+    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
+    expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
   it("returns early when content or index is missing", async () => {

@@ -8,6 +8,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { detectLanguage } from "@/lib/detect-language"
 
 // Path capture group allows any non-newline char so hyphenated paths like
 // "wiki/concepts/multi-head-attention.md" are accepted. The lazy `+?` plus
@@ -236,14 +237,63 @@ export async function autoIngest(
   return writtenPaths
 }
 
+/**
+ * Per-file language guard. Strips frontmatter + code/math blocks, runs
+ * detectLanguage on the remainder, and returns whether the content is in
+ * a language family compatible with the target. This catches cases where
+ * the LLM follows the format spec but writes a single page in a wrong
+ * language (observed ~once in 5 real-LLM runs on MiniMax-M2.7-highspeed).
+ */
+function contentMatchesTargetLanguage(content: string, target: string): boolean {
+  // Strip frontmatter
+  const fmEnd = content.indexOf("\n---\n", 3)
+  let body = fmEnd > 0 ? content.slice(fmEnd + 5) : content
+  // Strip code + math
+  body = body
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\$\$[\s\S]*?\$\$/g, "")
+    .replace(/\$[^$\n]*\$/g, "")
+  const sample = body.slice(0, 1500)
+  if (sample.trim().length < 20) return true // too short to judge
+
+  const detected = detectLanguage(sample)
+
+  // Compatible families: CJK targets accept CJK variants; Latin targets
+  // accept any Latin family (English may mis-detect as Italian/French for
+  // short idiomatic samples — that's fine). Cross-family is the real bug.
+  const cjk = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
+  const targetIsCjk = cjk.has(target)
+  const detectedIsCjk = cjk.has(detected)
+  if (targetIsCjk) return detectedIsCjk
+  return !detectedIsCjk && !["Arabic", "Hindi", "Thai", "Hebrew"].includes(detected)
+}
+
 async function writeFileBlocks(projectPath: string, text: string): Promise<string[]> {
   const writtenPaths: string[] = []
   const matches = text.matchAll(FILE_BLOCK_REGEX)
+
+  const targetLang = useWikiStore.getState().outputLanguage
 
   for (const match of matches) {
     const relativePath = match[1].trim()
     const content = match[2]
     if (!relativePath) continue
+
+    // Language guard: reject individual FILE blocks whose body contradicts
+    // the user-set target language. Log entries are short / structural so
+    // skip the check for them.
+    if (
+      targetLang &&
+      targetLang !== "auto" &&
+      !relativePath.endsWith("/log.md") &&
+      relativePath !== "wiki/log.md" &&
+      !contentMatchesTargetLanguage(content, targetLang)
+    ) {
+      console.warn(
+        `[ingest] dropping ${relativePath}: content not in target language ${targetLang}`,
+      )
+      continue
+    }
 
     const fullPath = `${projectPath}/${relativePath}`
     try {
@@ -487,8 +537,16 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "4. DO NOT output markdown tables, bullet lists, or headings outside of FILE/REVIEW blocks.",
     "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
     "6. Between blocks, use only blank lines — no prose.",
+    "7. EVERY FILE block's content (titles, body, descriptions) MUST be in the mandatory output language specified below. No exceptions — not even for page names or section headings.",
     "",
     "If you start with anything other than `---FILE:`, the entire response will be discarded.",
+    "",
+    // Repeat the language directive at the very end so it wins the "most
+    // recent instruction" tie-breaker. Small-to-medium models otherwise
+    // drift back to their training-data language for individual pages.
+    "---",
+    "",
+    languageRule(sourceContent),
   ].filter(Boolean).join("\n")
 }
 

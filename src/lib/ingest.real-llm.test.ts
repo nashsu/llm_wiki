@@ -33,7 +33,10 @@ const MINIMAX_MODEL = process.env.MINIMAX_MODEL ?? "MiniMax-M2.7-highspeed"
 const MINIMAX_ENDPOINT = process.env.MINIMAX_ENDPOINT ?? "https://api.minimaxi.com/v1"
 const ENABLED = process.env.RUN_LLM_TESTS === "1"
 
-const REAL_CONTENT_ROOT = path.join(process.cwd(), "tests", "fixtures", "real-content")
+// Real content documents are checked into git under src/test-helpers/
+// (NOT tests/fixtures/ — that path is gitignored) so other developers can
+// reproduce these tests without regenerating content.
+const REAL_CONTENT_ROOT = path.join(process.cwd(), "src", "test-helpers", "real-content")
 
 // Generous timeout to accommodate peak-hour API latency.
 // Two LLM calls per ingest × 1-4 min each + IO overhead.
