@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Label } from "@/components/ui/label"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
@@ -12,17 +13,19 @@ const UI_LANGUAGES = [
 ]
 
 export function InterfaceSection({ draft, setDraft }: Props) {
+  const { t } = useTranslation()
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold">界面</h2>
+        <h2 className="text-xl font-semibold">{t("settings.interfaceHeading")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          应用 UI 的显示语言。切换后立即生效并持久化。
+          {t("settings.interfaceDescription")}
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label>UI 语言</Label>
+        <Label>{t("settings.uiLanguage")}</Label>
         <div className="flex flex-wrap gap-2">
           {UI_LANGUAGES.map((l) => {
             const active = draft.uiLanguage === l.value
@@ -43,7 +46,7 @@ export function InterfaceSection({ draft, setDraft }: Props) {
           })}
         </div>
         <p className="text-xs text-muted-foreground">
-          只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在"输出偏好"里单独设置)。
+          {t("settings.uiLanguageHint")}
         </p>
       </div>
     </div>

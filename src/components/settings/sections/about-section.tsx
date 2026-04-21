@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { clipServerStatus } from "@/commands/fs"
 
 export function AboutSection() {
+  const { t } = useTranslation()
   const [clipStatus, setClipStatus] = useState<string>("...")
 
   useEffect(() => {
@@ -19,16 +21,16 @@ export function AboutSection() {
   }, [])
 
   const rows: Array<{ label: string; value: string; mono?: boolean }> = [
-    { label: "版本", value: `v${__APP_VERSION__}`, mono: true },
-    { label: "Clip Server", value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
+    { label: t("settings.aboutVersion"), value: `v${__APP_VERSION__}`, mono: true },
+    { label: t("settings.aboutClipServer"), value: `${clipStatus}  @  127.0.0.1:19827`, mono: true },
   ]
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold">关于</h2>
+        <h2 className="text-xl font-semibold">{t("settings.aboutHeading")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          构建信息和运行时状态。
+          {t("settings.aboutDescription")}
         </p>
       </div>
 
