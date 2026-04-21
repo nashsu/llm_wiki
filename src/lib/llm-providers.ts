@@ -20,9 +20,13 @@ function parseOpenAiLine(line: string): string | null {
   if (data === "[DONE]") return null
   try {
     const parsed = JSON.parse(data) as {
-      choices: Array<{ delta: { content?: string } }>
+      choices: Array<{ delta: { content?: string; reasoning_content?: string } }>
     }
-    return parsed.choices?.[0]?.delta?.content ?? null
+    const delta = parsed.choices?.[0]?.delta
+    // Reasoning models (e.g. Nemotron, DeepSeek-R1) emit thinking tokens in
+    // reasoning_content while content is null. Fall back so the accumulated
+    // text includes both the thinking phase and the final answer.
+    return delta?.content ?? delta?.reasoning_content ?? null
   } catch {
     return null
   }
@@ -64,7 +68,11 @@ function parseGoogleLine(line: string): string | null {
 }
 
 function buildOpenAiBody(messages: ChatMessage[]): Record<string, unknown> {
-  return { messages, stream: true }
+  // max_tokens must be set explicitly: without it many local servers (LM Studio,
+  // llama.cpp) fall back to a small default (often 2 048) that is too short for
+  // multi-file wiki generation. 8 192 matches common local model limits while
+  // leaving ample room for reasoning models that spend tokens on thinking first.
+  return { messages, stream: true, max_tokens: 8192 }
 }
 
 function buildAnthropicBody(messages: ChatMessage[]): Record<string, unknown> {
