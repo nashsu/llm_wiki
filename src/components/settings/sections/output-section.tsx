@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Label } from "@/components/ui/label"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
@@ -33,20 +34,21 @@ const LANGUAGE_OPTIONS = [
 const HISTORY_OPTIONS = [2, 4, 6, 8, 10, 20]
 
 export function OutputSection({ draft, setDraft }: Props) {
+  const { t } = useTranslation()
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold">输出偏好</h2>
+        <h2 className="text-xl font-semibold">{t("settings.outputHeading")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          控制 AI 生成内容的语言和对话上下文长度。
+          {t("settings.outputDescription")}
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label>AI 输出语言</Label>
+        <Label>{t("settings.outputLanguageLabel")}</Label>
         <p className="text-xs text-muted-foreground">
-          强制 AI 生成内容（chat 回复、wiki 页面、research 结果、lint 报告）使用指定语言。
-          选 "Auto" 让 AI 跟随用户输入或源文档的语言。
+          {t("settings.outputLanguageHint")}
         </p>
         <select
           value={draft.outputLanguage}
@@ -62,9 +64,9 @@ export function OutputSection({ draft, setDraft }: Props) {
       </div>
 
       <div className="space-y-2">
-        <Label>对话历史长度</Label>
+        <Label>{t("settings.historyLength")}</Label>
         <p className="text-xs text-muted-foreground">
-          每次请求发给 AI 的历史消息条数。多 = 上下文更完整但更费 token。
+          {t("settings.historyLengthHint")}
         </p>
         <div className="flex flex-wrap gap-2">
           {HISTORY_OPTIONS.map((n) => {
@@ -86,7 +88,10 @@ export function OutputSection({ draft, setDraft }: Props) {
           })}
         </div>
         <p className="text-xs text-muted-foreground">
-          当前 {draft.maxHistoryMessages} 条消息（约 {draft.maxHistoryMessages / 2} 轮对话）
+          {t("settings.historyLengthCurrent", {
+            count: draft.maxHistoryMessages,
+            turns: Math.floor(draft.maxHistoryMessages / 2),
+          })}
         </p>
       </div>
     </div>

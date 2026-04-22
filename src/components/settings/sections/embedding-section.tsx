@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
@@ -8,21 +9,22 @@ interface Props {
 }
 
 export function EmbeddingSection({ draft, setDraft }: Props) {
+  const { t } = useTranslation()
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold">向量嵌入</h2>
+        <h2 className="text-xl font-semibold">{t("settings.embeddingHeading")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          启用语义搜索。对任何 OpenAI 兼容的 /v1/embeddings endpoint 工作。
-          本地模型(如 LM Studio、Ollama embedding)不需要 API Key。
+          {t("settings.embeddingDescription")}
         </p>
       </div>
 
       <div className="flex items-center justify-between rounded-md border p-3">
         <div>
-          <div className="text-sm font-medium">启用向量搜索</div>
+          <div className="text-sm font-medium">{t("settings.embeddingEnable")}</div>
           <div className="text-xs text-muted-foreground">
-            关掉后搜索只走 token 匹配。
+            {t("settings.embeddingEnableHint")}
           </div>
         </div>
         <button
@@ -57,7 +59,7 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               type="password"
               value={draft.embeddingApiKey}
               onChange={(e) => setDraft("embeddingApiKey", e.target.value)}
-              placeholder="本地模型留空即可"
+              placeholder={t("settings.embeddingApiKeyPlaceholder")}
             />
           </div>
 
