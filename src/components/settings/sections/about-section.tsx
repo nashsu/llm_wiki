@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
-import { Download, RefreshCw, CheckCircle2, AlertCircle, Sparkles } from "lucide-react"
+import { Download, RefreshCw, CheckCircle2, Sparkles } from "lucide-react"
 import { clipServerStatus } from "@/commands/fs"
 import { Button } from "@/components/ui/button"
 import { useUpdateStore, shouldShowUpdateBanner } from "@/stores/update-store"
@@ -70,8 +70,15 @@ export function AboutSection() {
   ]
 
   const showBanner = shouldShowUpdateBanner(updateStore)
+  const lastCheckFailed = updateStore.lastResult?.kind === "error"
   const lastCheckedLabel = updateStore.lastCheckedAt
-    ? formatRelative(updateStore.lastCheckedAt)
+    ? lastCheckFailed
+      // Failed checks are overwhelmingly "GitHub unreachable from the
+      // user's network" (common in mainland China). Not actionable,
+      // so don't display a colored warning — keep the status in the
+      // same muted timestamp line and move on.
+      ? `${formatRelative(updateStore.lastCheckedAt)} · 未能连接 GitHub`
+      : formatRelative(updateStore.lastCheckedAt)
     : "从未"
 
   return (
@@ -132,12 +139,11 @@ export function AboutSection() {
           </div>
         )}
 
-        {updateStore.lastResult?.kind === "error" && (
-          <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>{updateStore.lastResult.message}</span>
-          </div>
-        )}
+        {/* error state intentionally has no banner — see the timestamp
+            line above for the muted "未能连接 GitHub" hint. GitHub is
+            regularly unreachable from certain networks (notably
+            mainland China) and a colored warning would misleadingly
+            look like a bug in the app. */}
 
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input
