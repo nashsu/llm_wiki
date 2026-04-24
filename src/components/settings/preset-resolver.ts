@@ -41,6 +41,19 @@ export function resolveConfig(
     }
   }
 
+  if (preset.provider === "claude-code") {
+    // Subprocess transport — no apiKey, no endpoint URL. Model id is
+    // passed straight to `claude --model`.
+    return {
+      provider: "claude-code",
+      apiKey: "",
+      model,
+      ollamaUrl: fallback.ollamaUrl,
+      customEndpoint: fallback.customEndpoint,
+      maxContextSize,
+    }
+  }
+
   // openai / anthropic / google / minimax — use fixed endpoint baked into the
   // provider dispatch. We still let users override baseUrl via apiKey env if
   // needed by editing manually, but presets for these don't expose it.

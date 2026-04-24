@@ -194,6 +194,24 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
   })
 })
 
+describe("Claude Code CLI provider — not reachable via getProviderConfig", () => {
+  it("throws, because the subprocess transport dispatches one layer up in streamChat", () => {
+    // If this ever stops throwing, someone wired claude-code into the
+    // HTTP path by mistake — it has no URL/headers and would crash
+    // silently inside fetch() otherwise.
+    expect(() =>
+      getProviderConfig({
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      } as RealLlmConfig),
+    ).toThrow(/subprocess transport/)
+  })
+})
+
 describe("Google provider URL — model path encoding", () => {
   const makeGoogleConfig = (model: string): RealLlmConfig => ({
     provider: "google",

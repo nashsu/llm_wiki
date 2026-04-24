@@ -332,6 +332,15 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       }
     }
 
+    case "claude-code":
+      // Claude Code CLI uses a subprocess transport (stdin/stdout JSON
+      // stream), not HTTP. Dispatch happens one layer up in
+      // streamChat() before getProviderConfig is called. Reaching this
+      // branch means wiring is broken somewhere upstream.
+      throw new Error(
+        "claude-code provider uses subprocess transport; getProviderConfig should not be called for it",
+      )
+
     case "custom": {
       // Custom endpoints can speak either OpenAI's /chat/completions
       // wire or Anthropic's /v1/messages wire. The field `apiMode` on

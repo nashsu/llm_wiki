@@ -10,7 +10,7 @@ import type { WikiProject, FileNode } from "@/types/wiki"
 export type CustomApiMode = "chat_completions" | "anthropic_messages"
 
 interface LlmConfig {
-  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax"
+  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
   apiKey: string
   model: string
   ollamaUrl: string

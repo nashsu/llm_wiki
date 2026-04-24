@@ -11,6 +11,19 @@ export interface StreamCallbacks {
   onError: (error: Error) => void
 }
 
+// Lazy import keeps the Tauri event/invoke bindings out of bundles that
+// never touch the subprocess provider (e.g. vitest with a fetch mock).
+async function streamViaClaudeCodeCli(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+) {
+  const mod = await import("./claude-cli-transport")
+  return mod.streamClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+}
+
 const DECODER = new TextDecoder()
 
 function parseLines(chunk: Uint8Array, buffer: string): [string[], string] {
@@ -36,6 +49,14 @@ export async function streamChat(
   requestOverrides?: RequestOverrides,
 ): Promise<void> {
   const { onToken, onDone, onError } = callbacks
+
+  // Claude Code CLI uses a subprocess transport (stdin/stdout), not
+  // HTTP. Dispatch before getProviderConfig — that function throws for
+  // this provider because it has no URL/headers.
+  if (config.provider === "claude-code") {
+    return streamViaClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+  }
+
   const providerConfig = getProviderConfig(config)
 
   // Combined abort: (a) user cancel, (b) our long-horizon timeout.
