@@ -342,6 +342,26 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 131072,
   },
   {
+    id: "bailian-token",
+    label: "阿里百炼 Token Plan",
+    hint: "token-plan.cn-beijing.maas.aliyuncs.com",
+    provider: "custom",
+    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    apiMode: "chat_completions",
+    baseUrlByMode: {
+      chat_completions: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      anthropic_messages: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    },
+    defaultModel: "qwen3.6-plus",
+    suggestedModels: [
+      "qwen3.6-plus",
+      "deepseek-v3.2",
+      "glm-5",
+      "MiniMax-M2.6",
+    ],
+    suggestedContextSize: 131072,
+  },
+  {
     id: "xiaomi-mimo",
     label: "小米 MiMo (Xiaomi)",
     hint: "api.xiaomimimo.com",
@@ -443,9 +463,12 @@ export function matchPreset(params: {
   for (const preset of LLM_PRESETS) {
     if (preset.provider !== provider) continue
     if (provider === "custom") {
-      if (!preset.baseUrl) continue // skip the generic Custom catch-alls
-      if (norm(preset.baseUrl) !== norm(customEndpoint)) continue
-      if ((preset.apiMode ?? "chat_completions") !== (apiMode ?? "chat_completions"))
+      const mode = apiMode ?? "chat_completions"
+      const presetMode = preset.apiMode ?? "chat_completions"
+      const presetBaseUrl = preset.baseUrlByMode?.[mode] ?? preset.baseUrl
+      if (!presetBaseUrl) continue // skip the generic Custom catch-alls
+      if (norm(presetBaseUrl) !== norm(customEndpoint)) continue
+      if (!preset.baseUrlByMode && presetMode !== mode)
         continue
       return preset
     }

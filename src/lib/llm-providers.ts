@@ -187,7 +187,10 @@ function requiresBearerAuth(url: string): boolean {
     // Alibaba Bailian Coding Plan — issues sk-xxx bearer-style tokens
     // on its /apps/anthropic gateway; behavior matches the other
     // Chinese Anthropic-wire proxies above.
-    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic")
+    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
+    // Alibaba Bailian Token Plan — same bearer-style auth on its
+    // Anthropic-compatible gateway.
+    normalized.startsWith("https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic")
   )
 }
 

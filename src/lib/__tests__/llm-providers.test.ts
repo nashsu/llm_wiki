@@ -158,6 +158,26 @@ describe("buildAnthropicUrl — URL suffix handling", () => {
   })
 })
 
+describe("Alibaba Bailian Token Plan provider config", () => {
+  it("uses bearer auth on the Anthropic-compatible gateway", () => {
+    const cfg = getProviderConfig({
+      provider: "custom",
+      apiKey: "sk-token-plan",
+      model: "qwen3.6-plus",
+      ollamaUrl: "",
+      customEndpoint: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      maxContextSize: 131072,
+      apiMode: "anthropic_messages",
+    } as RealLlmConfig)
+
+    expect(cfg.url).toBe(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages",
+    )
+    expect(cfg.headers.Authorization).toBe("Bearer sk-token-plan")
+    expect(cfg.headers["x-api-key"]).toBeUndefined()
+  })
+})
+
 describe("parseGoogleLine — Gemini SSE parsing", () => {
   it("extracts plain text from a single-part event", () => {
     const line = 'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}'

@@ -19,14 +19,15 @@ export function resolveConfig(
     ov.maxContextSize ?? preset.suggestedContextSize ?? fallback.maxContextSize
 
   if (preset.provider === "custom") {
+    const apiMode = ov.apiMode ?? preset.apiMode ?? "chat_completions"
     return {
       provider: "custom",
       apiKey,
       model,
       ollamaUrl: fallback.ollamaUrl,
-      customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
+      customEndpoint: ov.baseUrl ?? preset.baseUrlByMode?.[apiMode] ?? preset.baseUrl ?? "",
       maxContextSize,
-      apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
+      apiMode,
     }
   }
 
