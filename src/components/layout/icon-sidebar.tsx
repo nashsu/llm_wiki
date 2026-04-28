@@ -62,9 +62,9 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
 
   return (
     <TooltipProvider delay={300}>
-      <div className="flex h-full w-12 flex-col items-center border-r bg-muted/50 py-2">
+      <div className="flex h-full w-14 flex-col items-center border-r border-sidebar-border bg-sidebar/95 py-2 text-sidebar-foreground shadow-sm shadow-foreground/5">
         {/* Logo */}
-        <div className="mb-2 flex items-center justify-center">
+        <div className="mb-3 flex items-center justify-center rounded-md border border-sidebar-border/80 bg-card/80 p-1 shadow-sm">
           <img
             src={logoImg}
             alt="LLM Wiki"
@@ -72,15 +72,15 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           />
         </div>
         {/* Top: main nav items + Deep Research */}
-        <div className="flex flex-1 flex-col items-center gap-1">
+        <div className="flex flex-1 flex-col items-center gap-1.5">
           {NAV_ITEMS.map(({ view, icon: Icon, labelKey }) => (
             <Tooltip key={view}>
               <TooltipTrigger
                 onClick={() => setActiveView(view)}
-                className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
+                className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-all ${
                   activeView === view
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-primary/25"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 }`}
               >
                 <Icon className="h-5 w-5" />
@@ -100,10 +100,10 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           <Tooltip>
             <TooltipTrigger
               onClick={() => toggleResearchPanel(!researchPanelOpen)}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
+              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-all ${
                 researchPanelOpen
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-primary/25"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               }`}
             >
               <Globe className="h-5 w-5" />
@@ -117,7 +117,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           </Tooltip>
         </div>
         {/* Bottom: daemon status + settings + switch project */}
-        <div className="flex flex-col items-center gap-1 pb-1">
+        <div className="flex flex-col items-center gap-1.5 border-t border-sidebar-border/70 pt-2 pb-1">
           {/* Daemon status indicator */}
           <Tooltip>
             <TooltipTrigger className="flex h-6 w-6 items-center justify-center">
@@ -140,10 +140,10 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           <Tooltip>
             <TooltipTrigger
               onClick={() => setActiveView("settings")}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-colors ${
+              className={`relative flex h-10 w-10 items-center justify-center rounded-md transition-all ${
                 activeView === "settings"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm shadow-primary/25"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               }`}
             >
               <Settings className="h-5 w-5" />
@@ -171,7 +171,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
           <Tooltip>
             <TooltipTrigger
               onClick={onSwitchProject}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
             >
               <ArrowLeftRight className="h-5 w-5" />
             </TooltipTrigger>

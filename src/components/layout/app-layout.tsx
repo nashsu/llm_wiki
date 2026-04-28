@@ -98,14 +98,14 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     // it fills the rest of the viewport.
     <div className="flex h-screen flex-col bg-background text-foreground">
       <UpdateBanner />
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 bg-background/80">
         <IconSidebar onSwitchProject={onSwitchProject} />
         <div ref={containerRef} className="flex min-w-0 flex-1 overflow-hidden">
         {!isSettings && (
           <>
             {/* Left: File tree + Activity */}
             <div
-              className="flex shrink-0 flex-col overflow-hidden border-r"
+              className="flex shrink-0 flex-col overflow-hidden border-r border-border/80 bg-card/70 shadow-sm shadow-foreground/5"
               style={{ width: leftWidth }}
             >
               <div className="flex-1 overflow-hidden">
@@ -114,14 +114,14 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
               <ActivityPanel />
             </div>
             <div
-              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/35 active:bg-primary/45"
               onMouseDown={startDrag("left")}
             />
           </>
         )}
 
         {/* Center: Chat or view (sources/settings/review) */}
-        <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="min-w-0 flex-1 overflow-hidden bg-background/65">
           <ErrorBoundary>
             <ContentArea />
           </ErrorBoundary>
@@ -131,11 +131,11 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
         {hasRightPanel && (
           <>
             <div
-              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+              className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/35 active:bg-primary/45"
               onMouseDown={startDrag("right")}
             />
             <div
-              className="flex shrink-0 flex-col overflow-hidden border-l"
+              className="flex shrink-0 flex-col overflow-hidden border-l border-border/80 bg-card/75 shadow-sm shadow-foreground/5"
               style={{ width: rightWidth }}
             >
               <ErrorBoundary>

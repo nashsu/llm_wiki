@@ -49,8 +49,11 @@ function queueFilePath(projectPath: string): string {
 
 async function saveQueue(projectPath: string): Promise<void> {
   try {
-    // Only save pending and failed tasks (done tasks are removed)
-    const toSave = queue.filter((t) => t.status !== "done")
+    // Persist in-flight work as pending. If the app exits mid-ingest, restore
+    // can retry from the beginning without relying on a transient status.
+    const toSave = queue
+      .filter((t) => t.status !== "done")
+      .map((t) => (t.status === "processing" ? { ...t, status: "pending" as const } : t))
     await writeFile(queueFilePath(projectPath), JSON.stringify(toSave, null, 2))
   } catch {
     // non-critical
@@ -467,7 +470,6 @@ async function processNext(projectId: string): Promise<void> {
 
   processing = true
   next.status = "processing"
-  await saveQueue(pp)
   if (currentProjectId !== projectId) return
 
   const llmConfig = useWikiStore.getState().llmConfig
