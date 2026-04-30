@@ -11,13 +11,6 @@ import { enqueueIngest, enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { useTranslation } from "react-i18next"
 import { normalizePath, getFileName } from "@/lib/path-utils"
-import {
-  buildDeletedKeys,
-  cleanIndexListing,
-  stripDeletedWikilinks,
-  extractFrontmatterTitle,
-  type DeletedPageInfo,
-} from "@/lib/wiki-cleanup"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { decidePageFate } from "@/lib/source-delete-decision"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
@@ -347,8 +340,11 @@ export function SourcesView() {
       //            elsewhere in the frontmatter). Leaving the page
       //            alone prevents silent data loss when a filename
       //            happens to appear in an unrelated page's metadata.
-      const actuallyDeleted: string[] = []
-      const deletedInfos: DeletedPageInfo[] = []
+      // Pass 1: keep / skip — rewrite sources for shared pages, no
+      // deletion needed. The "delete" decisions are deferred to a
+      // single batch call after the loop so we can route them
+      // through the unified cascade helper.
+      const pagesToDelete: string[] = []
       for (const pagePath of relatedPages) {
         try {
           const content = await readFile(pagePath)
@@ -369,64 +365,28 @@ export function SourcesView() {
             continue
           }
 
-          // action === "delete": the page's sole source was this file.
-          // Capture slug + title before deletion so stale references
-          // can be cleaned from index / overview / sibling pages.
-          const slug = getFileName(pagePath).replace(/\.md$/, "")
-          const title = extractFrontmatterTitle(content)
-          deletedInfos.push({ slug, title })
-          // cascadeDeleteWikiPage = deleteFile(...) + drop the page's
-          // embedding chunks so future searches don't return phantom
-          // hits pointing at a file that no longer exists.
-          const { cascadeDeleteWikiPage } = await import("@/lib/wiki-page-delete")
-          await cascadeDeleteWikiPage(pp, pagePath)
-          actuallyDeleted.push(pagePath)
+          // action === "delete" → defer.
+          pagesToDelete.push(pagePath)
         } catch (err) {
           console.error(`Failed to process wiki page ${pagePath}:`, err)
         }
       }
 
-      // Steps 5 & 6: clean stale references from every wiki file.
-      //
-      // index.md  → drop list-item lines whose primary `[[target]]` is
-      //             a deleted page (title OR slug form matches).
-      // overview.md + everything else → strip `[[deleted]]` occurrences
-      //             in prose, replacing them with plain text (or with
-      //             the pipe display when present).
-      //
-      // Using normalized-key matching rather than the old substring
-      // `includes` check avoids two classes of real bugs: stale
-      // title-form refs surviving (`[[KV Cache]]` vs slug `kv-cache`),
-      // and innocent siblings getting wiped collaterally (deleting
-      // `ai.md` must not take `[[OpenAI]]` / `[[AI Safety]]` down).
-      const deletedKeys = buildDeletedKeys(deletedInfos)
-      if (deletedKeys.size > 0) {
-        try {
-          const wikiTree = await listDirectory(`${pp}/wiki`)
-          const allMdFiles = flattenMdFiles(wikiTree)
-          for (const file of allMdFiles) {
-            try {
-              const content = await readFile(file.path)
-              const isIndex = file.path === `${pp}/wiki/index.md` ||
-                file.name === "index.md"
-              // For index: first drop whole entry lines for deleted
-              // pages, then still strip any secondary `[[...]]` refs
-              // to deleted pages that may appear in surviving rows.
-              const afterListing = isIndex
-                ? cleanIndexListing(content, deletedKeys)
-                : content
-              const updated = stripDeletedWikilinks(afterListing, deletedKeys)
-              if (updated !== content) {
-                await writeFile(file.path, updated)
-              }
-            } catch {
-              // skip individual file failures — best-effort cleanup
-            }
-          }
-        } catch {
-          // non-critical
-        }
-      }
+      // Pass 2: full cascade for every page whose sole source was
+      // this file. The helper deletes the file + drops embeddings
+      // + sweeps every other wiki .md to clean stale body
+      // wikilinks, index.md listings, AND `related:` frontmatter
+      // arrays. The previous inline cleanup loop did 1 and 2 but
+      // left `related:` slugs pointing at deleted pages, which
+      // FrontmatterPanel renders as a broken-ref warning icon.
+      const { cascadeDeleteWikiPagesWithRefs } = await import(
+        "@/lib/wiki-page-delete"
+      )
+      const cascadeResult =
+        pagesToDelete.length > 0
+          ? await cascadeDeleteWikiPagesWithRefs(pp, pagesToDelete)
+          : { deletedPaths: [], rewrittenFiles: 0 }
+      const actuallyDeleted = cascadeResult.deletedPaths
 
     // Step 7: Append deletion record to log.md
     try {
@@ -803,14 +763,3 @@ function DeleteButton({
   )
 }
 
-function flattenMdFiles(nodes: FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenMdFiles(node.children))
-    } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
