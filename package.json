@@ -37,6 +37,7 @@
     "js-yaml": "^4.1.1",
     "katex": "^0.16.45",
     "lucide-react": "^1.7.0",
+    "mermaid": "^11.14.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-i18next": "^17.0.2",

@@ -21,6 +21,7 @@ import { makeQueryFileName } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
+import { MermaidDiagram } from "@/components/mermaid-diagram"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -699,6 +700,14 @@ function MarkdownContent({ content }: { content: string }) {
             pre: ({ children, ...props }) => (
               <pre className="rounded bg-background/50 p-2 text-xs overflow-x-auto" {...props}>{children}</pre>
             ),
+            code: ({ className, children, ...props }) => {
+              const lang = className?.replace("language-", "")
+              const codeText = String(children).replace(/\n$/, "")
+              if (lang === "mermaid") {
+                return <MermaidDiagram code={codeText} />
+              }
+              return <code className={className} {...props}>{children}</code>
+            },
           }}
         >
           {processed}
