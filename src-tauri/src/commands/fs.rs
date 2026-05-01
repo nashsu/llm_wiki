@@ -7,6 +7,18 @@ use calamine::{Reader, open_workbook_auto, Data};
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::FileNode;
 
+// Security: validate path to prevent directory-traversal attacks.
+fn validate_path(path: &str) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("Path contains '..' component".into());
+    }
+    if p.is_absolute() {
+        return Err("Absolute paths are not allowed".into());
+    }
+    Ok(())
+}
+
 /// Known binary formats that need special extraction
 const OFFICE_EXTS: &[&str] = &["docx", "pptx", "xlsx", "odt", "ods", "odp"];
 const IMAGE_EXTS: &[&str] = &[
@@ -31,6 +43,7 @@ pub async fn read_file(path: String) -> Result<String, String> {
     // pool where blocking-for-seconds is the contract.
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("read_file", || {
+            validate_path(&path)?;
             let p = Path::new(&path);
             let ext = p
                 .extension()
@@ -86,6 +99,7 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
     // See `read_file` above for why `spawn_blocking` is required.
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("preprocess_file", || {
+            validate_path(&path)?;
             let p = Path::new(&path);
             let ext = p
                 .extension()
@@ -894,6 +908,7 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
+            validate_path(&path)?;
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
@@ -911,6 +926,7 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
 pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
+            validate_path(&path)?;
             let p = Path::new(&path);
             if !p.exists() {
                 return Err(format!("Path does not exist: '{}'", path));
@@ -997,6 +1013,8 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
 pub async fn copy_file(source: String, destination: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_file", || {
+            validate_path(&source)?;
+            validate_path(&destination)?;
             let dest = Path::new(&destination);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)
@@ -1017,6 +1035,8 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
 pub async fn copy_directory(source: String, destination: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_directory", || {
+            validate_path(&source)?;
+            validate_path(&destination)?;
             let src = Path::new(&source);
             let dest = Path::new(&destination);
 
@@ -1071,6 +1091,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
 pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
+            validate_path(&path)?;
             let p = Path::new(&path);
             if p.is_dir() {
                 fs::remove_dir_all(&path)
@@ -1224,6 +1245,7 @@ fn collect_related_pages(dir: &Path, source_name: &str, results: &mut Vec<String
 pub async fn create_directory(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("create_directory", || {
+            validate_path(&path)?;
             fs::create_dir_all(&path)
                 .map_err(|e| format!("Failed to create directory '{}': {}", path, e))
         })
@@ -1256,6 +1278,7 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("read_file_as_base64", || {
+            validate_path(&path)?;
             let bytes = fs::read(&path)
                 .map_err(|e| format!("Failed to read '{}': {}", path, e))?;
             let p = Path::new(&path);
@@ -1295,7 +1318,10 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     // every fs command rather than carving out an exception that's
     // easy to violate later.
     tauri::async_runtime::spawn_blocking(move || {
-        run_guarded("file_exists", || Ok(Path::new(&path).exists()))
+        run_guarded("file_exists", || {
+            validate_path(&path)?;
+            Ok(Path::new(&path).exists())
+        })
     })
     .await
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
