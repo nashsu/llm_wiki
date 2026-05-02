@@ -29,6 +29,8 @@ import * as path from "path"
 import { buildWikiGraph } from "./lib/wiki-graph"
 import { findSurprisingConnections, detectKnowledgeGaps } from "./lib/graph-insights"
 import { searchWiki } from "./lib/search"
+import { autoIngest } from "./lib/ingest"
+import { deepResearch } from "./lib/deep-research"
 
 const DEFAULT_WIKI_PATH = process.env.WIKI_PATH ?? process.cwd()
 const PKG_VERSION = "0.4.6-mcp"
@@ -106,6 +108,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           project_path: { type: "string", description: "Path to wiki project" },
         },
         required: [],
+      },
+    },
+    {
+      name: "wiki_ingest",
+      description: "Two-stage LLM ingest of a source markdown/text file into the wiki. Stage 1 analyzes (entities, concepts, connections); stage 2 emits FILE blocks that are written under wiki/. Requires OPENAI_API_KEY (or LLM_API_KEY) configured. SHA256 incremental cache skips unchanged sources.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          source_file: { type: "string", description: "Absolute path to the source markdown/text file to ingest" },
+          project_path: { type: "string", description: "Path to wiki project (defaults to WIKI_PATH env var)" },
+          folder_context: { type: "string", description: "Optional folder hint for LLM categorization (e.g. 'papers/energy')" },
+        },
+        required: ["source_file"],
+      },
+    },
+    {
+      name: "wiki_deep_research",
+      description: "Multi-query web search → LLM synthesis → optional auto-ingest. Saves a research page to wiki/queries/ then (by default) ingests it to extract entities/concepts. Requires OPENAI_API_KEY and TAVILY_API_KEY.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "Research topic (free-form)" },
+          project_path: { type: "string", description: "Path to wiki project" },
+          search_queries: { type: "array", items: { type: "string" }, description: "Optional explicit search queries (defaults to [topic])" },
+          auto_ingest: { type: "boolean", description: "Whether to auto-ingest the synthesis page (default true)" },
+        },
+        required: ["topic"],
       },
     },
   ],
@@ -223,6 +252,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? `✓ All ${nodes.length} pages are properly connected.`
           : `Found ${issues.length} issue(s) in ${nodes.length} pages:\n\n${issues.join("\n")}`
         return { content: [{ type: "text", text: text }] }
+      }
+
+      case "wiki_ingest": {
+        if (!args.source_file) throw new McpError(ErrorCode.InvalidParams, "source_file is required")
+        const sourcePath = path.resolve(args.source_file as string)
+        const folderContext = args.folder_context as string | undefined
+        const result = await autoIngest(projectPath, sourcePath, undefined, undefined, folderContext)
+        const lines = [
+          result.cached
+            ? `✓ Cache HIT — ${result.writtenPaths.length} files unchanged for "${path.basename(sourcePath)}"`
+            : `✓ Ingested "${path.basename(sourcePath)}" — ${result.writtenPaths.length} files written`,
+          ...result.writtenPaths.map((p) => `  - ${p}`),
+        ]
+        if (result.reviewItems.length > 0) {
+          lines.push("", `Review items (${result.reviewItems.length}):`)
+          for (const r of result.reviewItems) lines.push(`  - [${r.type}] ${r.title}`)
+        }
+        if (result.warnings.length > 0) {
+          lines.push("", `Warnings (${result.warnings.length}):`)
+          for (const w of result.warnings) lines.push(`  - ${w}`)
+        }
+        if (result.hardFailures.length > 0) {
+          lines.push("", `Hard failures (${result.hardFailures.length}):`)
+          for (const f of result.hardFailures) lines.push(`  - ${f}`)
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] }
+      }
+
+      case "wiki_deep_research": {
+        if (!args.topic) throw new McpError(ErrorCode.InvalidParams, "topic is required")
+        const topic = args.topic as string
+        const searchQueries = Array.isArray(args.search_queries)
+          ? (args.search_queries as string[]).filter((s) => typeof s === "string" && s.trim())
+          : undefined
+        const autoIngestFlag = typeof args.auto_ingest === "boolean" ? args.auto_ingest : true
+        const result = await deepResearch(projectPath, topic, {
+          searchQueries,
+          autoIngest: autoIngestFlag,
+        })
+        const lines = [
+          `✓ Deep research on "${topic}" complete`,
+          `  Saved: ${result.savedPath}`,
+          `  Web results: ${result.webResultCount}`,
+          result.ingested
+            ? `  Auto-ingested ${result.ingestedFiles.length} wiki page(s)`
+            : `  Auto-ingest skipped`,
+        ]
+        if (result.ingestedFiles.length > 0) {
+          for (const f of result.ingestedFiles) lines.push(`    - ${f}`)
+        }
+        if (result.warnings.length > 0) {
+          lines.push("", `Warnings (${result.warnings.length}):`)
+          for (const w of result.warnings) lines.push(`  - ${w}`)
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] }
       }
 
       default:
