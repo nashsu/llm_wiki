@@ -9,6 +9,7 @@ import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { normalizePath } from "@/lib/path-utils"
 import { useWikiStore } from "@/stores/wiki-store"
+import { MermaidDiagram } from "@/components/mermaid-diagram"
 
 interface WikiReaderProps {
   body: string
@@ -113,6 +114,12 @@ export function WikiReader({ body }: WikiReaderProps) {
               {children}
             </td>
           ),
+          code: ({ className, children, ...props }) => {
+            const lang = className?.replace("language-", "")
+            const codeText = String(children).replace(/\n$/, "")
+            if (lang === "mermaid") return <MermaidDiagram code={codeText} />
+            return <code className={className} {...props}>{children}</code>
+          },
         }}
       >
         {transformed}
