@@ -1,20 +1,25 @@
 {
   "name": "llm-wiki-nashsu-skill",
-  "version": "0.4.6-skill",
-  "description": "nashsu/llm_wiki backend extracted as Node.js CLI skill (no GUI)",
+  "version": "0.4.6-skill.1",
+  "description": "nashsu/llm_wiki backend as Node.js CLI + MCP server (no Tauri/GUI)",
   "main": "dist/cli.js",
+  "bin": {
+    "llm-wiki": "dist/cli.js",
+    "llm-wiki-mcp": "dist/mcp-server.js"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.skill.json",
-    "dev": "ts-node --project tsconfig.skill.json src/cli.ts",
-    "cli": "node dist/cli.js"
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js",
+    "mcp": "node dist/mcp-server.js"
   },
   "dependencies": {
     "graphology": "^0.25.4",
-    "graphology-communities-louvain": "^2.0.0"
+    "graphology-communities-louvain": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "ts-node": "^10.9.0",
     "typescript": "^5.0.0"
   }
 }
