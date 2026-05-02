@@ -1,0 +1,28 @@
+{
+  "name": "llm-wiki-nashsu-skill",
+  "version": "0.4.6-skill.1",
+  "description": "nashsu/llm_wiki backend as Node.js CLI + MCP server (no Tauri/GUI)",
+  "main": "dist/cli.js",
+  "bin": {
+    "llm-wiki": "dist/cli.js",
+    "llm-wiki-mcp": "dist/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js",
+    "mcp": "node dist/mcp-server.js",
+    "test:e2e": "npm run build && node dist/test-server/e2e.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "graphology": "^0.25.4",
+    "graphology-communities-louvain": "^2.0.0",
+    "js-yaml": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -23,6 +23,9 @@ src-tauri/gen/
 
 # Internal docs (not shipped)
 docs/
+# But: the skill subproject's docs ARE part of the public skill surface.
+!skill/docs/
+!skill/docs/**
 
 # Benchmark and test data (local only)
 tests/
