@@ -1,0 +1,20 @@
+{
+  "name": "llm-wiki-nashsu-skill",
+  "version": "0.4.6-skill",
+  "description": "nashsu/llm_wiki backend extracted as Node.js CLI skill (no GUI)",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.skill.json",
+    "dev": "ts-node --project tsconfig.skill.json src/cli.ts",
+    "cli": "node dist/cli.js"
+  },
+  "dependencies": {
+    "graphology": "^0.25.4",
+    "graphology-communities-louvain": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
