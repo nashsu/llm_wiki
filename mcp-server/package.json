@@ -1,0 +1,26 @@
+{
+  "name": "llm-wiki-mcp-server",
+  "version": "0.4.6",
+  "description": "MCP server for llm_wiki — exposes wiki graph, search, insights, and lint as Model Context Protocol tools",
+  "main": "dist/index.js",
+  "bin": {
+    "llm-wiki-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": ["mcp", "wiki", "knowledge-graph", "llm", "model-context-protocol"],
+  "license": "MIT",
+  "dependencies": {
+    "graphology": "^0.25.4",
+    "graphology-communities-louvain": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

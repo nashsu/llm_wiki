@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@/commands/fs": ["./src/fs-node.ts"],
+      "@/stores/wiki-store": ["./src/stores-node.ts"],
+      "@/stores/research-store": ["./src/stores-node.ts"],
+      "@/stores/chat-store": ["./src/stores-node.ts"],
+      "@/stores/activity-store": ["./src/stores-node.ts"],
+      "@/stores/review-store": ["./src/stores-node.ts"],
+      "@/lib/*": ["../../src/lib/*"],
+      "@/types/*": ["../../src/types/*"]
+    }
+  },
+  "include": ["src/**/*", "../../src/lib/**/*", "../../src/types/**/*"],
+  "exclude": [
+    "../../src/components/**/*",
+    "../../src/App.tsx",
+    "../../src/main.tsx"
+  ]
+}
