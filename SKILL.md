@@ -31,13 +31,16 @@ metadata:
 
 | 能力 | 本技能 | llm-wiki-skill |
 |------|-------|----------------|
-| **图谱相关度** | 4 信号模型（直接链接×3 + 来源重叠×4 + Adamic-Adar×1.5 + 类型亲和×1）| 仅 wikilink，无权重 |
-| **社区检测** | Louvain 算法 + 凝聚度评分 | 主题页→社区（启发式）|
-| **图谱洞察** | 惊人连接 + 知识缺口 + 桥节点检测 | 无 |
-| **搜索** | RRF 混合（BM25 + 向量） | Grep 关键词 |
+| **图谱相关度** | 4 信号模型（直接链接×3 + 来源重叠×4 + Adamic-Adar×1.5 + 类型亲和×1）| 3 信号模型（共引强度 + 来源重叠 + 类型亲和度）|
+| **社区检测** | Louvain 算法 + 凝聚度评分 | Louvain 算法（graph-analysis.js）|
+| **图谱洞察** | 惊人连接 + 知识缺口 + 桥节点检测 | 惊人连接 + 桥节点 + 孤立节点 + 稀疏社区（大图自动降级）|
+| **搜索** | RRF 混合（BM25 + 向量） | Grep + 别名展开 + 段落上限 |
 | **深度研究** | 网络搜索→LLM 综合→自动消化 | 无 |
 | **审核队列** | 异步异步 sweep-reviews 系统 | 无 |
 | **图像处理** | 视觉 API 图像标注管线 | 无 |
+| **数字山水可视化** | 无（sigma.js 通用图谱）| ✅ 东方编辑部 × 数字山水风交互式 HTML |
+| **置信度标注** | 无 | ✅ EXTRACTED / INFERRED / AMBIGUOUS / UNVERIFIED |
+| **SessionStart hook** | 无 | ✅ 会话自动注入 wiki 上下文 |
 
 ---
 
@@ -272,11 +275,13 @@ node ${SKILL_DIR}/skill/cli.js status <wiki_root>
 
 | 场景 | 推荐方案 |
 |------|---------|
-| 日常 ingest（速度优先）| llm-wiki-skill（Shell，零开销）|
-| 图谱质量分析 | 本技能（graph + insights 命令）|
+| 日常 ingest（速度优先）| llm-wiki-skill（Shell，零开销，SHA256 缓存）|
+| 高精度图谱分析（Adamic-Adar） | 本技能（graph + insights 命令，4 信号模型）|
+| RRF 混合搜索 | 本技能（search 命令，BM25+向量）|
 | 深度研究专项 | 本技能（deep-research 命令）|
+| 基础图谱分析与可视化 | llm-wiki-skill（3 信号 + Louvain + 数字山水 HTML）|
 | 中文内容源（微信/知乎/小红书）| llm-wiki-skill |
-| Hermes Runtime 集成 | llm-wiki-skill（已有 HERMES.md）|
+| Hermes Runtime 集成 | llm-wiki-skill（已有 HERMES.md + SessionStart hook）|
 | 本技能 Hermes 集成 | 参见 HERMES.md（需手动适配）|
 
 ---
