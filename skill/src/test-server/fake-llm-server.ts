@@ -128,8 +128,10 @@ export function startFakeServer(port = 0): Promise<FakeServerHandle> {
       res.writeHead(404, { "Content-Type": "text/plain" })
       res.end("not found")
     } catch (err) {
+      // Test-only server — log to stderr for debugging, return generic body.
+      console.error("[fake-llm-server] handler error:", err)
       res.writeHead(500, { "Content-Type": "text/plain" })
-      res.end(String(err))
+      res.end("internal server error")
     }
   })
 

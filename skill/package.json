@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
-    "mcp": "node dist/mcp-server.js"
+    "mcp": "node dist/mcp-server.js",
+    "test:e2e": "npm run build && node dist/test-server/e2e.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -169,7 +169,7 @@ export async function deepResearch(
   const pageContent = [
     "---",
     "type: query",
-    `title: "Research: ${topic.replace(/"/g, '\\"')}"`,
+    `title: "Research: ${topic.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
     `created: ${date}`,
     "origin: deep-research",
     "tags: [research]",

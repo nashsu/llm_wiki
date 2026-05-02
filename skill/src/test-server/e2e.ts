@@ -10,7 +10,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process"
+import { spawn } from "child_process"
 import { startFakeServer, type FakeServerHandle } from "../test-server/fake-llm-server"
 
 const SKILL_ROOT = path.resolve(__dirname, "../..")
