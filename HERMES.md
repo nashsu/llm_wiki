@@ -1,40 +1,78 @@
-# llm-wiki-nashsu — Hermes Skill 入口
+# llm-wiki — Hermes Skill Entry
 
-> **适配状态**：⚠️ 部分适配（需完成 GUI→CLI 工程改造后方可完整使用）
-> **当前可用**：graph、insights、search 命令（无需 LLM）
-> **待完成**：ingest、deep-research 命令（需替换 Tauri IPC → Node.js fs）
+> **Status: ✅ Complete** — all CLI commands and MCP tools are
+> implemented and validated end-to-end (see
+> [`skill/docs/test-report.md`](skill/docs/test-report.md)).
 
-## 触发条件
+## What this skill does
 
-加载本技能当用户明确提到：
-- "图谱分析"、"知识图谱"、"图谱洞察"
-- "深度研究"
-- "知识缺口"、"惊人连接"
+Build and maintain a structured knowledge base ("wiki") from raw
+documents. Every command operates on a single project root that
+contains a `wiki/` subdirectory. See [`SKILL.md`](SKILL.md) for the
+full command reference.
 
-## 与 llm-wiki-skill 的关系
+## Trigger conditions
 
-本技能**补充** llm-wiki-skill，提供更高级的图谱分析能力：
-- llm-wiki-skill：负责日常 ingest、Hermes 调度、中文内容源
-- llm-wiki-nashsu：负责高级图谱分析、深度研究
+Load this skill when the user mentions:
 
-## 主要工作流
+- "知识库" / "wiki"
+- "知识图谱" / "graph analysis" / "knowledge graph"
+- "深度研究" / "deep research"
+- "知识缺口" / "knowledge gap"
+- "惊人连接" / "surprising connection"
+- ingest / search / lint operations against an existing wiki
 
-详见 `SKILL.md`。
+## Two integration modes
 
-## 安装路径
+### Mode A — CLI shell-out (the original Hermes path)
 
 ```bash
-# Hermes 安装
-bash install.sh --platform hermes
-
-# 直接使用
-node skill/cli.js graph <wiki_root>
-node skill/cli.js insights <wiki_root>
-node skill/cli.js search <wiki_root> <query>
+node skill/dist/cli.js <command> <wiki_root> [args]
 ```
 
-## 注意事项
+All eight commands (`status`, `search`, `graph`, `insights`, `lint`,
+`init`, `ingest`, `deep-research`) follow this pattern. JSON output is
+produced where appropriate so downstream agents can parse it.
 
-- Node.js >= 20 运行时必须可用
-- 中文素材源（微信/知乎/小红书）请使用 llm-wiki-skill
-- ingest 功能目前需要完成 Tauri IPC 替换工程（约 10-13 人日）
+### Mode B — Hermes MCP client
+
+Recent Hermes versions support MCP. Register the server in your
+Hermes MCP config:
+
+```yaml
+servers:
+  llm-wiki:
+    command: node
+    args: ["/abs/path/to/llm_wiki/skill/dist/mcp-server.js"]
+    env:
+      WIKI_PATH: /Users/me/wiki
+      OPENAI_API_KEY: sk-...
+      LLM_MODEL: gpt-4o-mini
+      TAVILY_API_KEY: tvly-...
+```
+
+The same seven `wiki_*` tools appear as native Hermes tool calls.
+
+Detailed walk-through: [`skill/docs/usage-hermes.md`](skill/docs/usage-hermes.md).
+
+## Install
+
+```bash
+cd skill
+npm install
+npm run build
+```
+
+Or use the existing repo installer:
+
+```bash
+bash install.sh --platform hermes
+```
+
+## Requirements
+
+- Node.js ≥ 20
+- `OPENAI_API_KEY` (or `LLM_API_KEY` + `LLM_BASE_URL`) for `ingest`
+  and `deep-research`
+- `TAVILY_API_KEY` for `deep-research`
+- All other commands work without any LLM credentials

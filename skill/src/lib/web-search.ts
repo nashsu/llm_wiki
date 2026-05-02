@@ -23,7 +23,8 @@ export async function webSearch(query: string, maxResults: number = 5): Promise<
   }
 
   try {
-    const response = await fetch("https://api.tavily.com/search", {
+    const baseUrl = (process.env.TAVILY_BASE_URL ?? "https://api.tavily.com").replace(/\/+$/, "")
+    const response = await fetch(`${baseUrl}/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

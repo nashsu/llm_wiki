@@ -15,17 +15,21 @@ import * as fs from "fs"
 import { buildWikiGraph } from "./lib/wiki-graph"
 import { findSurprisingConnections, detectKnowledgeGaps } from "./lib/graph-insights"
 import { searchWiki } from "./lib/search"
+import { autoIngest } from "./lib/ingest"
+import { deepResearch } from "./lib/deep-research"
 
 async function main() {
   const [, , command, ...args] = process.argv
   if (!command || command === "help" || command === "--help") { usage(); return }
   switch (command) {
-    case "graph":    return cmdGraph(args)
-    case "insights": return cmdInsights(args)
-    case "search":   return cmdSearch(args)
-    case "status":   return cmdStatus(args)
-    case "init":     return cmdInit(args)
-    case "lint":     return cmdLint(args)
+    case "graph":         return cmdGraph(args)
+    case "insights":      return cmdInsights(args)
+    case "search":        return cmdSearch(args)
+    case "status":        return cmdStatus(args)
+    case "init":          return cmdInit(args)
+    case "lint":          return cmdLint(args)
+    case "ingest":        return cmdIngest(args)
+    case "deep-research": return cmdDeepResearch(args)
     default:
       console.error(`Unknown command: ${command}`)
       usage()
@@ -41,21 +45,30 @@ USAGE:
   llm-wiki <command> <wiki_root> [options]
 
 COMMANDS:
-  graph    <wiki_root>            Build knowledge graph (outputs JSON)
-  insights <wiki_root>            Show surprising connections + knowledge gaps
-  search   <wiki_root> <query>    Keyword search (BM25+RRF)
-  status   <wiki_root>            Page count and type breakdown
-  init     <wiki_root>            Initialize wiki directory structure
-  lint     <wiki_root>            Check for broken links and orphan pages
+  graph         <wiki_root>                  Build knowledge graph (outputs JSON)
+  insights      <wiki_root>                  Show surprising connections + knowledge gaps
+  search        <wiki_root> <query>          Keyword search (BM25+RRF)
+  status        <wiki_root>                  Page count and type breakdown
+  init          <wiki_root>                  Initialize wiki directory structure
+  lint          <wiki_root>                  Check for broken links and orphan pages
+  ingest        <wiki_root> <source_file>    Two-stage LLM ingest of a markdown/text source
+  deep-research <wiki_root> <topic>          Web search → LLM synthesis → auto-ingest
 
 ENV VARS:
   SKILL_VERBOSE=1                 Enable verbose activity logging
   WIKI_PATH                       Default project path for MCP server
+  OPENAI_API_KEY / LLM_API_KEY    LLM credentials (required for ingest / deep-research)
+  LLM_BASE_URL                    Custom OpenAI-compatible endpoint
+  LLM_MODEL                       Model name (default: gpt-4o-mini)
+  TAVILY_API_KEY                  Tavily search API (required for deep-research)
+  WIKI_OUTPUT_LANGUAGE            auto | English | Chinese | Japanese | ...
 
 EXAMPLES:
   llm-wiki graph ./my-project
   llm-wiki search ./my-project "attention mechanism"
   llm-wiki insights ./my-project
+  llm-wiki ingest ./my-project ./raw/paper.md
+  llm-wiki deep-research ./my-project "transformer architecture"
 `.trim())
 }
 
@@ -151,6 +164,70 @@ async function cmdLint(args: string[]) {
     else if (n.linkCount <= 1) { console.log(`[isolated] ${n.label} — ${n.linkCount} link(s)`); issues++ }
   }
   console.log(`\n✓ ${nodes.length} pages checked — ${issues} issue(s)`)
+}
+
+async function cmdIngest(args: string[]) {
+  const [wikiRoot, sourceFile, ...rest] = args
+  if (!wikiRoot || !sourceFile) {
+    console.error("Usage: ingest <wiki_root> <source_file> [--folder=context]")
+    process.exit(1)
+  }
+  const projectPath = path.resolve(wikiRoot)
+  const sourcePath = path.resolve(sourceFile)
+  if (!fs.existsSync(sourcePath)) {
+    console.error(`Source file not found: ${sourcePath}`)
+    process.exit(1)
+  }
+  const folderArg = rest.find((a) => a.startsWith("--folder="))
+  const folderContext = folderArg ? folderArg.slice("--folder=".length) : undefined
+
+  console.error(`Ingesting: ${sourcePath} → ${projectPath}`)
+  const result = await autoIngest(projectPath, sourcePath, undefined, undefined, folderContext)
+  if (result.cached) {
+    console.error(`✓ cache HIT — ${result.writtenPaths.length} files unchanged`)
+  } else {
+    console.error(`✓ ingested — ${result.writtenPaths.length} files written, ${result.reviewItems.length} review item(s), ${result.warnings.length} warning(s)`)
+  }
+  process.stdout.write(JSON.stringify({
+    status: result.hardFailures.length === 0 ? "success" : "partial",
+    cached: result.cached,
+    pages: result.writtenPaths,
+    reviews_pending: result.reviewItems.length,
+    reviews: result.reviewItems.map((r) => ({ type: r.type, title: r.title, description: r.description })),
+    warnings: result.warnings,
+    hard_failures: result.hardFailures,
+  }, null, 2) + "\n")
+}
+
+async function cmdDeepResearch(args: string[]) {
+  const [wikiRoot, ...rest] = args
+  const queriesArg = rest.find((a) => a.startsWith("--queries="))
+  const noIngest = rest.includes("--no-ingest")
+  const topic = rest.filter((a) => !a.startsWith("--")).join(" ")
+  if (!wikiRoot || !topic) {
+    console.error("Usage: deep-research <wiki_root> <topic> [--queries=q1|q2|q3] [--no-ingest]")
+    process.exit(1)
+  }
+  const projectPath = path.resolve(wikiRoot)
+  const searchQueries = queriesArg
+    ? queriesArg.slice("--queries=".length).split("|").map((s) => s.trim()).filter(Boolean)
+    : undefined
+
+  console.error(`Researching: "${topic}" → ${projectPath}`)
+  const result = await deepResearch(projectPath, topic, {
+    searchQueries,
+    autoIngest: !noIngest,
+  })
+  console.error(`✓ saved ${result.savedPath} (${result.webResultCount} sources, ${result.ingestedFiles.length} pages ingested)`)
+  process.stdout.write(JSON.stringify({
+    status: "success",
+    topic: result.topic,
+    saved_path: result.savedPath,
+    web_result_count: result.webResultCount,
+    ingested: result.ingested,
+    ingested_files: result.ingestedFiles,
+    warnings: result.warnings,
+  }, null, 2) + "\n")
 }
 
 main().catch((err) => {
