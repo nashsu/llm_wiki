@@ -165,6 +165,42 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
   return null
 }
 
+/**
+ * Manages edge visibility based on hidden node types.
+ * When a node type is hidden, all connected edges are also hidden
+ * to prevent orphaned edge rendering.
+ */
+function HiddenTypeManager({ hiddenTypes }: { hiddenTypes: Set<string> }) {
+  const sigma = useSigma()
+
+  useEffect(() => {
+    if (hiddenTypes.size === 0) {
+      // Show all edges when no types are hidden
+      const graph = sigma.getGraph()
+      graph.forEachEdge((e) => {
+        graph.removeEdgeAttribute(e, "hidden")
+      })
+    } else {
+      // Hide edges connected to hidden node types
+      const graph = sigma.getGraph()
+      graph.forEachEdge((e, _attrs, source, target) => {
+        const sourceType = graph.getNodeAttribute(source, "nodeType") as string | undefined
+        const targetType = graph.getNodeAttribute(target, "nodeType") as string | undefined
+        const shouldHide = (sourceType && hiddenTypes.has(sourceType)) ||
+                          (targetType && hiddenTypes.has(targetType))
+        if (shouldHide) {
+          graph.setEdgeAttribute(e, "hidden", true)
+        } else {
+          graph.removeEdgeAttribute(e, "hidden")
+        }
+      })
+    }
+    sigma.refresh()
+  }, [sigma, hiddenTypes])
+
+  return null
+}
+
 function HighlightManager({ highlightedNodes }: { highlightedNodes: Set<string> }) {
   const sigma = useSigma()
 
@@ -315,6 +351,8 @@ export function GraphView() {
   const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set())
   const [sigmaKey, setSigmaKey] = useState(0)
   const [isResizing, setIsResizing] = useState(false)
+  const [legendCollapsed, setLegendCollapsed] = useState(false)
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const graphContainerRef = useRef<HTMLDivElement>(null)
   // Research confirmation dialog
   const [researchDialog, setResearchDialog] = useState<{
@@ -577,6 +615,11 @@ export function GraphView() {
               stagePadding: 30,
               nodeReducer: (_node, attrs) => {
                 const result = { ...attrs }
+                const nodeType = attrs.nodeType as string
+                if (hiddenTypes.has(nodeType)) {
+                  result.hidden = true
+                  return result
+                }
                 if (attrs.insightHighlight) {
                   result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
                   result.zIndex = 10
@@ -612,6 +655,7 @@ export function GraphView() {
             }}
           >
             <GraphLoader nodes={nodes} edges={edges} colorMode={colorMode} />
+            <HiddenTypeManager hiddenTypes={hiddenTypes} />
             <EventHandler onNodeClick={handleNodeClick} />
             <HighlightManager highlightedNodes={highlightedNodes} />
             <ZoomControls />
@@ -621,39 +665,81 @@ export function GraphView() {
 
           {/* Legend */}
           <div className="absolute bottom-3 left-3 rounded-lg border bg-background/90 backdrop-blur-sm px-3 py-2 text-xs shadow-sm max-w-[260px]">
-            {colorMode === "type" ? (
-              <>
-                <div className="mb-1.5 font-semibold text-foreground">Node Types</div>
-                <div className="flex flex-col gap-0.5">
-                  {Object.entries(NODE_TYPE_LABELS)
-                    .filter(([type]) => (typeCounts[type] ?? 0) > 0)
-                    .map(([type, label]) => (
-                      <div
-                        key={type}
-                        className="flex items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-accent/50"
-                        onMouseEnter={() => setHoveredType(type)}
-                        onMouseLeave={() => setHoveredType(null)}
-                      >
-                        <span
-                          className="inline-block h-3 w-3 rounded-full shrink-0 shadow-sm"
-                          style={{
-                            backgroundColor: NODE_TYPE_COLORS[type],
-                            boxShadow: `0 0 4px ${hexToRgba(NODE_TYPE_COLORS[type] ?? "#94a3b8", 0.4)}`,
-                          }}
-                        />
-                        <span className={hoveredType === type ? "text-foreground font-medium" : "text-muted-foreground"}>
-                          {label}
-                        </span>
-                        <span className="text-muted-foreground/60 ml-auto">{typeCounts[type]}</span>
-                      </div>
-                    ))}
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-semibold text-foreground">
+                {colorMode === "type" ? "Node Types" : "Communities"}
+              </span>
+              <div className="flex items-center gap-1">
+                {colorMode === "type" && hiddenTypes.size > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] px-1"
+                    onClick={() => setHiddenTypes(new Set())}
+                    title="Show all types"
+                  >
+                    Show all
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => setLegendCollapsed(!legendCollapsed)}
+                  title={legendCollapsed ? "Expand legend" : "Collapse legend"}
+                >
+                  {legendCollapsed ? "▶" : "▼"}
+                </Button>
+              </div>
+            </div>
+            {!legendCollapsed && (
+              colorMode === "type" ? (
+                <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto legend-scroll" style={{ direction: "rtl" }}>
+                  <div className="flex flex-col gap-0.5" style={{ direction: "ltr" }}>
+                    {Object.entries(NODE_TYPE_LABELS)
+                      .filter(([type]) => (typeCounts[type] ?? 0) > 0)
+                      .map(([type, label]) => {
+                        const isHidden = hiddenTypes.has(type)
+                        return (
+                          <div
+                            key={type}
+                            className={`flex items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-accent/50 ${isHidden ? "opacity-40" : ""}`}
+                            onMouseEnter={() => setHoveredType(type)}
+                            onMouseLeave={() => setHoveredType(null)}
+                            onDoubleClick={() => {
+                              setHiddenTypes((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(type)) {
+                                  next.delete(type)
+                                } else {
+                                  next.add(type)
+                                }
+                                return next
+                              })
+                            }}
+                            title="Double-click to toggle visibility"
+                          >
+                            <span
+                              className="inline-block h-3 w-3 rounded-full shrink-0 shadow-sm"
+                              style={{
+                                backgroundColor: isHidden ? "#94a3b8" : NODE_TYPE_COLORS[type],
+                                boxShadow: `0 0 4px ${hexToRgba(isHidden ? "#94a3b8" : NODE_TYPE_COLORS[type] ?? "#94a3b8", 0.4)}`,
+                              }}
+                            />
+                            <span className={hoveredType === type ? "text-foreground font-medium" : "text-muted-foreground"}>
+                              {label}
+                            </span>
+                            <span className="text-muted-foreground/60 ml-auto">{typeCounts[type]}</span>
+                            {isHidden && <span className="text-muted-foreground/60 text-[10px]">hidden</span>}
+                          </div>
+                        )
+                      })}
+                  </div>
                 </div>
-              </>
-            ) : (
-              <>
-                <div className="mb-1.5 font-semibold text-foreground">Communities</div>
-                <div className="flex flex-col gap-0.5">
-                  {communities.map((c) => (
+              ) : (
+                <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto legend-scroll" style={{ direction: "rtl" }}>
+                  <div className="flex flex-col gap-0.5" style={{ direction: "ltr" }}>
+                    {communities.map((c) => (
                     <div
                       key={c.id}
                       className="flex items-center gap-2 rounded px-1 py-0.5 transition-colors hover:bg-accent/50"
@@ -674,8 +760,9 @@ export function GraphView() {
                       )}
                     </div>
                   ))}
+                  </div>
                 </div>
-              </>
+              )
             )}
           </div>
         </div>

@@ -128,3 +128,26 @@
     @apply font-sans;
     }
 }
+
+/* Legend scrollbar - left side */
+.legend-scroll {
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.legend-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.legend-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.legend-scroll::-webkit-scrollbar-thumb {
+  background: oklch(0.55 0 0);
+  border-radius: 2px;
+}
+
+.legend-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
