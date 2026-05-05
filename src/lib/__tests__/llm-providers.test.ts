@@ -195,15 +195,19 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
 })
 
 describe("Claude Code CLI provider — not reachable via getProviderConfig", () => {
-  it("throws, because the subprocess transport dispatches one layer up in streamChat", () => {
+  it.each([
+    ["claude-code", "claude-sonnet-4-6"],
+    ["codex-cli", "gpt-5.1-codex-mini"],
+    ["gemini-cli", "gemini-2.5-flash"],
+  ] as const)("throws for %s, because the subprocess transport dispatches one layer up in streamChat", (provider, model) => {
     // If this ever stops throwing, someone wired claude-code into the
     // HTTP path by mistake — it has no URL/headers and would crash
     // silently inside fetch() otherwise.
     expect(() =>
       getProviderConfig({
-        provider: "claude-code",
+        provider,
         apiKey: "",
-        model: "claude-sonnet-4-6",
+        model,
         ollamaUrl: "",
         customEndpoint: "",
         maxContextSize: 200000,

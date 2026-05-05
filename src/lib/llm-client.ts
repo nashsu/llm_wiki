@@ -25,6 +25,17 @@ async function streamViaClaudeCodeCli(
   return mod.streamClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
 }
 
+async function streamViaLocalCli(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+) {
+  const mod = await import("./local-cli-transport")
+  return mod.streamLocalCli(config, messages, callbacks, signal, requestOverrides)
+}
+
 const DECODER = new TextDecoder()
 
 function parseLines(chunk: Uint8Array, buffer: string): [string[], string] {
@@ -56,6 +67,9 @@ export async function streamChat(
   // this provider because it has no URL/headers.
   if (config.provider === "claude-code") {
     return streamViaClaudeCodeCli(config, messages, callbacks, signal, requestOverrides)
+  }
+  if (config.provider === "codex-cli" || config.provider === "gemini-cli") {
+    return streamViaLocalCli(config, messages, callbacks, signal, requestOverrides)
   }
 
   const providerConfig = getProviderConfig(config)

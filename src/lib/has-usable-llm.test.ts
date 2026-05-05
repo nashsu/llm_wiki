@@ -37,6 +37,18 @@ describe("hasUsableLlm", () => {
     ).toBe(true)
   })
 
+  it("returns true for codex-cli with no API key", () => {
+    expect(
+      hasUsableLlm({ provider: "codex-cli", apiKey: "" }),
+    ).toBe(true)
+  })
+
+  it("returns true for gemini-cli with no API key", () => {
+    expect(
+      hasUsableLlm({ provider: "gemini-cli", apiKey: "" }),
+    ).toBe(true)
+  })
+
   it("returns false for openai with no API key", () => {
     expect(
       hasUsableLlm({ provider: "openai", apiKey: "" }),
@@ -74,6 +86,8 @@ describe("hasUsableLlm", () => {
     expect(PROVIDERS_WITHOUT_KEY.has("ollama")).toBe(true)
     expect(PROVIDERS_WITHOUT_KEY.has("custom")).toBe(true)
     expect(PROVIDERS_WITHOUT_KEY.has("claude-code")).toBe(true)
+    expect(PROVIDERS_WITHOUT_KEY.has("codex-cli")).toBe(true)
+    expect(PROVIDERS_WITHOUT_KEY.has("gemini-cli")).toBe(true)
   })
 
   it("PROVIDERS_WITHOUT_KEY does not include hosted-API providers", () => {
@@ -96,6 +110,8 @@ describe("hasUsableLlm", () => {
       "custom",
       "minimax",
       "claude-code",
+      "codex-cli",
+      "gemini-cli",
     ]
     for (const p of allProviders) {
       const inNoKey = PROVIDERS_WITHOUT_KEY.has(p)

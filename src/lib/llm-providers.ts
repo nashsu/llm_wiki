@@ -528,12 +528,15 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
     }
 
     case "claude-code":
+    case "codex-cli":
+    case "gemini-cli":
       // Claude Code CLI uses a subprocess transport (stdin/stdout JSON
-      // stream), not HTTP. Dispatch happens one layer up in
-      // streamChat() before getProviderConfig is called. Reaching this
-      // branch means wiring is broken somewhere upstream.
+      // stream); Codex/Gemini CLI use a local non-streaming subprocess
+      // transport. Dispatch happens one layer up in streamChat() before
+      // getProviderConfig is called. Reaching this branch means wiring is
+      // broken somewhere upstream.
       throw new Error(
-        "claude-code provider uses subprocess transport; getProviderConfig should not be called for it",
+        `${provider} provider uses subprocess transport; getProviderConfig should not be called for it`,
       )
 
     case "custom": {
