@@ -19,9 +19,31 @@ interface LlmConfig {
   apiMode?: CustomApiMode
 }
 
+export type SearchProvider = "tavily" | "serpapi" | "none"
+export type SerpApiEngine =
+  | "google"
+  | "google_news"
+  | "google_scholar"
+  | "google_patents"
+  | "bing"
+  | "duckduckgo"
+  | "google_images"
+  | "google_videos"
+  | "youtube"
+  | string
+
+export interface SearchProviderOverride {
+  apiKey?: string
+  serpApiEngine?: SerpApiEngine
+}
+
+export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
+
 interface SearchApiConfig {
-  provider: "tavily" | "none"
+  provider: SearchProvider
   apiKey: string
+  serpApiEngine?: SerpApiEngine
+  providerConfigs?: SearchProviderConfigs
 }
 
 interface EmbeddingConfig {
@@ -228,6 +250,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   searchApiConfig: {
     provider: "none",
     apiKey: "",
+    serpApiEngine: "google",
+    providerConfigs: {},
   },
 
   embeddingConfig: {

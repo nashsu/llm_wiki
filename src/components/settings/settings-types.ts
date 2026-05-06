@@ -37,10 +37,6 @@ export interface SettingsDraft {
   multimodalApiMode: CustomApiMode | undefined
   multimodalConcurrency: number
 
-  // Web search
-  searchProvider: "tavily" | "none"
-  searchApiKey: string
-
   // Output preferences
   outputLanguage: string
   maxHistoryMessages: number

@@ -39,7 +39,7 @@ export function ReviewView() {
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (searchConfig.provider === "none" || !searchConfig.apiKey) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to add a Tavily API key first.")
+        window.alert("Web Search not configured. Go to Settings → Web Search to add a Tavily or SerpApi API key first.")
         return
       }
       const item = items.find((i) => i.id === id)
