@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, LogIn, XCircle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
 import { Input } from "@/components/ui/input"
@@ -122,7 +122,7 @@ function PresetRow({
   // Claude Code CLI authenticates via the user's existing ~/.claude OAuth
   // (inherited from the spawned subprocess), so no API key field is
   // shown. Ollama ditto for its local-only model.
-  const needsApiKey = preset.provider !== "ollama" && preset.provider !== "claude-code"
+  const needsApiKey = !["ollama", "claude-code", "codex-cli", "gemini-cli"].includes(preset.provider)
 
   return (
     <div
@@ -246,6 +246,9 @@ function PresetRow({
           )}
 
           {preset.provider === "claude-code" && <ClaudeCliStatusPill />}
+          {(preset.provider === "codex-cli" || preset.provider === "gemini-cli") && (
+            <LocalCliStatusPill provider={preset.provider} />
+          )}
 
           {needsApiKey && (
             <div className="space-y-2">
@@ -426,6 +429,136 @@ interface DetectResult {
   error: string | null
 }
 
+interface LocalCliDetectResult extends DetectResult {
+  auth_status: string | null
+}
+
+function LocalCliStatusPill({ provider }: { provider: "codex-cli" | "gemini-cli" }) {
+  const [state, setState] = useState<"loading" | "ok" | "err">("loading")
+  const [result, setResult] = useState<LocalCliDetectResult | null>(null)
+  const [loginState, setLoginState] = useState<"idle" | "opening" | "opened" | "err">("idle")
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const label = provider === "codex-cli" ? "Codex CLI" : "Gemini CLI"
+  const authText = provider === "codex-cli"
+    ? "Uses ChatGPT OAuth through `codex login`; LLM Wiki does not store OpenAI tokens."
+    : "Uses Google OAuth through the official Gemini CLI. Antigravity private tokens are not read or copied."
+
+  async function detect() {
+    setState("loading")
+    try {
+      const r = await invoke<LocalCliDetectResult>("local_cli_detect", { provider })
+      setResult(r)
+      setState(r.installed ? "ok" : "err")
+    } catch (e) {
+      setResult({
+        installed: false,
+        version: null,
+        path: null,
+        auth_status: null,
+        error: e instanceof Error ? e.message : String(e),
+      })
+      setState("err")
+    }
+  }
+
+  useEffect(() => {
+    void detect()
+  }, [provider])
+
+  async function openLogin() {
+    setLoginState("opening")
+    setLoginError(null)
+    try {
+      await invoke("local_cli_open_login", { provider })
+      setLoginState("opened")
+      setTimeout(() => setLoginState((cur) => (cur === "opened" ? "idle" : cur)), 3000)
+      setTimeout(() => void detect(), 1500)
+    } catch (e) {
+      setLoginError(e instanceof Error ? e.message : String(e))
+      setLoginState("err")
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <Label className="m-0">{label} status</Label>
+        <button
+          type="button"
+          onClick={() => void openLogin()}
+          className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          disabled={loginState === "opening"}
+          title={`Open ${label} OAuth login in a terminal`}
+        >
+          {loginState === "opening" ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <LogIn className="h-3 w-3" />
+          )}
+          {loginState === "opening" ? "Opening…" : "OAuth login"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void detect()}
+          className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          disabled={state === "loading"}
+        >
+          {state === "loading" ? "Checking…" : "Re-check"}
+        </button>
+      </div>
+      <div
+        className={`flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-xs ${
+          state === "ok"
+            ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
+            : state === "err"
+              ? "border-rose-500/40 bg-rose-500/5 text-rose-700 dark:text-rose-400"
+              : "border-border bg-background/50 text-muted-foreground"
+        }`}
+      >
+        {state === "loading" && <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />}
+        {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+        {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {state === "loading" && <div>Detecting local {label} binary…</div>}
+          {state === "ok" && (
+            <>
+              <div>
+                Detected{result?.version ? ` ${result.version}` : ""}. No API key needed.
+              </div>
+              {result?.path && (
+                <div className="truncate font-mono text-[10px] text-muted-foreground">
+                  {result.path}
+                </div>
+              )}
+              {result?.auth_status && <div>{result.auth_status}</div>}
+              <div className="text-muted-foreground">{authText}</div>
+              {loginState === "opened" && (
+                <div className="text-emerald-600 dark:text-emerald-400">
+                  Terminal opened. Complete OAuth there, then re-check.
+                </div>
+              )}
+              {loginState === "err" && loginError && (
+                <div className="text-rose-600 dark:text-rose-400">{loginError}</div>
+              )}
+            </>
+          )}
+          {state === "err" && (
+            <>
+              <div>{result?.error ?? `${label} not available.`}</div>
+              <div className="text-muted-foreground">
+                Install the official {label}, then re-check.
+              </div>
+              {loginState === "err" && loginError && (
+                <div className="text-rose-600 dark:text-rose-400">{loginError}</div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Health-check pill for the Claude Code CLI provider. Auto-runs
  * `claude --version` on mount, with a refresh button for when the user
@@ -436,6 +569,8 @@ interface DetectResult {
 function ClaudeCliStatusPill() {
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
+  const [loginState, setLoginState] = useState<"idle" | "opening" | "opened" | "err">("idle")
+  const [loginError, setLoginError] = useState<string | null>(null)
 
   async function detect() {
     setState("loading")
@@ -458,10 +593,38 @@ function ClaudeCliStatusPill() {
     void detect()
   }, [])
 
+  async function openLogin() {
+    setLoginState("opening")
+    setLoginError(null)
+    try {
+      await invoke("claude_cli_open_login")
+      setLoginState("opened")
+      setTimeout(() => setLoginState((cur) => (cur === "opened" ? "idle" : cur)), 3000)
+      setTimeout(() => void detect(), 1500)
+    } catch (e) {
+      setLoginError(e instanceof Error ? e.message : String(e))
+      setLoginState("err")
+    }
+  }
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         <Label className="m-0">CLI status</Label>
+        <button
+          type="button"
+          onClick={() => void openLogin()}
+          className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          disabled={loginState === "opening"}
+          title="Open Claude Code OAuth login in a terminal"
+        >
+          {loginState === "opening" ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <LogIn className="h-3 w-3" />
+          )}
+          {loginState === "opening" ? "Opening…" : "OAuth login"}
+        </button>
         <button
           type="button"
           onClick={() => void detect()}
@@ -502,12 +665,17 @@ function ClaudeCliStatusPill() {
                   the resulting "Unauthenticated" exit-1 as a LLM
                   Wiki bug. */}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
-                <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
-                  claude
-                </code>{" "}
-                in a terminal to refresh the OAuth login.
+                If chat fails with an authentication error, use OAuth login to refresh your
+                local Claude Code session.
               </div>
+              {loginState === "opened" && (
+                <div className="text-emerald-600 dark:text-emerald-400">
+                  Terminal opened. Complete the Claude OAuth flow there, then re-check.
+                </div>
+              )}
+              {loginState === "err" && loginError && (
+                <div className="text-rose-600 dark:text-rose-400">{loginError}</div>
+              )}
             </>
           )}
           {state === "err" && (
@@ -520,6 +688,9 @@ function ClaudeCliStatusPill() {
                 </code>{" "}
                 then re-check.
               </div>
+              {loginState === "err" && loginError && (
+                <div className="text-rose-600 dark:text-rose-400">{loginError}</div>
+              )}
             </>
           )}
         </div>

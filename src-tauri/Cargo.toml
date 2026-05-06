@@ -40,7 +40,7 @@ futures = "0.3"
 # Claude Code CLI subprocess transport: spawn `claude` as a child process,
 # stream stdout line-by-line back to the frontend. tokio::process gives us
 # async io and clean cancellation; `which` locates the binary on PATH.
-tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt", "fs"] }
 which = "7"
 uuid = { version = "1", features = ["v4"] }
 # Multimodal image extraction (Phase 1):

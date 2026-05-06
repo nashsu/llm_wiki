@@ -8,7 +8,7 @@ import type { CustomApiMode } from "./llm-presets"
  */
 export interface SettingsDraft {
   // LLM provider
-  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli" | "gemini-cli"
   apiKey: string
   model: string
   ollamaUrl: string
@@ -29,7 +29,7 @@ export interface SettingsDraft {
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
   multimodalUseMainLlm: boolean
-  multimodalProvider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  multimodalProvider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli" | "gemini-cli"
   multimodalApiKey: string
   multimodalModel: string
   multimodalOllamaUrl: string

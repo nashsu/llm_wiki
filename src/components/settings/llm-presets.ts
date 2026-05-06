@@ -16,6 +16,8 @@ export type Provider =
   | "custom"
   | "minimax"
   | "claude-code"
+  | "codex-cli"
+  | "gemini-cli"
 
 export interface LlmPreset {
   /** Stable id used as the dropdown value. */
@@ -52,6 +54,35 @@ export interface LlmPreset {
 }
 
 export const LLM_PRESETS: LlmPreset[] = [
+  {
+    id: "codex-cli",
+    label: "Codex CLI (GPT OAuth)",
+    hint: "Uses local `codex login` / ChatGPT OAuth — no API key needed",
+    provider: "codex-cli",
+    defaultModel: "gpt-5.1-codex-mini",
+    suggestedModels: [
+      "gpt-5.1-codex-mini",
+      "gpt-5.1-codex",
+      "gpt-5.1",
+      "gpt-5-mini",
+      "o3",
+    ],
+    suggestedContextSize: 128000,
+  },
+  {
+    id: "gemini-cli-oauth",
+    label: "Gemini CLI (Antigravity OAuth)",
+    hint: "Uses local `gemini` Google OAuth — no API key needed",
+    provider: "gemini-cli",
+    defaultModel: "gemini-2.5-flash",
+    suggestedModels: [
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+      "gemini-2.0-flash",
+    ],
+    suggestedContextSize: 1000000,
+  },
   {
     id: "anthropic",
     label: "Anthropic (Claude)",

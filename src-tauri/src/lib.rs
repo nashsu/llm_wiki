@@ -73,6 +73,7 @@ pub fn run() {
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.
             app.manage(commands::claude_cli::ClaudeCliState::default());
+            app.manage(commands::local_cli::LocalCliState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -101,8 +102,13 @@ pub fn run() {
             commands::vectorstore::vector_legacy_row_count,
             commands::vectorstore::vector_drop_legacy,
             commands::claude_cli::claude_cli_detect,
+            commands::claude_cli::claude_cli_open_login,
             commands::claude_cli::claude_cli_spawn,
             commands::claude_cli::claude_cli_kill,
+            commands::local_cli::local_cli_detect,
+            commands::local_cli::local_cli_open_login,
+            commands::local_cli::local_cli_spawn,
+            commands::local_cli::local_cli_kill,
             commands::extract_images::extract_pdf_images_cmd,
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,

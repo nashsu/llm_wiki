@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -136,6 +136,71 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
             error: Some("`claude --version` timed out after 3s".to_string()),
         }),
     }
+}
+
+/// Open an interactive terminal running `claude` so the Claude Code CLI
+/// can complete or refresh its browser OAuth flow. We intentionally do
+/// not handle tokens in LLM Wiki; the official CLI owns credential
+/// storage under ~/.claude and this app only reuses the authenticated
+/// subprocess transport after login succeeds.
+#[tauri::command]
+pub async fn claude_cli_open_login() -> Result<(), String> {
+    let claude = find_claude_command()?;
+    let claude_display = claude.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            r#"tell application "Terminal"
+    activate
+    do script "{}"
+end tell"#,
+            shell_quote(&claude_display)
+        );
+        StdCommand::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+            .map_err(|e| format!("Failed to open Terminal for Claude OAuth login: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        StdCommand::new("cmd")
+            .args(["/C", "start", "", "cmd", "/K", &claude_display])
+            .spawn()
+            .map_err(|e| format!("Failed to open Command Prompt for Claude OAuth login: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let command = format!("{}; exec $SHELL", shell_quote(&claude_display));
+        let terminals: [(&str, &[&str]); 4] = [
+            ("x-terminal-emulator", &["-e", "sh", "-lc"]),
+            ("gnome-terminal", &["--", "sh", "-lc"]),
+            ("konsole", &["-e", "sh", "-lc"]),
+            ("xterm", &["-e", "sh", "-lc"]),
+        ];
+
+        for (terminal, args) in terminals {
+            let Ok(path) = which::which(terminal) else {
+                continue;
+            };
+            let mut cmd = StdCommand::new(path);
+            cmd.args(args).arg(&command);
+            if cmd.spawn().is_ok() {
+                return Ok(());
+            }
+        }
+
+        Err("No supported terminal emulator found. Run `claude` in a terminal to complete OAuth login.".to_string())
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 /// Spawn `claude -p --output-format stream-json --input-format stream-json
