@@ -36,4 +36,5 @@ export const OUTPUT_LANGUAGE_OPTIONS = [
   { value: "Swedish", label: "Svenska (Swedish)" },
   { value: "Indonesian", label: "Bahasa Indonesia (Indonesian)" },
   { value: "Thai", label: "ไทย (Thai)" },
+  { value: "Ukrainian", label: "Українська (Ukrainian)" },
 ] as const
