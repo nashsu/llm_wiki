@@ -202,7 +202,7 @@
         "description": "自动监控指定目录，按固定间隔导入新增或修改的文件。",
         "enable": "启用定时导入",
         "directory": "监控目录",
-        "directoryHelp": "该目录（含子目录）中的文件将被自动导入。新文件会复制到 sources；修改过的文件会重新摄入。",
+        "directoryHelp": "该目录（含子目录）中的文件将被自动导入。新文件会复制到 sources；修改过的文件会重新摄入。默认为项目下的 raw/ 目录。",
         "browse": "浏览",
         "selectDirectory": "选择监控目录",
         "interval": "扫描间隔（分钟）",

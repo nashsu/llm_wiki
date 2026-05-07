@@ -202,7 +202,7 @@
         "description": "Automatically monitor a directory and import new or modified files at regular intervals.",
         "enable": "Enable scheduled import",
         "directory": "Monitor Directory",
-        "directoryHelp": "Files in this directory (and subdirectories) will be automatically imported. New files are copied to sources; modified files are re-ingested.",
+        "directoryHelp": "Files in this directory (and subdirectories) will be automatically imported. New files are copied to sources; modified files are re-ingested. Defaults to the project's raw/ directory.",
         "browse": "Browse",
         "selectDirectory": "Select Directory to Monitor",
         "interval": "Scan Interval (minutes)",
