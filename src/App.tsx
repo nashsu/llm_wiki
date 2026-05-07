@@ -369,6 +369,13 @@ function App() {
       stopScheduledImport()
     }).catch(() => {})
 
+    // Reset scheduled import path to default when switching projects
+    const currentConfig = useWikiStore.getState().scheduledImportConfig
+    useWikiStore.getState().setScheduledImportConfig({
+      ...currentConfig,
+      path: "raw",
+    })
+
     // Clear all per-project state BEFORE flipping back to the welcome screen
     // so old data cannot leak in via any async render pass.
     const { resetProjectState } = await import("@/lib/reset-project-state")
