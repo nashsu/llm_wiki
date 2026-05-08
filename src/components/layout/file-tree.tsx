@@ -67,8 +67,8 @@ export function FileTree() {
 
   return (
     <ScrollArea className="h-full min-w-0 overflow-hidden">
-      <div className="p-2">
-        <div className="mb-2 px-2 text-xs font-semibold uppercase text-muted-foreground">
+      <div className="min-w-0 p-2">
+        <div className="mb-2 max-w-full whitespace-normal break-words px-2 text-xs font-semibold uppercase leading-snug text-muted-foreground">
           {project.name}
         </div>
         {fileTree.map((node) => (

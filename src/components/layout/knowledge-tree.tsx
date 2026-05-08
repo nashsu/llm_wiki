@@ -152,8 +152,8 @@ export function KnowledgeTree() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-2">
-        <div className="mb-2 px-2 text-xs font-semibold uppercase text-muted-foreground">
+      <div className="min-w-0 p-2">
+        <div className="mb-2 max-w-full whitespace-normal break-words px-2 text-xs font-semibold uppercase leading-snug text-muted-foreground">
           {project.name}
         </div>
 
