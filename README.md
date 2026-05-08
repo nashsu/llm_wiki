@@ -404,6 +404,16 @@ npm run tauri dev      # Development
 npm run tauri build    # Production build
 ```
 
+### Branding Assets
+
+The app icon is intentionally stored in every place the app renders it, so production builds do not fall back to an older logo:
+
+- `logo.jpg` — README and repository preview logo
+- `src/assets/logo.jpg` — in-app sidebar logo bundled by Vite
+- `src-tauri/icons/icon.icns` and `src-tauri/icons/*.png` — macOS/Tauri bundle icons
+
+When changing the icon, update these files together and rebuild the Tauri app. Updating only `icon.icns` is not enough because the sidebar logo is a separate frontend asset.
+
 ### Chrome Extension
 
 1. Open `chrome://extensions`
