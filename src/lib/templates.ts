@@ -44,6 +44,7 @@ const BASE_NAMING = `- 파일명: \`kebab-case.md\`
 const BASE_FRONTMATTER = `모든 페이지는 YAML frontmatter를 포함한다:
 
 \`\`\`yaml
+---
 type: entity | concept | source | query | comparison | synthesis | overview | profile | decision | workflow | session
 title: 사람이 읽기 쉬운 제목
 tags: []
