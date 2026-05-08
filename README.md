@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#what-is-this">What is this?</a> •
   <a href="#what-we-changed--added">Features</a> •
+  <a href="#한국어-개선-요약-obsidian-스타일-다크-모드">한국어 개선 요약</a> •
   <a href="#tech-stack">Tech Stack</a> •
   <a href="#installation">Installation</a> •
   <a href="#credits">Credits</a> •
@@ -41,6 +42,14 @@
 - **Deep Research** — LLM-optimized search topics, multi-query web search, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
+- **Obsidian-style Dark Mode** — switch between System, Light, and Dark themes, with graph colors tuned for dark backgrounds
+
+## 한국어 개선 요약: Obsidian 스타일 다크 모드
+
+- 좌측 사이드바에서 라이트/다크 모드를 즉시 전환할 수 있습니다.
+- Settings → Interface에서 System, Light, Dark 테마를 선택할 수 있습니다.
+- 선택한 테마는 앱 상태 저장소에 보존되어 재시작 후에도 유지됩니다.
+- Knowledge Graph의 노드 라벨, 엣지 라벨, 강조/흐림 색상이 다크 배경에서도 읽기 쉽게 조정되었습니다.
 
 ## What is this?
 
