@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | 中文
+  <a href="README.md">English</a> | 中文 | <a href="README_KO.md">한국어</a>
 </p>
 
 ---
@@ -41,6 +41,7 @@
 - **深度研究** — LLM 智能生成搜索主题，多查询网络搜索，研究结果自动摄入 Wiki
 - **异步审核系统** — LLM 在摄入时标记需人工判断的项，预定义操作，预生成搜索查询
 - **Chrome 网页剪藏** — 一键捕获网页内容，自动摄入知识库
+- **Obsidian 风格深色模式** — 支持 System、Light、Dark 主题切换，并优化知识图谱在深色背景下的可读性
 
 ## 这是什么？
 
