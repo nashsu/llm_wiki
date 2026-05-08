@@ -281,12 +281,20 @@ function App() {
     try {
       const savedScheduledImport = await loadScheduledImportConfig(proj.path)
       if (savedScheduledImport) {
-        useWikiStore.getState().setScheduledImportConfig(savedScheduledImport)
+        // Migrate relative path to absolute (backward compatibility)
+        let path = savedScheduledImport.path
+        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:\\/)) {
+          path = `${proj.path}/${path}`
+        }
+        useWikiStore.getState().setScheduledImportConfig({
+          ...savedScheduledImport,
+          path,
+        })
       } else {
         // Reset to default for new projects
         useWikiStore.getState().setScheduledImportConfig({
           enabled: false,
-          path: "raw/sources",
+          path: `${proj.path}/raw/sources`,
           interval: 60,
           lastScan: null,
         })

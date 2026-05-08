@@ -81,14 +81,15 @@ function initialDraft(
   uiLanguage: string,
   projectPath?: string,
 ): SettingsDraft {
-  // Resolve the display path: if path is empty, show default "raw/sources"
-  // If path is relative and we have a project path, show absolute path
-  // If path is absolute, show as-is
-  const rawPath = scheduledImport.path || "raw/sources"
-  let displayPath = rawPath
-  if (projectPath && !rawPath.startsWith("/") && !rawPath.match(/^[a-zA-Z]:\\/)) {
-    // Relative path - prepend project path for display
-    displayPath = `${projectPath}/${rawPath}`
+  // Show absolute path: if stored path is empty, show default using project path
+  // If stored path is relative (legacy), prepend project path
+  // If stored path is absolute, show as-is
+  let displayPath = scheduledImport.path || ""
+  if (!displayPath && projectPath) {
+    displayPath = `${projectPath}/raw/sources`
+  } else if (displayPath && projectPath && !displayPath.startsWith("/") && !displayPath.match(/^[a-zA-Z]:\\/)) {
+    // Legacy relative path - prepend project path for display
+    displayPath = `${projectPath}/${displayPath}`
   }
 
   return {
@@ -288,14 +289,9 @@ export function SettingsView() {
       console.warn("[proxy] live update failed; restart will still apply:", err)
     }
 
-    // Strip project path prefix to store relative path
-    let savePath = draft.scheduledImportPath
-    if (project && savePath.startsWith(project.path + "/")) {
-      savePath = savePath.slice(project.path.length + 1)
-    }
     const newScheduledImport = {
       enabled: draft.scheduledImportEnabled,
-      path: savePath,
+      path: draft.scheduledImportPath,
       interval: draft.scheduledImportInterval,
       lastScan: scheduledImportConfig.lastScan,
     }
