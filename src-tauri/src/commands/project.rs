@@ -38,35 +38,42 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
 
     // schema.md
     let schema_content = format!(
-        r#"# Wiki Schema
+        r#"# 위키 스키마
 
-## Page Types
+## 작성 언어 원칙
 
-| Type | Directory | Purpose |
+- `schema.md`와 `purpose.md`는 기본적으로 한국어로 작성하고 유지한다.
+- `wiki/index.md`, `wiki/log.md`, `wiki/overview.md` 등 주요 구조 문서도 한국어 작성을 기본 원칙으로 한다.
+- 파일명, page type, YAML key, 고유명사, 원문 제목은 필요하면 영어를 유지한다.
+- 설명, 판단, 요약, 운영 규칙은 한국어로 쓴다.
+
+## 페이지 유형
+
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
-| entity | wiki/entities/ | Named things (models, companies, people, datasets) |
-| concept | wiki/concepts/ | Ideas, techniques, phenomena |
-| source | wiki/sources/ | Papers, articles, talks, blog posts |
-| query | wiki/queries/ | Open questions under investigation |
-| comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
-| synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
+| entity | wiki/entities/ | 모델, 회사, 사람, 데이터셋처럼 이름이 있는 대상 |
+| concept | wiki/concepts/ | 아이디어, 기법, 현상, 반복 패턴 |
+| source | wiki/sources/ | 논문, 글, 발표, 블로그 글 같은 원본 자료 |
+| query | wiki/queries/ | 계속 조사 중인 열린 질문 |
+| comparison | wiki/comparisons/ | 관련 대상의 나란한 비교 분석 |
+| synthesis | wiki/synthesis/ | 여러 자료를 가로지르는 종합과 결론 |
 
-## Naming Conventions
+## 파일명 규칙
 
-- Files: `kebab-case.md`
-- Entities: match official name where possible (e.g., `gpt-4.md`, `openai.md`)
-- Concepts: descriptive noun phrases (e.g., `chain-of-thought.md`)
-- Sources: `author-year-slug.md` (e.g., `wei-2022-chain-of-thought.md`)
-- Queries: question as slug (e.g., `does-scale-improve-reasoning.md`)
+- 파일명은 `kebab-case.md`를 사용한다.
+- entity는 가능하면 공식 명칭에 맞춘다(예: `gpt-4.md`, `openai.md`).
+- concept은 설명적인 명사구를 사용한다(예: `chain-of-thought.md`).
+- source는 `author-year-slug.md` 형식을 권장한다(예: `wei-2022-chain-of-thought.md`).
+- query는 질문을 slug로 바꾼다(예: `does-scale-improve-reasoning.md`).
 
 ## Frontmatter
 
-All pages must include YAML frontmatter:
+모든 페이지는 YAML frontmatter를 포함한다:
 
 ```yaml
 ---
 type: entity | concept | source | query | comparison | synthesis | overview
-title: Human-readable title
+title: 사람이 읽기 쉬운 제목
 tags: []
 related: []
 created: YYYY-MM-DD
@@ -74,7 +81,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-Source pages also include:
+source 페이지는 추가로 다음 필드를 포함한다:
 ```yaml
 authors: []
 year: YYYY
@@ -82,97 +89,103 @@ url: ""
 venue: ""
 ```
 
-## Index Format
+## Index 형식
 
-`wiki/index.md` lists all pages grouped by type. Each entry:
+`wiki/index.md`는 모든 페이지를 유형별로 묶어 나열한다. 각 항목은 다음 형식을 따른다:
 ```
-- [[page-slug]] — one-line description
+- [[page-slug]] — 한 줄 설명
 ```
 
-## Log Format
+## Log 형식
 
-`wiki/log.md` records research activity in reverse chronological order:
+`wiki/log.md`는 작업 이력을 최신순으로 기록한다:
 ```
 ## YYYY-MM-DD
 
-- Action taken / finding noted
+- 수행한 작업 / 확인한 발견
 ```
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
-- Use `[[page-slug]]` syntax to link between wiki pages
-- Every entity and concept should appear in `wiki/index.md`
-- Queries link to the sources and concepts they draw on
-- Synthesis pages cite all contributing sources via `related:`
+- Wiki 페이지끼리는 `[[page-slug]]` 문법으로 연결한다.
+- 모든 entity와 concept은 `wiki/index.md`에 나타나야 한다.
+- query 페이지는 근거로 삼은 source와 concept을 연결한다.
+- synthesis 페이지는 기여한 모든 source를 `related:`로 인용한다.
 
-## Contradiction Handling
+## 모순 처리
 
-When sources contradict each other:
-1. Note the contradiction in the relevant concept or entity page
-2. Create or update a query page to track the open question
-3. Link both sources from the query page
-4. Resolve in a synthesis page once sufficient evidence exists
+원본 자료끼리 충돌할 때:
+1. 관련 concept 또는 entity 페이지에 모순을 명시한다.
+2. 열린 질문을 추적하기 위해 query 페이지를 만들거나 갱신한다.
+3. query 페이지에서 충돌하는 두 source를 모두 연결한다.
+4. 충분한 근거가 쌓이면 synthesis 페이지에서 정리한다.
 "#
     );
     write_file_inner(root.join("schema.md"), &schema_content)?;
 
     // purpose.md
-    let purpose_content = r#"# Project Purpose
+    let purpose_content = r#"# 프로젝트 목적
 
-## Goal
+## 작성 언어 원칙
 
-<!-- What are you trying to understand or build? -->
+- 이 프로젝트의 `schema.md`와 `purpose.md`는 한국어로 관리한다.
+- `wiki/index.md`, `wiki/log.md`, `wiki/overview.md` 등 주요 문서는 한국어 작성을 기본 원칙으로 한다.
+- 고유명사, 파일명, page type, YAML key는 필요하면 원어를 유지하되 설명과 판단은 한국어로 정리한다.
 
-## Key Questions
+## 목표
 
-<!-- List the primary questions driving this research -->
+<!-- 무엇을 이해하거나 만들려는지 적는다. -->
+
+## 핵심 질문
+
+<!-- 이 프로젝트를 움직이는 주요 질문을 적는다. -->
 
 1.
 2.
 3.
 
-## Scope
+## 범위
 
-<!-- What is in scope? What is explicitly out of scope? -->
+<!-- 포함할 것과 명시적으로 제외할 것을 적는다. -->
 
-**In scope:**
+**포함:**
 -
 
-**Out of scope:**
+**제외:**
 -
 
-## Thesis
+## 작업 논지
 
-<!-- Your current working hypothesis or conclusion (update as research progresses) -->
+<!-- 현재 작업 가설이나 결론을 적고, 프로젝트가 진행되면 갱신한다. -->
 
-> TBD
+> 미정
 "#;
     write_file_inner(root.join("purpose.md"), purpose_content)?;
 
     // wiki/index.md
-    let index_content = r#"# Wiki Index
+    let index_content = r#"# 위키 색인
 
-## Entities
+## 엔티티
 
-## Concepts
+## 개념
 
-## Sources
+## 소스
 
-## Queries
+## 쿼리
 
-## Comparisons
+## 비교
 
-## Synthesis
+## 종합
 "#;
     write_file_inner(root.join("wiki/index.md"), index_content)?;
 
     // wiki/log.md
     let log_content = format!(
-        r#"# Research Log
+        r#"# 작업 로그
 
 ## {today}
 
-- Project created
+- 프로젝트 생성
 "#
     );
     write_file_inner(root.join("wiki/log.md"), &log_content)?;
@@ -180,14 +193,14 @@ When sources contradict each other:
     // wiki/overview.md
     let overview_content = r#"---
 type: overview
-title: Project Overview
+title: 프로젝트 개요
 tags: []
 related: []
 ---
 
-# Overview
+# 프로젝트 개요
 
-<!-- Provide a high-level summary of what this wiki covers and its current state. Update regularly as understanding deepens. -->
+<!-- 이 위키가 다루는 범위와 현재 상태를 고수준으로 요약한다. 이해가 깊어질수록 정기적으로 갱신한다. -->
 "#;
     write_file_inner(root.join("wiki/overview.md"), overview_content)?;
 
@@ -227,7 +240,10 @@ related: []
   "outgoing-link": true,
   "starred": true
 }"#;
-    write_file_inner(root.join(".obsidian/core-plugins.json"), obsidian_core_plugins)?;
+    write_file_inner(
+        root.join(".obsidian/core-plugins.json"),
+        obsidian_core_plugins,
+    )?;
 
     Ok(WikiProject {
         name,
@@ -279,8 +295,13 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
 
 fn write_file_inner(path: std::path::PathBuf, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create parent dirs for '{}': {}",
+                path.display(),
+                e
+            )
+        })?;
     }
     fs::write(&path, contents)
         .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))
