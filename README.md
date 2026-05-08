@@ -412,7 +412,7 @@ The app icon is intentionally stored in every place the app renders it, so produ
 - `src/assets/logo.jpg` — in-app sidebar logo bundled by Vite
 - `src-tauri/icons/icon.icns` and `src-tauri/icons/*.png` — macOS/Tauri bundle icons
 
-When changing the icon, update these files together and rebuild the Tauri app. Updating only `icon.icns` is not enough because the sidebar logo is a separate frontend asset. On macOS, install the rebuilt app with `npm run install:macos`; this fully replaces the old bundle, clears the app WebView cache, and verifies that the installed executable references the same bundled sidebar logo as the newly built app.
+When changing the icon, update these files together and rebuild the Tauri app. Updating only `icon.icns` is not enough because the sidebar logo is a separate frontend asset. On macOS, install the rebuilt app with `npm run install:macos`; this fully replaces the old bundle, clears the app WebView cache, verifies that the installed executable references the same bundled sidebar logo as the newly built app, and locks the installed app bundle so stale local copies cannot overwrite it on restart. The same script unlocks the existing bundle before replacing it during the next intentional install.
 
 ### Chrome Extension
 

@@ -25,6 +25,7 @@ fi
 mkdir -p "${BACKUP_DIR}"
 
 if [[ -d "${DEST_APP}" ]]; then
+  chflags -R nouchg "${DEST_APP}" 2>/dev/null || true
   mv "${DEST_APP}" "${BACKUP_DIR}/${APP_NAME}"
 fi
 
@@ -46,7 +47,9 @@ if [[ "${installed_logo_ref}" != "${source_logo_ref}" ]]; then
 fi
 
 codesign -vvv --deep --strict "${DEST_APP}" >/dev/null
+chflags -R uchg "${DEST_APP}"
 
 echo "Installed ${DEST_APP}"
 echo "Verified sidebar logo reference: ${installed_logo_ref}"
+echo "Locked installed app bundle with uchg."
 echo "Backup: ${BACKUP_DIR}"
