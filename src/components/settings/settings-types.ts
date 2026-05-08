@@ -1,5 +1,6 @@
 import type { CustomApiMode } from "./llm-presets"
 import type { ReasoningConfig } from "@/stores/wiki-store"
+import type { UiTheme } from "@/lib/theme"
 
 /**
  * Shape of the draft state each section reads from and writes into.
@@ -52,6 +53,7 @@ export interface SettingsDraft {
 
   // UI
   uiLanguage: string
+  uiTheme: UiTheme
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

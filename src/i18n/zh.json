@@ -12,6 +12,8 @@
     "review": "待审阅",
     "settings": "设置",
     "switchProject": "切换项目",
+    "switchToLight": "切换到浅色模式",
+    "switchToDark": "切换到深色模式",
     "updateAvailable": "有可用更新",
     "updateAvailableSuffix": " · 有更新"
   },
@@ -209,7 +211,12 @@
         "title": "界面",
         "description": "界面语言和外观样式。切换后立即生效并持久化。",
         "uiLanguage": "UI 语言",
-        "uiLanguageHint": "只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在\"输出偏好\"里单独设置)。"
+        "uiLanguageHint": "只影响按钮、标签这些 UI 文案,不影响 AI 输出语言(那个在\"输出偏好\"里单独设置)。",
+        "theme": "主题",
+        "themeSystem": "跟随系统",
+        "themeLight": "浅色",
+        "themeDark": "深色",
+        "themeHint": "深色模式可降低界面眩光；跟随系统会使用 macOS 外观设置。"
       },
       "maintenance": {
         "title": "维护",

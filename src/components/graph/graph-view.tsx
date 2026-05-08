@@ -3,6 +3,8 @@ import Graph from "graphology"
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core"
 import "@react-sigma/core/lib/style.css"
 import type { SigmaNodeEventPayload } from "sigma/types"
+import type { EdgeLabelDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering"
+import type { Settings } from "sigma/settings"
 import forceAtlas2 from "graphology-layout-forceatlas2"
 import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
@@ -58,6 +60,24 @@ type ColorMode = "type" | "community"
 
 const BASE_NODE_SIZE = 8
 const MAX_NODE_SIZE = 28
+const LIGHT_GRAPH_THEME = {
+  label: "#1e293b",
+  labelHalo: "rgba(248,250,252,0.92)",
+  edgeLabel: "#334155",
+  defaultEdge: "#cbd5e1",
+  dimmedNodeMix: "#e2e8f0",
+  dimmedEdge: "#f1f5f9",
+  highlightedEdge: "#1e293b",
+}
+const DARK_GRAPH_THEME = {
+  label: "#dcddde",
+  labelHalo: "rgba(30,30,30,0.92)",
+  edgeLabel: "#c7c7c7",
+  defaultEdge: "#4a4a4a",
+  dimmedNodeMix: "#2b2b2b",
+  dimmedEdge: "#3a3a3a",
+  highlightedEdge: "#b3b3b3",
+}
 
 function nodeColor(type: string): string {
   return NODE_TYPE_COLORS[type] ?? NODE_TYPE_COLORS.other
@@ -84,6 +104,81 @@ function nodeSize(linkCount: number, maxLinks: number): number {
   if (maxLinks === 0) return BASE_NODE_SIZE
   const ratio = linkCount / maxLinks
   return BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
+}
+
+function getDocumentDarkMode(): boolean {
+  return typeof document !== "undefined" && document.documentElement.classList.contains("dark")
+}
+
+function useDocumentDarkMode(): boolean {
+  const [isDark, setIsDark] = useState(getDocumentDarkMode)
+
+  useEffect(() => {
+    const root = document.documentElement
+    const update = () => setIsDark(root.classList.contains("dark"))
+    update()
+    const observer = new MutationObserver(update)
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] })
+    return () => observer.disconnect()
+  }, [])
+
+  return isDark
+}
+
+const drawReadableNodeLabel: NodeLabelDrawingFunction = (context, data, settings) => {
+  if (!data.label) return
+  const color = settings.labelColor.attribute
+    ? data[settings.labelColor.attribute] ?? settings.labelColor.color ?? "#000"
+    : settings.labelColor.color
+  const x = data.x + data.size + 3
+  const y = data.y + settings.labelSize / 3
+
+  context.save()
+  context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`
+  context.lineJoin = "round"
+  context.miterLimit = 2
+  context.lineWidth = Math.max(3, settings.labelSize * 0.32)
+  context.strokeStyle = String((settings as typeof settings & { labelHaloColor?: string }).labelHaloColor ?? "rgba(255,255,255,0.9)")
+  context.strokeText(data.label, x, y)
+  context.fillStyle = String(color)
+  context.fillText(data.label, x, y)
+  context.restore()
+}
+
+const drawReadableEdgeLabel: EdgeLabelDrawingFunction = (context, edgeData, sourceData, targetData, settings) => {
+  if (!edgeData.label) return
+  const color = settings.edgeLabelColor.attribute
+    ? edgeData[settings.edgeLabelColor.attribute] ?? settings.edgeLabelColor.color ?? "#000"
+    : settings.edgeLabelColor.color
+
+  const sx = sourceData.x
+  const sy = sourceData.y
+  const tx = targetData.x
+  const ty = targetData.y
+  const dx = tx - sx
+  const dy = ty - sy
+  const distance = Math.sqrt(dx * dx + dy * dy)
+  if (distance <= sourceData.size + targetData.size) return
+
+  const text = String(edgeData.label)
+  const angle = Math.atan2(dy, dx)
+  const midpointX = (sx + tx) / 2
+  const midpointY = (sy + ty) / 2
+
+  context.save()
+  context.translate(midpointX, midpointY)
+  context.rotate(angle)
+  context.font = `${settings.edgeLabelWeight} ${settings.edgeLabelSize}px ${settings.edgeLabelFont}`
+  const width = context.measureText(text).width
+  const y = edgeData.size / 2 + settings.edgeLabelSize
+  context.lineJoin = "round"
+  context.miterLimit = 2
+  context.lineWidth = Math.max(3, settings.edgeLabelSize * 0.32)
+  context.strokeStyle = String((settings as typeof settings & { labelHaloColor?: string }).labelHaloColor ?? "rgba(255,255,255,0.9)")
+  context.strokeText(text, -width / 2, y)
+  context.fillStyle = String(color)
+  context.fillText(text, -width / 2, y)
+  context.restore()
 }
 
 // --- Inner components ---
@@ -349,6 +444,8 @@ export function GraphView() {
   }))
   const [nodeMenu, setNodeMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement>(null)
+  const isDarkGraph = useDocumentDarkMode()
+  const graphTheme = isDarkGraph ? DARK_GRAPH_THEME : LIGHT_GRAPH_THEME
   // Research confirmation dialog
   const [researchDialog, setResearchDialog] = useState<{
     loading: boolean
@@ -518,6 +615,57 @@ export function GraphView() {
   const hiddenCount = nodes.length - filteredGraph.nodes.length
   const filtersActive = hasActiveGraphFilters(filters)
   const contextNode = nodeMenu ? nodes.find((node) => node.id === nodeMenu.nodeId) : null
+  const sigmaSettings = useMemo<Partial<Settings> & { labelHaloColor: string }>(() => ({
+    renderEdgeLabels: true,
+    defaultEdgeColor: graphTheme.defaultEdge,
+    defaultNodeColor: "#94a3b8",
+    labelSize: 13,
+    labelWeight: "bold",
+    labelColor: { color: graphTheme.label },
+    edgeLabelSize: 12,
+    edgeLabelWeight: "600",
+    edgeLabelColor: { color: graphTheme.edgeLabel },
+    labelDensity: 0.4,
+    labelRenderedSizeThreshold: 6,
+    stagePadding: 30,
+    defaultDrawNodeLabel: drawReadableNodeLabel,
+    defaultDrawEdgeLabel: drawReadableEdgeLabel,
+    labelHaloColor: graphTheme.labelHalo,
+    nodeReducer: (_node, attrs) => {
+      const result = { ...attrs }
+      if (attrs.insightHighlight) {
+        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
+        result.zIndex = 10
+        result.forceLabel = true
+      }
+      if (attrs.hovering) {
+        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
+        result.zIndex = 10
+        result.forceLabel = true
+      }
+      if (attrs.dimmed) {
+        result.color = mixColor(attrs.color ?? "#94a3b8", graphTheme.dimmedNodeMix, 0.75)
+        result.label = ""
+        result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
+      }
+      return result
+    },
+    edgeReducer: (_edge, attrs) => {
+      const result = { ...attrs }
+      if (attrs.dimmed) {
+        result.color = graphTheme.dimmedEdge
+        result.size = 0.3
+      }
+      if (attrs.highlighted) {
+        const w = attrs.weight ?? 1
+        result.color = graphTheme.highlightedEdge
+        result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
+        result.label = `relevance: ${w.toFixed(1)}`
+        result.forceLabel = true
+      }
+      return result
+    },
+  }), [graphTheme])
 
   if (!project) {
     return (
@@ -646,7 +794,7 @@ export function GraphView() {
         {/* Graph canvas */}
         <div
           ref={graphContainerRef}
-          className="relative flex-1 min-w-0 overflow-hidden bg-slate-50 dark:bg-slate-950"
+          className="relative flex-1 min-w-0 overflow-hidden bg-slate-50 dark:bg-background"
           onContextMenu={(e) => e.preventDefault()}
           onClick={() => setNodeMenu(null)}
         >
@@ -659,51 +807,7 @@ export function GraphView() {
           <SigmaContainer
             key={sigmaKey}
             style={{ width: "100%", height: "100%", background: "transparent" }}
-            settings={{
-              renderEdgeLabels: true,
-              defaultEdgeColor: "#cbd5e1",
-              defaultNodeColor: "#94a3b8",
-              labelSize: 13,
-              labelWeight: "bold",
-              labelColor: { color: "#1e293b" },
-              labelDensity: 0.4,
-              labelRenderedSizeThreshold: 6,
-              stagePadding: 30,
-              nodeReducer: (_node, attrs) => {
-                const result = { ...attrs }
-                if (attrs.insightHighlight) {
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
-                  result.zIndex = 10
-                  result.forceLabel = true
-                }
-                if (attrs.hovering) {
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
-                  result.zIndex = 10
-                  result.forceLabel = true
-                }
-                if (attrs.dimmed) {
-                  result.color = mixColor(attrs.color ?? "#94a3b8", "#e2e8f0", 0.75)
-                  result.label = ""
-                  result.size = (attrs.size ?? BASE_NODE_SIZE) * 0.6
-                }
-                return result
-              },
-              edgeReducer: (_edge, attrs) => {
-                const result = { ...attrs }
-                if (attrs.dimmed) {
-                  result.color = "#f1f5f9"
-                  result.size = 0.3
-                }
-                if (attrs.highlighted) {
-                  const w = attrs.weight ?? 1
-                  result.color = "#1e293b"
-                  result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
-                  result.label = `relevance: ${w.toFixed(1)}`
-                  result.forceLabel = true
-                }
-                return result
-              },
-            }}
+            settings={sigmaSettings}
           >
             <GraphLoader nodes={filteredGraph.nodes} edges={filteredGraph.edges} colorMode={colorMode} />
             <EventHandler onNodeClick={handleNodeClick} onNodeContextMenu={handleNodeContextMenu} />

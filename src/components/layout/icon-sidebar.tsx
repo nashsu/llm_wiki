@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, Moon, Sun,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -8,6 +8,8 @@ import { useReviewStore } from "@/stores/review-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
+import { loadUiTheme, saveUiTheme } from "@/lib/project-store"
+import { activateUiTheme, normalizeUiTheme, themeUsesDark, type UiTheme } from "@/lib/theme"
 import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
 
@@ -45,6 +47,27 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
 
   // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
+  const [uiTheme, setUiTheme] = useState<UiTheme>("system")
+
+  useEffect(() => {
+    let cancelled = false
+    loadUiTheme().then((theme) => {
+      if (cancelled) return
+      setUiTheme(normalizeUiTheme(theme))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const darkActive = themeUsesDark(uiTheme)
+  const toggleTheme = async () => {
+    const nextTheme: UiTheme = darkActive ? "light" : "dark"
+    setUiTheme(nextTheme)
+    activateUiTheme(nextTheme)
+    await saveUiTheme(nextTheme)
+  }
+
   useEffect(() => {
     const check = async () => {
       try {
@@ -135,6 +158,18 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
               {daemonStatus === "starting" && "Clip server starting..."}
               {daemonStatus === "port_conflict" && "Port 19827 is occupied. Web Clipper unavailable."}
               {daemonStatus === "error" && "Clip server error. Restarting..."}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              onClick={toggleTheme}
+              aria-label={darkActive ? t("nav.switchToLight") : t("nav.switchToDark")}
+              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+            >
+              {darkActive ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {darkActive ? t("nav.switchToLight") : t("nav.switchToDark")}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

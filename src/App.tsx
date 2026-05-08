@@ -5,7 +5,8 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadUiTheme } from "@/lib/project-store"
+import { activateUiTheme, normalizeUiTheme } from "@/lib/theme"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -226,6 +227,8 @@ function App() {
         if (savedLang) {
           await i18n.changeLanguage(savedLang)
         }
+        const savedUiTheme = normalizeUiTheme(await loadUiTheme())
+        activateUiTheme(savedUiTheme)
         const lastProject = await getLastProject()
         if (lastProject) {
           try {

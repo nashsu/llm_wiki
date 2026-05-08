@@ -12,6 +12,8 @@
     "review": "Review",
     "settings": "Settings",
     "switchProject": "Switch Project",
+    "switchToLight": "Switch to light mode",
+    "switchToDark": "Switch to dark mode",
     "updateAvailable": "Update available",
     "updateAvailableSuffix": " · update"
   },
@@ -209,7 +211,12 @@
         "title": "Interface",
         "description": "UI language and appearance. Changes apply immediately and persist.",
         "uiLanguage": "UI Language",
-        "uiLanguageHint": "Affects labels, buttons, and other UI strings only. The AI output language is set separately in Output Preferences."
+        "uiLanguageHint": "Affects labels, buttons, and other UI strings only. The AI output language is set separately in Output Preferences.",
+        "theme": "Theme",
+        "themeSystem": "System",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "themeHint": "Dark mode reduces glare across the app. System follows your macOS appearance."
       },
       "maintenance": {
         "title": "Maintenance",

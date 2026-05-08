@@ -18,7 +18,8 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
-import { saveLanguage } from "@/lib/project-store"
+import { loadUiTheme, saveLanguage, saveUiTheme } from "@/lib/project-store"
+import { activateUiTheme, normalizeUiTheme, type UiTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
@@ -73,6 +74,7 @@ function initialDraft(
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
+  uiTheme: UiTheme,
 ): SettingsDraft {
   return {
     provider: llm.provider,
@@ -104,6 +106,7 @@ function initialDraft(
     proxyUrl: proxy.url,
     proxyBypassLocal: proxy.bypassLocal,
     uiLanguage,
+    uiTheme,
   }
 }
 
@@ -143,6 +146,7 @@ export function SettingsView() {
       proxyConfig,
       maxHistoryMessages,
       i18n.language,
+      "system",
     ),
   )
 
@@ -164,6 +168,7 @@ export function SettingsView() {
         proxyConfig,
         maxHistoryMessages,
         prev.uiLanguage,
+        prev.uiTheme,
       ),
     )
   }, [
@@ -174,6 +179,17 @@ export function SettingsView() {
     proxyConfig,
     maxHistoryMessages,
   ])
+
+  useEffect(() => {
+    let cancelled = false
+    loadUiTheme().then((theme) => {
+      if (cancelled) return
+      setDraftState((prev) => ({ ...prev, uiTheme: normalizeUiTheme(theme) }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const setDraft: DraftSetter = useCallback((key, value) => {
     setDraftState((prev) => ({ ...prev, [key]: value }))
@@ -255,6 +271,8 @@ export function SettingsView() {
       await i18n.changeLanguage(draft.uiLanguage)
       await saveLanguage(draft.uiLanguage)
     }
+    activateUiTheme(draft.uiTheme)
+    await saveUiTheme(draft.uiTheme)
 
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
