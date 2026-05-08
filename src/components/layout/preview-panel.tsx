@@ -5,9 +5,10 @@ import { readFile, writeFile } from "@/commands/fs"
 import { getFileCategory, isBinary } from "@/lib/file-types"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
-import { getFileName } from "@/lib/path-utils"
+import { getRelativePath } from "@/lib/path-utils"
 
 export function PreviewPanel() {
+  const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
   const setFileContent = useWikiStore((s) => s.setFileContent)
@@ -83,13 +84,13 @@ export function PreviewPanel() {
   }
 
   const category = getFileCategory(selectedFile)
-  const fileName = getFileName(selectedFile)
+  const displayPath = project ? getRelativePath(selectedFile, project.path) : selectedFile
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-3 py-1.5">
         <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
-          {fileName}
+          {displayPath}
         </span>
         <button
           onClick={() => setSelectedFile(null)}
