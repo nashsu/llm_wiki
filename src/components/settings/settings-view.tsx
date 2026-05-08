@@ -79,11 +79,17 @@ function initialDraft(
   scheduledImport: ReturnType<typeof useWikiStore.getState>["scheduledImportConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
+  projectPath?: string,
 ): SettingsDraft {
   // Resolve the display path: if path is empty, show default "raw/sources"
-  // If path is relative, show it as-is (user sees relative path)
-  // If path is absolute, show it as-is
-  const displayPath = scheduledImport.path || "raw/sources"
+  // If path is relative and we have a project path, show absolute path
+  // If path is absolute, show as-is
+  const rawPath = scheduledImport.path || "raw/sources"
+  let displayPath = rawPath
+  if (projectPath && !rawPath.startsWith("/") && !rawPath.match(/^[a-zA-Z]:\\/)) {
+    // Relative path - prepend project path for display
+    displayPath = `${projectPath}/${rawPath}`
+  }
 
   return {
     provider: llm.provider,
@@ -164,6 +170,7 @@ export function SettingsView() {
       scheduledImportConfig,
       maxHistoryMessages,
       i18n.language,
+      project?.path,
     ),
   )
 
@@ -187,6 +194,7 @@ export function SettingsView() {
         scheduledImportConfig,
         maxHistoryMessages,
         prev.uiLanguage,
+        project?.path,
       ),
     )
   }, [
@@ -198,6 +206,7 @@ export function SettingsView() {
     proxyConfig,
     scheduledImportConfig,
     maxHistoryMessages,
+    project,
   ])
 
   const setDraft: DraftSetter = useCallback((key, value) => {
@@ -279,9 +288,14 @@ export function SettingsView() {
       console.warn("[proxy] live update failed; restart will still apply:", err)
     }
 
+    // Strip project path prefix to store relative path
+    let savePath = draft.scheduledImportPath
+    if (project && savePath.startsWith(project.path + "/")) {
+      savePath = savePath.slice(project.path.length + 1)
+    }
     const newScheduledImport = {
       enabled: draft.scheduledImportEnabled,
-      path: draft.scheduledImportPath,
+      path: savePath,
       interval: draft.scheduledImportInterval,
       lastScan: scheduledImportConfig.lastScan,
     }
