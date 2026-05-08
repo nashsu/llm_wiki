@@ -9,30 +9,43 @@ export interface WikiTemplate {
   extraFiles?: Record<string, string>
 }
 
-const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | Named things (people, tools, organizations, datasets) |
-| concept | wiki/concepts/ | Ideas, techniques, phenomena, frameworks |
-| source | wiki/sources/ | Papers, articles, talks, books, blog posts |
-| query | wiki/queries/ | Open questions under active investigation |
-| comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
-| synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
-| overview | wiki/ | High-level project summary (one per project) |
-| profile | wiki/profile/ | Durable user preferences, operating model, and personal context |
-| decision | wiki/decisions/ | Confirmed choices and rationale that should guide future work |
-| workflow | wiki/workflows/ | Repeatable procedures, checklists, and working agreements |
-| session | wiki/sessions/ | Recent work summaries and handoff context |`
+const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | 사람, 도구, 조직, 데이터셋처럼 이름이 있는 대상 |
+| concept | wiki/concepts/ | 아이디어, 기법, 현상, 프레임워크 |
+| source | wiki/sources/ | 논문, 글, 발표, 책, 블로그 글 같은 원본 자료 |
+| query | wiki/queries/ | 계속 조사 중인 열린 질문 |
+| comparison | wiki/comparisons/ | 관련 대상의 나란한 비교 분석 |
+| synthesis | wiki/synthesis/ | 여러 자료를 가로지르는 종합과 결론 |
+| overview | wiki/ | 프로젝트 전체 고수준 요약(프로젝트당 하나) |
+| profile | wiki/profile/ | 오래 유지할 사용자 선호, 운영 방식, 개인 맥락 |
+| decision | wiki/decisions/ | 이후 작업을 이끌 확정 선택과 판단 근거 |
+| workflow | wiki/workflows/ | 반복 절차, 체크리스트, 작업 합의 |
+| session | wiki/sessions/ | 최근 작업 요약과 handoff 맥락 |`
 
-const BASE_NAMING = `- Files: \`kebab-case.md\`
-- Entities: match official name where possible (e.g., \`openai.md\`, \`gpt-4.md\`)
-- Concepts: descriptive noun phrases (e.g., \`chain-of-thought.md\`)
-- Sources: \`author-year-slug.md\` (e.g., \`wei-2022-cot.md\`)
-- Queries: question as slug (e.g., \`does-scale-improve-reasoning.md\`)`
+const BASE_LANGUAGE_POLICY = `## 작성 언어 원칙
 
-const BASE_FRONTMATTER = `All pages must include YAML frontmatter:
+- \`schema.md\`와 \`purpose.md\`는 기본적으로 한국어로 작성하고 유지한다.
+- \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/overview.md\` 등 주요 구조 문서도 한국어 작성을 기본 원칙으로 한다.
+- 엔티티명, 고유명사, 제품명, 논문명, 파일 slug는 필요하면 원어를 유지하되 설명과 본문은 한국어로 쓴다.
+- 외국어 원문을 인용할 때도 요약, 해석, 판단, 정리 문장은 한국어로 작성한다.
+- 사용자가 명시적으로 다른 출력 언어를 요청한 경우에만 그 요청을 우선한다.`
+
+const BASE_PURPOSE_LANGUAGE_POLICY = `## 작성 언어 원칙
+
+- 이 프로젝트의 \`schema.md\`와 \`purpose.md\`는 한국어로 관리한다.
+- \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/overview.md\` 등 주요 문서는 한국어 작성을 기본 원칙으로 한다.
+- 고유명사와 원문 제목은 필요하면 원어를 유지하되, 설명과 판단은 한국어로 정리한다.`
+
+const BASE_NAMING = `- 파일명: \`kebab-case.md\`
+- 엔티티: 가능하면 공식 명칭에 맞춘다(예: \`openai.md\`, \`gpt-4.md\`)
+- 개념: 설명적인 명사구를 사용한다(예: \`chain-of-thought.md\`)
+- 원본 요약: \`author-year-slug.md\` 형식을 권장한다(예: \`wei-2022-cot.md\`)
+- 질의: 질문을 slug로 바꾼다(예: \`does-scale-improve-reasoning.md\`)`
+
+const BASE_FRONTMATTER = `모든 페이지는 YAML frontmatter를 포함한다:
 
 \`\`\`yaml
----
 type: entity | concept | source | query | comparison | synthesis | overview | profile | decision | workflow | session
-title: Human-readable title
+title: 사람이 읽기 쉬운 제목
 tags: []
 related: []
 created: YYYY-MM-DD
@@ -44,7 +57,7 @@ memory_status: active | candidate | superseded
 ---
 \`\`\`
 
-Source pages also include:
+source 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 authors: []
 year: YYYY
@@ -52,36 +65,36 @@ url: ""
 venue: ""
 \`\`\``
 
-const BASE_INDEX_FORMAT = `\`wiki/index.md\` lists all pages grouped by type. Each entry:
+const BASE_INDEX_FORMAT = `\`wiki/index.md\`는 모든 페이지를 유형별로 묶어 나열한다. 각 항목은 다음 형식을 따른다:
 \`\`\`
-- [[page-slug]] — one-line description
+- [[page-slug]] — 한 줄 설명
 \`\`\``
 
-const BASE_LOG_FORMAT = `\`wiki/log.md\` records activity in reverse chronological order:
+const BASE_LOG_FORMAT = `\`wiki/log.md\`는 작업 이력을 최신순으로 기록한다:
 \`\`\`
 ## YYYY-MM-DD
 
-- Action taken / finding noted
+- 수행한 작업 / 확인한 발견
 \`\`\``
 
-const BASE_CROSSREF = `- Use \`[[page-slug]]\` syntax to link between wiki pages
-- Every entity and concept should appear in \`wiki/index.md\`
-- Queries link to the sources and concepts they draw on
-- Synthesis pages cite all contributing sources via \`related:\``
+const BASE_CROSSREF = `- Wiki 페이지끼리는 \`[[page-slug]]\` 문법으로 연결한다.
+- 모든 entity와 concept은 \`wiki/index.md\`에 나타나야 한다.
+- query 페이지는 근거로 삼은 source와 concept을 연결한다.
+- synthesis 페이지는 기여한 모든 source를 \`related:\`로 인용한다.`
 
-const BASE_CONTRADICTION = `When sources contradict each other:
-1. Note the contradiction in the relevant concept or entity page
-2. Create or update a query page to track the open question
-3. Link both sources from the query page
-4. Resolve in a synthesis page once sufficient evidence exists`
+const BASE_CONTRADICTION = `원본 자료끼리 충돌할 때:
+1. 관련 concept 또는 entity 페이지에 모순을 명시한다.
+2. 열린 질문을 추적하기 위해 query 페이지를 만들거나 갱신한다.
+3. query 페이지에서 충돌하는 두 source를 모두 연결한다.
+4. 충분한 근거가 쌓이면 synthesis 페이지에서 정리한다.`
 
-const CODEXIAN_MEMORY_FRONTMATTER = `Codexian Memory pages use these additional meanings:
+const CODEXIAN_MEMORY_FRONTMATTER = `Codexian Memory 페이지는 다음 의미를 추가로 사용한다:
 
-- \`profile\`: durable facts about Kevin's goals, preferences, judgment criteria, and response style. Profile updates should be reviewed before becoming active.
-- \`decision\`: explicit decisions Kevin made, including date, rationale, and reversal conditions.
-- \`workflow\`: repeated procedures Codex should follow in future sessions.
-- \`session\`: recent work context, open loops, and short-lived continuity notes.
-- \`synthesis\`: compiled memory such as \`wiki/synthesis/codex-boot-context.md\`.
+- \`profile\`: Kevin의 목표, 선호, 판단 기준, 응답 방식처럼 오래 유지할 사실. profile 변경은 active가 되기 전에 검토한다.
+- \`decision\`: Kevin이 명시적으로 확정한 결정, 날짜, 근거, 되돌릴 조건.
+- \`workflow\`: 이후 세션에서 Codex가 반복해서 따라야 할 절차.
+- \`session\`: 최근 작업 맥락, 열린 루프, 짧은 연속성 노트.
+- \`synthesis\`: \`wiki/synthesis/codex-boot-context.md\`처럼 컴파일된 기억.
 
 Memory frontmatter:
 \`\`\`yaml
@@ -97,117 +110,121 @@ const researchTemplate: WikiTemplate = {
   description: "Deep-dive research with hypothesis tracking and methodology notes",
   icon: "🔬",
   extraDirs: ["wiki/methodology", "wiki/findings", "wiki/thesis"],
-  schema: `# Wiki Schema — Research Deep-Dive
+  schema: `# 위키 스키마 — 심층 연구
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
-| thesis | wiki/thesis/ | Working hypothesis and its evolution over time |
-| methodology | wiki/methodology/ | Research methods, protocols, and study designs |
-| finding | wiki/findings/ | Individual empirical results or observations |
+| thesis | wiki/thesis/ | 작업 가설과 시간에 따른 변화 |
+| methodology | wiki/methodology/ | 연구 방법, 프로토콜, 연구 설계 |
+| finding | wiki/findings/ | 개별 경험적 결과나 관찰 |
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
-- Theses: hypothesis as slug (e.g., \`scaling-improves-reasoning.md\`)
-- Methodologies: method name (e.g., \`systematic-review.md\`, \`ablation-study.md\`)
-- Findings: descriptive slug (e.g., \`larger-models-better-few-shot.md\`)
+- Thesis: 가설을 slug로 만든다(예: \`scaling-improves-reasoning.md\`)
+- Methodology: 방법론 이름을 사용한다(예: \`systematic-review.md\`, \`ablation-study.md\`)
+- Finding: 발견 내용을 설명하는 slug를 쓴다(예: \`larger-models-better-few-shot.md\`)
 
 ## Frontmatter
 
 ${BASE_FRONTMATTER}
 
-Thesis pages also include:
+thesis 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 confidence: low | medium | high
 status: speculative | supported | refuted | settled
 \`\`\`
 
-Finding pages also include:
+finding 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 source: "[[source-slug]]"
 confidence: low | medium | high
 replicated: true | false | null
 \`\`\`
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
-- Findings link back to their source via the \`source:\` frontmatter field
-- Thesis pages reference supporting and refuting findings via \`related:\`
-- Methodology pages are cited by the findings that used them
+- finding 페이지는 \`source:\` frontmatter 필드로 원본 source를 연결한다.
+- thesis 페이지는 \`related:\`로 지지하거나 반박하는 finding을 참조한다.
+- methodology 페이지는 해당 방법을 사용한 finding에서 인용한다.
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 
-## Research-Specific Conventions
+## 연구 전용 규칙
 
-- Keep the thesis pages updated as evidence accumulates — they are living documents
-- Every finding should assess replication status when known
-- Methodology pages explain the *why* (rationale) not just the *how*
-- Distinguish between direct evidence and inference in finding pages
+- 근거가 쌓이면 thesis 페이지를 계속 갱신한다. thesis는 살아 있는 문서로 다룬다.
+- 모든 finding은 알려진 경우 재현 여부를 평가한다.
+- methodology 페이지는 방법뿐 아니라 그 방법을 쓰는 이유와 근거도 설명한다.
+- finding 페이지에서는 직접 근거와 추론을 구분한다.
 `,
-  purpose: `# Project Purpose — Research Deep-Dive
+  purpose: `# 프로젝트 목적 — 심층 연구
 
-## Research Question
+${BASE_PURPOSE_LANGUAGE_POLICY}
 
-<!-- State the central question this research aims to answer. Be specific and falsifiable. -->
+## 연구 질문
 
->
-
-## Hypothesis / Working Thesis
-
-<!-- Your current best guess. This will evolve — update it as evidence accumulates. -->
+<!-- 이 연구가 답하려는 중심 질문을 적는다. 구체적이고 반증 가능하게 쓴다. -->
 
 >
 
-## Background
+## 가설 / 작업 논지
 
-<!-- What prior work or context motivates this research? What gap does it fill? -->
+<!-- 현재 가장 그럴듯한 판단을 적는다. 근거가 쌓이면 계속 갱신한다. -->
 
-## Sub-questions
+>
 
-<!-- Break down the main question into tractable sub-questions. -->
+## 배경
+
+<!-- 이 연구를 시작하게 한 선행 연구, 맥락, 공백을 적는다. -->
+
+## 하위 질문
+
+<!-- 중심 질문을 조사 가능한 작은 질문으로 나눈다. -->
 
 1.
 2.
 3.
 4.
 
-## Scope
+## 범위
 
-**In scope:**
+**포함:**
 -
 
-**Out of scope:**
+**제외:**
 -
 
-## Methodology
+## 방법론
 
-<!-- How will you investigate this? What types of sources or experiments are relevant? -->
-
--
-
-## Success Criteria
-
-<!-- How will you know when you have a satisfying answer? -->
+<!-- 어떻게 조사할지, 어떤 자료나 실험이 관련 있는지 적는다. -->
 
 -
 
-## Current Status
+## 성공 기준
 
-> Not started — update this section as research progresses.
+<!-- 어떤 상태가 되면 충분히 만족스러운 답이라고 볼지 적는다. -->
+
+-
+
+## 현재 상태
+
+> 시작 전 — 연구가 진행되면 이 섹션을 갱신한다.
 `,
 }
 
@@ -217,112 +234,116 @@ const readingTemplate: WikiTemplate = {
   description: "Track a book's characters, themes, plot threads, and chapter notes",
   icon: "📚",
   extraDirs: ["wiki/characters", "wiki/themes", "wiki/plot-threads", "wiki/chapters"],
-  schema: `# Wiki Schema — Reading a Book
+  schema: `# 위키 스키마 — 독서
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
-| character | wiki/characters/ | People and figures in the book |
-| theme | wiki/themes/ | Recurring ideas, motifs, and symbolic threads |
-| plot-thread | wiki/plot-threads/ | Storylines or narrative arcs being tracked |
-| chapter | wiki/chapters/ | Per-chapter notes and summaries |
+| character | wiki/characters/ | 책에 등장하는 인물과 주요 대상 |
+| theme | wiki/themes/ | 반복되는 생각, 모티프, 상징적 흐름 |
+| plot-thread | wiki/plot-threads/ | 추적 중인 이야기 줄기나 서사 arc |
+| chapter | wiki/chapters/ | 장별 노트와 요약 |
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
-- Characters: character name in kebab-case (e.g., \`elizabeth-bennet.md\`)
-- Themes: thematic noun phrase (e.g., \`social-class-mobility.md\`, \`deception-vs-honesty.md\`)
-- Plot threads: arc description (e.g., \`darcys-redemption-arc.md\`)
-- Chapters: \`ch-NN-slug.md\` (e.g., \`ch-01-opening-scene.md\`)
+- Character: 인물명을 kebab-case로 쓴다(예: \`elizabeth-bennet.md\`)
+- Theme: 주제를 나타내는 명사구를 쓴다(예: \`social-class-mobility.md\`, \`deception-vs-honesty.md\`)
+- Plot thread: 서사 흐름 설명을 사용한다(예: \`darcys-redemption-arc.md\`)
+- Chapter: \`ch-NN-slug.md\` 형식을 사용한다(예: \`ch-01-opening-scene.md\`)
 
 ## Frontmatter
 
 ${BASE_FRONTMATTER}
 
-Character pages also include:
+character 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 first_appearance: "Ch. N"
 role: protagonist | antagonist | supporting | minor
 \`\`\`
 
-Chapter pages also include:
+chapter 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 chapter: N
 pages: "1-24"
 \`\`\`
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
-- Chapter notes reference characters appearing in that chapter via \`related:\`
-- Theme pages link to the chapters where the theme is most prominent
-- Plot thread pages list chapters that advance the arc
+- chapter 노트는 해당 장에 등장하는 character를 \`related:\`로 참조한다.
+- theme 페이지는 그 주제가 두드러지는 chapter를 연결한다.
+- plot-thread 페이지는 해당 arc를 진전시키는 chapter를 나열한다.
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 
-## Reading-Specific Conventions
+## 독서 전용 규칙
 
-- Chapter pages are written during or immediately after reading — capture fresh reactions
-- Distinguish between plot summary and personal interpretation in chapter notes
-- Theme pages should track *development* across the book, not just state that a theme exists
-- Flag unresolved plot threads with status: \`open\` until resolved
-- Note page numbers for important quotes to enable re-finding later
+- chapter 페이지는 읽는 중이거나 읽은 직후 작성해 생생한 반응을 남긴다.
+- chapter 노트에서는 줄거리 요약과 개인 해석을 구분한다.
+- theme 페이지는 주제가 존재한다는 사실만 쓰지 말고 책 전체에서 어떻게 발전하는지 추적한다.
+- 해결되지 않은 plot thread는 해결 전까지 status를 \`open\`으로 표시한다.
+- 중요한 인용은 나중에 다시 찾을 수 있도록 페이지 번호를 적는다.
 `,
-  purpose: `# Project Purpose — Reading
+  purpose: `# 프로젝트 목적 — 독서
 
-## Book Details
+${BASE_PURPOSE_LANGUAGE_POLICY}
 
-**Title:**
-**Author:**
-**Year:**
-**Genre:**
+## 책 정보
 
-## Why I'm Reading This
+**제목:**
+**저자:**
+**연도:**
+**장르:**
 
-<!-- What drew you to this book? What do you hope to get from it? -->
+## 이 책을 읽는 이유
 
-## Key Themes to Track
+<!-- 이 책에 끌린 이유와 얻고 싶은 것을 적는다. -->
 
-<!-- What thematic threads do you expect or want to follow? -->
+## 추적할 핵심 주제
+
+<!-- 예상하거나 따라가고 싶은 주제 흐름을 적는다. -->
 
 1.
 2.
 3.
 
-## Questions Going In
+## 읽기 전 질문
 
-<!-- What do you want answered or explored by the end? -->
+<!-- 책을 다 읽을 때까지 답을 찾고 싶은 질문을 적는다. -->
 
 1.
 2.
 
-## Reading Pace
+## 독서 속도
 
-**Started:**
-**Target finish:**
-**Current chapter:**
+**시작일:**
+**목표 완료일:**
+**현재 장:**
 
-## First Impressions
+## 첫인상
 
-<!-- Update after first chapter or first sitting. -->
+<!-- 첫 장 또는 첫 독서 세션 뒤에 갱신한다. -->
 
 >
 
-## Final Takeaways
+## 최종 배움
 
-<!-- Fill in when finished. What did this book teach you? -->
+<!-- 완독 후 작성한다. 이 책이 무엇을 알려주었는지 적는다. -->
 
 >
 `,
@@ -334,123 +355,127 @@ const personalTemplate: WikiTemplate = {
   description: "Track goals, habits, reflections, and journal entries for self-improvement",
   icon: "🌱",
   extraDirs: ["wiki/goals", "wiki/habits", "wiki/reflections", "wiki/journal"],
-  schema: `# Wiki Schema — Personal Growth
+  schema: `# 위키 스키마 — 개인 성장
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
-| goal | wiki/goals/ | Specific outcomes you are working toward |
-| habit | wiki/habits/ | Recurring behaviours and their tracking |
-| reflection | wiki/reflections/ | Periodic reviews and lessons learned |
-| journal | wiki/journal/ | Freeform daily or session entries |
+| goal | wiki/goals/ | 달성하려는 구체적 결과 |
+| habit | wiki/habits/ | 반복 행동과 추적 기록 |
+| reflection | wiki/reflections/ | 주기적 회고와 배운 점 |
+| journal | wiki/journal/ | 자유 형식의 일간 또는 세션 기록 |
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
-- Goals: outcome as slug (e.g., \`run-a-marathon.md\`, \`learn-spanish.md\`)
-- Habits: behaviour name (e.g., \`daily-meditation.md\`, \`morning-pages.md\`)
-- Reflections: type + date (e.g., \`weekly-2024-03.md\`, \`quarterly-2024-q1.md\`)
-- Journal: date slug (e.g., \`2024-03-15.md\`)
+- Goal: 원하는 결과를 slug로 쓴다(예: \`run-a-marathon.md\`, \`learn-spanish.md\`)
+- Habit: 행동 이름을 쓴다(예: \`daily-meditation.md\`, \`morning-pages.md\`)
+- Reflection: 유형과 날짜를 함께 쓴다(예: \`weekly-2024-03.md\`, \`quarterly-2024-q1.md\`)
+- Journal: 날짜 slug를 쓴다(예: \`2024-03-15.md\`)
 
 ## Frontmatter
 
 ${BASE_FRONTMATTER}
 
-Goal pages also include:
+goal 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 target_date: YYYY-MM-DD
 status: active | paused | achieved | abandoned
 progress: 0-100
 \`\`\`
 
-Habit pages also include:
+habit 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 frequency: daily | weekly | monthly
 streak: N
 status: active | paused | dropped
 \`\`\`
 
-Reflection pages also include:
+reflection 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 period: weekly | monthly | quarterly | annual
 \`\`\`
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
-- Reflection pages reference the goals and habits reviewed during that period
-- Goals link to the habits that support them via \`related:\`
-- Journal entries can reference goals and reflections inline with \`[[slug]]\`
+- reflection 페이지는 해당 기간에 검토한 goal과 habit을 참조한다.
+- goal은 이를 뒷받침하는 habit을 \`related:\`로 연결한다.
+- journal 항목은 본문에서 \`[[slug]]\`로 goal과 reflection을 참조할 수 있다.
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 
-## Personal Growth Conventions
+## 개인 성장 전용 규칙
 
-- Be honest in journal and reflection entries — this wiki is for you, not an audience
-- Update goal progress fields regularly; stale data is worse than no data
-- Distinguish between outcome goals (what you want) and process goals (what you will do)
-- Reflect on *why* habits succeed or fail, not just whether they did
-- Use the synthesis directory for cross-cutting insights that span multiple goals or periods
+- journal과 reflection에는 솔직하게 쓴다. 이 위키는 관객이 아니라 자신을 위한 공간이다.
+- goal의 progress 필드는 정기적으로 갱신한다. 낡은 데이터는 없는 데이터보다 더 혼란스럽다.
+- 결과 목표(원하는 것)와 과정 목표(실제로 할 행동)를 구분한다.
+- habit은 성공 여부뿐 아니라 왜 성공하거나 실패했는지 회고한다.
+- 여러 goal이나 기간을 가로지르는 통찰은 synthesis 디렉터리에 정리한다.
 `,
-  purpose: `# Project Purpose — Personal Growth
+  purpose: `# 프로젝트 목적 — 개인 성장
 
-## Focus Areas
+${BASE_PURPOSE_LANGUAGE_POLICY}
 
-<!-- What areas of your life or self are you actively working on? -->
+## 집중 영역
 
-1.
-2.
-3.
-
-## Motivation
-
-<!-- Why now? What prompted you to start this wiki? -->
-
-## Current Goals (Summary)
-
-<!-- High-level list — create detailed goal pages in wiki/goals/ -->
-
-- [ ]
-- [ ]
-- [ ]
-
-## Active Habits
-
-<!-- High-level list — create detailed habit pages in wiki/habits/ -->
-
--
--
-
-## Review Cadence
-
-**Daily journal:** Yes / No
-**Weekly reflection:**
-**Monthly reflection:**
-**Quarterly reflection:**
-
-## Guiding Principles
-
-<!-- What values or principles guide your growth work? -->
+<!-- 삶이나 자기 자신 중 현재 적극적으로 다루는 영역을 적는다. -->
 
 1.
 2.
 3.
 
-## This Year's Theme
+## 동기
 
-<!-- One phrase or sentence that captures your intention for the year. -->
+<!-- 왜 지금 시작하는지, 무엇이 이 위키를 만들게 했는지 적는다. -->
+
+## 현재 목표 요약
+
+<!-- 큰 목록을 적고, 자세한 내용은 wiki/goals/에 goal 페이지로 만든다. -->
+
+- [ ]
+- [ ]
+- [ ]
+
+## 활성 습관
+
+<!-- 큰 목록을 적고, 자세한 내용은 wiki/habits/에 habit 페이지로 만든다. -->
+
+-
+-
+
+## 회고 주기
+
+**일간 journal:** 예 / 아니오
+**주간 reflection:**
+**월간 reflection:**
+**분기 reflection:**
+
+## 운영 원칙
+
+<!-- 성장 작업을 이끄는 가치나 원칙을 적는다. -->
+
+1.
+2.
+3.
+
+## 올해의 테마
+
+<!-- 올해의 의도를 담은 한 문장 또는 문구를 적는다. -->
 
 >
 `,
@@ -462,46 +487,48 @@ const businessTemplate: WikiTemplate = {
   description: "Manage meetings, decisions, projects, and stakeholder context for a team",
   icon: "💼",
   extraDirs: ["wiki/meetings", "wiki/decisions", "wiki/projects", "wiki/stakeholders"],
-  schema: `# Wiki Schema — Business / Team
+  schema: `# 위키 스키마 — 비즈니스 / 팀
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
-| meeting | wiki/meetings/ | Meeting notes, agendas, and action items |
-| decision | wiki/decisions/ | Architectural or strategic decisions (ADR-style) |
-| project | wiki/projects/ | Project briefs, status, and retrospectives |
-| stakeholder | wiki/stakeholders/ | People, teams, and organisations involved |
+| meeting | wiki/meetings/ | 회의록, agenda, 실행 항목 |
+| decision | wiki/decisions/ | 아키텍처 또는 전략 결정(ADR 스타일) |
+| project | wiki/projects/ | 프로젝트 개요, 상태, 회고 |
+| stakeholder | wiki/stakeholders/ | 관련된 사람, 팀, 조직 |
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
-- Meetings: \`YYYY-MM-DD-slug.md\` (e.g., \`2024-03-15-sprint-planning.md\`)
-- Decisions: \`NNN-slug.md\` (e.g., \`001-adopt-typescript.md\`)
-- Projects: descriptive slug (e.g., \`payments-redesign.md\`)
-- Stakeholders: name or team in kebab-case (e.g., \`alice-chen.md\`, \`platform-team.md\`)
+- Meeting: \`YYYY-MM-DD-slug.md\` 형식을 쓴다(예: \`2024-03-15-sprint-planning.md\`)
+- Decision: \`NNN-slug.md\` 형식을 쓴다(예: \`001-adopt-typescript.md\`)
+- Project: 설명적인 slug를 쓴다(예: \`payments-redesign.md\`)
+- Stakeholder: 사람이나 팀 이름을 kebab-case로 쓴다(예: \`alice-chen.md\`, \`platform-team.md\`)
 
 ## Frontmatter
 
 ${BASE_FRONTMATTER}
 
-Meeting pages also include:
+meeting 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 date: YYYY-MM-DD
 attendees: []
 action_items: []
 \`\`\`
 
-Decision pages also include:
+decision 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 status: proposed | accepted | deprecated | superseded
 deciders: []
 date: YYYY-MM-DD
-supersedes: ""   # slug of ADR this replaces, if any
+supersedes: ""   # 대체하는 ADR slug가 있으면 적는다.
 \`\`\`
 
-Project pages also include:
+project 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
 status: planned | active | on-hold | complete | cancelled
 owner: ""
@@ -509,88 +536,90 @@ start_date: YYYY-MM-DD
 target_date: YYYY-MM-DD
 \`\`\`
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
-- Meeting notes reference attendees via \`attendees:\` frontmatter and \`[[stakeholder-slug]]\` links
-- Decision pages link to the meetings where the decision was discussed
-- Project pages link to their key decisions via \`related:\`
-- Stakeholder pages list projects and decisions they are involved in
+- meeting 노트는 \`attendees:\` frontmatter와 \`[[stakeholder-slug]]\` 링크로 참석자를 참조한다.
+- decision 페이지는 해당 결정이 논의된 meeting을 연결한다.
+- project 페이지는 핵심 decision을 \`related:\`로 연결한다.
+- stakeholder 페이지는 관련 project와 decision을 나열한다.
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 
-## Business-Specific Conventions
+## 비즈니스 전용 규칙
 
-- Write meeting notes during or within 24 hours — memory fades fast
-- Action items must have a named owner and due date to be actionable
-- Decision pages capture *context and consequences*, not just the decision itself
-- Deprecated decisions should link to the decision that superseded them
-- Projects should have a retrospective section added on completion
+- meeting 노트는 회의 중 또는 24시간 안에 작성한다. 기억은 빠르게 흐려진다.
+- 실행 항목은 실행 가능하도록 담당자와 기한을 반드시 둔다.
+- decision 페이지는 결정 자체뿐 아니라 맥락과 결과를 함께 기록한다.
+- deprecated decision은 이를 대체한 decision을 연결한다.
+- project는 완료 시 회고 섹션을 추가한다.
 `,
-  purpose: `# Project Purpose — Business / Team
+  purpose: `# 프로젝트 목적 — 비즈니스 / 팀
 
-## Business Context
+${BASE_PURPOSE_LANGUAGE_POLICY}
 
-**Organisation / Team:**
-**Domain:**
-**Time period covered:**
+## 비즈니스 맥락
 
-## Objectives
+**조직 / 팀:**
+**도메인:**
+**기록 기간:**
 
-<!-- What are the top-level business objectives this wiki supports? -->
+## 목표
+
+<!-- 이 위키가 지원하는 최상위 비즈니스 목표를 적는다. -->
 
 1.
 2.
 3.
 
-## Key Projects
+## 핵심 프로젝트
 
-<!-- High-level list — create detailed pages in wiki/projects/ -->
-
--
--
-
-## Key Stakeholders
-
-<!-- Who are the primary people or teams involved? -->
+<!-- 큰 목록을 적고, 자세한 내용은 wiki/projects/에 project 페이지로 만든다. -->
 
 -
 -
 
-## Open Decisions
+## 핵심 이해관계자
 
-<!-- Decisions currently in flight — create ADR pages in wiki/decisions/ -->
+<!-- 주요 인물이나 팀을 적는다. -->
+
+-
+-
+
+## 열린 결정
+
+<!-- 현재 논의 중인 결정을 적고, 자세한 내용은 wiki/decisions/에 ADR 페이지로 만든다. -->
 
 -
 -
 
-## Metrics / Success Criteria
+## 지표 / 성공 기준
 
-<!-- How does the team measure progress toward its objectives? -->
-
--
-
-## Constraints and Risks
-
-<!-- Known constraints (budget, time, org) and risks to track -->
+<!-- 팀이 목표 달성 과정을 어떻게 측정하는지 적는다. -->
 
 -
 
-## Review Cadence
+## 제약과 위험
 
-**Weekly sync notes:**
-**Monthly status update:**
-**Quarterly retrospective:**
+<!-- 예산, 시간, 조직 같은 알려진 제약과 추적해야 할 위험을 적는다. -->
+
+-
+
+## 검토 주기
+
+**주간 동기화 노트:**
+**월간 상태 갱신:**
+**분기 회고:**
 `,
 }
 
@@ -600,15 +629,17 @@ const generalTemplate: WikiTemplate = {
   description: "Minimal setup — a blank slate for any purpose",
   icon: "📄",
   extraDirs: [],
-  schema: `# Wiki Schema
+  schema: `# 위키 스키마
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
 
@@ -616,49 +647,51 @@ ${BASE_NAMING}
 
 ${BASE_FRONTMATTER}
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 `,
-  purpose: `# Project Purpose
+  purpose: `# 프로젝트 목적
 
-## Goal
+${BASE_PURPOSE_LANGUAGE_POLICY}
 
-<!-- What are you trying to understand or build? -->
+## 목표
 
-## Key Questions
+<!-- 무엇을 이해하거나 만들려는지 적는다. -->
 
-<!-- List the primary questions driving this project -->
+## 핵심 질문
+
+<!-- 이 프로젝트를 움직이는 주요 질문을 적는다. -->
 
 1.
 2.
 3.
 
-## Scope
+## 범위
 
-**In scope:**
+**포함:**
 -
 
-**Out of scope:**
+**제외:**
 -
 
-## Thesis
+## 작업 논지
 
-<!-- Your current working hypothesis or conclusion (update as the project progresses) -->
+<!-- 현재 작업 가설이나 결론을 적고, 프로젝트가 진행되면 갱신한다. -->
 
-> TBD
+> 미정
 `,
 }
 
@@ -673,22 +706,24 @@ const codexianMemoryTemplate: WikiTemplate = {
     "wiki/workflows",
     "wiki/sessions",
   ],
-  schema: `# Wiki Schema — Codexian Memory
+  schema: `# 위키 스키마 — Codexian Memory
 
-## Page Types
+## 페이지 유형
 
-| Type | Directory | Purpose |
+| 유형 | 디렉터리 | 목적 |
 |------|-----------|---------|
 ${BASE_SCHEMA_TYPES}
 
-## Naming Conventions
+${BASE_LANGUAGE_POLICY}
+
+## 파일명 규칙
 
 ${BASE_NAMING}
-- Profile: durable topic name (e.g., \`user-operating-model.md\`)
-- Decisions: date and decision slug (e.g., \`2026-05-08-memory-context-policy.md\`)
-- Workflows: procedure name (e.g., \`codex-session-boot.md\`)
-- Sessions: date and concise session slug (e.g., \`2026-05-08-llm-wiki-codexian.md\`)
-- Boot context: always use \`wiki/synthesis/codex-boot-context.md\`
+- Profile: 오래 유지할 주제 이름을 쓴다(예: \`user-operating-model.md\`)
+- Decision: 날짜와 decision slug를 함께 쓴다(예: \`2026-05-08-memory-context-policy.md\`)
+- Workflow: 절차 이름을 쓴다(예: \`codex-session-boot.md\`)
+- Session: 날짜와 간결한 session slug를 쓴다(예: \`2026-05-08-llm-wiki-codexian.md\`)
+- Boot context: 항상 \`wiki/synthesis/codex-boot-context.md\`를 사용한다.
 
 ## Frontmatter
 
@@ -696,22 +731,22 @@ ${BASE_FRONTMATTER}
 
 ${CODEXIAN_MEMORY_FRONTMATTER}
 
-## Memory Priority
+## 기억 우선순위
 
-When answering as Codex, apply memory in this order:
+Codex로 답할 때는 기억을 다음 순서로 적용한다:
 
-1. The user's current request and active runtime instructions
-2. Active profile, decision, and workflow pages
-3. Recent session pages
-4. General wiki retrieval results
+1. 사용자의 현재 요청과 활성 runtime instructions
+2. active profile, decision, workflow 페이지
+3. 최근 session 페이지
+4. 일반 wiki 검색 결과
 
-Profile pages are durable and should change slowly. If a new source suggests changing Kevin's identity, preferences, or operating model, create a review item instead of silently overwriting active profile memory.
+profile 페이지는 오래 유지되고 천천히 바뀌어야 한다. 새 source가 Kevin의 정체성, 선호, 운영 방식을 바꾸라고 제안하면 active profile memory를 조용히 덮어쓰지 말고 review item을 만든다.
 
-## Index Format
+## Index 형식
 
 ${BASE_INDEX_FORMAT}
 
-Recommended sections:
+권장 섹션:
 
 - Profile
 - Decisions
@@ -721,82 +756,84 @@ Recommended sections:
 - Sources
 - Queries
 
-## Log Format
+## Log 형식
 
 ${BASE_LOG_FORMAT}
 
-## Cross-referencing Rules
+## 교차 참조 규칙
 
 ${BASE_CROSSREF}
-- Profile pages link to the decisions, workflows, and sessions that justify them
-- Session pages link to decisions and workflows that changed during the session
-- \`codex-boot-context.md\` summarizes only active memory and links back to source pages
+- profile 페이지는 이를 뒷받침하는 decision, workflow, session을 연결한다.
+- session 페이지는 해당 세션에서 바뀐 decision과 workflow를 연결한다.
+- \`codex-boot-context.md\`는 active memory만 요약하고 source 페이지로 되돌아가는 링크를 둔다.
 
-## Contradiction Handling
+## 모순 처리
 
 ${BASE_CONTRADICTION}
 `,
-  purpose: `# Project Purpose — Codexian Memory
+  purpose: `# 프로젝트 목적 — Codexian Memory
 
-## Goal
+${BASE_PURPOSE_LANGUAGE_POLICY}
+
+## 목표
 
 Codex가 Kevin의 목표, 선호, 판단 기준, 최근 작업 맥락을 유지하도록 돕는 개인 기억 Wiki입니다.
 
-## Key Questions
+## 핵심 질문
 
 1. Kevin이 반복해서 설명하지 않아도 Codex가 알아야 하는 운영 방식은 무엇인가?
 2. 최근 세션과 확정 결정 중 다음 작업에 영향을 주는 맥락은 무엇인가?
 3. 어떤 기억은 장기 profile로 승격하고, 어떤 기억은 session으로만 보존해야 하는가?
 
-## Scope
+## 범위
 
-**In scope:**
+**포함:**
 - Kevin의 작업 선호, 응답 선호, 판단 기준, 반복 workflow
 - Codex 세션 로그와 handoff에서 추출한 최근 작업 맥락
 - 확정된 의사결정과 되돌릴 조건
 - Codex가 시작 시 읽을 \`wiki/synthesis/codex-boot-context.md\`
 
-**Out of scope:**
+**제외:**
 - 출처가 불명확한 추측
 - 민감하거나 정체성에 가까운 profile 자동 확정
 - 원본 raw source를 지우거나 요약본으로 대체하는 일
 
-## Thesis
+## 작업 논지
 
 > Raw source는 보존하고, Wiki는 Codex가 바로 사용할 수 있는 기억으로 컴파일하며, profile 변경은 사람 검토를 거친다.
 `,
   extraFiles: {
-    "wiki/index.md": `# Wiki Index
+    "wiki/index.md": `# 위키 색인
 
-## Profile
+## Profile / 사용자 프로필
 
-- [[profile/user-operating-model|Kevin Operating Model]]
+- [[profile/user-operating-model|Kevin 운영 모델]]
 
-## Decisions
+## Decisions / 결정
 
-## Workflows
+## Workflows / 작업 절차
 
-- [[workflows/codex-session-boot|Codex Session Boot]]
+- [[workflows/codex-session-boot|Codex 세션 시작]]
 
-## Sessions
+## Sessions / 세션
 
-## Synthesis
+## Synthesis / 종합
 
-- [[synthesis/codex-boot-context|Codex Boot Context]]
+- [[synthesis/codex-boot-context|Codex 시작 맥락]]
 
-## Entities
+## Entities / 엔티티
 
-## Concepts
+## Concepts / 개념
 
-## Sources
+## Sources / 원본 자료
 
-## Queries
+## Queries / 질문
 
-## Comparisons
+## Comparisons / 비교
 `,
     "wiki/profile/user-operating-model.md": `---
 type: profile
-title: Kevin Operating Model
+title: Kevin 운영 모델
 tags: [codexian-memory, profile]
 related: [codex-boot-context]
 created: 2026-05-08
@@ -807,17 +844,17 @@ last_reviewed: 2026-05-08
 memory_status: candidate
 ---
 
-# Kevin Operating Model
+# Kevin 운영 모델
 
-Use this page for durable, reviewed preferences and working agreements about Kevin.
+이 페이지는 Kevin에 대한 오래 유지할 검토된 선호와 작업 합의를 기록한다.
 
-## Active Memory
+## 활성 기억
 
-- Add stable preferences only after review.
+- 안정적인 선호는 검토 후에만 추가한다.
 `,
     "wiki/workflows/codex-session-boot.md": `---
 type: workflow
-title: Codex Session Boot
+title: Codex 세션 시작
 tags: [codexian-memory, workflow]
 related: [codex-boot-context, user-operating-model]
 created: 2026-05-08
@@ -828,18 +865,18 @@ last_reviewed: 2026-05-08
 memory_status: active
 ---
 
-# Codex Session Boot
+# Codex 세션 시작
 
-## Steps
+## 단계
 
-1. Read \`purpose.md\`.
-2. Read \`wiki/synthesis/codex-boot-context.md\`.
-3. Check recent session pages when continuity matters.
-4. Prefer active decisions and workflows over older session notes.
+1. \`purpose.md\`를 읽는다.
+2. \`wiki/synthesis/codex-boot-context.md\`를 읽는다.
+3. 연속성이 중요하면 최근 session 페이지를 확인한다.
+4. 오래된 session note보다 active decision과 workflow를 우선한다.
 `,
     "wiki/synthesis/codex-boot-context.md": `---
 type: synthesis
-title: Codex Boot Context
+title: Codex 시작 맥락
 tags: [codexian-memory, boot-context]
 related: [user-operating-model, codex-session-boot]
 created: 2026-05-08
@@ -850,25 +887,25 @@ last_reviewed: 2026-05-08
 memory_status: active
 ---
 
-# Codex Boot Context
+# Codex 시작 맥락
 
-This page is the compact memory summary Codex should read at the start of work.
+이 페이지는 Codex가 작업 시작 시 읽어야 할 압축 기억 요약이다.
 
-## Stable Profile
+## 안정적인 Profile
 
-- Pending reviewed profile memory.
+- 검토된 profile memory를 추가한다.
 
-## Active Decisions
+## 활성 Decision
 
-- Pending decisions.
+- 활성 decision을 추가한다.
 
-## Active Workflows
+## 활성 Workflow
 
-- Use [[codex-session-boot]] as the default session start workflow.
+- [[codex-session-boot]]를 기본 세션 시작 workflow로 사용한다.
 
-## Recent Session Context
+## 최근 Session 맥락
 
-- Add recent work summaries under \`wiki/sessions/\`.
+- 최근 작업 요약은 \`wiki/sessions/\` 아래에 추가한다.
 `,
   },
 }
