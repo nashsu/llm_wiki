@@ -351,6 +351,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **Path normalization** — unified `normalizePath()` used across 22+ files, backslash → forward slash
 - **Unicode-safe string handling** — char-based slicing instead of byte-based (prevents crashes on CJK filenames)
 - **macOS close-to-hide** — close button hides window (app stays running in background), click dock icon to restore, Cmd+Q to quit
+- **macOS-style app identity** — unified Dock icon and in-app sidebar logo use the same polished compass-over-wiki mark
 - **Windows/Linux close confirmation** — confirmation dialog before quitting to prevent accidental data loss
 - **Tauri v2** — native desktop on macOS, Windows, Linux
 - **GitHub Actions CI/CD** — automated builds for macOS (ARM + Intel), Windows (.msi), Linux (.deb / .AppImage)
