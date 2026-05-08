@@ -177,6 +177,15 @@ export interface ProviderOverride {
 
 export type ProviderConfigs = Record<string, ProviderOverride>
 
+
+function filterAppFileTree(nodes: FileNode[]): FileNode[] {
+  return nodes
+    .filter((node) => node.name !== "codex-memory")
+    .map((node) => node.is_dir && node.children
+      ? { ...node, children: filterAppFileTree(node.children) }
+      : node)
+}
+
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
@@ -252,7 +261,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   dataVersion: 0,
 
   setProject: (project) => set({ project }),
-  setFileTree: (fileTree) => set({ fileTree }),
+  setFileTree: (fileTree) => set({ fileTree: filterAppFileTree(fileTree) }),
   setSelectedFile: (selectedFile) => set({ selectedFile }),
   setFileContent: (fileContent) => set({ fileContent }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),

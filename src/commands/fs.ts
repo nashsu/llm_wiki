@@ -16,8 +16,17 @@ export async function writeFile(path: string, contents: string): Promise<void> {
   return invoke<void>("write_file", { path, contents })
 }
 
+export function filterAppDirectoryTree(nodes: FileNode[]): FileNode[] {
+  return nodes
+    .filter((node) => node.name !== "codex-memory")
+    .map((node) => node.is_dir && node.children
+      ? { ...node, children: filterAppDirectoryTree(node.children) }
+      : node)
+}
+
 export async function listDirectory(path: string): Promise<FileNode[]> {
-  return invoke<FileNode[]>("list_directory", { path })
+  const nodes = await invoke<FileNode[]>("list_directory", { path })
+  return filterAppDirectoryTree(nodes)
 }
 
 export async function copyFile(

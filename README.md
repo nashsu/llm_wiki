@@ -42,7 +42,6 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Obsidian-style Dark Mode** — switch between System, Light, and Dark themes, with graph colors tuned for dark backgrounds
-- **Codexian Memory** — Codex can read profile, decision, workflow, and session memory before general wiki retrieval
 
 ## What is this?
 
@@ -95,23 +94,6 @@ The original has Schema (how the wiki works) but no formal place for **why** the
 - LLM can suggest updates based on usage patterns
 - Different from schema — schema is structural rules, purpose is directional intent
 
-### 2.5 Codexian Memory — A Wiki That Remembers the User
-
-The Codexian Memory template turns LLM Wiki into a personal memory layer for Codex. It keeps the original Raw Sources -> Wiki -> Schema discipline, while separating durable memory from recent work context so the user does not have to re-explain the same operating model every session.
-
-```text
-wiki/
-├── profile/      # User goals, preferences, judgment criteria, response style
-├── decisions/    # Confirmed choices, rationale, and reversal conditions
-├── workflows/    # Repeatable procedures and session-start rules
-├── sessions/     # Recent work summaries and handoff context
-└── synthesis/
-    └── codex-boot-context.md  # Compact boot context for Codex
-```
-
-Chat retrieval reads `purpose.md`, `wiki/synthesis/codex-boot-context.md`, and active profile/decision/workflow/session memory before general wiki search results. The user's current request and runtime instructions still have highest priority. Durable profile changes are routed through Review instead of being silently applied.
-
-Memory safety is intentionally conservative: log appends strip accidental duplicate frontmatter, review IDs continue from the persisted queue, and Review cleanup will not mark an item resolved when any named affected page is missing.
 
 ### 3. Two-Step Chain-of-Thought Ingest
 
@@ -451,13 +433,11 @@ my-wiki/
 │   ├── queries/            # Saved chat answers + research
 │   ├── synthesis/          # Cross-source analysis
 │   ├── comparisons/        # Side-by-side comparisons
-│   ├── profile/            # Codexian Memory: user profile
-│   ├── decisions/          # Codexian Memory: confirmed decisions
-│   ├── workflows/          # Codexian Memory: repeatable procedures
-│   └── sessions/           # Codexian Memory: recent work context
 ├── .obsidian/              # Obsidian vault config (auto-generated)
 └── .llm-wiki/              # App config, chat history, review items
 ```
+
+Note: if an external Codex workflow keeps a root-level `codex-memory/` folder in the same vault, LLM Wiki hides it and does not ingest, search, display, or use it as chat context.
 
 ## Star History
 

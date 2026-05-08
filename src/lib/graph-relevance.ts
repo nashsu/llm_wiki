@@ -35,15 +35,12 @@ const WEIGHTS = {
 } as const
 
 const TYPE_AFFINITY: Record<string, Record<string, number>> = {
-  entity: { concept: 1.2, entity: 0.8, source: 1.0, synthesis: 1.0, query: 0.8, profile: 0.8 },
-  concept: { entity: 1.2, concept: 0.8, source: 1.0, synthesis: 1.2, query: 1.0, workflow: 0.8 },
-  source: { entity: 1.0, concept: 1.0, source: 0.5, query: 0.8, synthesis: 1.0, session: 0.8 },
-  query: { concept: 1.0, entity: 0.8, synthesis: 1.0, source: 0.8, query: 0.5, decision: 0.8, session: 0.8 },
-  synthesis: { concept: 1.2, entity: 1.0, source: 1.0, query: 1.0, synthesis: 0.8, profile: 1.2, decision: 1.1, workflow: 1.1, session: 1.0 },
-  profile: { synthesis: 1.2, decision: 1.1, workflow: 1.1, session: 0.8, query: 0.8 },
-  decision: { synthesis: 1.1, profile: 1.1, workflow: 1.0, session: 1.0, query: 0.8 },
-  workflow: { synthesis: 1.1, profile: 1.1, decision: 1.0, session: 1.0, concept: 0.8 },
-  session: { synthesis: 1.0, profile: 0.8, decision: 1.0, workflow: 1.0, source: 0.8, query: 0.8 },
+  entity: { concept: 1.2, entity: 0.8, source: 1.0, synthesis: 1.0, query: 0.8, decision: 0.8 },
+  concept: { entity: 1.2, concept: 0.8, source: 1.0, synthesis: 1.2, query: 1.0 },
+  source: { entity: 1.0, concept: 1.0, source: 0.5, query: 0.8, synthesis: 1.0 },
+  query: { concept: 1.0, entity: 0.8, synthesis: 1.0, source: 0.8, query: 0.5, decision: 0.8 },
+  synthesis: { concept: 1.2, entity: 1.0, source: 1.0, query: 1.0, synthesis: 0.8, decision: 1.1 },
+  decision: { synthesis: 1.1, query: 0.8, source: 0.8 },
 }
 
 // ---------------------------------------------------------------------------

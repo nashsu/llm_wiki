@@ -7,7 +7,7 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  Brain, CheckSquare, Workflow, History,
+  CheckSquare,
   Image as ImageIcon,
 } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -15,7 +15,6 @@ import { readFile, writeFile, listDirectory, createDirectory } from "@/commands/
 import { lastQueryPages } from "@/components/chat/chat-panel"
 import type { DisplayMessage } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
-import { useReviewStore } from "@/stores/review-store"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
@@ -31,22 +30,7 @@ import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
 
-type MemorySaveKind = "query" | "session" | "decision" | "workflow" | "profile-review"
-
-const MEMORY_SAVE_OPTIONS: Array<{ value: MemorySaveKind; label: string }> = [
-  { value: "query", label: "Query" },
-  { value: "session", label: "Session" },
-  { value: "decision", label: "Decision" },
-  { value: "workflow", label: "Workflow" },
-  { value: "profile-review", label: "Profile Review" },
-]
-
-const MEMORY_SAVE_TARGETS: Record<Exclude<MemorySaveKind, "profile-review">, { folder: string; type: string; indexHeading: string; logLabel: string }> = {
-  query: { folder: "queries", type: "query", indexHeading: "Queries", logLabel: "query page" },
-  session: { folder: "sessions", type: "session", indexHeading: "Sessions", logLabel: "session memory" },
-  decision: { folder: "decisions", type: "decision", indexHeading: "Decisions", logLabel: "decision memory" },
-  workflow: { folder: "workflows", type: "workflow", indexHeading: "Workflows", logLabel: "workflow memory" },
-}
+const SAVE_TARGET = { folder: "queries", type: "query", indexHeading: "Queries", logLabel: "query page" }
 
 export function useSourceFiles() {
   const project = useWikiStore((s) => s.project)
@@ -177,7 +161,6 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saveKind, setSaveKind] = useState<MemorySaveKind>("query")
 
   const handleSave = useCallback(async () => {
     if (!project || saving) return
@@ -199,27 +182,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
 
-      if (saveKind === "profile-review") {
-        useReviewStore.getState().addItem({
-          type: "suggestion",
-          title: `Profile memory review: ${title}`,
-          description: [
-            "Review this candidate before adding it to wiki/profile.",
-            "",
-            cleanContent,
-          ].join("\n"),
-          affectedPages: ["wiki/profile/user-operating-model.md"],
-          options: [
-            { label: "Create Page", action: "create" },
-            { label: "Skip", action: "skip" },
-          ],
-        })
-        setSaved(true)
-        setTimeout(() => setSaved(false), 2000)
-        return
-      }
-
-      const target = MEMORY_SAVE_TARGETS[saveKind]
+      const target = SAVE_TARGET
       await createDirectory(`${pp}/wiki/${target.folder}`).catch(() => {})
       const filePath = `${pp}/wiki/${target.folder}/${fileName}`
 
@@ -229,12 +192,10 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         `title: "${title.replace(/"/g, '\\"')}"`,
         `created: ${date}`,
         `updated: ${date}`,
-        `tags: [codexian-memory]`,
         `related: []`,
         `sources: ["chat"]`,
         `confidence: medium`,
         `last_reviewed: ${date}`,
-        `memory_status: active`,
         "---",
         "",
       ].join("\n")
@@ -297,23 +258,12 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     } finally {
       setSaving(false)
     }
-  }, [project, content, saving, saveKind, setFileTree])
+  }, [project, content, saving, setFileTree])
 
   if (!visible && !saved) return null
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      <select
-        value={saveKind}
-        onChange={(e) => setSaveKind(e.target.value as MemorySaveKind)}
-        disabled={saving}
-        className="h-6 rounded border bg-background px-1 text-[11px] text-muted-foreground"
-        title="Choose where to save this answer"
-      >
-        {MEMORY_SAVE_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
       <button
         type="button"
         onClick={handleSave}
@@ -322,7 +272,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         title="Save to wiki"
       >
         <BookmarkPlus className="h-3 w-3" />
-        {saved ? "Saved!" : saving ? "Saving..." : saveKind === "query" ? "Save to Wiki" : "Save as Memory"}
+        {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
       </button>
     </div>
   )
@@ -341,10 +291,7 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   synthesis: { icon: GitMerge, color: "text-red-500" },
   comparison: { icon: BarChart3, color: "text-teal-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
-  profile: { icon: Brain, color: "text-pink-500" },
   decision: { icon: CheckSquare, color: "text-lime-500" },
-  workflow: { icon: Workflow, color: "text-orange-500" },
-  session: { icon: History, color: "text-sky-500" },
   clip: { icon: Globe, color: "text-blue-400" },
 }
 
@@ -355,10 +302,7 @@ function getRefType(path: string): string {
   if (path.includes("/queries/")) return "query"
   if (path.includes("/synthesis/")) return "synthesis"
   if (path.includes("/comparisons/")) return "comparison"
-  if (path.includes("/profile/")) return "profile"
   if (path.includes("/decisions/")) return "decision"
-  if (path.includes("/workflows/")) return "workflow"
-  if (path.includes("/sessions/")) return "session"
   if (path.includes("overview")) return "overview"
   if (path.includes("raw/sources/")) return "clip"
   return "source"

@@ -26,7 +26,6 @@ const TREE: FileNode[] = [
     dir(`${WIKI}/concepts`, [file(`${WIKI}/concepts/bar.md`)]),
     dir(`${WIKI}/queries`, [file(`${WIKI}/queries/what-is-foo.md`)]),
     dir(`${WIKI}/sources`, [file(`${WIKI}/sources/paper.md`)]),
-    dir(`${WIKI}/profile`, [file(`${WIKI}/profile/user-judgment-criteria.md`)]),
   ]),
   dir(`${PP}/raw`, [
     dir(`${SOURCES}`, [
@@ -135,11 +134,6 @@ describe("resolveRelatedSlug", () => {
     )
   })
 
-  it("finds profile pages by bare slug", () => {
-    expect(resolveRelatedSlug(TREE, "user-judgment-criteria", WIKI)).toBe(
-      `${WIKI}/profile/user-judgment-criteria.md`,
-    )
-  })
 
   it("accepts bare filename with .md extension", () => {
     expect(resolveRelatedSlug(TREE, "foo.md", WIKI)).toBe(`${WIKI}/entities/foo.md`)

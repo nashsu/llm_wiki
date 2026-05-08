@@ -32,13 +32,13 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("MANDATORY OUTPUT LANGUAGE: English")
   })
 
-  it("contains structural analysis sections", () => {
+  it("contains structural analysis sections without Codex memory classification", () => {
     const prompt = buildAnalysisPrompt("", "", "")
     expect(prompt).toContain("## Key Entities")
     expect(prompt).toContain("## Key Concepts")
     expect(prompt).toContain("## Main Arguments & Findings")
     expect(prompt).toContain("## Recommendations")
-    expect(prompt).toContain("## Codexian Memory Classification")
+    expect(prompt).not.toContain("Codexian Memory")
   })
 })
 
@@ -66,11 +66,12 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("my-paper.pdf")
   })
 
-  it("allows Codexian Memory page types and profile review guardrails", () => {
+  it("does not generate Codex memory page types or profile review guardrails", () => {
     const prompt = buildGenerationPrompt("", "", "", "session.md")
-    expect(prompt).toContain("decision | workflow | session | profile")
-    expect(prompt).toContain("Do NOT silently overwrite durable profile pages")
-    expect(prompt).toContain("- confirm: profile memory")
+    expect(prompt).toContain("source | entity | concept | comparison | query | synthesis | decision")
+    expect(prompt).not.toContain("workflow | session | profile")
+    expect(prompt).not.toContain("durable profile")
+    expect(prompt).not.toContain("profile memory")
   })
 
   it("respects user setting regardless of source content language", () => {

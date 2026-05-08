@@ -9,10 +9,7 @@ import {
   BookOpen,
   Calendar,
   Hash,
-  Brain,
   CheckSquare,
-  Workflow,
-  History,
 } from "lucide-react"
 
 export interface WikiTypeStyle {
@@ -81,29 +78,11 @@ export const WIKI_TYPE_STYLES: Record<string, WikiTypeStyle> = {
     chipClass: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
     dotClass: "bg-indigo-500",
   },
-  profile: {
-    label: "Profile",
-    icon: Brain,
-    chipClass: "bg-pink-500/15 text-pink-700 dark:text-pink-300",
-    dotClass: "bg-pink-500",
-  },
   decision: {
     label: "Decision",
     icon: CheckSquare,
     chipClass: "bg-lime-500/15 text-lime-700 dark:text-lime-300",
     dotClass: "bg-lime-500",
-  },
-  workflow: {
-    label: "Workflow",
-    icon: Workflow,
-    chipClass: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
-    dotClass: "bg-orange-500",
-  },
-  session: {
-    label: "Session",
-    icon: History,
-    chipClass: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-    dotClass: "bg-sky-500",
   },
 }
 

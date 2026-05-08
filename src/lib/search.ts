@@ -305,7 +305,7 @@ export async function searchWiki(
       let added = 0
       for (const vr of vectorResults) {
         if (knownIds.has(vr.id)) continue
-        const dirs = ["entities", "concepts", "sources", "synthesis", "comparisons", "comparison", "queries", "profile", "decisions", "workflows", "sessions"]
+        const dirs = ["entities", "concepts", "sources", "synthesis", "comparisons", "comparison", "queries", "decisions"]
         for (const dir of dirs) {
           const tryPath = `${pp}/wiki/${dir}/${vr.id}.md`
           try {

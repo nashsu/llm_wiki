@@ -14,7 +14,6 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
-import { buildMemoryContext } from "@/lib/memory-context"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -206,10 +205,6 @@ export function ChatPanel() {
           readFile(`${pp}/wiki/index.md`).catch(() => ""),
           readFile(`${pp}/purpose.md`).catch(() => ""),
         ])
-        const memoryBudget = Math.floor(PAGE_BUDGET * 0.2)
-        const effectivePageBudget = PAGE_BUDGET - memoryBudget
-        const memoryContext = await buildMemoryContext(pp, memoryBudget)
-
         // ── Phase 1: Tokenized search → top 10 ────────────────
         const searchResults = await searchWiki(pp, text)
         const topSearchResults = searchResults.slice(0, 10)
@@ -269,14 +264,14 @@ export function ChatPanel() {
         const relevantPages: PageEntry[] = []
 
         const tryAddPage = async (title: string, filePath: string, priority: number): Promise<boolean> => {
-          if (usedChars >= effectivePageBudget) return false
+          if (usedChars >= PAGE_BUDGET) return false
           try {
             const raw = await readFile(filePath)
             const relativePath = getRelativePath(filePath, pp)
             const truncated = raw.length > MAX_PAGE_SIZE
               ? raw.slice(0, MAX_PAGE_SIZE) + "\n\n[...truncated...]"
               : raw
-            if (usedChars + truncated.length > effectivePageBudget) return false
+            if (usedChars + truncated.length > PAGE_BUDGET) return false
             usedChars += truncated.length
             relevantPages.push({ title, path: relativePath, content: truncated, priority })
             return true
@@ -328,7 +323,6 @@ export function ChatPanel() {
             "Use markdown formatting for clarity.",
             "",
             purpose ? `## Wiki Purpose\n${purpose}` : "",
-            memoryContext.content,
             index ? `## Wiki Index\n${index}` : "",
             relevantPages.length > 0 ? `## Page List\n${pageList}` : "",
             `## Wiki Pages\n\n${pagesContext}`,
@@ -349,10 +343,7 @@ export function ChatPanel() {
         // (after history so it's the last system instruction the LLM sees).
         langReminder = buildLanguageReminder(text)
 
-        lastQueryPages = [
-          ...memoryContext.pages,
-          ...relevantPages.map((p) => ({ title: p.title, path: p.path })),
-        ]
+        lastQueryPages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
         queryRefs = [...lastQueryPages]
       }
 
