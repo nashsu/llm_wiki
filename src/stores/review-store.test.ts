@@ -14,7 +14,7 @@ function makeInput(overrides: Partial<Omit<ReviewItem, "id" | "resolved" | "crea
 
 // Reset the store between tests — Zustand stores are module-level singletons.
 beforeEach(() => {
-  useReviewStore.setState({ items: [] })
+  useReviewStore.getState().setItems([])
 })
 
 describe("review-store addItem", () => {
@@ -33,6 +33,25 @@ describe("review-store addItem", () => {
     store.addItem(makeInput({ title: "Same" }))
     store.addItem(makeInput({ title: "Same" }))
     expect(useReviewStore.getState().items).toHaveLength(2)
+  })
+
+  it("continues IDs after persisted review items are loaded", () => {
+    useReviewStore.getState().setItems([
+      {
+        id: "review-22",
+        type: "suggestion",
+        title: "Persisted",
+        description: "description",
+        options: [],
+        resolved: false,
+        createdAt: 1,
+      },
+    ])
+
+    useReviewStore.getState().addItem(makeInput({ title: "New" }))
+
+    const items = useReviewStore.getState().items
+    expect(items[items.length - 1]?.id).toBe("review-23")
   })
 })
 
@@ -159,6 +178,30 @@ describe("review-store addItems dedupe", () => {
     const b = items.find((i) => i.title.toLowerCase().includes("b"))
     expect(a?.affectedPages).toEqual(["1.md", "2.md", "4.md"])
     expect(b?.affectedPages).toEqual(["3.md"])
+  })
+
+  it("continues bulk IDs after persisted review items are loaded", () => {
+    useReviewStore.getState().setItems([
+      {
+        id: "review-9",
+        type: "suggestion",
+        title: "Persisted",
+        description: "description",
+        options: [],
+        resolved: false,
+        createdAt: 1,
+      },
+    ])
+
+    useReviewStore.getState().addItems([
+      makeInput({ title: "A" }),
+      makeInput({ title: "B" }),
+    ])
+
+    expect(useReviewStore.getState().items.slice(-2).map((item) => item.id)).toEqual([
+      "review-10",
+      "review-11",
+    ])
   })
 
   it("invariant: after addItems, no two pending items share (type, normalized title)", () => {

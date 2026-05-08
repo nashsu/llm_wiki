@@ -121,6 +121,23 @@ function pageExists(name: string, index: WikiIndex): boolean {
   return false
 }
 
+function affectedPageExists(path: string, index: Pick<WikiIndex, "byId">): boolean {
+  const base = path.split("/").pop()?.replace(/\.md$/, "").toLowerCase()
+  return Boolean(base && index.byId.has(base))
+}
+
+export function canApplyLlmReviewResolution(
+  item: ReviewItem,
+  index: Pick<WikiIndex, "byId">,
+): boolean {
+  if (item.type === "contradiction" || item.type === "confirm") return false
+
+  const affected = item.affectedPages ?? []
+  if (affected.length === 0) return true
+
+  return affected.every((path) => affectedPageExists(path, index))
+}
+
 /**
  * Extract a JSON object from an LLM response.
  *
@@ -224,6 +241,7 @@ async function judgeBatch(
     "",
     "For each review item, decide whether the underlying condition has been RESOLVED by the current wiki state.",
     "Be conservative: only mark as resolved if you are confident the concern no longer applies.",
+    "Do not mark a review resolved when any named affected page is missing from the current wiki.",
     "For contradictions, confirmations, or human-judgment items, default to keeping them pending.",
     "",
     'Respond with ONLY a JSON object in this exact shape: {"resolved": ["id1", "id2"]}',
@@ -417,8 +435,11 @@ export async function sweepResolvedReviews(
       // or aborted between the LLM call starting and finishing.
       if (!signal?.aborted && matchesCurrentProject(projectPath)) {
         for (const id of resolvedIds) {
-          store.resolveItem(id, "llm-judged")
-          llmResolved++
+          const item = stillPending.find((pendingItem) => pendingItem.id === id)
+          if (item && canApplyLlmReviewResolution(item, index)) {
+            store.resolveItem(id, "llm-judged")
+            llmResolved++
+          }
         }
       }
     } catch (err) {

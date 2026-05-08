@@ -113,6 +113,8 @@ wiki/
 
 Chat retrieval은 `purpose.md`, `wiki/synthesis/codex-boot-context.md`, profile/decision/workflow/session memory를 일반 검색 결과보다 먼저 읽습니다. 단, 사용자의 현재 요청과 런타임 지시가 항상 최우선입니다. Profile 변경처럼 민감하거나 오래 남는 기억은 바로 확정하지 않고 Review에 올리도록 설계되어 있습니다.
 
+기억 안전장치는 보수적으로 동작합니다. log append는 실수로 섞인 중복 frontmatter를 제거하고, review ID는 저장된 queue의 마지막 번호 뒤에서 이어지며, Review cleanup은 affected page가 하나라도 없으면 해당 item을 resolved로 바꾸지 않습니다.
+
 ### 3. 2단계 Chain-of-Thought Ingest
 
 단일 LLM 호출로 읽기와 쓰기를 동시에 처리하지 않고, 두 번의 순차 호출로 품질을 높입니다.

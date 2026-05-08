@@ -16,6 +16,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { appendLogContent } from "@/lib/log-append"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -94,7 +95,7 @@ export function ReviewView() {
         const logPath = `${pp}/wiki/log.md`
         let logContent = ""
         try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
-        await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Saved query page \`${fileName}\`\n`)
+        await writeFile(logPath, appendLogContent(logContent, `- ${date}: Saved query page \`${fileName}\`\n`))
 
         // Refresh tree
         const tree = await listDirectory(pp)
@@ -201,7 +202,7 @@ export function ReviewView() {
           const logPath = `${pp}/wiki/log.md`
           let logContent = ""
           try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
-          await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Created ${pageType} page \`${fileName}\` from review\n`)
+          await writeFile(logPath, appendLogContent(logContent, `- ${date}: Created ${pageType} page \`${fileName}\` from review\n`))
 
           // Refresh
           const tree = await listDirectory(pp)

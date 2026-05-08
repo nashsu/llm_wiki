@@ -25,6 +25,7 @@ import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
+import { appendLogContent } from "@/lib/log-append"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 // Module-level cache of source file names
@@ -273,7 +274,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         logContent = "# Wiki Log\n\n"
       }
       const logEntry = `- ${date}: Saved ${target.logLabel} \`${fileName}\`\n`
-      await writeFile(logPath, logContent.trimEnd() + "\n" + logEntry)
+      await writeFile(logPath, appendLogContent(logContent, logEntry))
 
       // Refresh file tree and update graph
       const tree = await listDirectory(pp)

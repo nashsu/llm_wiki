@@ -14,6 +14,7 @@ import { normalizePath, getFileName } from "@/lib/path-utils"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { decidePageFate } from "@/lib/source-delete-decision"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
+import { appendLogContent } from "@/lib/log-append"
 import {
   collectAllFilesIncludingDot,
   decideDeleteClick,
@@ -395,7 +396,7 @@ export function SourcesView() {
       const date = new Date().toISOString().slice(0, 10)
       const keptCount = relatedPages.length - actuallyDeleted.length
       const logEntry = `\n## [${date}] delete | ${fileName}\n\nDeleted source file and ${actuallyDeleted.length} wiki pages.${keptCount > 0 ? ` ${keptCount} shared pages kept (have other sources).` : ""}\n`
-      await writeFile(logPath, logContent.trimEnd() + logEntry)
+      await writeFile(logPath, appendLogContent(logContent, logEntry))
     } catch {
       // non-critical
     }
@@ -762,4 +763,3 @@ function DeleteButton({
     </Button>
   )
 }
-

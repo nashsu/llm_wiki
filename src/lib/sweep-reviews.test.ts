@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest"
-import { extractJsonObject } from "./sweep-reviews"
+import { canApplyLlmReviewResolution, extractJsonObject } from "./sweep-reviews"
+import type { ReviewItem } from "@/stores/review-store"
+
+function makeReview(overrides: Partial<ReviewItem> = {}): ReviewItem {
+  return {
+    id: "review-1",
+    type: "suggestion",
+    title: "Review",
+    description: "description",
+    affectedPages: [],
+    options: [],
+    resolved: false,
+    createdAt: 1,
+    ...overrides,
+  }
+}
 
 describe("extractJsonObject", () => {
   describe("bare JSON", () => {
@@ -127,5 +142,38 @@ describe("extractJsonObject", () => {
       const raw = 'I analyzed the reviews. Final answer:\n\n{"resolved": ["abc"]}'
       expect(JSON.parse(extractJsonObject(raw))).toEqual({ resolved: ["abc"] })
     })
+  })
+})
+
+describe("canApplyLlmReviewResolution", () => {
+  it("keeps an LLM-resolved suggestion pending when any affected page is missing", () => {
+    const item = makeReview({
+      affectedPages: [
+        "wiki/concepts/self-wiki.md",
+        "wiki/queries/security-guidelines-for-personal-data.md",
+      ],
+    })
+
+    expect(canApplyLlmReviewResolution(item, { byId: new Set(["self-wiki"]) })).toBe(false)
+  })
+
+  it("allows an LLM-resolved suggestion only when all affected pages exist", () => {
+    const item = makeReview({
+      affectedPages: [
+        "wiki/concepts/self-wiki.md",
+        "queries/security-guidelines-for-personal-data.md",
+      ],
+    })
+
+    expect(canApplyLlmReviewResolution(item, {
+      byId: new Set(["self-wiki", "security-guidelines-for-personal-data"]),
+    })).toBe(true)
+  })
+
+  it("never lets LLM cleanup resolve confirmation or contradiction items", () => {
+    const index = { byId: new Set(["profile"]) }
+
+    expect(canApplyLlmReviewResolution(makeReview({ type: "confirm" }), index)).toBe(false)
+    expect(canApplyLlmReviewResolution(makeReview({ type: "contradiction" }), index)).toBe(false)
   })
 })

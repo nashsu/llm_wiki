@@ -32,6 +32,21 @@ interface ReviewState {
 
 let counter = 0
 
+function maxReviewCounter(items: readonly ReviewItem[]): number {
+  let max = 0
+  for (const item of items) {
+    const match = item.id.match(/^review-(\d+)$/)
+    if (!match) continue
+    max = Math.max(max, Number(match[1]))
+  }
+  return max
+}
+
+function nextReviewId(existingItems: readonly ReviewItem[]): string {
+  counter = Math.max(counter, maxReviewCounter(existingItems))
+  return `review-${++counter}`
+}
+
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
 
@@ -41,7 +56,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         ...state.items,
         {
           ...item,
-          id: `review-${++counter}`,
+          id: nextReviewId(state.items),
           resolved: false,
           createdAt: Date.now(),
         },
@@ -55,6 +70,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
       // from multiple files).
       // Merge affectedPages / searchQueries / sourcePath instead of duplicating.
       const result = [...state.items]
+      counter = Math.max(counter, maxReviewCounter(result))
       const keyFor = (t: string, title: string) => `${t}::${normalizeReviewTitle(title)}`
 
       // Build index of existing pending items for fast lookup
@@ -96,7 +112,10 @@ export const useReviewStore = create<ReviewState>((set) => ({
       return { items: result }
     }),
 
-  setItems: (items) => set({ items }),
+  setItems: (items) => {
+    counter = maxReviewCounter(items)
+    set({ items })
+  },
 
   resolveItem: (id, action) =>
     set((state) => ({

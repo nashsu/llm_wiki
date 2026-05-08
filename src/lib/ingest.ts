@@ -8,6 +8,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
+import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
 import {
@@ -828,7 +829,7 @@ async function writeFileBlocks(
     try {
       if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
         const existing = await tryReadFile(fullPath)
-        const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
+        const appended = appendLogContent(existing, content)
         await writeFile(fullPath, appended)
       } else if (
         relativePath === "wiki/index.md" ||
@@ -1570,9 +1571,7 @@ export async function executeIngestWrites(
     try {
       if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
         const existing = await tryReadFile(fullPath)
-        const appended = existing
-          ? `${existing}\n\n${content.trim()}`
-          : content.trim()
+        const appended = appendLogContent(existing, content)
         await writeFile(fullPath, appended)
       } else {
         await writeFile(fullPath, content)
