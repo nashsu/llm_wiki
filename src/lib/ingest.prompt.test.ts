@@ -38,6 +38,7 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Key Concepts")
     expect(prompt).toContain("## Main Arguments & Findings")
     expect(prompt).toContain("## Recommendations")
+    expect(prompt).toContain("## Codexian Memory Classification")
   })
 })
 
@@ -63,6 +64,13 @@ describe("buildGenerationPrompt language directive", () => {
   it("includes the source filename in output instructions", () => {
     const prompt = buildGenerationPrompt("", "", "", "my-paper.pdf")
     expect(prompt).toContain("my-paper.pdf")
+  })
+
+  it("allows Codexian Memory page types and profile review guardrails", () => {
+    const prompt = buildGenerationPrompt("", "", "", "session.md")
+    expect(prompt).toContain("decision | workflow | session | profile")
+    expect(prompt).toContain("Do NOT silently overwrite durable profile pages")
+    expect(prompt).toContain("- confirm: profile memory")
   })
 
   it("respects user setting regardless of source content language", () => {

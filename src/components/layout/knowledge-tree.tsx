@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import {
   FileText, Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, ChevronRight, ChevronDown, Layout, Globe, Trash2,
+  Brain, CheckSquare, Workflow, History,
 } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,10 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color:
   synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 4 },
   comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 5 },
   query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 6 },
+  profile:     { icon: Brain,       label: "Profile",      color: "text-pink-500",   order: 7 },
+  decision:    { icon: CheckSquare, label: "Decisions",    color: "text-lime-500",   order: 8 },
+  workflow:    { icon: Workflow,    label: "Workflows",    color: "text-orange-500", order: 9 },
+  session:     { icon: History,     label: "Sessions",     color: "text-sky-500",    order: 10 },
 }
 
 const DEFAULT_CONFIG = { icon: FileText, label: "Other", color: "text-muted-foreground", order: 99 }
@@ -38,7 +43,7 @@ export function KnowledgeTree() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
-  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source", "profile", "decision", "workflow", "session"]))
   // Two-stage delete: first click arms the row, second click executes.
   // Only one row armed at a time (clicking another row replaces).
   const [armedPath, setArmedPath] = useState<string | null>(null)

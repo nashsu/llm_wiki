@@ -6,6 +6,7 @@ export interface WikiTemplate {
   schema: string
   purpose: string
   extraDirs: string[]
+  extraFiles?: Record<string, string>
 }
 
 const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | Named things (people, tools, organizations, datasets) |
@@ -14,7 +15,11 @@ const BASE_SCHEMA_TYPES = `| entity | wiki/entities/ | Named things (people, too
 | query | wiki/queries/ | Open questions under active investigation |
 | comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
 | synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
-| overview | wiki/ | High-level project summary (one per project) |`
+| overview | wiki/ | High-level project summary (one per project) |
+| profile | wiki/profile/ | Durable user preferences, operating model, and personal context |
+| decision | wiki/decisions/ | Confirmed choices and rationale that should guide future work |
+| workflow | wiki/workflows/ | Repeatable procedures, checklists, and working agreements |
+| session | wiki/sessions/ | Recent work summaries and handoff context |`
 
 const BASE_NAMING = `- Files: \`kebab-case.md\`
 - Entities: match official name where possible (e.g., \`openai.md\`, \`gpt-4.md\`)
@@ -26,12 +31,16 @@ const BASE_FRONTMATTER = `All pages must include YAML frontmatter:
 
 \`\`\`yaml
 ---
-type: entity | concept | source | query | comparison | synthesis | overview
+type: entity | concept | source | query | comparison | synthesis | overview | profile | decision | workflow | session
 title: Human-readable title
 tags: []
 related: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
+sources: []
+confidence: low | medium | high
+last_reviewed: YYYY-MM-DD
+memory_status: active | candidate | superseded
 ---
 \`\`\`
 
@@ -65,6 +74,22 @@ const BASE_CONTRADICTION = `When sources contradict each other:
 2. Create or update a query page to track the open question
 3. Link both sources from the query page
 4. Resolve in a synthesis page once sufficient evidence exists`
+
+const CODEXIAN_MEMORY_FRONTMATTER = `Codexian Memory pages use these additional meanings:
+
+- \`profile\`: durable facts about Kevin's goals, preferences, judgment criteria, and response style. Profile updates should be reviewed before becoming active.
+- \`decision\`: explicit decisions Kevin made, including date, rationale, and reversal conditions.
+- \`workflow\`: repeated procedures Codex should follow in future sessions.
+- \`session\`: recent work context, open loops, and short-lived continuity notes.
+- \`synthesis\`: compiled memory such as \`wiki/synthesis/codex-boot-context.md\`.
+
+Memory frontmatter:
+\`\`\`yaml
+sources: []
+confidence: low | medium | high
+last_reviewed: YYYY-MM-DD
+memory_status: active | candidate | superseded
+\`\`\``
 
 const researchTemplate: WikiTemplate = {
   id: "research",
@@ -637,7 +662,219 @@ ${BASE_CONTRADICTION}
 `,
 }
 
+const codexianMemoryTemplate: WikiTemplate = {
+  id: "codexian-memory",
+  name: "Codexian Memory",
+  description: "A personal memory wiki that helps Codex keep Kevin's context, preferences, decisions, and recent work active",
+  icon: "🧠",
+  extraDirs: [
+    "wiki/profile",
+    "wiki/decisions",
+    "wiki/workflows",
+    "wiki/sessions",
+  ],
+  schema: `# Wiki Schema — Codexian Memory
+
+## Page Types
+
+| Type | Directory | Purpose |
+|------|-----------|---------|
+${BASE_SCHEMA_TYPES}
+
+## Naming Conventions
+
+${BASE_NAMING}
+- Profile: durable topic name (e.g., \`user-operating-model.md\`)
+- Decisions: date and decision slug (e.g., \`2026-05-08-memory-context-policy.md\`)
+- Workflows: procedure name (e.g., \`codex-session-boot.md\`)
+- Sessions: date and concise session slug (e.g., \`2026-05-08-llm-wiki-codexian.md\`)
+- Boot context: always use \`wiki/synthesis/codex-boot-context.md\`
+
+## Frontmatter
+
+${BASE_FRONTMATTER}
+
+${CODEXIAN_MEMORY_FRONTMATTER}
+
+## Memory Priority
+
+When answering as Codex, apply memory in this order:
+
+1. The user's current request and active runtime instructions
+2. Active profile, decision, and workflow pages
+3. Recent session pages
+4. General wiki retrieval results
+
+Profile pages are durable and should change slowly. If a new source suggests changing Kevin's identity, preferences, or operating model, create a review item instead of silently overwriting active profile memory.
+
+## Index Format
+
+${BASE_INDEX_FORMAT}
+
+Recommended sections:
+
+- Profile
+- Decisions
+- Workflows
+- Sessions
+- Synthesis
+- Sources
+- Queries
+
+## Log Format
+
+${BASE_LOG_FORMAT}
+
+## Cross-referencing Rules
+
+${BASE_CROSSREF}
+- Profile pages link to the decisions, workflows, and sessions that justify them
+- Session pages link to decisions and workflows that changed during the session
+- \`codex-boot-context.md\` summarizes only active memory and links back to source pages
+
+## Contradiction Handling
+
+${BASE_CONTRADICTION}
+`,
+  purpose: `# Project Purpose — Codexian Memory
+
+## Goal
+
+Codex가 Kevin의 목표, 선호, 판단 기준, 최근 작업 맥락을 유지하도록 돕는 개인 기억 Wiki입니다.
+
+## Key Questions
+
+1. Kevin이 반복해서 설명하지 않아도 Codex가 알아야 하는 운영 방식은 무엇인가?
+2. 최근 세션과 확정 결정 중 다음 작업에 영향을 주는 맥락은 무엇인가?
+3. 어떤 기억은 장기 profile로 승격하고, 어떤 기억은 session으로만 보존해야 하는가?
+
+## Scope
+
+**In scope:**
+- Kevin의 작업 선호, 응답 선호, 판단 기준, 반복 workflow
+- Codex 세션 로그와 handoff에서 추출한 최근 작업 맥락
+- 확정된 의사결정과 되돌릴 조건
+- Codex가 시작 시 읽을 \`wiki/synthesis/codex-boot-context.md\`
+
+**Out of scope:**
+- 출처가 불명확한 추측
+- 민감하거나 정체성에 가까운 profile 자동 확정
+- 원본 raw source를 지우거나 요약본으로 대체하는 일
+
+## Thesis
+
+> Raw source는 보존하고, Wiki는 Codex가 바로 사용할 수 있는 기억으로 컴파일하며, profile 변경은 사람 검토를 거친다.
+`,
+  extraFiles: {
+    "wiki/index.md": `# Wiki Index
+
+## Profile
+
+- [[profile/user-operating-model|Kevin Operating Model]]
+
+## Decisions
+
+## Workflows
+
+- [[workflows/codex-session-boot|Codex Session Boot]]
+
+## Sessions
+
+## Synthesis
+
+- [[synthesis/codex-boot-context|Codex Boot Context]]
+
+## Entities
+
+## Concepts
+
+## Sources
+
+## Queries
+
+## Comparisons
+`,
+    "wiki/profile/user-operating-model.md": `---
+type: profile
+title: Kevin Operating Model
+tags: [codexian-memory, profile]
+related: [codex-boot-context]
+created: 2026-05-08
+updated: 2026-05-08
+sources: []
+confidence: medium
+last_reviewed: 2026-05-08
+memory_status: candidate
+---
+
+# Kevin Operating Model
+
+Use this page for durable, reviewed preferences and working agreements about Kevin.
+
+## Active Memory
+
+- Add stable preferences only after review.
+`,
+    "wiki/workflows/codex-session-boot.md": `---
+type: workflow
+title: Codex Session Boot
+tags: [codexian-memory, workflow]
+related: [codex-boot-context, user-operating-model]
+created: 2026-05-08
+updated: 2026-05-08
+sources: []
+confidence: medium
+last_reviewed: 2026-05-08
+memory_status: active
+---
+
+# Codex Session Boot
+
+## Steps
+
+1. Read \`purpose.md\`.
+2. Read \`wiki/synthesis/codex-boot-context.md\`.
+3. Check recent session pages when continuity matters.
+4. Prefer active decisions and workflows over older session notes.
+`,
+    "wiki/synthesis/codex-boot-context.md": `---
+type: synthesis
+title: Codex Boot Context
+tags: [codexian-memory, boot-context]
+related: [user-operating-model, codex-session-boot]
+created: 2026-05-08
+updated: 2026-05-08
+sources: []
+confidence: medium
+last_reviewed: 2026-05-08
+memory_status: active
+---
+
+# Codex Boot Context
+
+This page is the compact memory summary Codex should read at the start of work.
+
+## Stable Profile
+
+- Pending reviewed profile memory.
+
+## Active Decisions
+
+- Pending decisions.
+
+## Active Workflows
+
+- Use [[codex-session-boot]] as the default session start workflow.
+
+## Recent Session Context
+
+- Add recent work summaries under \`wiki/sessions/\`.
+`,
+  },
+}
+
 export const templates: WikiTemplate[] = [
+  codexianMemoryTemplate,
   researchTemplate,
   readingTemplate,
   personalTemplate,

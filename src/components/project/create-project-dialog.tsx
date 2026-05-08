@@ -68,6 +68,9 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       for (const dir of template.extraDirs) {
         await createDirectory(`${pp}/${dir}`)
       }
+      for (const [relativePath, contents] of Object.entries(template.extraFiles ?? {})) {
+        await writeFile(`${pp}/${relativePath}`, contents)
+      }
 
       // Persist the user's language choice. The store / disk
       // mirror is what the rest of the app reads via

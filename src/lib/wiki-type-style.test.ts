@@ -39,6 +39,7 @@ describe("getWikiTypeStyle", () => {
     const expected = [
       "entity", "concept", "query", "source",
       "thesis", "finding", "event", "overview",
+      "profile", "decision", "workflow", "session",
     ]
     for (const t of expected) {
       const style = getWikiTypeStyle(t)
