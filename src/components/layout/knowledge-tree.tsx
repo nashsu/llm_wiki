@@ -10,6 +10,7 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
+import { SidebarProjectTitle } from "./sidebar-project-title"
 
 interface WikiPageInfo {
   path: string
@@ -153,9 +154,7 @@ export function KnowledgeTree() {
   return (
     <ScrollArea className="h-full">
       <div className="min-w-0 p-2">
-        <div className="mb-2 max-w-full whitespace-normal break-words px-2 text-xs font-semibold uppercase leading-snug text-muted-foreground">
-          {project.name}
-        </div>
+        <SidebarProjectTitle name={project.name} />
 
         {sortedGroups.length === 0 && (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">

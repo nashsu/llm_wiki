@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
+import { SidebarProjectTitle } from "./sidebar-project-title"
 
 function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   const [expanded, setExpanded] = useState(depth < 1)
@@ -68,9 +69,7 @@ export function FileTree() {
   return (
     <ScrollArea className="h-full min-w-0 overflow-hidden">
       <div className="min-w-0 p-2">
-        <div className="mb-2 max-w-full whitespace-normal break-words px-2 text-xs font-semibold uppercase leading-snug text-muted-foreground">
-          {project.name}
-        </div>
+        <SidebarProjectTitle name={project.name} />
         {fileTree.map((node) => (
           <TreeNode key={node.path} node={node} depth={0} />
         ))}
