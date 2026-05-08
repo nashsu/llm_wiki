@@ -36,6 +36,9 @@ export function findInTreeByName(
   targetName: string,
   pathContains: string,
 ): string | null {
+  const targetNameKey = normalizeLookupPath(targetName)
+  const pathContainsKey = normalizeLookupPath(pathContains)
+
   function walk(nodes: FileNode[]): string | null {
     for (const node of nodes) {
       if (node.is_dir) {
@@ -45,7 +48,10 @@ export function findInTreeByName(
         }
         continue
       }
-      if (node.name === targetName && node.path.includes(pathContains)) {
+      if (
+        normalizeLookupPath(node.name) === targetNameKey &&
+        normalizeLookupPath(node.path).includes(pathContainsKey)
+      ) {
         return node.path
       }
     }
@@ -119,9 +125,11 @@ export function resolveSourceName(
 }
 
 function findInTreeByPath(tree: FileNode[], targetPath: string): string | null {
+  const targetPathKey = normalizeLookupPath(targetPath)
+
   function walk(nodes: FileNode[]): string | null {
     for (const node of nodes) {
-      if (node.path === targetPath) return node.path
+      if (normalizeLookupPath(node.path) === targetPathKey) return node.path
       if (node.is_dir && node.children) {
         const r = walk(node.children)
         if (r) return r
@@ -130,4 +138,8 @@ function findInTreeByPath(tree: FileNode[], targetPath: string): string | null {
     return null
   }
   return walk(tree)
+}
+
+function normalizeLookupPath(path: string): string {
+  return path.replace(/\\/g, "/").normalize("NFC")
 }

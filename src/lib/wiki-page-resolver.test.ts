@@ -26,6 +26,7 @@ const TREE: FileNode[] = [
     dir(`${WIKI}/concepts`, [file(`${WIKI}/concepts/bar.md`)]),
     dir(`${WIKI}/queries`, [file(`${WIKI}/queries/what-is-foo.md`)]),
     dir(`${WIKI}/sources`, [file(`${WIKI}/sources/paper.md`)]),
+    dir(`${WIKI}/profile`, [file(`${WIKI}/profile/user-judgment-criteria.md`)]),
   ]),
   dir(`${PP}/raw`, [
     dir(`${SOURCES}`, [
@@ -98,6 +99,26 @@ describe("findInTreeByName", () => {
     )
   })
 
+  it("matches macOS decomposed Hangul paths against composed project paths", () => {
+    const composedProject = "/Users/kevin/내 드라이브/LLM WIKI Vault"
+    const decomposedProject = composedProject.normalize("NFD")
+    const hangulTree = [
+      dir(`${decomposedProject}/raw`, [
+        dir(`${decomposedProject}/raw/sources`, [
+          file(`${decomposedProject}/raw/sources/사용자 판단 기준.md`.normalize("NFD")),
+        ]),
+      ]),
+    ]
+
+    expect(
+      findInTreeByName(
+        hangulTree,
+        "사용자 판단 기준.md",
+        `${composedProject}/raw/sources/`,
+      ),
+    ).toBe(`${decomposedProject}/raw/sources/사용자 판단 기준.md`.normalize("NFD"))
+  })
+
   it("returns null when nothing matches", () => {
     expect(findInTreeByName(TREE, "missing.md", `${WIKI}/`)).toBeNull()
   })
@@ -111,6 +132,12 @@ describe("resolveRelatedSlug", () => {
   it("finds queries with hyphenated slugs", () => {
     expect(resolveRelatedSlug(TREE, "what-is-foo", WIKI)).toBe(
       `${WIKI}/queries/what-is-foo.md`,
+    )
+  })
+
+  it("finds profile pages by bare slug", () => {
+    expect(resolveRelatedSlug(TREE, "user-judgment-criteria", WIKI)).toBe(
+      `${WIKI}/profile/user-judgment-criteria.md`,
     )
   })
 
@@ -181,5 +208,26 @@ describe("resolveSourceName", () => {
     expect(resolveSourceName(TREE, "wiki/sources/paper.md", SOURCES)).toBe(
       `${WIKI}/sources/paper.md`,
     )
+  })
+
+  it("falls back to raw/sources for bare markdown source filenames with Hangul", () => {
+    const composedProject = "/Users/kevin/내 드라이브/LLM WIKI Vault"
+    const decomposedProject = composedProject.normalize("NFD")
+    const hangulTree = [
+      dir(`${decomposedProject}/raw`, [
+        dir(`${decomposedProject}/raw/sources`, [
+          file(`${decomposedProject}/raw/sources/사용자 운영 모델.md`.normalize("NFD")),
+        ]),
+      ]),
+      dir(`${decomposedProject}/wiki`, [dir(`${decomposedProject}/wiki/sources`, [])]),
+    ]
+
+    expect(
+      resolveSourceName(
+        hangulTree,
+        "사용자 운영 모델.md",
+        `${composedProject}/raw/sources`,
+      ),
+    ).toBe(`${decomposedProject}/raw/sources/사용자 운영 모델.md`.normalize("NFD"))
   })
 })
