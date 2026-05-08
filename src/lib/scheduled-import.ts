@@ -209,7 +209,7 @@ export function resolveImportPath(projectPath: string, configPath: string): stri
   // Default to "raw/sources" if path is empty
   const path = configPath || "raw/sources"
   // If path is already absolute, use it as-is
-  if (path.startsWith("/") || path.match(/^[a-zA-Z]:\\/)) {
+  if (path.startsWith("/") || path.match(/^[a-zA-Z]:[/\\]/)) {
     return normalizePath(path)
   }
   // Otherwise, treat as relative to project path

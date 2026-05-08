@@ -283,7 +283,7 @@ function App() {
       if (savedScheduledImport) {
         // Migrate relative path to absolute (backward compatibility)
         let path = savedScheduledImport.path
-        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:\\/)) {
+        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
           path = `${proj.path}/${path}`
         }
         useWikiStore.getState().setScheduledImportConfig({

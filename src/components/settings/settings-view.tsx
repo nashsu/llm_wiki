@@ -87,7 +87,7 @@ function initialDraft(
   let displayPath = scheduledImport.path || ""
   if (!displayPath && projectPath) {
     displayPath = `${projectPath}/raw/sources`
-  } else if (displayPath && projectPath && !displayPath.startsWith("/") && !displayPath.match(/^[a-zA-Z]:\\/)) {
+  } else if (displayPath && projectPath && !displayPath.startsWith("/") && !displayPath.match(/^[a-zA-Z]:[/\\]/)) {
     // Legacy relative path - prepend project path for display
     displayPath = `${projectPath}/${displayPath}`
   }
