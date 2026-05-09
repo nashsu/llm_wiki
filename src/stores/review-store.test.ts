@@ -27,11 +27,19 @@ describe("review-store addItem", () => {
     expect(items[0].createdAt).toBeTypeOf("number")
   })
 
-  it("does NOT dedupe in addItem (single-item path is append-only)", () => {
-    // By design — dedupe only applies to addItems (bulk path from ingest).
+  it("dedupes exact repeats in addItem", () => {
     const store = useReviewStore.getState()
-    store.addItem(makeInput({ title: "Same" }))
-    store.addItem(makeInput({ title: "Same" }))
+    store.addItem(makeInput({ title: "Same", description: "same desc", affectedPages: ["a.md"] }))
+    store.addItem(makeInput({ title: "Same", description: "same desc", affectedPages: ["b.md"] }))
+    const items = useReviewStore.getState().items
+    expect(items).toHaveLength(1)
+    expect(items[0].affectedPages).toEqual(["a.md", "b.md"])
+  })
+
+  it("keeps same-title addItem entries separate when details differ", () => {
+    const store = useReviewStore.getState()
+    store.addItem(makeInput({ title: "Same", description: "first detail" }))
+    store.addItem(makeInput({ title: "Same", description: "second detail" }))
     expect(useReviewStore.getState().items).toHaveLength(2)
   })
 

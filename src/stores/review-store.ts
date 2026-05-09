@@ -31,6 +31,7 @@ interface ReviewState {
 }
 
 let counter = 0
+type ReviewInput = Omit<ReviewItem, "id" | "resolved" | "createdAt">
 
 function maxReviewCounter(items: readonly ReviewItem[]): number {
   let max = 0
@@ -47,21 +48,63 @@ function nextReviewId(existingItems: readonly ReviewItem[]): string {
   return `review-${++counter}`
 }
 
+function normalizeText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").normalize("NFC").toLowerCase()
+}
+
+function reviewTitleKey(type: string, title: string): string {
+  return `${type}::${normalizeReviewTitle(title)}`
+}
+
+function exactReviewKey(item: Pick<ReviewItem, "type" | "title" | "description">): string {
+  return `${reviewTitleKey(item.type, item.title)}::${normalizeText(item.description)}`
+}
+
+function mergeReviewData(old: ReviewItem, incoming: ReviewInput): ReviewItem {
+  const mergedPages = Array.from(new Set([...(old.affectedPages ?? []), ...(incoming.affectedPages ?? [])]))
+  const mergedQueries = Array.from(new Set([...(old.searchQueries ?? []), ...(incoming.searchQueries ?? [])]))
+  const optionKeys = new Set<string>()
+  const mergedOptions = [...old.options, ...incoming.options].filter((option) => {
+    const key = `${option.label}::${option.action}`
+    if (optionKeys.has(key)) return false
+    optionKeys.add(key)
+    return true
+  })
+
+  return {
+    ...old,
+    description: incoming.description || old.description,
+    sourcePath: incoming.sourcePath ?? old.sourcePath,
+    affectedPages: mergedPages.length > 0 ? mergedPages : undefined,
+    searchQueries: mergedQueries.length > 0 ? mergedQueries : undefined,
+    options: mergedOptions,
+  }
+}
+
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
 
   addItem: (item) =>
-    set((state) => ({
-      items: [
-        ...state.items,
-        {
-          ...item,
-          id: nextReviewId(state.items),
-          resolved: false,
-          createdAt: Date.now(),
-        },
-      ],
-    })),
+    set((state) => {
+      const result = [...state.items]
+      const incomingKey = exactReviewKey(item)
+      const existingIdx = result.findIndex((existing) =>
+        !existing.resolved && exactReviewKey(existing) === incomingKey
+      )
+
+      if (existingIdx !== -1) {
+        result[existingIdx] = mergeReviewData(result[existingIdx], item)
+        return { items: result }
+      }
+
+      result.push({
+        ...item,
+        id: nextReviewId(result),
+        resolved: false,
+        createdAt: Date.now(),
+      })
+      return { items: result }
+    }),
 
   addItems: (items) =>
     set((state) => {
@@ -71,32 +114,22 @@ export const useReviewStore = create<ReviewState>((set) => ({
       // Merge affectedPages / searchQueries / sourcePath instead of duplicating.
       const result = [...state.items]
       counter = Math.max(counter, maxReviewCounter(result))
-      const keyFor = (t: string, title: string) => `${t}::${normalizeReviewTitle(title)}`
 
       // Build index of existing pending items for fast lookup
       const pendingIndex = new Map<string, number>()
       result.forEach((it, idx) => {
         if (!it.resolved) {
-          pendingIndex.set(keyFor(it.type, it.title), idx)
+          pendingIndex.set(reviewTitleKey(it.type, it.title), idx)
         }
       })
 
       for (const incoming of items) {
-        const k = keyFor(incoming.type, incoming.title)
+        const k = reviewTitleKey(incoming.type, incoming.title)
         const existingIdx = pendingIndex.get(k)
 
         if (existingIdx !== undefined) {
           // Merge into existing
-          const old = result[existingIdx]
-          const mergedPages = Array.from(new Set([...(old.affectedPages ?? []), ...(incoming.affectedPages ?? [])]))
-          const mergedQueries = Array.from(new Set([...(old.searchQueries ?? []), ...(incoming.searchQueries ?? [])]))
-          result[existingIdx] = {
-            ...old,
-            description: incoming.description || old.description, // prefer newer description
-            sourcePath: incoming.sourcePath ?? old.sourcePath,
-            affectedPages: mergedPages.length > 0 ? mergedPages : undefined,
-            searchQueries: mergedQueries.length > 0 ? mergedQueries : undefined,
-          }
+          result[existingIdx] = mergeReviewData(result[existingIdx], incoming)
         } else {
           const newItem = {
             ...incoming,
