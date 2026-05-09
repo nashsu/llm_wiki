@@ -25,8 +25,8 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color:
   entity:      { icon: Users,       label: "Entities",     color: "text-blue-500",   order: 1 },
   concept:     { icon: Lightbulb,   label: "Concepts",     color: "text-purple-500", order: 2 },
   source:      { icon: BookOpen,    label: "Sources",      color: "text-orange-500", order: 3 },
-  synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 4 },
-  comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 5 },
+  comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 4 },
+  synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 5 },
   query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 6 },
   decision:    { icon: CheckSquare, label: "Decisions",    color: "text-lime-500",   order: 8 },
 }
@@ -41,7 +41,7 @@ export function KnowledgeTree() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
-  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source", "decision"]))
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
   // Two-stage delete: first click arms the row, second click executes.
   // Only one row armed at a time (clicking another row replaces).
   const [armedPath, setArmedPath] = useState<string | null>(null)
@@ -330,6 +330,7 @@ function parsePageInfo(path: string, fileName: string, content: string): WikiPag
     else if (path.includes("/queries/")) type = "query"
     else if (path.includes("/comparisons/")) type = "comparison"
     else if (path.includes("/synthesis/")) type = "synthesis"
+    else if (path.includes("/decisions/")) type = "decision"
     else if (fileName === "overview.md") type = "overview"
   }
 

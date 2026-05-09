@@ -431,8 +431,8 @@ my-wiki/
 │   ├── concepts/           # Theories, methods, techniques
 │   ├── sources/            # Source summaries
 │   ├── queries/            # Saved chat answers + research
-│   ├── synthesis/          # Cross-source analysis
 │   ├── comparisons/        # Side-by-side comparisons
+│   ├── synthesis/          # Cross-source analysis
 ├── .obsidian/              # Obsidian vault config (auto-generated)
 └── .llm-wiki/              # App config, chat history, review items
 ```

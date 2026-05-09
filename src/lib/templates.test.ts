@@ -16,4 +16,15 @@ describe("wiki templates", () => {
       "general",
     ])
   })
+
+  it("does not create new decision directories while preserving legacy guidance", () => {
+    const business = getTemplate("business")
+
+    expect(business.extraDirs).not.toContain("wiki/decisions")
+    expect(business.schema).not.toContain("| decision |")
+    expect(business.schema).not.toContain("type: entity | concept | source | query | comparison | synthesis | decision | overview")
+    expect(business.schema).toContain("type: decision")
+    expect(business.schema).toContain("wiki/decisions/")
+    expect(business.purpose).toContain("wiki/queries/")
+  })
 })
