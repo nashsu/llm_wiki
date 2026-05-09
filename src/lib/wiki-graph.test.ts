@@ -104,6 +104,26 @@ describe("buildWikiGraph", () => {
     expect(graph.nodes.find((node) => node.id === "concept-a")?.unresolvedSources).toEqual(["raw-only.pdf"])
   })
 
+  it("resolves raw source filenames through clean source summary pages", async () => {
+    installWiki({
+      [`${WIKI}/concepts/concept-a.md`]: page(
+        'type: concept\ntitle: Concept A\nsources: ["OpenClaw vs Hermes-20260509.md"]',
+      ),
+      [`${WIKI}/sources/openclaw-vs-hermes-source.md`]: page(
+        'type: source\ntitle: OpenClaw vs Hermes\nsources: ["OpenClaw vs Hermes-20260509.md"]',
+      ),
+    })
+
+    const graph = await buildWikiGraph(PROJECT)
+
+    expect(graph.edges).toHaveLength(1)
+    expect(graph.edges[0]).toMatchObject({
+      source: "concept-a",
+      target: "openclaw-vs-hermes-source",
+      types: ["source"],
+    })
+  })
+
   it("merges duplicate relation types into one edge", async () => {
     installWiki({
       [`${WIKI}/concepts/concept-a.md`]: page(

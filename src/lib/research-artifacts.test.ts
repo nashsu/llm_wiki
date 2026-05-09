@@ -77,7 +77,7 @@ describe("research save plan", () => {
 
     expect(plan.primaryType).toBe("synthesis")
     expect(plan.queryRecordPath).toBe(
-      "wiki/queries/deep-research-hermes에-대해서-조사해서-최신자료-기준으로-정리해줘-2026-05-09-123456.md",
+      "wiki/queries/hermes-agent-operating-model-2026-05-09-123456.md",
     )
     expect(plan.primaryPath).toBe("wiki/synthesis/hermes-agent-operating-model.md")
     expect(plan.related).toEqual(["obsidian"])
@@ -129,8 +129,9 @@ describe("research save plan", () => {
       references: "1. Source",
     })
 
-    expect(page).toContain('title: "Research Log: 안드레 카파시 스킬"')
-    expect(page).toContain("# Research Log: 안드레 카파시 스킬")
+    expect(page).toContain('title: "안드레 카파시 스킬"')
+    expect(page).toContain('original_query: "안드레이 카파시 (Andrej Karpathy)가 만든 skill 조사해서 핵심 인싸이트 정리해줘."')
+    expect(page).toContain("# 안드레 카파시 스킬")
     expect(page).toContain("## Original Query")
     expect(page).toContain("조사해서 핵심 인싸이트 정리해줘")
   })

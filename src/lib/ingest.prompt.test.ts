@@ -95,9 +95,9 @@ describe("buildGenerationPrompt language directive", () => {
       "딥리서치 기록",
       { sourceSummaryTitle: "안드레 카파시 스킬" },
     )
-    expect(prompt).toContain("A source summary page at **wiki/sources/deep-research-karpathy.md**")
+    expect(prompt).toContain("A source summary page at **wiki/sources/안드레-카파시-스킬-source.md**")
     expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬"')
-    expect(prompt).toContain("Do not use the original research question as the page title")
+    expect(prompt).toContain("Do not use the original filename, raw research question, or command text as the page title")
   })
 
   it("does not generate Codex memory page types or profile review guardrails", () => {

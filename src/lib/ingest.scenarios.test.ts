@@ -546,7 +546,7 @@ describe("deep research ingest options", () => {
     pendingResponses = [
       "## Key Concepts\n- 카파시 스킬\n",
       [
-        "---FILE: wiki/sources/deep-research-karpathy.md---",
+        "---FILE: wiki/sources/안드레-카파시-스킬-source.md---",
         "---",
         "type: source",
         "title: Research: 안드레이 카파시가 만든 skill 조사해서 핵심 인사이트 정리해줘",
@@ -582,8 +582,8 @@ describe("deep research ingest options", () => {
       { sourceSummaryTitle: "안드레 카파시 스킬" },
     )
 
-    expect(written).toContain("wiki/sources/deep-research-karpathy.md")
-    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "deep-research-karpathy.md"))
+    expect(written).toContain("wiki/sources/안드레-카파시-스킬-source.md")
+    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "안드레-카파시-스킬-source.md"))
     expect(content).toContain('title: "안드레 카파시 스킬"')
     expect(content).toContain("# 안드레 카파시 스킬")
     expect(content).not.toContain("# Research: 안드레이 카파시")

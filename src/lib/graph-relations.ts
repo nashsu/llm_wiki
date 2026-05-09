@@ -21,6 +21,7 @@ export interface GraphResolvableNode {
   id: string
   type: string
   path: string
+  sources?: string[]
 }
 
 export interface GraphReferenceResolver {
@@ -84,6 +85,10 @@ export function buildGraphReferenceResolver(
       addIdLookup(sourceIds, node.id, node.id)
       addIdLookup(sourceIds, fileName, node.id)
       addIdLookup(sourceIds, fileNameToGraphId(fileName), node.id)
+      for (const sourceName of node.sources ?? []) {
+        addIdLookup(sourceIds, sourceName, node.id)
+        addIdLookup(sourceIds, stripAnyExtension(sourceName), node.id)
+      }
 
       if (relativeWikiPath) {
         addPathLookup(sourcePaths, `wiki/${relativeWikiPath}`, node.id)
@@ -221,6 +226,10 @@ function normalizeSlashes(value: string): string {
 
 function stripMdExtension(value: string): string {
   return value.replace(/\.md$/i, "")
+}
+
+function stripAnyExtension(value: string): string {
+  return value.replace(/\.[^./\\]+$/i, "")
 }
 
 function basename(path: string): string {

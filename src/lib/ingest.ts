@@ -57,6 +57,10 @@ function resolveCaptionConfig(
 import { buildLanguageDirective } from "@/lib/output-language"
 import { detectLanguage } from "@/lib/detect-language"
 import { sameScriptFamily } from "@/lib/language-metadata"
+import {
+  buildSourceSummaryPlan,
+  type SourceSummaryPlan,
+} from "@/lib/wiki-title"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -633,8 +637,10 @@ async function generateOllamaSplitFileBlocks(params: {
     onProgress,
     options,
   } = params
-  const sourceBaseName = getSourceBaseName(fileName)
-  const conceptSlug = makeSourceConceptSlug(sourceBaseName)
+  const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent, options?.sourceSummaryTitle)
+  const sourcePageSlug = sourceSummaryPlan.slug
+  const sourceSubjectSlug = sourceSummaryPlan.titleSlug
+  const conceptSlug = makeSourceConceptSlug(sourceSubjectSlug)
   const comparisonIntent = shouldForceComparisonPage(fileName, sourceContent, analysis)
   const comparisonPath = makeComparisonPagePath(fileName)
   const comparisonSlug = comparisonPath.split("/").pop()?.replace(/\.md$/, "") ?? ""
@@ -673,18 +679,14 @@ async function generateOllamaSplitFileBlocks(params: {
   const tasks = [
     ...(!options?.skipSourceSummary ? [{
       label: "source summary",
-      path: `wiki/sources/${sourceBaseName}.md`,
+      path: sourceSummaryPlan.path,
       user: [
         sharedContext,
         "",
-        `Generate exactly one source summary page at wiki/sources/${sourceBaseName}.md.`,
+        `Generate exactly one source summary page at ${sourceSummaryPlan.path}.`,
         "type must be `source`.",
-        options?.sourceSummaryTitle
-          ? `Use frontmatter title and H1 exactly: ${options.sourceSummaryTitle}.`
-          : "",
-        options?.sourceSummaryTitle
-          ? "Do not use the original research question as the page title."
-          : "",
+        `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`,
+        "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
@@ -723,7 +725,7 @@ async function generateOllamaSplitFileBlocks(params: {
         "Generate exactly one updated index page at wiki/index.md.",
         "type must be `index`.",
         `Preserve existing entries from the current index and add links for ${[
-          `[[${sourceBaseName}]]`,
+          `[[${sourcePageSlug}]]`,
           comparisonIntent && comparisonSlug ? `[[${comparisonSlug}]]` : "",
           `[[${conceptSlug}]]`,
         ].filter(Boolean).join(", ")}.`,
@@ -874,8 +876,6 @@ async function autoIngestImpl(
   const sp = normalizePath(sourcePath)
   const activity = useActivityStore.getState()
   const fileName = getFileName(sp)
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -892,6 +892,9 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+
+  const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSummaryPath = sourceSummaryPlan.path
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -970,14 +973,14 @@ async function autoIngestImpl(
               )
             }
           }
-          await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+          await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
           // Re-embed the source-summary page so caption text lands
           // in the search index. Without this step, search by image
           // content stays empty for files ingested before captioning
           // was added — the safety-net section was just rewritten
           // with captions, but the embeddings still reflect the old
           // empty-alt content.
-          await reembedSourceSummary(pp, fileName)
+          await reembedSourceSummary(pp, fileName, sourceSummaryPlan)
         }
       } else {
         console.log(`[ingest:diag] cache-hit branch: skipping injection (no images returned from extraction)`)
@@ -1243,6 +1246,7 @@ async function autoIngestImpl(
     fileName,
     signal,
     options,
+    sourceSummaryPlan,
   )
 
   // Surface parser / writer warnings to the activity panel so users
@@ -1268,7 +1272,7 @@ async function autoIngestImpl(
   // task for retry rather than "success".
   if (!options.skipSourceSummary && !hasSourceSummary && !signal?.aborted) {
     const date = new Date().toISOString().slice(0, 10)
-    const fallbackTitle = options.sourceSummaryTitle?.trim() || `Source: ${fileName}`
+    const fallbackTitle = sourceSummaryPlan.title
     const fallbackContent = [
       "---",
       `type: source`,
@@ -1316,7 +1320,7 @@ async function autoIngestImpl(
   // want the safety-net section to slip image refs into the wiki
   // through the back door.
   if (!options.skipSourceSummary && mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
-    await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+    await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
   }
 
   if (writtenPaths.length > 0 && !signal?.aborted) {
@@ -1483,11 +1487,12 @@ async function writeFileBlocks(
   sourceFileName: string,
   signal?: AbortSignal,
   options: AutoIngestOptions = {},
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(sourceFileName, "", options.sourceSummaryTitle),
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
-  const sourceSummaryPath = `wiki/sources/${sourceFileName.replace(/\.[^.]+$/, "")}.md`
+  const sourceSummaryPath = sourceSummaryPlan.path
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
   // (disk full, permission, OS-level errors). Distinct from soft drops
   // (language mismatch, parse warnings, path-traversal rejections):
@@ -1501,7 +1506,7 @@ async function writeFileBlocks(
   const targetLang = useWikiStore.getState().outputLanguage
 
   for (const { path: relativePath, content: rawContent } of blocks) {
-    if (options.skipSourceSummary && relativePath === sourceSummaryPath) {
+    if (options.skipSourceSummary && relativePath.startsWith("wiki/sources/")) {
       const msg = `Dropped "${relativePath}" — source-summary output is disabled for this ingest.`
       console.warn(`[ingest] ${msg}`)
       warnings.push(msg)
@@ -1517,8 +1522,8 @@ async function writeFileBlocks(
     // unparseable frontmatter and the read-time fallback had to
     // paper over it forever.
     let content = sanitizeIngestedFileContent(rawContent)
-    if (relativePath === sourceSummaryPath && options.sourceSummaryTitle) {
-      content = applyCanonicalPageTitle(content, options.sourceSummaryTitle)
+    if (relativePath === sourceSummaryPath) {
+      content = applyCanonicalPageTitle(content, sourceSummaryPlan.title)
     }
 
     // Language guard: reject individual FILE blocks whose body contradicts
@@ -1739,21 +1744,17 @@ export function buildGenerationPrompt(
   sourceContent: string = "",
   options: AutoIngestOptions = {},
 ): string {
-  // Use original filename (without extension) as the source summary page name
-  const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
+  const sourceSummaryPlan = buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSubjectSlug = sourceSummaryPlan.titleSlug
   const sourceSummaryInstruction = options.skipSourceSummary
     ? [
         "1. Do NOT generate a source summary page in wiki/sources/ for this source.",
         "   This source is a Deep Research query record; the curated synthesis/comparison page already exists.",
       ]
     : [
-        `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
-        ...(options.sourceSummaryTitle
-          ? [
-              `   For that source summary page, use frontmatter title and H1 exactly: "${options.sourceSummaryTitle}".`,
-              "   Do not use the original research question as the page title.",
-            ]
-          : []),
+        `1. A source summary page at **${sourceSummaryPlan.path}** (MUST use this exact path)`,
+        `   For that source summary page, use frontmatter title and H1 exactly: "${sourceSummaryPlan.title}".`,
+        "   Do not use the original filename, raw research question, or command text as the page title.",
       ]
 
   return [
@@ -1773,8 +1774,8 @@ export function buildGenerationPrompt(
     "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
     "4. A comparison page in wiki/comparisons/ is REQUIRED when the source filename, title, tags, headings, or body clearly compare alternatives (for example: `vs`, `versus`, `comparison`, `비교`, `대비`, comparison tables, trade-off / selection-criteria sections).",
     options.skipSourceSummary
-      ? `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
-      : `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
+      ? `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
+      : `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
     "5. Synthesis, query, or decision pages only when the analysis clearly recommends reusable cross-source content",
     "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
     "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
@@ -1798,6 +1799,8 @@ export function buildGenerationPrompt(
     "Required fields and types:",
     "  • type     — one of: source | entity | concept | comparison | synthesis | query | decision",
     "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
+    "               Use a concise content title. Do not prefix with Research, Research Log, Source, or Deep Research.",
+    "               Do not include raw filenames, date suffixes, or instruction words like 조사해줘/정리해줘.",
     "  • created  — date in YYYY-MM-DD form (no quotes)",
     "  • updated  — same as created",
     "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
@@ -2028,10 +2031,10 @@ async function injectImagesIntoSourceSummary(
   pp: string,
   fileName: string,
   savedImages: { relPath: string; page: number | null; sha256?: string }[],
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(fileName),
 ): Promise<void> {
   if (savedImages.length === 0) return
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
+  const sourceSummaryPath = sourceSummaryPlan.path
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   console.log(`[ingest:diag] injectImagesIntoSourceSummary: target=${sourceSummaryFullPath}, images=${savedImages.length}`)
   try {
@@ -2065,7 +2068,7 @@ async function injectImagesIntoSourceSummary(
       const stubFrontmatter = [
         "---",
         "type: source",
-        `title: "Source: ${fileName}"`,
+        `title: ${yamlString(sourceSummaryPlan.title)}`,
         `created: ${date}`,
         `updated: ${date}`,
         `sources: ["${fileName}"]`,
@@ -2073,7 +2076,7 @@ async function injectImagesIntoSourceSummary(
         "related: []",
         "---",
         "",
-        `# Source: ${fileName}`,
+        `# ${sourceSummaryPlan.title}`,
         "",
       ].join("\n")
       await writeFile(sourceSummaryFullPath, stubFrontmatter + wrapped)
@@ -2103,23 +2106,26 @@ async function injectImagesIntoSourceSummary(
  * already exist in the step-6 logic. Wrapping them once here
  * avoids drift between the two paths if either side changes.
  */
-async function reembedSourceSummary(pp: string, fileName: string): Promise<void> {
+async function reembedSourceSummary(
+  pp: string,
+  fileName: string,
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(fileName),
+): Promise<void> {
   const embCfg = useWikiStore.getState().embeddingConfig
   if (!embCfg.enabled || !embCfg.model) return
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryFullPath = `${pp}/wiki/sources/${sourceBaseName}.md`
+  const sourceSummaryFullPath = `${pp}/${sourceSummaryPlan.path}`
   try {
     const content = await readFile(sourceSummaryFullPath)
     const titleMatch = content.match(
       /^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m,
     )
-    const title = titleMatch ? titleMatch[1].trim() : sourceBaseName
+    const title = titleMatch ? titleMatch[1].trim() : sourceSummaryPlan.title
     const { embedPage } = await import("@/lib/embedding")
-    await embedPage(pp, sourceBaseName, title, content, embCfg)
-    console.log(`[ingest:caption] re-embedded ${sourceBaseName} with captioned alt text`)
+    await embedPage(pp, sourceSummaryPlan.slug, title, content, embCfg)
+    console.log(`[ingest:caption] re-embedded ${sourceSummaryPlan.slug} with captioned alt text`)
   } catch (err) {
     console.warn(
-      `[ingest:caption] re-embed failed for ${sourceBaseName}:`,
+      `[ingest:caption] re-embed failed for ${sourceSummaryPlan.slug}:`,
       err instanceof Error ? err.message : err,
     )
   }
@@ -2344,8 +2350,10 @@ export async function executeIngestWrites(
       const savedImages = await extractAndSaveSourceImages(pp, ingestSource)
       if (savedImages.length > 0) {
         const fileName = getFileName(ingestSource)
-        await injectImagesIntoSourceSummary(pp, fileName, savedImages)
-        const sourceSummaryPath = `wiki/sources/${fileName.replace(/\.[^.]+$/, "")}.md`
+        const sourceContent = await tryReadFile(ingestSource)
+        const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent)
+        await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
+        const sourceSummaryPath = sourceSummaryPlan.path
         if (!writtenRelativePaths.includes(sourceSummaryPath)) {
           writtenRelativePaths.push(sourceSummaryPath)
           writtenPaths.push(`${pp}/${sourceSummaryPath}`)

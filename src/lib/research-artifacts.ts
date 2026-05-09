@@ -1,5 +1,9 @@
 import type { WebSearchResult } from "@/lib/web-search"
 import { makeQuerySlug } from "@/lib/wiki-filename"
+import {
+  buildResearchQueryFileName,
+  canonicalizeWikiTitle,
+} from "@/lib/wiki-title"
 
 export type ResearchArtifactType = "query" | "synthesis" | "comparison"
 
@@ -73,12 +77,12 @@ export function stripLooseLeadingMetadata(text: string): string {
 
 export function extractResearchTitle(topic: string, synthesis: string): string {
   const yamlTitle = synthesis.match(/^\s*---\s*\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/im)?.[1]?.trim()
-  if (yamlTitle) return yamlTitle.replace(/^["']|["']$/g, "").trim()
+  if (yamlTitle) return canonicalizeWikiTitle(yamlTitle.replace(/^["']|["']$/g, "").trim(), topic)
 
   const headingTitle = stripThinkingBlocks(synthesis).match(/^#\s+(.+?)\s*$/m)?.[1]?.trim()
-  if (headingTitle) return headingTitle
+  if (headingTitle) return canonicalizeWikiTitle(headingTitle, topic)
 
-  return topic.trim() || "Deep Research"
+  return canonicalizeWikiTitle(topic.trim(), "Deep Research")
 }
 
 export function classifyResearchArtifact(args: {
@@ -117,9 +121,8 @@ export function buildResearchSavePlan(args: {
   const date = iso.slice(0, 10)
   const time = iso.slice(11, 19).replace(/:/g, "")
   const title = extractResearchTitle(args.topic, args.synthesis)
-  const topicSlug = makeQuerySlug(args.topic)
   const titleSlug = makeQuerySlug(title)
-  const queryRecordFileName = `deep-research-${topicSlug}-${date}-${time}.md`
+  const queryRecordFileName = buildResearchQueryFileName(title, date, time)
   const classification = classifyResearchArtifact(args)
   const primaryFolder = classification.type === "comparison"
     ? "comparisons"
@@ -151,14 +154,15 @@ export function buildResearchRecordPage(args: {
   references: string
 }): string {
   const body = stripLeadingHeading(args.content)
-  const title = args.title.trim() || args.topic.trim() || "Deep Research"
+  const title = canonicalizeWikiTitle(args.title, args.topic.trim() || "Deep Research")
   return [
     "---",
     "type: query",
-    `title: "Research Log: ${escapeYaml(title)}"`,
+    `title: "${escapeYaml(title)}"`,
     `created: ${args.date}`,
     `updated: ${args.date}`,
     "origin: deep-research",
+    `original_query: "${escapeYaml(args.topic.trim())}"`,
     "tags: [research]",
     "related: []",
     "sources: []",
@@ -166,7 +170,7 @@ export function buildResearchRecordPage(args: {
     `last_reviewed: ${args.date}`,
     "---",
     "",
-    `# Research Log: ${title}`,
+    `# ${title}`,
     "",
     "## Original Query",
     "",
