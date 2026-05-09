@@ -66,11 +66,6 @@ function buildKnownTargetKeys(pages: WikiPageSnapshot[]): Set<string> {
   for (const page of pages) {
     const relativeNoExt = normalizeTarget(page.relativePath)
     for (const key of targetKeys(relativeNoExt)) known.add(key)
-
-    const title = parseFrontmatter(page.content).frontmatter?.title
-    if (typeof title === "string" && title.trim()) {
-      known.add(title.trim().toLowerCase())
-    }
   }
   return known
 }

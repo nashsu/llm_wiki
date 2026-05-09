@@ -70,13 +70,18 @@ describe("findMissingWikiReferences", () => {
     ])
   })
 
-  it("resolves links by frontmatter title as well as filename slug", () => {
+  it("flags title-only links because the app resolver navigates by file path or slug", () => {
     const pages = [
       page("concepts/rotary-position-embedding.md", "Rotary Position Embedding"),
       page("sources/rope.md", "RoPE Source", "See [[Rotary Position Embedding]]."),
     ]
 
-    expect(findMissingWikiReferences(pages, ["sources/rope.md"])).toEqual([])
+    expect(findMissingWikiReferences(pages, ["sources/rope.md"])).toEqual([
+      {
+        target: "Rotary Position Embedding",
+        pages: ["sources/rope.md"],
+      },
+    ])
   })
 })
 
