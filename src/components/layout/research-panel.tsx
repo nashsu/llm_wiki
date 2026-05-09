@@ -13,7 +13,7 @@ import { useResearchStore, type ResearchTask } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
 import { queueResearch } from "@/lib/deep-research"
-import { normalizePath } from "@/lib/path-utils"
+import { getFileName, normalizePath } from "@/lib/path-utils"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
@@ -220,8 +220,9 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   )
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
-  const project = useWikiStore((s) => s.project)
-
+  const currentProjectPath = useWikiStore((s) => s.project?.path ? normalizePath(s.project.path) : "")
+  const isCurrentProject = normalizePath(task.projectPath) === currentProjectPath
+  const projectLabel = getFileName(task.projectPath.replace(/[\\/]+$/, "")) || task.projectPath
   const statusIcon = {
     queued: <div className="h-3 w-3 rounded-full border-2 border-muted-foreground" />,
     searching: <Loader2 className="h-3 w-3 animate-spin text-blue-500" />,
@@ -241,8 +242,8 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   }[task.status]
 
   async function handleOpenSaved() {
-    if (!project || !task.savedPath) return
-    const path = `${normalizePath(project.path)}/${task.savedPath}`
+    if (!task.savedPath) return
+    const path = `${normalizePath(task.projectPath)}/${task.savedPath}`
     try {
       const content = await readFile(path)
       setSelectedFile(path)
@@ -265,7 +266,20 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
           <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
         )}
         {statusIcon}
-        <span className="flex-1 truncate font-medium">{task.topic}</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{task.topic}</div>
+          <div className="mt-0.5">
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                isCurrentProject
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {projectLabel}
+            </span>
+          </div>
+        </div>
         <span className="shrink-0 text-muted-foreground">{statusText}</span>
       </button>
 

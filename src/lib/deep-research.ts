@@ -19,7 +19,12 @@ export function queueResearch(
   searchQueries?: string[],
 ): string {
   const store = useResearchStore.getState()
-  const taskId = store.addTask(topic)
+  const project = useWikiStore.getState().project
+  const taskId = store.addTask(
+    topic,
+    project?.id ?? normalizePath(projectPath),
+    normalizePath(projectPath),
+  )
   // Store search queries on the task
   if (searchQueries && searchQueries.length > 0) {
     store.updateTask(taskId, { searchQueries })
@@ -28,7 +33,7 @@ export function queueResearch(
   store.setPanelOpen(true)
   // Start processing on next tick to ensure React has rendered the panel
   setTimeout(() => {
-    processQueue(projectPath, llmConfig, searchConfig)
+    processQueue(llmConfig, searchConfig)
   }, 50)
   return taskId
 }
@@ -37,7 +42,6 @@ export function queueResearch(
  * Process queued tasks up to maxConcurrent limit.
  */
 function processQueue(
-  projectPath: string,
   llmConfig: LlmConfig,
   searchConfig: SearchApiConfig,
 ) {
@@ -48,7 +52,7 @@ function processQueue(
   for (let i = 0; i < available; i++) {
     const next = useResearchStore.getState().getNextQueued()
     if (!next) break
-    executeResearch(projectPath, next.id, next.topic, llmConfig, searchConfig)
+    executeResearch(next.projectPath, next.id, next.topic, llmConfig, searchConfig)
   }
 }
 
@@ -242,5 +246,6 @@ function onTaskFinished(
   searchConfig: SearchApiConfig,
 ) {
   // Process next queued task
-  setTimeout(() => processQueue(projectPath, llmConfig, searchConfig), 100)
+  void projectPath
+  setTimeout(() => processQueue(llmConfig, searchConfig), 100)
 }

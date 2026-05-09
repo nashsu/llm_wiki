@@ -36,7 +36,9 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
     s.items.filter((i) => !i.resolved && normalizePath(i.projectPath) === currentProjectPath).length,
   )
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
-  const researchActiveCount = useResearchStore((s) => s.tasks.filter((t) => t.status !== "done" && t.status !== "error").length)
+  const researchActiveCount = useResearchStore((s) =>
+    s.tasks.filter((t) => t.status !== "done" && t.status !== "error").length,
+  )
   const toggleResearchPanel = useResearchStore((s) => s.setPanelOpen)
   // Use `hasAvailableUpdate` (ignores dismiss state) rather than
   // `shouldShowUpdateBanner`. The dot is a passive signpost — it
