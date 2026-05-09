@@ -321,7 +321,7 @@ function ReviewCard({
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">
-          {(item.type === "suggestion" || item.type === "missing-page") && (
+          {shouldShowDeepResearch(item) && (
             <Button
               variant="default"
               size="sm"
@@ -351,6 +351,17 @@ function ReviewCard({
       )}
     </div>
   )
+}
+
+function shouldShowDeepResearch(item: ReviewItem): boolean {
+  if (isLintCrossReferenceSuggestion(item)) return false
+  return item.type === "suggestion" || item.type === "missing-page"
+}
+
+function isLintCrossReferenceSuggestion(item: ReviewItem): boolean {
+  return item.type === "suggestion"
+    && item.title.startsWith("Add cross-references to ")
+    && item.description.includes("no outbound")
 }
 
 /** Detect if an action implies deep research (web search + LLM synthesis) */
