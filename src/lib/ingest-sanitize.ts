@@ -70,6 +70,12 @@ export function sanitizeIngestedFileContent(content: string): string {
   // link transform applied at read time.
   cleaned = repairWikilinkListsInFrontmatter(cleaned)
 
+  // (4) Some local models emit the frontmatter payload and closing
+  // fence, but forget the opening `---` as the very first line.
+  // Repair only when the document starts with a known frontmatter
+  // key and has a closing fence before the first heading/body.
+  cleaned = addMissingOpeningFrontmatterFence(cleaned)
+
   return cleaned
 }
 
@@ -132,4 +138,18 @@ function repairWikilinkListsInFrontmatter(content: string): string {
     repairedPayload +
     content.slice(m.index! + 4 + m[1].length)
   )
+}
+
+function addMissingOpeningFrontmatterFence(content: string): string {
+  if (/^\s*---\s*\r?\n/.test(content)) return content
+  if (!/^(type|title|created|updated|tags|related|sources|confidence|last_reviewed)\s*:/i.test(content)) {
+    return content
+  }
+
+  const headingIndex = content.search(/\r?\n#{1,6}\s+/)
+  const fenceIndex = content.search(/\r?\n---\s*(\r?\n|$)/)
+  if (fenceIndex < 0) return content
+  if (headingIndex >= 0 && fenceIndex > headingIndex) return content
+
+  return `---\n${content}`
 }

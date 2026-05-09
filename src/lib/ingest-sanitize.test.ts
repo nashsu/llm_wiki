@@ -79,7 +79,20 @@ describe("sanitizeIngestedFileContent", () => {
     expect(sanitizeIngestedFileContent(input)).toBe(input)
   })
 
-  it("composes all three repairs on a real-corpus-shaped input", () => {
+  it("adds a missing opening frontmatter fence when the model starts at `type:`", () => {
+    const input =
+      "type: source\ntitle: LLM Wiki\nsources: [llm-wiki.md]\n---\n# Body"
+    expect(sanitizeIngestedFileContent(input)).toBe(
+      "---\ntype: source\ntitle: LLM Wiki\nsources: [llm-wiki.md]\n---\n# Body",
+    )
+  })
+
+  it("does NOT add a frontmatter fence to ordinary body prose", () => {
+    const input = "title: this appears in body prose\n\nNo YAML fence follows."
+    expect(sanitizeIngestedFileContent(input)).toBe(input)
+  })
+
+  it("composes the common repairs on a real-corpus-shaped input", () => {
     const input =
       "```yaml\nfrontmatter:\n---\ntype: entity\nrelated: [[a]], [[b]]\n---\n\n# Body\n```"
     const out = sanitizeIngestedFileContent(input)

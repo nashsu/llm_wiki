@@ -5,18 +5,25 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
-import { getFileName, normalizePath } from "@/lib/path-utils"
+import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
 import {
+  buildDeterministicIngestLogEntry,
+  findMissingWikiReferences,
+  missingReferencesToReviewItems,
+  type WikiPageSnapshot,
+} from "@/lib/ingest-integrity"
+import {
   extractAndSaveSourceImages,
   buildImageMarkdownSection,
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
+import type { FileNode } from "@/types/wiki"
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -248,6 +255,244 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
  */
 export function languageRule(sourceContent: string = ""): string {
   return buildLanguageDirective(sourceContent)
+}
+
+function slugifyWikiStem(input: string): string {
+  const slug = input
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}-]/gu, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+  return slug || "source"
+}
+
+function shortStableHash(input: string): string {
+  let hash = 0x811c9dc5
+  for (const char of input.normalize("NFKC")) {
+    hash ^= char.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(36).padStart(6, "0").slice(0, 6)
+}
+
+function makeSourceConceptSlug(sourceBaseName: string): string {
+  return `${slugifyWikiStem(sourceBaseName)}-${shortStableHash(sourceBaseName)}-concept`
+}
+
+async function generateOneFileBlock(
+  llmConfig: LlmConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  signal: AbortSignal | undefined,
+  maxTokens = 4096,
+): Promise<string> {
+  let out = ""
+  let streamError: Error | null = null
+  await streamChat(
+    llmConfig,
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    {
+      onToken: (token) => { out += token },
+      onDone: () => {},
+      onError: (err) => { streamError = err },
+    },
+    signal,
+    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: maxTokens },
+  )
+  if (streamError) throw streamError
+  return out
+}
+
+async function generateOllamaSplitFileBlocks(params: {
+  llmConfig: LlmConfig
+  schema: string
+  purpose: string
+  index: string
+  fileName: string
+  overview: string
+  sourceContent: string
+  analysis: string
+  signal?: AbortSignal
+  onProgress?: (detail: string) => void
+}): Promise<string> {
+  const {
+    llmConfig,
+    schema,
+    purpose,
+    index,
+    fileName,
+    overview,
+    sourceContent,
+    analysis,
+    signal,
+    onProgress,
+  } = params
+  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
+  const conceptSlug = makeSourceConceptSlug(sourceBaseName)
+  const date = new Date().toISOString().slice(0, 10)
+  const language = languageRule(sourceContent)
+
+  const sharedSystem = [
+    "You are a strict wiki maintainer. Generate exactly ONE FILE block.",
+    "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
+    "The first line must be the requested `---FILE: path---` line.",
+    "The last line must be exactly `---END FILE---`.",
+    "The file content inside the block must start with YAML frontmatter.",
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    `Use created/updated/last_reviewed date ${date}.`,
+    `The sources array MUST include "${fileName}" for source-derived content.`,
+    "Use compact Korean prose. Prefer fewer, stronger sections over many thin pages.",
+    "",
+    language,
+    "",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
+    schema ? `## Wiki Schema\n${schema}` : "",
+    index ? `## Current Wiki Index\n${index}` : "",
+    overview ? `## Current Overview\n${overview}` : "",
+  ].filter(Boolean).join("\n")
+
+  const sharedContext = [
+    `## Source file\n${fileName}`,
+    "",
+    "## Stage 1 analysis",
+    analysis,
+    "",
+    "## Original source content",
+    sourceContent,
+  ].join("\n")
+
+  const tasks = [
+    {
+      label: "source summary",
+      path: `wiki/sources/${sourceBaseName}.md`,
+      user: [
+        sharedContext,
+        "",
+        `Generate exactly one source summary page at wiki/sources/${sourceBaseName}.md.`,
+        "type must be `source`.",
+        "Summarize the source; do not copy it wholesale.",
+      ].join("\n"),
+      maxTokens: 4096,
+    },
+    {
+      label: "central concept",
+      path: `wiki/concepts/${conceptSlug}.md`,
+      user: [
+        sharedContext,
+        "",
+        `Generate exactly one durable concept page at wiki/concepts/${conceptSlug}.md.`,
+        "type must be `concept`.",
+        "Choose the single most reusable idea from the source and make it useful for future wiki queries.",
+      ].join("\n"),
+      maxTokens: 4096,
+    },
+    {
+      label: "index",
+      path: "wiki/index.md",
+      user: [
+        sharedContext,
+        "",
+        "Generate exactly one updated index page at wiki/index.md.",
+        "type must be `index`.",
+        `Preserve existing entries from the current index and add links for [[${sourceBaseName}]] and [[${conceptSlug}]].`,
+      ].join("\n"),
+      maxTokens: 4096,
+    },
+    {
+      label: "overview",
+      path: "wiki/overview.md",
+      user: [
+        sharedContext,
+        "",
+        "Generate exactly one updated overview page at wiki/overview.md.",
+        "type must be `overview`.",
+        "Write a 2-5 paragraph high-level overview of the whole wiki after this source is included.",
+      ].join("\n"),
+      maxTokens: 4096,
+    },
+  ]
+
+  const parts: string[] = []
+  for (const task of tasks) {
+    onProgress?.(`Step 2/2: Generating ${task.label}...`)
+    const systemPrompt = [
+      sharedSystem,
+      "",
+      `The first line must be exactly: ---FILE: ${task.path}---`,
+    ].join("\n")
+    parts.push(await generateOneFileBlock(
+      llmConfig,
+      systemPrompt,
+      task.user,
+      signal,
+      task.maxTokens,
+    ))
+  }
+  return parts.join("\n\n")
+}
+
+function flattenMdNodes(nodes: FileNode[]): FileNode[] {
+  const files: FileNode[] = []
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      files.push(...flattenMdNodes(node.children))
+    } else if (!node.is_dir && node.name.endsWith(".md")) {
+      files.push(node)
+    }
+  }
+  return files
+}
+
+async function readWikiSnapshots(projectPath: string): Promise<WikiPageSnapshot[]> {
+  const wikiRoot = `${projectPath}/wiki`
+  const tree = await listDirectory(wikiRoot)
+  const files = flattenMdNodes(tree)
+  const pages: WikiPageSnapshot[] = []
+
+  for (const file of files) {
+    try {
+      pages.push({
+        relativePath: getRelativePath(file.path, wikiRoot),
+        content: await readFile(file.path),
+      })
+    } catch {
+      // Ignore unreadable pages; the ingest result should still finish.
+    }
+  }
+
+  return pages
+}
+
+async function appendActualIngestLog(
+  projectPath: string,
+  sourceFileName: string,
+  writtenPaths: string[],
+): Promise<void> {
+  const logPath = `${projectPath}/wiki/log.md`
+  const existing = await tryReadFile(logPath)
+  const entry = buildDeterministicIngestLogEntry(sourceFileName, writtenPaths)
+  await writeFile(logPath, appendLogContent(existing, entry))
+  if (!writtenPaths.includes("wiki/log.md")) writtenPaths.push("wiki/log.md")
+}
+
+async function collectPostIngestReviewItems(
+  projectPath: string,
+  writtenPaths: string[],
+  sourcePath: string,
+): Promise<Omit<ReviewItem, "id" | "resolved" | "createdAt">[]> {
+  const pages = await readWikiSnapshots(projectPath)
+  const missing = findMissingWikiReferences(
+    pages,
+    writtenPaths.map((p) => p.replace(/^wiki\//, "")),
+  )
+  return missingReferencesToReviewItems(missing, sourcePath)
 }
 
 /**
@@ -549,45 +794,67 @@ async function autoIngestImpl(
 
   let generation = ""
 
-  await streamChat(
-    llmConfig,
-    [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent) },
+  if (llmConfig.provider === "ollama") {
+    try {
+      generation = await generateOllamaSplitFileBlocks({
+        llmConfig,
+        schema,
+        purpose,
+        index,
+        fileName,
+        overview,
+        sourceContent: truncatedContent,
+        analysis,
+        signal,
+        onProgress: (detail) => activity.updateItem(activityId, { detail }),
+      })
+    } catch (err) {
+      activity.updateItem(activityId, {
+        status: "error",
+        detail: `Generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    }
+  } else {
+    await streamChat(
+      llmConfig,
+      [
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent) },
+        {
+          role: "user",
+          content: [
+            `Source document to process: **${fileName}**`,
+            "",
+            "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo",
+            "its tables, bullet points, or prose. Your output must be FILE/REVIEW",
+            "blocks as specified in the system prompt — nothing else.",
+            "",
+            "## Stage 1 Analysis (context only — do not repeat)",
+            "",
+            analysis,
+            "",
+            "## Original Source Content",
+            "",
+            truncatedContent,
+            "",
+            "---",
+            "",
+            `Now emit the FILE blocks for the wiki files derived from **${fileName}**.`,
+            "Your response MUST begin with `---FILE:` as the very first characters.",
+            "No preamble. No analysis prose. Start immediately.",
+          ].join("\n"),
+        },
+      ],
       {
-        role: "user",
-        content: [
-          `Source document to process: **${fileName}**`,
-          "",
-          "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo",
-          "its tables, bullet points, or prose. Your output must be FILE/REVIEW",
-          "blocks as specified in the system prompt — nothing else.",
-          "",
-          "## Stage 1 Analysis (context only — do not repeat)",
-          "",
-          analysis,
-          "",
-          "## Original Source Content",
-          "",
-          truncatedContent,
-          "",
-          "---",
-          "",
-          `Now emit the FILE blocks for the wiki files derived from **${fileName}**.`,
-          "Your response MUST begin with `---FILE:` as the very first characters.",
-          "No preamble. No analysis prose. Start immediately.",
-        ].join("\n"),
+        onToken: (token) => { generation += token },
+        onDone: () => {},
+        onError: (err) => {
+          activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${err.message}` })
+        },
       },
-    ],
-    {
-      onToken: (token) => { generation += token },
-      onDone: () => {},
-      onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${err.message}` })
-      },
-    },
-    signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
-  )
+      signal,
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+    )
+  }
 
   const generationActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (generationActivity?.status === "error") {
@@ -662,6 +929,17 @@ async function autoIngestImpl(
     await injectImagesIntoSourceSummary(pp, fileName, savedImages)
   }
 
+  if (writtenPaths.length > 0 && !signal?.aborted) {
+    try {
+      await appendActualIngestLog(pp, fileName, writtenPaths)
+    } catch (err) {
+      const msg = `Failed to append deterministic ingest log: ${err instanceof Error ? err.message : String(err)}`
+      console.error(`[ingest] ${msg}`)
+      writeWarnings.push(msg)
+      hardFailures.push("wiki/log.md")
+    }
+  }
+
   if (writtenPaths.length > 0) {
     try {
       const tree = await listDirectory(pp)
@@ -674,6 +952,15 @@ async function autoIngestImpl(
 
   // ── Step 4: Parse review items ────────────────────────────────
   const reviewItems = parseReviewBlocks(generation, sp)
+  if (writtenPaths.length > 0 && !signal?.aborted) {
+    try {
+      reviewItems.push(...await collectPostIngestReviewItems(pp, writtenPaths, sp))
+    } catch (err) {
+      console.warn(
+        `[ingest] Failed to collect post-ingest integrity reviews: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
   if (reviewItems.length > 0) {
     useReviewStore.getState().addItems(reviewItems)
   }
@@ -828,9 +1115,10 @@ async function writeFileBlocks(
     const fullPath = `${projectPath}/${relativePath}`
     try {
       if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
-        const existing = await tryReadFile(fullPath)
-        const appended = appendLogContent(existing, content)
-        await writeFile(fullPath, appended)
+        // Generated log blocks are intentionally ignored. The app appends a
+        // deterministic log entry after all writes finish, using only the
+        // paths that actually reached disk.
+        continue
       } else if (
         relativePath === "wiki/index.md" ||
         relativePath.endsWith("/index.md") ||
@@ -1026,8 +1314,9 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
     "4. Comparison, query, decision, or synthesis pages only when the analysis clearly recommends reusable cross-source content",
     "5. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "6. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "",
+    "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
@@ -1496,7 +1785,7 @@ export async function executeIngestWrites(
     "---END FILE---",
     "```",
     "",
-    "For wiki/log.md, include a log entry to append. For all other files, output the complete file content.",
+    "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "Use relative paths from the project root (e.g., wiki/sources/topic.md).",
     "Do not include any other text outside the FILE blocks.",
   ]
@@ -1546,35 +1835,23 @@ export async function executeIngestWrites(
   )
 
   const writtenPaths: string[] = []
-  const matches = accumulated.matchAll(FILE_BLOCK_REGEX)
+  const writtenRelativePaths: string[] = []
+  const { blocks, warnings: parseWarnings } = parseFileBlocks(accumulated)
 
-  for (const match of matches) {
-    const relativePath = match[1].trim()
-    const content = match[2]
-
-    if (!relativePath) continue
-
+  for (const { path: relativePath, content: rawContent } of blocks) {
+    if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
+      continue
+    }
     const fullPath = `${pp}/${relativePath}`
+    const content = sanitizeIngestedFileContent(rawContent)
 
     try {
-      if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
-        const existing = await tryReadFile(fullPath)
-        const appended = appendLogContent(existing, content)
-        await writeFile(fullPath, appended)
-      } else {
-        await writeFile(fullPath, content)
-      }
+      await writeFile(fullPath, content)
       writtenPaths.push(fullPath)
+      writtenRelativePaths.push(relativePath)
     } catch (err) {
       console.error(`Failed to write ${fullPath}:`, err)
     }
-  }
-
-  if (writtenPaths.length > 0) {
-    const fileList = writtenPaths.map((p) => `- ${p}`).join("\n")
-    getStore().addMessage("system", `Files written to wiki:\n${fileList}`)
-  } else {
-    getStore().addMessage("system", "No files were written. The LLM response did not contain valid FILE blocks.")
   }
 
   // Image cascade: surface any embedded images on the source-summary
@@ -1598,12 +1875,18 @@ export async function executeIngestWrites(
   // safety-net inject here too so the executeIngestWrites path
   // stays consistent with autoIngest.
   const mmCfgWrites = useWikiStore.getState().multimodalConfig
+  const sourceFileName = ingestSource ? getFileName(ingestSource) : "manual-ingest.md"
   if (ingestSource && mmCfgWrites.enabled) {
     try {
       const savedImages = await extractAndSaveSourceImages(pp, ingestSource)
       if (savedImages.length > 0) {
         const fileName = getFileName(ingestSource)
         await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+        const sourceSummaryPath = `wiki/sources/${fileName.replace(/\.[^.]+$/, "")}.md`
+        if (!writtenRelativePaths.includes(sourceSummaryPath)) {
+          writtenRelativePaths.push(sourceSummaryPath)
+          writtenPaths.push(`${pp}/${sourceSummaryPath}`)
+        }
       }
     } catch (err) {
       console.warn(
@@ -1611,6 +1894,48 @@ export async function executeIngestWrites(
         err instanceof Error ? err.message : err,
       )
     }
+  }
+
+  if (writtenRelativePaths.length > 0 && !signal?.aborted) {
+    try {
+      await appendActualIngestLog(pp, sourceFileName, writtenRelativePaths)
+      const logFullPath = `${pp}/wiki/log.md`
+      if (!writtenPaths.includes(logFullPath)) writtenPaths.push(logFullPath)
+    } catch (err) {
+      console.error(
+        `[executeIngestWrites] failed to append deterministic ingest log:`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
+  const reviewItems = parseReviewBlocks(accumulated, ingestSource ?? `${pp}/manual-ingest.md`)
+  if (writtenRelativePaths.length > 0 && !signal?.aborted) {
+    try {
+      reviewItems.push(...await collectPostIngestReviewItems(
+        pp,
+        writtenRelativePaths,
+        ingestSource ?? `${pp}/manual-ingest.md`,
+      ))
+    } catch (err) {
+      console.warn(
+        `[executeIngestWrites] failed to collect post-ingest integrity reviews:`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+  if (reviewItems.length > 0) {
+    useReviewStore.getState().addItems(reviewItems)
+  }
+
+  if (writtenPaths.length > 0) {
+    const fileList = writtenPaths.map((p) => `- ${p}`).join("\n")
+    const warningText = parseWarnings.length > 0
+      ? `\n\nWarnings:\n${parseWarnings.map((w) => `- ${w}`).join("\n")}`
+      : ""
+    getStore().addMessage("system", `Files written to wiki:\n${fileList}${warningText}`)
+  } else {
+    getStore().addMessage("system", "No files were written. The LLM response did not contain valid FILE blocks.")
   }
 
   return writtenPaths

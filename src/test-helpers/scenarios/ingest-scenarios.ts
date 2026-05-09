@@ -113,7 +113,9 @@ export const ingestScenarios: IngestScenario[] = [
         ],
         "wiki/sources/rope-paper.md": ["rope-paper.md"],
       },
-      reviewsCreated: [],
+      reviewsCreated: [
+        { type: "missing-page", titleContains: "attention" },
+      ],
     },
   },
 
@@ -265,6 +267,9 @@ export const ingestScenarios: IngestScenario[] = [
           "[[注意力机制]]",
         ],
       },
+      reviewsCreated: [
+        { type: "missing-page", titleContains: "注意力机制" },
+      ],
     },
   },
 ]
