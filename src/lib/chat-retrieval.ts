@@ -5,7 +5,11 @@ import type { LlmConfig } from "@/stores/wiki-store"
 import { searchWiki, tokenizeQuery, type SearchResult } from "@/lib/search"
 import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
 import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
-import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
+import {
+  getOutputLanguage,
+  buildLanguageDirectiveFromLanguage,
+  buildLanguageReminderFromLanguage,
+} from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 
@@ -57,6 +61,7 @@ export async function buildChatRetrievalContext({
   const greetingOnly = isGreeting(query)
 
   if (greetingOnly) {
+    const greetingDirective = buildLanguageDirectiveFromLanguage(outputLanguage)
     systemMessages.push({
       role: "system",
       content: [
@@ -64,7 +69,7 @@ export async function buildChatRetrievalContext({
         "The user sent a casual greeting -- reply briefly and naturally, in one or two sentences.",
         "Do NOT invent wiki content or pretend to have retrieved pages. Invite the user to ask a concrete question if they want information from the wiki.",
         "",
-        `Respond in ${outputLanguage}.`,
+        greetingDirective,
       ].join("\n"),
     })
 
@@ -203,13 +208,7 @@ export async function buildChatRetrievalContext({
       "",
       "---",
       "",
-      `## MANDATORY OUTPUT LANGUAGE: ${outputLanguage}`,
-      "",
-      `You MUST write your entire response in **${outputLanguage}**.`,
-      "The wiki content above may be in a different language, but this is IRRELEVANT to your output language.",
-      `Ignore the language of the wiki content. Write in ${outputLanguage} only.`,
-      `Even proper nouns should use standard ${outputLanguage} transliteration when appropriate.`,
-      "DO NOT use any other language. This overrides all other instructions.",
+      buildLanguageDirectiveFromLanguage(outputLanguage),
     ].filter(Boolean).join("\n"),
   })
 
@@ -220,7 +219,7 @@ export async function buildChatRetrievalContext({
     searchResults,
     graphExpansions,
     budget,
-    langReminder: buildLanguageReminder(query),
+    langReminder: buildLanguageReminderFromLanguage(outputLanguage),
     outputLanguage,
     greetingOnly,
   }

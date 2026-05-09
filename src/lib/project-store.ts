@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig, EmbeddingConfig, DocumentLlmConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -94,6 +94,18 @@ export async function saveEmbeddingConfig(config: EmbeddingConfig): Promise<void
 export async function loadEmbeddingConfig(): Promise<EmbeddingConfig | null> {
   const store = await getStore()
   return (await store.get<EmbeddingConfig>(EMBEDDING_KEY)) ?? null
+}
+
+const DOCUMENT_LLM_KEY = "documentLlmConfig"
+
+export async function saveDocumentLlmConfig(config: DocumentLlmConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(DOCUMENT_LLM_KEY, config)
+}
+
+export async function loadDocumentLlmConfig(): Promise<DocumentLlmConfig | null> {
+  const store = await getStore()
+  return (await store.get<DocumentLlmConfig>(DOCUMENT_LLM_KEY)) ?? null
 }
 
 const MULTIMODAL_KEY = "multimodalConfig"

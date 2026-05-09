@@ -102,11 +102,12 @@
     "changeHint": "Changes apply after saving.",
     "language": "Language",
     "languageHint": "Interface language (wiki content follows source material language)",
-    "categories": {
-      "llm": "LLM Models",
-      "embedding": "Embeddings",
-      "multimodal": "Image Captioning",
-      "webSearch": "Web Search",
+      "categories": {
+        "llm": "LLM Models",
+        "embedding": "Embeddings",
+        "document": "Document Processing",
+        "multimodal": "Image Captioning",
+        "webSearch": "Web Search",
       "network": "Network",
       "agent": "Agent Access",
       "output": "Output",
@@ -157,6 +158,26 @@
         "legacyPromptBody": "Your project has {{count}} entries in the old per-page vector store. The new per-chunk index gives better retrieval but needs a one-time re-embed. Run \"Re-index all pages\" to upgrade.",
         "dropLegacy": "Drop legacy index",
         "dropLegacyDone": "Legacy index removed."
+      },
+      "document": {
+        "title": "Document Processing",
+        "description": "Controls the model used for source ingest, wiki file generation, page merging, and Save to Wiki. It does not affect normal chat answers or deep-research synthesis.",
+        "useMainLabel": "Use main LLM for document processing",
+        "useMainHint": "Keep using the main chat/research model for ingest and page merges. Turn this off if you want a faster dedicated model for document-heavy workflows.",
+        "dedicatedHeading": "Dedicated document-processing model",
+        "provider": "Provider",
+        "ollamaUrl": "Ollama URL",
+        "customEndpoint": "Endpoint URL",
+        "customEndpointHint": "OpenAI-compatible /v1 base. LM Studio, llama.cpp server, vLLM, LocalAI all work.",
+        "apiKey": "API key",
+        "apiKeyPlaceholder": "Leave blank for local / no-auth endpoints",
+        "model": "Model",
+        "modelPlaceholder": "e.g. gpt-4.1-mini, gemini-2.5-flash, kimi-k2.5",
+        "modelHint": "Balanced fast model recommended. This setting is used by ingest analysis, wiki generation, and page merge calls.",
+        "contextWindow": "Context window",
+        "reasoning": "Reasoning / thinking",
+        "reasoningBudget": "thinking budget tokens",
+        "reasoningHint": "Document-processing prompts often work best with low or off reasoning to avoid slow or reasoning-only responses."
       },
       "multimodal": {
         "title": "Image Captioning",
@@ -219,8 +240,8 @@
       "output": {
         "title": "Output Preferences",
         "description": "Controls for generated content — language, conversation history length.",
-        "aiLanguage": "AI Output Language",
-        "aiLanguageHint": "Force AI-generated content (chat replies, wiki pages, research output, lint reports) to use the selected language. Pick \"Auto\" to let the AI follow the user's input or source document language.",
+        "aiLanguage": "AI Output Mode",
+        "aiLanguageHint": "Controls how AI-generated content (chat replies, wiki pages, research output, lint reports) should be written. Recommended: \"Chinese-first (preserve English terms)\" for Simplified Chinese prose that keeps English technical terms, paper titles, model names, APIs, commands, code, and paths. \"Auto\" remains strict single-language detection and is not recommended for mixed Chinese-English source material.",
         "historyLength": "Conversation History Length",
         "historyHint": "Number of prior messages sent to the AI on each request. More = richer context but more tokens.",
         "historyCurrent": "Currently {{count}} messages (about {{turns}} turns)"

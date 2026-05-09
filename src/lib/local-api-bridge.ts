@@ -4,7 +4,7 @@ import { searchWiki } from "@/lib/search"
 import { buildWikiGraph } from "@/lib/wiki-graph"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { enqueueIngest } from "@/lib/ingest-queue"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm, hasUsableLlm } from "@/lib/has-usable-llm"
 import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { useWikiStore } from "@/stores/wiki-store"
 
@@ -266,8 +266,12 @@ async function handleIngestFile(payload: Record<string, unknown>) {
   if (!sourcePath) throw new Error("sourcePath is required")
   const project = getActiveProjectForIngest(payload)
   const store = useWikiStore.getState()
-  if (!hasUsableLlm(store.llmConfig)) {
-    throw new Error("LLM not configured -- set API key and model in Settings.")
+  if (!hasUsableDocumentLlm(store.llmConfig, store.documentLlmConfig)) {
+    throw new Error(
+      store.documentLlmConfig.useMainLlm
+        ? "LLM not configured -- set API key and model in Settings."
+        : "Document-processing model not configured -- check Settings -> Document Processing.",
+    )
   }
 
   const pp = normalizePath(project.path)
@@ -294,8 +298,12 @@ async function handleIngestClip(payload: Record<string, unknown>) {
   if (!content.trim()) throw new Error("content is required")
   const project = getActiveProjectForIngest(payload)
   const store = useWikiStore.getState()
-  if (!hasUsableLlm(store.llmConfig)) {
-    throw new Error("LLM not configured -- set API key and model in Settings.")
+  if (!hasUsableDocumentLlm(store.llmConfig, store.documentLlmConfig)) {
+    throw new Error(
+      store.documentLlmConfig.useMainLlm
+        ? "LLM not configured -- set API key and model in Settings."
+        : "Document-processing model not configured -- check Settings -> Document Processing.",
+    )
   }
 
   const pp = normalizePath(project.path)

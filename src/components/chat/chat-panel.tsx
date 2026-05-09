@@ -10,6 +10,7 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { buildChatRetrievalContext } from "@/lib/chat-retrieval"
+import { resolveDocumentLlmConfig } from "@/lib/document-llm"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -286,7 +287,11 @@ export function ChatPanel() {
     if (!project) return
     const pp = normalizePath(project.path)
     try {
-      await executeIngestWrites(pp, llmConfig, undefined, undefined)
+      const ingestLlm = resolveDocumentLlmConfig(
+        llmConfig,
+        useWikiStore.getState().documentLlmConfig,
+      )
+      await executeIngestWrites(pp, ingestLlm, undefined, undefined)
       try {
         const tree = await listDirectory(pp)
         setFileTree(tree)

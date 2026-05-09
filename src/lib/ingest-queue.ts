@@ -3,7 +3,7 @@ import { autoIngest } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm } from "@/lib/has-usable-llm"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -471,12 +471,16 @@ async function processNext(projectId: string): Promise<void> {
   await saveQueue(pp)
   if (currentProjectId !== projectId) return
 
-  const llmConfig = useWikiStore.getState().llmConfig
+  const store = useWikiStore.getState()
+  const llmConfig = store.llmConfig
+  const documentLlmConfig = store.documentLlmConfig
 
   // Check if LLM is configured
-  if (!hasUsableLlm(llmConfig)) {
+  if (!hasUsableDocumentLlm(llmConfig, documentLlmConfig)) {
     next.status = "failed"
-    next.error = "LLM not configured — set API key in Settings"
+    next.error = documentLlmConfig.useMainLlm
+      ? "LLM not configured — set API key in Settings"
+      : "Document-processing model not configured — check Settings → Document Processing"
     processing = false
     await saveQueue(pp)
     processNext(projectId)

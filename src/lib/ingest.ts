@@ -16,6 +16,7 @@ import {
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
+import { resolveDocumentLlmConfig } from "@/lib/document-llm"
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -268,8 +269,12 @@ export async function autoIngest(
   signal?: AbortSignal,
   folderContext?: string,
 ): Promise<string[]> {
+  const effectiveLlm = resolveDocumentLlmConfig(
+    llmConfig,
+    useWikiStore.getState().documentLlmConfig,
+  )
   return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext),
+    autoIngestImpl(projectPath, sourcePath, effectiveLlm, signal, folderContext),
   )
 }
 
@@ -1374,6 +1379,10 @@ export async function startIngest(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
 ): Promise<void> {
+  const effectiveLlm = resolveDocumentLlmConfig(
+    llmConfig,
+    useWikiStore.getState().documentLlmConfig,
+  )
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
   const store = getStore()
@@ -1437,7 +1446,7 @@ export async function startIngest(
   let accumulated = ""
 
   await streamChat(
-    llmConfig,
+    effectiveLlm,
     [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -1464,6 +1473,10 @@ export async function executeIngestWrites(
   userGuidance?: string,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  const effectiveLlm = resolveDocumentLlmConfig(
+    llmConfig,
+    useWikiStore.getState().documentLlmConfig,
+  )
   const pp = normalizePath(projectPath)
   const store = getStore()
 
@@ -1523,7 +1536,7 @@ export async function executeIngestWrites(
     .join("\n\n")
 
   await streamChat(
-    llmConfig,
+    effectiveLlm,
     [{ role: "system", content: systemPrompt }, ...conversationHistory],
     {
       onToken: (token) => {

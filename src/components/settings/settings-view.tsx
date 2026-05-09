@@ -22,6 +22,7 @@ import { saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
+import { DocumentLlmSection } from "./sections/document-llm-section"
 import { MultimodalSection } from "./sections/multimodal-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
@@ -35,6 +36,7 @@ import { AgentAccessSection } from "./sections/agent-access-section"
 type CategoryId =
   | "llm"
   | "embedding"
+  | "document"
   | "multimodal"
   | "web-search"
   | "network"
@@ -57,6 +59,7 @@ interface Category {
 const CATEGORIES: Category[] = [
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
+  { id: "document", labelKey: "settings.categories.document", icon: Bot },
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "network", labelKey: "settings.categories.network", icon: Network },
@@ -71,6 +74,7 @@ const CATEGORIES: Category[] = [
 function initialDraft(
   llm: ReturnType<typeof useWikiStore.getState>["llmConfig"],
   embed: ReturnType<typeof useWikiStore.getState>["embeddingConfig"],
+  documentLlm: ReturnType<typeof useWikiStore.getState>["documentLlmConfig"],
   multimodal: ReturnType<typeof useWikiStore.getState>["multimodalConfig"],
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
@@ -88,11 +92,20 @@ function initialDraft(
     reasoning: llm.reasoning,
     embeddingEnabled: embed.enabled,
     embeddingEndpoint: embed.endpoint,
-    embeddingApiKey: embed.apiKey,
-    embeddingModel: embed.model,
-    embeddingMaxChunkChars: embed.maxChunkChars,
-    embeddingOverlapChunkChars: embed.overlapChunkChars,
-    multimodalEnabled: multimodal.enabled,
+      embeddingApiKey: embed.apiKey,
+      embeddingModel: embed.model,
+      embeddingMaxChunkChars: embed.maxChunkChars,
+      embeddingOverlapChunkChars: embed.overlapChunkChars,
+      documentUseMainLlm: documentLlm.useMainLlm,
+      documentProvider: documentLlm.provider,
+      documentApiKey: documentLlm.apiKey,
+      documentModel: documentLlm.model,
+      documentOllamaUrl: documentLlm.ollamaUrl,
+      documentCustomEndpoint: documentLlm.customEndpoint,
+      documentMaxContextSize: documentLlm.maxContextSize ?? 204800,
+      documentApiMode: documentLlm.apiMode,
+      documentReasoning: documentLlm.reasoning,
+      multimodalEnabled: multimodal.enabled,
     multimodalUseMainLlm: multimodal.useMainLlm,
     multimodalProvider: multimodal.provider,
     multimodalApiKey: multimodal.apiKey,
@@ -116,6 +129,8 @@ export function SettingsView() {
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
   const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
+  const documentLlmConfig = useWikiStore((s) => s.documentLlmConfig)
+  const setDocumentLlmConfig = useWikiStore((s) => s.setDocumentLlmConfig)
   const multimodalConfig = useWikiStore((s) => s.multimodalConfig)
   const setMultimodalConfig = useWikiStore((s) => s.setMultimodalConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
@@ -141,6 +156,7 @@ export function SettingsView() {
     initialDraft(
       llmConfig,
       embeddingConfig,
+      documentLlmConfig,
       multimodalConfig,
       outputLanguage,
       proxyConfig,
@@ -162,6 +178,7 @@ export function SettingsView() {
       initialDraft(
         llmConfig,
         embeddingConfig,
+        documentLlmConfig,
         multimodalConfig,
         outputLanguage,
         proxyConfig,
@@ -172,6 +189,7 @@ export function SettingsView() {
   }, [
     llmConfig,
     embeddingConfig,
+    documentLlmConfig,
     multimodalConfig,
     outputLanguage,
     proxyConfig,
@@ -186,6 +204,7 @@ export function SettingsView() {
     const {
       saveLlmConfig,
       saveEmbeddingConfig,
+      saveDocumentLlmConfig,
       saveMultimodalConfig,
       saveOutputLanguage,
       saveProxyConfig,
@@ -208,6 +227,17 @@ export function SettingsView() {
       model: draft.embeddingModel,
       maxChunkChars: draft.embeddingMaxChunkChars,
       overlapChunkChars: draft.embeddingOverlapChunkChars,
+    }
+    const newDocumentLlm = {
+      useMainLlm: draft.documentUseMainLlm,
+      provider: draft.documentProvider,
+      apiKey: draft.documentApiKey,
+      model: draft.documentModel,
+      ollamaUrl: draft.documentOllamaUrl,
+      customEndpoint: draft.documentCustomEndpoint,
+      maxContextSize: draft.documentMaxContextSize,
+      apiMode: draft.documentProvider === "custom" ? draft.documentApiMode : undefined,
+      reasoning: draft.documentReasoning,
     }
     const newMultimodal = {
       enabled: draft.multimodalEnabled,
@@ -237,6 +267,8 @@ export function SettingsView() {
     await saveLlmConfig(newLlm)
     setEmbeddingConfig(newEmbed)
     await saveEmbeddingConfig(newEmbed)
+    setDocumentLlmConfig(newDocumentLlm)
+    await saveDocumentLlmConfig(newDocumentLlm)
     setMultimodalConfig(newMultimodal)
     await saveMultimodalConfig(newMultimodal)
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
@@ -265,6 +297,7 @@ export function SettingsView() {
     draft,
     setLlmConfig,
     setEmbeddingConfig,
+    setDocumentLlmConfig,
     setOutputLanguage,
     setProxyConfig,
     setMaxHistoryMessages,
@@ -281,6 +314,8 @@ export function SettingsView() {
         return <LlmProviderSection />
       case "embedding":
         return <EmbeddingSection draft={draft} setDraft={setDraft} />
+      case "document":
+        return <DocumentLlmSection draft={draft} setDraft={setDraft} />
       case "multimodal":
         return <MultimodalSection draft={draft} setDraft={setDraft} />
       case "web-search":

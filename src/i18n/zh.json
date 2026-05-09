@@ -102,11 +102,12 @@
     "changeHint": "改动会在保存后应用。",
     "language": "语言",
     "languageHint": "界面语言（Wiki 内容语言以原始资料为准）",
-    "categories": {
-      "llm": "LLM 模型",
-      "embedding": "向量嵌入",
-      "multimodal": "图片描述",
-      "webSearch": "网页搜索",
+      "categories": {
+        "llm": "LLM 模型",
+        "embedding": "向量嵌入",
+        "document": "文档处理",
+        "multimodal": "图片描述",
+        "webSearch": "网页搜索",
       "network": "网络",
       "agent": "智能体访问",
       "output": "输出偏好",
@@ -157,6 +158,26 @@
         "legacyPromptBody": "当前项目在旧版按页向量存储里有 {{count}} 条记录。新版按 chunk 索引检索质量更高,但需要一次性重新 embed。点击\"重新索引全部页面\"完成升级。",
         "dropLegacy": "删除旧版索引",
         "dropLegacyDone": "旧版索引已删除。"
+      },
+      "document": {
+        "title": "文档处理",
+        "description": "控制 source ingest、wiki 文件生成、页面合并、以及 Save to Wiki 使用的模型。不影响普通 chat 回答，也不影响 deep research 的研究结果合成。",
+        "useMainLabel": "文档处理复用主 LLM",
+        "useMainHint": "继续用主 chat/research 模型处理 ingest 和页面合并。如果你想给文档工作流单独换一个更快的模型，就把它关掉。",
+        "dedicatedHeading": "独立文档处理模型",
+        "provider": "Provider",
+        "ollamaUrl": "Ollama URL",
+        "customEndpoint": "端点 URL",
+        "customEndpointHint": "OpenAI 兼容的 /v1 根地址。LM Studio、llama.cpp server、vLLM、LocalAI 都可以。",
+        "apiKey": "API Key",
+        "apiKeyPlaceholder": "本地 / 无鉴权端点留空",
+        "model": "模型",
+        "modelPlaceholder": "例如 gpt-4.1-mini、gemini-2.5-flash、kimi-k2.5",
+        "modelHint": "推荐均衡型快模型。这个设置会用于 ingest 分析、wiki 生成、以及页面合并。",
+        "contextWindow": "上下文窗口",
+        "reasoning": "Reasoning / thinking",
+        "reasoningBudget": "thinking budget tokens",
+        "reasoningHint": "文档处理 prompt 往往更适合 low 或 off，能避免过慢或只输出 reasoning 的响应。"
       },
       "multimodal": {
         "title": "图片描述",
@@ -219,8 +240,8 @@
       "output": {
         "title": "输出偏好",
         "description": "影响生成内容的语言、对话历史长度等参数。",
-        "aiLanguage": "AI 输出语言",
-        "aiLanguageHint": "强制 AI 生成内容（chat 回复、wiki 页面、research 结果、lint 报告）使用指定语言。选 \"Auto\" 让 AI 跟随用户输入或源文档的语言。",
+        "aiLanguage": "AI 输出模式",
+        "aiLanguageHint": "控制 AI 生成内容（chat 回复、wiki 页面、research 结果、lint 报告）的输出方式。推荐“中文为主（保留必要英文）”：主体用简体中文，但保留英文术语、论文标题、模型名、API、命令、代码和路径。\"Auto\" 仍是严格单语自动检测，更适合明确的单语言资料，不适合中英混合资料。",
         "historyLength": "对话历史长度",
         "historyHint": "每次请求发给 AI 的历史消息条数。多 = 上下文更完整但更费 token。",
         "historyCurrent": "当前 {{count}} 条消息（约 {{turns}} 轮对话）"

@@ -18,7 +18,7 @@ import type { FileNode } from "@/types/wiki"
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
 import { makeQueryFileName } from "@/lib/wiki-filename"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm } from "@/lib/has-usable-llm"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
@@ -234,8 +234,9 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       setTimeout(() => setSaved(false), 2000)
 
       // Full auto-ingest: extract entities, concepts, cross-references from saved content
-      const llmConfig = useWikiStore.getState().llmConfig
-      if (hasUsableLlm(llmConfig)) {
+      const store = useWikiStore.getState()
+      const llmConfig = store.llmConfig
+      if (hasUsableDocumentLlm(llmConfig, store.documentLlmConfig)) {
         const { autoIngest } = await import("@/lib/ingest")
         autoIngest(pp, filePath, llmConfig).catch((err) =>
           console.error("Failed to auto-ingest saved query:", err)

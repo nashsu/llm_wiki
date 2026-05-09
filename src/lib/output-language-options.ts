@@ -15,7 +15,8 @@
  * the language.
  */
 export const OUTPUT_LANGUAGE_OPTIONS = [
-  { value: "auto", label: "Auto (detect from input/source)" },
+  { value: "Chinese (preserve English terms)", label: "中文为主（保留必要英文）" },
+  { value: "auto", label: "Auto (strict single-language detect from input/source)" },
   { value: "English", label: "English" },
   { value: "Chinese", label: "简体中文 (Simplified Chinese)" },
   { value: "Traditional Chinese", label: "繁體中文 (Traditional Chinese)" },

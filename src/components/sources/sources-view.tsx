@@ -8,7 +8,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { copyFile, listDirectory, readFile, writeFile, deleteFile, findRelatedWikiPages, preprocessFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { enqueueIngest, enqueueBatch } from "@/lib/ingest-queue"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm } from "@/lib/has-usable-llm"
 import { useTranslation } from "react-i18next"
 import { normalizePath, getFileName } from "@/lib/path-utils"
 import { parseSources, writeSources } from "@/lib/sources-merge"
@@ -27,6 +27,7 @@ export function SourcesView() {
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const documentLlmConfig = useWikiStore((s) => s.documentLlmConfig)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
@@ -133,7 +134,7 @@ export function SourcesView() {
     await loadSources()
 
     // Enqueue for serial ingest (runs in background via ingest queue)
-    if (hasUsableLlm(llmConfig)) {
+    if (hasUsableDocumentLlm(llmConfig, documentLlmConfig)) {
       for (const destPath of importedPaths) {
         enqueueIngest(project.id, destPath).catch((err) =>
           console.error(`Failed to enqueue ingest:`, err)
@@ -175,7 +176,7 @@ export function SourcesView() {
       await loadSources()
 
       // Build ingest tasks with folder context
-      if (hasUsableLlm(llmConfig)) {
+      if (hasUsableDocumentLlm(llmConfig, documentLlmConfig)) {
         const tasks = copiedFiles
           .filter((fp) => {
             const ext = fp.split(".").pop()?.toLowerCase() ?? ""

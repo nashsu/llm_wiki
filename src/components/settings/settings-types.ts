@@ -28,6 +28,17 @@ export interface SettingsDraft {
   /** Overlap characters between adjacent chunks. Empty = default (200). */
   embeddingOverlapChunkChars: number | undefined
 
+  // Document processing (ingest / merge / Save to Wiki)
+  documentUseMainLlm: boolean
+  documentProvider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code"
+  documentApiKey: string
+  documentModel: string
+  documentOllamaUrl: string
+  documentCustomEndpoint: string
+  documentMaxContextSize: number
+  documentApiMode: CustomApiMode | undefined
+  documentReasoning: ReasoningConfig | undefined
+
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
   multimodalUseMainLlm: boolean

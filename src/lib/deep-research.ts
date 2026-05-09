@@ -6,6 +6,7 @@ import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wik
 import { useResearchStore } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { resolveDocumentLlmConfig } from "@/lib/document-llm"
 
 /**
  * Queue a deep research task. Automatically starts processing if under concurrency limit.
@@ -217,7 +218,11 @@ async function executeResearch(
     }
 
     // Auto-ingest the research result to generate entities, concepts, cross-references
-    autoIngest(pp, `${pp}/${savedPath}`, llmConfig).catch((err) => {
+    const ingestLlm = resolveDocumentLlmConfig(
+      llmConfig,
+      useWikiStore.getState().documentLlmConfig,
+    )
+    autoIngest(pp, `${pp}/${savedPath}`, ingestLlm).catch((err) => {
       console.error("Failed to auto-ingest research result:", err)
     })
   } catch (err) {
