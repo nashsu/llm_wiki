@@ -8,6 +8,8 @@ BACKUP_ROOT="${BACKUP_ROOT:-/private/tmp/llmwiki-install-backups}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="${BACKUP_ROOT}/${STAMP}"
 CACHE_DIR="${HOME}/Library/Caches/com.llmwiki.app"
+WEBKIT_DIR="${HOME}/Library/WebKit/com.llmwiki.app"
+SAVED_STATE_DIR="${HOME}/Library/Saved Application State/com.llmwiki.app.savedState"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 if [[ ! -d "${SOURCE_APP}" ]]; then
@@ -24,6 +26,17 @@ fi
 
 mkdir -p "${BACKUP_DIR}"
 
+osascript -e 'tell application "LLM Wiki" to quit' >/dev/null 2>&1 || true
+for _ in {1..20}; do
+  if ! pgrep -x "llm-wiki" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+if pgrep -x "llm-wiki" >/dev/null 2>&1; then
+  pkill -x "llm-wiki" >/dev/null 2>&1 || true
+fi
+
 if [[ -d "${DEST_APP}" ]]; then
   chflags -R nouchg "${DEST_APP}" 2>/dev/null || true
   mv "${DEST_APP}" "${BACKUP_DIR}/${APP_NAME}"
@@ -31,6 +44,12 @@ fi
 
 if [[ -d "${CACHE_DIR}" ]]; then
   mv "${CACHE_DIR}" "${BACKUP_DIR}/com.llmwiki.app.cache"
+fi
+if [[ -d "${WEBKIT_DIR}" ]]; then
+  mv "${WEBKIT_DIR}" "${BACKUP_DIR}/com.llmwiki.app.webkit"
+fi
+if [[ -d "${SAVED_STATE_DIR}" ]]; then
+  mv "${SAVED_STATE_DIR}" "${BACKUP_DIR}/com.llmwiki.app.savedState"
 fi
 
 ditto "${SOURCE_APP}" "${DEST_APP}"
