@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { buildAnalysisPrompt, buildGenerationPrompt } from "./ingest"
+import {
+  buildAnalysisPrompt,
+  buildGenerationPrompt,
+  makeComparisonPagePath,
+  shouldForceComparisonPage,
+} from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 
 beforeEach(() => {
@@ -66,9 +71,38 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("my-paper.pdf")
   })
 
+  it("can disable source-summary generation for deep research query records", () => {
+    const prompt = buildGenerationPrompt(
+      "",
+      "",
+      "",
+      "deep-research-karpathy.md",
+      undefined,
+      "딥리서치 기록",
+      { skipSourceSummary: true },
+    )
+    expect(prompt).toContain("Do NOT generate a source summary page in wiki/sources/")
+    expect(prompt).not.toContain("A source summary page at **wiki/sources/deep-research-karpathy.md**")
+  })
+
+  it("can pin a canonical source-summary title for query-only deep research", () => {
+    const prompt = buildGenerationPrompt(
+      "",
+      "",
+      "",
+      "deep-research-karpathy.md",
+      undefined,
+      "딥리서치 기록",
+      { sourceSummaryTitle: "안드레 카파시 스킬" },
+    )
+    expect(prompt).toContain("A source summary page at **wiki/sources/deep-research-karpathy.md**")
+    expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬"')
+    expect(prompt).toContain("Do not use the original research question as the page title")
+  })
+
   it("does not generate Codex memory page types or profile review guardrails", () => {
     const prompt = buildGenerationPrompt("", "", "", "session.md")
-    expect(prompt).toContain("source | entity | concept | comparison | query | synthesis | decision")
+    expect(prompt).toContain("source | entity | concept | comparison | synthesis | query | decision")
     expect(prompt).not.toContain("workflow | session | profile")
     expect(prompt).not.toContain("durable profile")
     expect(prompt).not.toContain("profile memory")
@@ -79,6 +113,42 @@ describe("buildGenerationPrompt language directive", () => {
     const prompt = buildGenerationPrompt("", "", "", "x.pdf", undefined, "私は日本語の文章を書きます")
     expect(prompt).toContain("MANDATORY OUTPUT LANGUAGE: English")
     expect(prompt).not.toContain("OUTPUT LANGUAGE: Japanese")
+  })
+
+  it("requires a comparison page for explicitly comparative sources", () => {
+    const prompt = buildGenerationPrompt("", "", "", "OpenClaw vs Hermes.md")
+    expect(prompt).toContain("A comparison page in wiki/comparisons/ is REQUIRED")
+    expect(prompt).toContain("wiki/comparisons/openclaw-vs-hermes.md")
+    expect(prompt).toContain("type: comparison")
+  })
+})
+
+describe("comparison source detection", () => {
+  it("detects comparison intent from filename", () => {
+    expect(shouldForceComparisonPage("OpenClaw vs Hermes.md")).toBe(true)
+    expect(makeComparisonPagePath("OpenClaw vs Hermes.md")).toBe(
+      "wiki/comparisons/openclaw-vs-hermes.md",
+    )
+  })
+
+  it("detects comparison intent from frontmatter tags and tables", () => {
+    const source = [
+      "---",
+      "tags: [ai-agent, comparison]",
+      "---",
+      "",
+      "# 도구 비교",
+      "",
+      "| 구분 | A | B |",
+      "| --- | --- | --- |",
+      "| 강점 | 데이터 | 실행 |",
+    ].join("\n")
+    expect(shouldForceComparisonPage("agent-tools.md", source)).toBe(true)
+  })
+
+  it("does not force comparison for incidental comparison words only", () => {
+    const source = "RLHF datasets include many paired comparisons, but this note is not a tool-vs-tool analysis."
+    expect(shouldForceComparisonPage("rlhf-survey.md", source)).toBe(false)
   })
 })
 

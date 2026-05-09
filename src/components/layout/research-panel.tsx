@@ -17,6 +17,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
+import { getResearchArtifactLabel } from "@/lib/research-artifacts"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 export function ResearchPanel() {
@@ -119,7 +120,7 @@ function separateThinking(text: string): { thinking: string; answer: string } {
   return { thinking: "", answer: text }
 }
 
-function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStreaming: boolean }) {
+function ResearchResultBlock({ synthesis, isStreaming }: { synthesis: string; isStreaming: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { thinking, answer } = useMemo(() => separateThinking(synthesis), [synthesis])
   const renderLanguage = useMemo(() => detectLanguage(answer || synthesis), [answer, synthesis])
@@ -143,7 +144,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
 
   return (
     <div className="mb-2 flex flex-col min-h-0">
-      <div className="mb-1 font-medium text-muted-foreground">Synthesis</div>
+      <div className="mb-1 font-medium text-muted-foreground">Research Result</div>
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto rounded bg-muted/30 p-2 prose prose-xs prose-invert max-w-none"
@@ -231,12 +232,16 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
     error: <AlertCircle className="h-3 w-3 text-destructive" />,
   }[task.status]
 
+  const savedLabel = task.savedPath
+    ? `Saved to ${getResearchArtifactLabel(task.savedArtifactType)}`
+    : "Done"
+
   const statusText = {
     queued: "Queued",
     searching: "Searching web...",
     synthesizing: "Synthesizing...",
     saving: "Saving to wiki...",
-    done: task.savedPath ? "Saved" : "Done",
+    done: savedLabel,
     error: "Failed",
   }[task.status]
 
@@ -297,9 +302,9 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
             </div>
           )}
 
-          {/* Synthesis (streaming) */}
+          {/* Research result (streaming) */}
           {task.synthesis && (
-            <SynthesisBlock synthesis={task.synthesis} isStreaming={task.status === "synthesizing"} />
+            <ResearchResultBlock synthesis={task.synthesis} isStreaming={task.status === "synthesizing"} />
           )}
 
           {/* Actions */}

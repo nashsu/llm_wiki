@@ -1,11 +1,18 @@
 import { webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
 import { autoIngest } from "./ingest"
-import { writeFile, readFile, listDirectory } from "@/commands/fs"
+import { writeFile, readFile, listDirectory, createDirectory } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import {
+  RESEARCH_REQUIRED_DIRS,
+  buildPrimaryResearchPage,
+  buildResearchRecordPage,
+  buildResearchSavePlan,
+  cleanResearchSynthesis,
+} from "@/lib/research-artifacts"
 
 /**
  * Queue a deep research task. Automatically starts processing if under concurrency limit.
@@ -165,46 +172,48 @@ async function executeResearch(
     // Step 3: Save to wiki
     store.updateTask(taskId, { status: "saving", synthesis: accumulated })
 
-    const date = new Date().toISOString().slice(0, 10)
-    const slug = topic.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
-    const fileName = `research-${slug}-${date}.md`
-    const filePath = `${pp}/wiki/queries/${fileName}`
-
     const references = webResults
       .map((r, i) => `${i + 1}. [${r.title}](${r.url}) — ${r.source}`)
       .join("\n")
 
-    // Strip <think>/<thinking> blocks before saving
-    const cleanedSynthesis = accumulated
-      .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
-      .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "") // unclosed thinking block
-      .trimStart()
+    const cleanedSynthesis = cleanResearchSynthesis(accumulated)
+    const savePlan = buildResearchSavePlan({
+      topic,
+      synthesis: accumulated,
+      webResults,
+    })
 
-    const pageContent = [
-      "---",
-      `type: query`,
-      `title: "Research: ${topic.replace(/"/g, '\\"')}"`,
-      `created: ${date}`,
-      `origin: deep-research`,
-      `tags: [research]`,
-      "---",
-      "",
-      `# Research: ${topic}`,
-      "",
-      cleanedSynthesis,
-      "",
-      "## References",
-      "",
+    await ensureResearchWikiDirs(pp)
+
+    const queryRecordContent = buildResearchRecordPage({
+      topic,
+      title: savePlan.title,
+      date: savePlan.date,
+      content: cleanedSynthesis,
       references,
-      "",
-    ].join("\n")
+    })
+    await writeFile(`${pp}/${savePlan.queryRecordPath}`, queryRecordContent)
 
-    await writeFile(filePath, pageContent)
-    const savedPath = `wiki/queries/${fileName}`
+    let savedPath = savePlan.queryRecordPath
+    if (savePlan.primaryType !== "query") {
+      const primaryContent = buildPrimaryResearchPage({
+        type: savePlan.primaryType,
+        title: savePlan.title,
+        date: savePlan.date,
+        content: cleanedSynthesis,
+        queryRecordFileName: savePlan.queryRecordFileName,
+        references,
+        related: savePlan.related,
+      })
+      await writeFile(`${pp}/${savePlan.primaryPath}`, primaryContent)
+      savedPath = savePlan.primaryPath
+    }
 
     useResearchStore.getState().updateTask(taskId, {
       status: "done",
       savedPath,
+      queryRecordPath: savePlan.queryRecordPath,
+      savedArtifactType: savePlan.primaryType,
     })
 
     // Refresh tree
@@ -216,8 +225,14 @@ async function executeResearch(
       // ignore
     }
 
-    // Auto-ingest the research result to generate entities, concepts, cross-references
-    autoIngest(pp, `${pp}/${savedPath}`, llmConfig).catch((err) => {
+    // Auto-ingest the immutable research record to generate entities
+    // and concepts without treating a curated synthesis/comparison
+    // page as raw input. When a primary artifact was already written,
+    // do not duplicate the same research record into wiki/sources.
+    autoIngest(pp, `${pp}/${savePlan.queryRecordPath}`, llmConfig, undefined, undefined, {
+      skipSourceSummary: savePlan.primaryType !== "query",
+      sourceSummaryTitle: savePlan.title,
+    }).catch((err) => {
       console.error("Failed to auto-ingest research result:", err)
     })
   } catch (err) {
@@ -229,6 +244,12 @@ async function executeResearch(
   }
 
   onTaskFinished(pp, llmConfig, searchConfig)
+}
+
+async function ensureResearchWikiDirs(projectPath: string): Promise<void> {
+  await Promise.all(
+    RESEARCH_REQUIRED_DIRS.map((dir) => createDirectory(`${projectPath}/${dir}`)),
+  )
 }
 
 function onTaskFinished(
