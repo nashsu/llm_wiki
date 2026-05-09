@@ -89,13 +89,18 @@ function requestedFileBlock(messages: Array<{ content?: string }>): string {
   if (!pathMatch) throw new Error("No requested FILE path found in prompt")
 
   const requestedPath = pathMatch[1].trim()
+  const sourceMatch = prompt.match(/## Source file\n([^\n]+)/) ??
+    prompt.match(/sources array MUST include "([^"]+)"/)
+  const sourceFileName = sourceMatch?.[1]?.trim() ?? "나를 기억하는 LLM 위키 설계법.md"
   const type = requestedPath === "wiki/index.md"
     ? "index"
     : requestedPath === "wiki/overview.md"
       ? "overview"
       : requestedPath.startsWith("wiki/sources/")
         ? "source"
-        : "concept"
+        : requestedPath.startsWith("wiki/comparisons/")
+          ? "comparison"
+          : "concept"
   const title = requestedPath.split("/").pop()?.replace(/\.md$/, "") ?? type
 
   return [
@@ -107,7 +112,7 @@ function requestedFileBlock(messages: Array<{ content?: string }>): string {
     "updated: 2026-05-09",
     "tags: []",
     "related: []",
-    'sources: ["나를 기억하는 LLM 위키 설계법.md"]',
+    `sources: ["${sourceFileName}"]`,
     "confidence: medium",
     "last_reviewed: 2026-05-09",
     "---",
@@ -298,6 +303,324 @@ describe("ollama split ingest", () => {
     )
     expect(conceptPath).not.toBe("wiki/concepts/source-concept-concept.md")
     expect(await fileExists(path.join(ctx.tmp.path, conceptPath!))).toBe(true)
+  })
+})
+
+describe("comparison source enforcement", () => {
+  it("creates a comparison page when the main generation omits one", async () => {
+    ctx = { tmp: await createTempProject("ingest-comparison-enforced") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(
+      ctx.tmp.path,
+      "raw",
+      "sources",
+      "OpenClaw vs Hermes.md",
+    )
+    await writeFileRaw(
+      sourceFullPath,
+      [
+        "---",
+        "tags: [ai-agent, comparison]",
+        "---",
+        "",
+        "# OpenClaw vs Hermes",
+        "",
+        "| 구분 | OpenClaw | Hermes |",
+        "| --- | --- | --- |",
+        "| 역할 | 데이터 엔진 | 운영 콘솔 |",
+        "",
+        "## 실무 선택 기준",
+        "맥락 부족이면 OpenClaw, 실행 마찰이면 Hermes를 먼저 본다.",
+      ].join("\n"),
+    )
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Recommendations\n- Create a reusable comparison page for OpenClaw and Hermes.\n",
+      [
+        "---FILE: wiki/sources/OpenClaw vs Hermes.md---",
+        "---",
+        "type: source",
+        "title: OpenClaw vs Hermes",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: [comparison]",
+        "related: []",
+        'sources: ["OpenClaw vs Hermes.md"]',
+        "confidence: high",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# OpenClaw vs Hermes",
+        "",
+        "source summary only.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/index.md---",
+        "---",
+        "type: index",
+        "title: Index",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Index",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/overview.md---",
+        "---",
+        "type: overview",
+        "title: Overview",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Overview",
+        "---END FILE---",
+      ].join("\n"),
+      requestedFileBlock,
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    const comparisonPath = "wiki/comparisons/openclaw-vs-hermes.md"
+    expect(written).toContain(comparisonPath)
+    const content = await readFileRaw(path.join(ctx.tmp.path, comparisonPath))
+    expect(content).toContain("type: comparison")
+    expect(content).toContain('sources: ["OpenClaw vs Hermes.md"]')
+  })
+})
+
+describe("deep research ingest options", () => {
+  it("pins query-only source summary titles to the canonical research title", async () => {
+    ctx = { tmp: await createTempProject("ingest-deep-research-source-title") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(
+      ctx.tmp.path,
+      "wiki",
+      "queries",
+      "deep-research-karpathy.md",
+    )
+    await writeFileRaw(
+      sourceFullPath,
+      [
+        "---",
+        "type: query",
+        "title: Research Log: 안드레 카파시 스킬",
+        "origin: deep-research",
+        "---",
+        "",
+        "# Research Log: 안드레 카파시 스킬",
+        "",
+        "안드레이 카파시 스킬 조사.",
+      ].join("\n"),
+    )
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Concepts\n- 카파시 스킬\n",
+      [
+        "---FILE: wiki/sources/deep-research-karpathy.md---",
+        "---",
+        "type: source",
+        "title: Research: 안드레이 카파시가 만든 skill 조사해서 핵심 인사이트 정리해줘",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: [research]",
+        "related: []",
+        'sources: ["deep-research-karpathy.md"]',
+        "confidence: medium",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# Research: 안드레이 카파시가 만든 skill 조사해서 핵심 인사이트 정리해줘",
+        "",
+        "카파시 스킬 요약.",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      undefined,
+      undefined,
+      { sourceSummaryTitle: "안드레 카파시 스킬" },
+    )
+
+    expect(written).toContain("wiki/sources/deep-research-karpathy.md")
+    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "deep-research-karpathy.md"))
+    expect(content).toContain('title: "안드레 카파시 스킬"')
+    expect(content).toContain("# 안드레 카파시 스킬")
+    expect(content).not.toContain("# Research: 안드레이 카파시")
+  })
+
+  it("does not duplicate curated deep research artifacts into wiki/sources", async () => {
+    ctx = { tmp: await createTempProject("ingest-deep-research-no-source-summary") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(
+      ctx.tmp.path,
+      "wiki",
+      "queries",
+      "deep-research-karpathy.md",
+    )
+    await writeFileRaw(
+      sourceFullPath,
+      [
+        "---",
+        "type: query",
+        "title: Research Log: 안드레 카파시 스킬",
+        "origin: deep-research",
+        "---",
+        "",
+        "# Research Log: 안드레 카파시 스킬",
+        "",
+        "## Original Query",
+        "안드레이 카파시 스킬 조사.",
+        "",
+        "## Result",
+        "카파시 스킬은 AI 코딩 워크플로를 정리한다.",
+      ].join("\n"),
+    )
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Concepts\n- 카파시 스킬\n",
+      [
+        "---FILE: wiki/sources/deep-research-karpathy.md---",
+        "---",
+        "type: source",
+        "title: 안드레 카파시 스킬 조사",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: [research]",
+        "related: []",
+        'sources: ["deep-research-karpathy.md"]',
+        "confidence: medium",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# 안드레 카파시 스킬 조사",
+        "",
+        "중복 source summary.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/concepts/karpathy-skills.md---",
+        "---",
+        "type: concept",
+        "title: 카파시 스킬",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: [ai-coding]",
+        "related: []",
+        'sources: ["deep-research-karpathy.md"]',
+        "confidence: medium",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# 카파시 스킬",
+        "",
+        "AI 코딩 워크플로 원칙.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/index.md---",
+        "---",
+        "type: index",
+        "title: Index",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# 색인",
+        "- [[karpathy-skills]] 카파시 스킬",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/overview.md---",
+        "---",
+        "type: overview",
+        "title: Overview",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Overview",
+        "카파시 스킬을 포함한다.",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      undefined,
+      undefined,
+      { skipSourceSummary: true },
+    )
+
+    expect(written).not.toContain("wiki/sources/deep-research-karpathy.md")
+    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "sources", "deep-research-karpathy.md"))).toBe(false)
+    expect(written).toContain("wiki/concepts/karpathy-skills.md")
+    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "concepts", "karpathy-skills.md"))).toBe(true)
   })
 })
 

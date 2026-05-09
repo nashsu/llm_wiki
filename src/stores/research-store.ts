@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import type { ResearchArtifactType } from "@/lib/research-artifacts"
 import type { WebSearchResult } from "@/lib/web-search"
 
 export interface ResearchTask {
@@ -9,6 +10,8 @@ export interface ResearchTask {
   webResults: WebSearchResult[]
   synthesis: string
   savedPath: string | null
+  queryRecordPath: string | null
+  savedArtifactType: ResearchArtifactType | null
   error: string | null
   createdAt: number
 }
@@ -45,6 +48,8 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
           webResults: [],
           synthesis: "",
           savedPath: null,
+          queryRecordPath: null,
+          savedArtifactType: null,
           error: null,
           createdAt: Date.now(),
         },

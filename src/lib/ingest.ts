@@ -78,6 +78,22 @@ export interface ParseFileBlocksResult {
   warnings: string[]
 }
 
+export interface AutoIngestOptions {
+  /**
+   * Deep Research writes its own curated synthesis/comparison page before
+   * ingesting the query record for entity/concept extraction. In that flow,
+   * a source-summary page would duplicate the query record and pollute the
+   * graph with question-shaped titles.
+   */
+  skipSourceSummary?: boolean
+  /**
+   * Canonical title to use when a Deep Research query remains query-only and
+   * therefore is allowed to produce a source summary. Keeps graph labels tied
+   * to the research result title instead of the raw question text.
+   */
+  sourceSummaryTitle?: string
+}
+
 // Line-level openers / closers. Both are case-insensitive, tolerant of
 // extra interior whitespace (`--- END FILE ---`), and anchored to the
 // whole trimmed line so a stray `---END FILE---` inside prose or a list
@@ -283,6 +299,286 @@ function makeSourceConceptSlug(sourceBaseName: string): string {
   return `${slugifyWikiStem(sourceBaseName)}-${shortStableHash(sourceBaseName)}-concept`
 }
 
+const COMPARISON_SIGNAL_RE = /\b(vs\.?|versus|compare[sd]?|comparison|trade-?off)\b|비교|대비|차이|선택\s*기준|장단점/iu
+
+function getSourceBaseName(sourceFileName: string): string {
+  return sourceFileName.replace(/\.[^.]+$/, "")
+}
+
+export function makeComparisonPagePath(sourceFileName: string): string {
+  return `wiki/comparisons/${slugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+}
+
+function isComparisonPagePath(path: string): boolean {
+  return path.replace(/\\/g, "/").startsWith("wiki/comparisons/")
+}
+
+function hasMarkdownComparisonTable(text: string): boolean {
+  const lines = text.split("\n")
+  for (let i = 0; i < lines.length - 1; i++) {
+    const current = lines[i]
+    const next = lines[i + 1]
+    if (!current.includes("|") || !next.includes("|")) continue
+    if (!/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(next)) continue
+
+    const window = lines.slice(Math.max(0, i - 4), Math.min(lines.length, i + 12)).join("\n")
+    if (COMPARISON_SIGNAL_RE.test(window)) return true
+  }
+  return false
+}
+
+function frontmatterHasComparisonTag(sourceContent: string): boolean {
+  const match = sourceContent.match(/^---\n([\s\S]*?)\n---/)
+  if (!match) return false
+  return /^tags:\s*\[?[^\n]*\bcomparison\b/im.test(match[1])
+}
+
+export function shouldForceComparisonPage(
+  sourceFileName: string,
+  sourceContent: string = "",
+  analysis: string = "",
+): boolean {
+  let score = 0
+  if (COMPARISON_SIGNAL_RE.test(sourceFileName)) score += 3
+  if (frontmatterHasComparisonTag(sourceContent)) score += 3
+
+  const headings = sourceContent
+    .split("\n")
+    .filter((line) => /^#{1,4}\s+/.test(line))
+    .slice(0, 12)
+    .join("\n")
+  if (COMPARISON_SIGNAL_RE.test(headings)) score += 2
+  if (hasMarkdownComparisonTable(sourceContent)) score += 2
+  if (COMPARISON_SIGNAL_RE.test(analysis)) score += 1
+
+  return score >= 3
+}
+
+function yamlString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+function stripFrontmatter(markdown: string): string {
+  return markdown.replace(/^---\n[\s\S]*?\n---\n?/, "").trim()
+}
+
+function extractFirstMarkdownTable(markdown: string): string {
+  const lines = markdown.split("\n")
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (!lines[i].includes("|")) continue
+    if (!/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i + 1])) continue
+
+    const table: string[] = [lines[i], lines[i + 1]]
+    for (let j = i + 2; j < lines.length; j++) {
+      if (!lines[j].includes("|") || lines[j].trim() === "") break
+      table.push(lines[j])
+    }
+    return table.join("\n")
+  }
+  return ""
+}
+
+function excerptForFallback(markdown: string, maxChars = 1400): string {
+  const compact = stripFrontmatter(markdown)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+  if (compact.length <= maxChars) return compact
+  return `${compact.slice(0, maxChars).trimEnd()}\n\n...`
+}
+
+function shouldUseKoreanFallback(sourceContent: string, analysis: string): boolean {
+  return /[\u3131-\u318e\uac00-\ud7a3]/u.test(`${sourceContent}\n${analysis}`)
+}
+
+function fallbackComparisonCopy(sourceContent: string, analysis: string): {
+  titleSuffix: string
+  purposeHeading: string
+  purposeBody: string
+  comparisonHeading: string
+  comparisonFallback: string
+  criteriaHeading: string
+  criteriaItems: string[]
+  evidenceHeading: string
+  evidenceFallback: string
+} {
+  if (shouldUseKoreanFallback(sourceContent, analysis)) {
+    return {
+      titleSuffix: "비교",
+      purposeHeading: "목적",
+      purposeBody: "이 문서는 원본 source가 비교 대상으로 제시한 선택지의 역할, 강점, 적용 조건을 한 페이지에서 재사용하기 위해 생성되었습니다.",
+      comparisonHeading: "핵심 비교",
+      comparisonFallback: "- 원본 source의 비교 구조를 기준으로 각 대상의 역할, 강점, 한계, 적용 조건을 함께 검토합니다.",
+      criteriaHeading: "판단 기준",
+      criteriaItems: [
+        "- 어느 선택지가 더 적합한지는 현재 병목이 데이터/맥락 설계인지, 실행/운영 자동화인지에 따라 판단합니다.",
+        "- 민감한 데이터, 자동 실행, 외부 공유가 포함되는 경우 사람의 검수와 승인 지점을 먼저 둡니다.",
+      ],
+      evidenceHeading: "원본 근거 요약",
+      evidenceFallback: "- 원본 source의 분석 내용이 부족해 최소 comparison 페이지로 생성되었습니다.",
+    }
+  }
+
+  return {
+    titleSuffix: "comparison",
+    purposeHeading: "Purpose",
+    purposeBody: "This page was generated so the alternatives, strengths, limits, and adoption conditions in the original source can be reused from one comparison note.",
+    comparisonHeading: "Core Comparison",
+    comparisonFallback: "- Use the original source's comparison structure to evaluate each option's role, strengths, limits, and fit conditions.",
+    criteriaHeading: "Decision Criteria",
+    criteriaItems: [
+      "- Pick the better option based on the current bottleneck: data/context design, execution workflow, or operational automation.",
+      "- If sensitive data, autonomous execution, or external sharing is involved, define human review and approval points first.",
+    ],
+    evidenceHeading: "Source Evidence Summary",
+    evidenceFallback: "- The source did not provide enough structured analysis, so this minimal comparison page was generated.",
+  }
+}
+
+function buildFallbackComparisonPage(
+  sourceFileName: string,
+  sourceContent: string,
+  analysis: string,
+): string {
+  const date = new Date().toISOString().slice(0, 10)
+  const baseName = getSourceBaseName(sourceFileName)
+  const table = extractFirstMarkdownTable(sourceContent)
+  const evidence = excerptForFallback(analysis || sourceContent)
+  const copy = fallbackComparisonCopy(sourceContent, analysis)
+  const title = `${baseName} ${copy.titleSuffix}`
+
+  return [
+    "---",
+    "type: comparison",
+    `title: ${yamlString(title)}`,
+    `created: ${date}`,
+    `updated: ${date}`,
+    "tags: [comparison]",
+    "related: []",
+    `sources: [${yamlString(sourceFileName)}]`,
+    "confidence: medium",
+    `last_reviewed: ${date}`,
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    `## ${copy.purposeHeading}`,
+    copy.purposeBody,
+    "",
+    `## ${copy.comparisonHeading}`,
+    table || copy.comparisonFallback,
+    "",
+    `## ${copy.criteriaHeading}`,
+    ...copy.criteriaItems,
+    "",
+    `## ${copy.evidenceHeading}`,
+    evidence || copy.evidenceFallback,
+  ].join("\n")
+}
+
+async function ensureComparisonPageForComparisonSource(params: {
+  projectPath: string
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  llmConfig: LlmConfig
+  writtenPaths: string[]
+  signal?: AbortSignal
+}): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
+  const {
+    projectPath,
+    sourceFileName,
+    sourceContent,
+    analysis,
+    llmConfig,
+    writtenPaths,
+    signal,
+  } = params
+
+  if (!shouldForceComparisonPage(sourceFileName, sourceContent, analysis)) {
+    return { writtenPaths: [], warnings: [], hardFailures: [] }
+  }
+  if (writtenPaths.some(isComparisonPagePath)) {
+    return { writtenPaths: [], warnings: [], hardFailures: [] }
+  }
+
+  const comparisonPath = makeComparisonPagePath(sourceFileName)
+  const date = new Date().toISOString().slice(0, 10)
+  const systemPrompt = [
+    "You are a strict wiki maintainer. Generate exactly ONE FILE block.",
+    "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
+    `The first line must be exactly: ---FILE: ${comparisonPath}---`,
+    "The last line must be exactly `---END FILE---`.",
+    "The file content inside the block must start with YAML frontmatter.",
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    "The frontmatter type must be exactly `comparison`.",
+    `Use created/updated/last_reviewed date ${date}.`,
+    `The sources array MUST include "${sourceFileName}".`,
+    "",
+    languageRule(sourceContent),
+  ].join("\n")
+  const userPrompt = [
+    `The source file **${sourceFileName}** was detected as a comparison source, but no comparison page was generated.`,
+    "",
+    `Create the missing comparison page at **${comparisonPath}**.`,
+    "",
+    "Page requirements:",
+    "- type must be `comparison`.",
+    "- Compare the main alternatives side by side.",
+    "- Include a compact comparison table when the source supports it.",
+    "- Include decision criteria, recommended use, risks, and source-grounded conclusion.",
+    "- Do not create entity, concept, source, index, overview, or log pages.",
+    "",
+    "## Stage 1 Analysis",
+    analysis,
+    "",
+    "## Original Source Content",
+    sourceContent,
+  ].join("\n")
+
+  const warnings: string[] = []
+  try {
+    const generation = await generateOneFileBlock(
+      llmConfig,
+      systemPrompt,
+      userPrompt,
+      signal,
+      4096,
+    )
+    const result = await writeFileBlocks(
+      projectPath,
+      generation,
+      llmConfig,
+      sourceFileName,
+      signal,
+    )
+    warnings.push(...result.warnings)
+    const comparisonWritten = result.writtenPaths.filter(isComparisonPagePath)
+    if (comparisonWritten.length > 0 || result.hardFailures.length > 0) {
+      return {
+        writtenPaths: comparisonWritten,
+        warnings,
+        hardFailures: result.hardFailures,
+      }
+    }
+    warnings.push(`Comparison source detected but LLM did not emit a wiki/comparisons page for "${sourceFileName}".`)
+  } catch (err) {
+    warnings.push(
+      `Comparison page LLM generation failed for "${sourceFileName}": ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  try {
+    await writeFile(
+      `${projectPath}/${comparisonPath}`,
+      buildFallbackComparisonPage(sourceFileName, sourceContent, analysis),
+    )
+    return { writtenPaths: [comparisonPath], warnings, hardFailures: [] }
+  } catch (err) {
+    const msg = `Failed to write fallback comparison page "${comparisonPath}": ${err instanceof Error ? err.message : String(err)}`
+    return { writtenPaths: [], warnings: [...warnings, msg], hardFailures: [comparisonPath] }
+  }
+}
+
 async function generateOneFileBlock(
   llmConfig: LlmConfig,
   systemPrompt: string,
@@ -321,6 +617,7 @@ async function generateOllamaSplitFileBlocks(params: {
   analysis: string
   signal?: AbortSignal
   onProgress?: (detail: string) => void
+  options?: AutoIngestOptions
 }): Promise<string> {
   const {
     llmConfig,
@@ -333,9 +630,13 @@ async function generateOllamaSplitFileBlocks(params: {
     analysis,
     signal,
     onProgress,
+    options,
   } = params
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
+  const sourceBaseName = getSourceBaseName(fileName)
   const conceptSlug = makeSourceConceptSlug(sourceBaseName)
+  const comparisonIntent = shouldForceComparisonPage(fileName, sourceContent, analysis)
+  const comparisonPath = makeComparisonPagePath(fileName)
+  const comparisonSlug = comparisonPath.split("/").pop()?.replace(/\.md$/, "") ?? ""
   const date = new Date().toISOString().slice(0, 10)
   const language = languageRule(sourceContent)
 
@@ -369,7 +670,7 @@ async function generateOllamaSplitFileBlocks(params: {
   ].join("\n")
 
   const tasks = [
-    {
+    ...(!options?.skipSourceSummary ? [{
       label: "source summary",
       path: `wiki/sources/${sourceBaseName}.md`,
       user: [
@@ -377,10 +678,29 @@ async function generateOllamaSplitFileBlocks(params: {
         "",
         `Generate exactly one source summary page at wiki/sources/${sourceBaseName}.md.`,
         "type must be `source`.",
+        options?.sourceSummaryTitle
+          ? `Use frontmatter title and H1 exactly: ${options.sourceSummaryTitle}.`
+          : "",
+        options?.sourceSummaryTitle
+          ? "Do not use the original research question as the page title."
+          : "",
         "Summarize the source; do not copy it wholesale.",
+      ].filter(Boolean).join("\n"),
+      maxTokens: 4096,
+    }] : []),
+    ...(comparisonIntent ? [{
+      label: "comparison",
+      path: comparisonPath,
+      user: [
+        sharedContext,
+        "",
+        `Generate exactly one comparison page at ${comparisonPath}.`,
+        "type must be `comparison`.",
+        "This source is explicitly comparative; do not collapse it into only a concept page.",
+        "Compare the main alternatives side by side, include decision criteria, risks, and a source-grounded recommendation.",
       ].join("\n"),
       maxTokens: 4096,
-    },
+    }] : []),
     {
       label: "central concept",
       path: `wiki/concepts/${conceptSlug}.md`,
@@ -401,7 +721,11 @@ async function generateOllamaSplitFileBlocks(params: {
         "",
         "Generate exactly one updated index page at wiki/index.md.",
         "type must be `index`.",
-        `Preserve existing entries from the current index and add links for [[${sourceBaseName}]] and [[${conceptSlug}]].`,
+        `Preserve existing entries from the current index and add links for ${[
+          `[[${sourceBaseName}]]`,
+          comparisonIntent && comparisonSlug ? `[[${comparisonSlug}]]` : "",
+          `[[${conceptSlug}]]`,
+        ].filter(Boolean).join(", ")}.`,
       ].join("\n"),
       maxTokens: 4096,
     },
@@ -513,9 +837,10 @@ export async function autoIngest(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  options: AutoIngestOptions = {},
 ): Promise<string[]> {
   return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext),
+    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext, options),
   )
 }
 
@@ -525,11 +850,14 @@ async function autoIngestImpl(
   llmConfig: LlmConfig,
   signal?: AbortSignal,
   folderContext?: string,
+  options: AutoIngestOptions = {},
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
   const activity = useActivityStore.getState()
   const fileName = getFileName(sp)
+  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
+  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -557,14 +885,29 @@ async function autoIngestImpl(
   // re-running them costs only the extraction time and converges the
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
-  const cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
+  let cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
+  if (options.skipSourceSummary && cachedFiles?.includes(sourceSummaryPath)) {
+    console.log(
+      `[ingest-cache] cache miss for ${fileName}: source-summary output is disabled for this ingest`,
+    )
+    cachedFiles = null
+  }
   console.log(`[ingest:diag] cache check for "${fileName}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
-  if (cachedFiles !== null) {
+  const cachedComparisonMissing =
+    cachedFiles !== null &&
+    shouldForceComparisonPage(fileName, sourceContent) &&
+    !cachedFiles.some(isComparisonPagePath)
+  if (cachedComparisonMissing) {
+    console.log(
+      `[ingest-cache] cache miss for ${fileName}: comparison source needs a wiki/comparisons page`,
+    )
+  }
+  if (cachedFiles !== null && !cachedComparisonMissing) {
     try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
       const savedImages = await extractAndSaveSourceImages(pp, sp)
       console.log(`[ingest:diag] cache-hit branch: got ${savedImages.length} image(s)`)
-      if (savedImages.length > 0) {
+      if (savedImages.length > 0 && !options.skipSourceSummary) {
         // Caption first (populates the cache), THEN inject — the
         // safety-net section uses the cache to populate alt text.
         // Doing them in this order means cache-hit re-runs (e.g.
@@ -807,6 +1150,7 @@ async function autoIngestImpl(
         analysis,
         signal,
         onProgress: (detail) => activity.updateItem(activityId, { detail }),
+        options,
       })
     } catch (err) {
       activity.updateItem(activityId, {
@@ -818,7 +1162,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent, options) },
         {
           role: "user",
           content: [
@@ -869,6 +1213,7 @@ async function autoIngestImpl(
     llmConfig,
     fileName,
     signal,
+    options,
   )
 
   // Surface parser / writer warnings to the activity panel so users
@@ -883,8 +1228,6 @@ async function autoIngestImpl(
   }
 
   // Ensure source summary page exists (LLM may not have generated it correctly)
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   const hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
 
@@ -894,12 +1237,13 @@ async function autoIngestImpl(
   // old project's wiki would both be noise and mask the error.
   // Returning no files lets processNext's length-0 safety net mark the
   // task for retry rather than "success".
-  if (!hasSourceSummary && !signal?.aborted) {
+  if (!options.skipSourceSummary && !hasSourceSummary && !signal?.aborted) {
     const date = new Date().toISOString().slice(0, 10)
+    const fallbackTitle = options.sourceSummaryTitle?.trim() || `Source: ${fileName}`
     const fallbackContent = [
       "---",
       `type: source`,
-      `title: "Source: ${fileName}"`,
+      `title: ${yamlString(fallbackTitle)}`,
       `created: ${date}`,
       `updated: ${date}`,
       `sources: ["${fileName}"]`,
@@ -907,7 +1251,7 @@ async function autoIngestImpl(
       `related: []`,
       "---",
       "",
-      `# Source: ${fileName}`,
+      `# ${fallbackTitle}`,
       "",
       analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
       "",
@@ -920,12 +1264,29 @@ async function autoIngestImpl(
     }
   }
 
+  if (!options.skipSourceSummary && writtenPaths.length > 0 && !signal?.aborted) {
+    const comparisonResult = await ensureComparisonPageForComparisonSource({
+      projectPath: pp,
+      sourceFileName: fileName,
+      sourceContent: truncatedContent,
+      analysis,
+      llmConfig,
+      writtenPaths,
+      signal,
+    })
+    for (const p of comparisonResult.writtenPaths) {
+      if (!writtenPaths.includes(p)) writtenPaths.push(p)
+    }
+    writeWarnings.push(...comparisonResult.warnings)
+    hardFailures.push(...comparisonResult.hardFailures)
+  }
+
   // ── Step 3.5: Append extracted images to the source-summary page ─
   // Skipped when the master toggle is off — see Step 0.6 above for
   // the full rationale. With captioning disabled we also don't
   // want the safety-net section to slip image refs into the wiki
   // through the back door.
-  if (mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
+  if (!options.skipSourceSummary && mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
     await injectImagesIntoSourceSummary(pp, fileName, savedImages)
   }
 
@@ -1051,16 +1412,49 @@ function contentMatchesTargetLanguage(content: string, target: string): boolean 
   return !detectedIsCjk
 }
 
+function applyCanonicalPageTitle(content: string, title: string): string {
+  const canonicalTitle = title.trim()
+  if (!canonicalTitle) return content
+
+  let out = content
+  if (out.startsWith("---\n")) {
+    const fmEnd = out.indexOf("\n---", 4)
+    if (fmEnd >= 0) {
+      const frontmatter = out.slice(0, fmEnd)
+      const rest = out.slice(fmEnd)
+      const titleLine = `title: ${yamlString(canonicalTitle)}`
+      out = /^title:\s*.*$/m.test(frontmatter)
+        ? `${frontmatter.replace(/^title:\s*.*$/m, titleLine)}${rest}`
+        : `${frontmatter}\n${titleLine}${rest}`
+    }
+  }
+
+  if (/^#\s+.+$/m.test(out)) {
+    return out.replace(/^#\s+.+$/m, `# ${canonicalTitle}`)
+  }
+
+  const frontmatterEnd = out.startsWith("---\n") ? out.indexOf("\n---", 4) : -1
+  if (frontmatterEnd >= 0) {
+    const afterClosing = out.indexOf("\n", frontmatterEnd + 4)
+    if (afterClosing >= 0) {
+      return `${out.slice(0, afterClosing + 1)}\n# ${canonicalTitle}\n\n${out.slice(afterClosing + 1).trimStart()}`
+    }
+  }
+  return `# ${canonicalTitle}\n\n${out}`
+}
+
 async function writeFileBlocks(
   projectPath: string,
   text: string,
   llmConfig: LlmConfig,
   sourceFileName: string,
   signal?: AbortSignal,
+  options: AutoIngestOptions = {},
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
+  const sourceSummaryPath = `wiki/sources/${sourceFileName.replace(/\.[^.]+$/, "")}.md`
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
   // (disk full, permission, OS-level errors). Distinct from soft drops
   // (language mismatch, parse warnings, path-traversal rejections):
@@ -1074,6 +1468,13 @@ async function writeFileBlocks(
   const targetLang = useWikiStore.getState().outputLanguage
 
   for (const { path: relativePath, content: rawContent } of blocks) {
+    if (options.skipSourceSummary && relativePath === sourceSummaryPath) {
+      const msg = `Dropped "${relativePath}" — source-summary output is disabled for this ingest.`
+      console.warn(`[ingest] ${msg}`)
+      warnings.push(msg)
+      continue
+    }
+
     // Sanitize at the boundary — strip stray code-fence wrappers,
     // `frontmatter:` prefixes, and repair invalid wikilink-list
     // YAML lines so the file we write is canonical regardless of
@@ -1082,7 +1483,10 @@ async function writeFileBlocks(
     // step ~45% of generated entity pages went to disk with
     // unparseable frontmatter and the read-time fallback had to
     // paper over it forever.
-    const content = sanitizeIngestedFileContent(rawContent)
+    let content = sanitizeIngestedFileContent(rawContent)
+    if (relativePath === sourceSummaryPath && options.sourceSummaryTitle) {
+      content = applyCanonicalPageTitle(content, options.sourceSummaryTitle)
+    }
 
     // Language guard: reject individual FILE blocks whose body contradicts
     // the user-set target language. Skip:
@@ -1131,8 +1535,8 @@ async function writeFileBlocks(
         // content pages).
         await writeFile(fullPath, content)
       } else {
-        // Content pages (entities / concepts / queries / synthesis /
-        // comparisons / sources summaries): if a page with this
+        // Content pages (entities / concepts / queries / comparisons /
+        // synthesis / sources summaries): if a page with this
         // path already exists on disk, merge old + new instead of
         // clobbering. The merge has three layers:
         //   1. Frontmatter array fields (sources, tags, related)
@@ -1293,9 +1697,31 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
 /**
  * Step 2 prompt: AI takes its own analysis and generates wiki files + review items.
  */
-export function buildGenerationPrompt(schema: string, purpose: string, index: string, sourceFileName: string, overview?: string, sourceContent: string = ""): string {
+export function buildGenerationPrompt(
+  schema: string,
+  purpose: string,
+  index: string,
+  sourceFileName: string,
+  overview?: string,
+  sourceContent: string = "",
+  options: AutoIngestOptions = {},
+): string {
   // Use original filename (without extension) as the source summary page name
   const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
+  const sourceSummaryInstruction = options.skipSourceSummary
+    ? [
+        "1. Do NOT generate a source summary page in wiki/sources/ for this source.",
+        "   This source is a Deep Research query record; the curated synthesis/comparison page already exists.",
+      ]
+    : [
+        `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
+        ...(options.sourceSummaryTitle
+          ? [
+              `   For that source summary page, use frontmatter title and H1 exactly: "${options.sourceSummaryTitle}".`,
+              "   Do not use the original research question as the page title.",
+            ]
+          : []),
+      ]
 
   return [
     "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
@@ -1309,12 +1735,16 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "",
     "## What to generate",
     "",
-    `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
+    ...sourceSummaryInstruction,
     "2. Entity pages in wiki/entities/ for key entities identified in the analysis",
     "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
-    "4. Comparison, query, decision, or synthesis pages only when the analysis clearly recommends reusable cross-source content",
-    "5. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "4. A comparison page in wiki/comparisons/ is REQUIRED when the source filename, title, tags, headings, or body clearly compare alternatives (for example: `vs`, `versus`, `comparison`, `비교`, `대비`, comparison tables, trade-off / selection-criteria sections).",
+    options.skipSourceSummary
+      ? `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
+      : `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
+    "5. Synthesis, query, or decision pages only when the analysis clearly recommends reusable cross-source content",
+    "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
+    "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
     "",
     "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "",
@@ -1333,7 +1763,7 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "   write `related: [a, b]` with bare slugs.",
     "",
     "Required fields and types:",
-    "  • type     — one of: source | entity | concept | comparison | query | synthesis | decision",
+    "  • type     — one of: source | entity | concept | comparison | synthesis | query | decision",
     "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
     "  • created  — date in YYYY-MM-DD form (no quotes)",
     "  • updated  — same as created",
