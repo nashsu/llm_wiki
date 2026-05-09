@@ -32,7 +32,7 @@
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
-- **4-Signal Knowledge Graph** — relevance model with direct links, source overlap, Adamic-Adar, and type affinity
+- **Relation-Aware Knowledge Graph** — typed wikilink, related, and source edges with Knowledge, Evidence, and Maintenance modes
 - **Louvain Community Detection** — automatic knowledge cluster discovery with cohesion scoring
 - **Graph Insights** — surprising connections and knowledge gaps with one-click Deep Research
 - **Vector Semantic Search** — optional embedding-based retrieval via LanceDB, supports any OpenAI-compatible endpoint
@@ -41,7 +41,7 @@
 - **Deep Research** — LLM-optimized search topics, multi-query web search, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
-- **Obsidian-style Dark Mode** — switch between System, Light, and Dark themes, with graph colors tuned for dark backgrounds
+- **Obsidian-style Graph UX** — restrained gray edges, readable hover labels, elastic node dragging, and dark-mode tuned graph colors
 
 ## What is this?
 
@@ -125,26 +125,43 @@ Additional ingest enhancements beyond the original:
 - **Guaranteed source summary** — fallback ensures a source summary page is always created, even if the LLM omits it
 - **Language-aware generation** — LLM responds in the user's configured language (English or Chinese)
 
-### 4. Knowledge Graph with Relevance Model
+### 4. Relation-Aware Knowledge Graph
 
 <p align="center">
   <img src="assets/3-knowledge_graph.jpg" width="100%" alt="Knowledge Graph">
 </p>
 
-The original mentions `[[wikilinks]]` for cross-references but has no graph analysis. We built a **full knowledge graph visualization and relevance engine**:
+The original mentions `[[wikilinks]]` for cross-references but has no graph analysis. We built a **schema-aware knowledge graph visualization and relevance engine** that understands the LLM Wiki page model instead of copying Obsidian's full vault graph.
+
+**Relation Types:**
+| Edge Type | Source | Meaning |
+|-----------|--------|---------|
+| `wikilink` | Body `[[wikilinks]]` | Explicit page-to-page reference |
+| `related` | Frontmatter `related: []` | Curated semantic relationship |
+| `source` | Frontmatter `sources: []` | Evidence trail from wiki knowledge back to source summaries |
+
+Multiple relationships between the same two pages are merged into one edge with combined relation metadata. Query pages stay in the graph data, but are hidden by default in knowledge-focused modes so operational history can be surfaced later without polluting the main view.
 
 **4-Signal Relevance Model:**
 | Signal | Weight | Description |
 |--------|--------|-------------|
 | Direct link | ×3.0 | Pages linked via `[[wikilinks]]` |
-| Source overlap | ×4.0 | Pages sharing the same raw source (via frontmatter `sources[]`) |
+| Source evidence | ×4.0 | Pages connected through resolved frontmatter `sources[]` |
 | Adamic-Adar | ×1.5 | Pages sharing common neighbors (weighted by neighbor degree) |
 | Type affinity | ×1.0 | Bonus for same page type (entity↔entity, concept↔concept) |
 
+**Graph Modes:**
+| Mode | Default Focus | Use It For |
+|------|---------------|------------|
+| Knowledge | Concepts, entities, comparisons, synthesis | Understanding the knowledge structure |
+| Evidence | Source summaries and source edges | Tracing which sources support which pages |
+| Maintenance | Isolated, unresolved, and under-supported nodes | Finding cleanup and wiki health work |
+
 **Graph Visualization (sigma.js + graphology + ForceAtlas2):**
-- Node colors by page type or community, sizes scaled by link count (√ scaling)
-- Edge thickness and color by relevance weight (green=strong, gray=weak)
-- Hover interaction: neighbors stay visible, non-neighbors dim, edges highlight with relevance score label
+- Node colors by page type or community, sizes scaled by link count with vault-size-aware limits
+- Obsidian-like gray edge styling keeps relationship density readable as the vault grows
+- Hover interaction: neighbors stay visible, non-neighbors dim, connected edges highlight without noisy edge labels
+- Elastic node dragging: dragging a node lightly pulls connected nodes, then settles back near the original layout
 - Zoom controls (ZoomIn, ZoomOut, Fit-to-screen)
 - Position caching prevents layout jumps when data updates
 - Legend switches between type counts and community info based on coloring mode
