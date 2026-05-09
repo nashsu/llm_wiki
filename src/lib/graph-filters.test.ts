@@ -30,9 +30,11 @@ function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, "id" | "label"
 }
 
 function makeFilters(overrides: Partial<GraphFilterState> = {}): GraphFilterState {
+  const mode = overrides.mode ?? "knowledge"
+  const base = createGraphFiltersForMode(mode)
   return {
-    ...createGraphFiltersForMode("knowledge"),
-    hiddenTypes: new Set(DEFAULT_GRAPH_FILTERS.hiddenTypes),
+    ...base,
+    hiddenTypes: new Set(mode === "knowledge" ? DEFAULT_GRAPH_FILTERS.hiddenTypes : base.hiddenTypes),
     hiddenNodeIds: new Set<string>(),
     ...overrides,
   }
@@ -46,13 +48,13 @@ describe("graph filters", () => {
     expect(isStructuralGraphNode(nodes[1])).toBe(false)
   })
 
-  it("hides structural nodes and their connected edges by default", () => {
+  it("hides structural and source nodes in knowledge mode by default", () => {
     const out = applyGraphFilters(nodes, edges, makeFilters())
 
     expect(out.nodes.map((n) => n.id)).not.toContain("index")
+    expect(out.nodes.map((n) => n.id)).not.toContain("source-c")
     expect(out.edges).toEqual([
       { source: "concept-a", target: "entity-b", types: ["related"], weight: 2 },
-      { source: "source-c", target: "entity-b", types: ["source"], weight: 3 },
     ])
   })
 

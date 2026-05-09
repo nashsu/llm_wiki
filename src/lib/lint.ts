@@ -5,6 +5,7 @@ import type { FileNode } from "@/types/wiki"
 import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { parseFrontmatter, type FrontmatterValue } from "@/lib/frontmatter"
 
 export interface LintResult {
   type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
@@ -38,9 +39,34 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
+function extractRelated(content: string): string[] {
+  const parsed = parseFrontmatter(content)
+  return frontmatterArray(parsed.frontmatter?.related)
+}
+
+function frontmatterArray(value: FrontmatterValue | undefined): string[] {
+  if (Array.isArray(value)) return value.map((v) => v.trim()).filter(Boolean)
+  if (typeof value !== "string") return []
+  const trimmed = value.trim()
+  if (!trimmed) return []
+  return [trimmed]
+}
+
 function relativeToSlug(relativePath: string): string {
   // relativePath relative to wiki/ dir, e.g. "entities/foo-bar" or "queries/my-page-2024-01-01"
   return relativePath.replace(/\.md$/, "")
+}
+
+function normalizeReferenceKey(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()!
+    .replace(/\.md$/i, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .normalize("NFC")
+    .toLowerCase()
 }
 
 /**
@@ -58,8 +84,10 @@ function buildSlugMap(
     // e.g. /path/to/project/wiki/entities/foo.md → entities/foo
     const rel = getRelativePath(f.path, wikiRoot).replace(/\.md$/, "")
     map.set(rel.toLowerCase(), f.path)
+    map.set(rel.replace(/\s+/g, "-").toLowerCase(), f.path)
     // also index by basename without extension
     map.set(f.name.replace(/\.md$/, "").toLowerCase(), f.path)
+    map.set(normalizeReferenceKey(f.name), f.path)
   }
   return map
 }
@@ -84,7 +112,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   const slugMap = buildSlugMap(contentFiles, wikiRoot)
 
   // Read all content files
-  type PageData = { path: string; slug: string; content: string; outlinks: string[] }
+  type PageData = { path: string; slug: string; outlinks: string[]; related: string[] }
   const pages: PageData[] = []
 
   for (const f of contentFiles) {
@@ -92,7 +120,8 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
       const content = await readFile(f.path)
       const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
       const outlinks = extractWikilinks(content)
-      pages.push({ path: f.path, slug, content, outlinks })
+      const related = extractRelated(content)
+      pages.push({ path: f.path, slug, outlinks, related })
     } catch {
       // skip unreadable files
     }
@@ -102,10 +131,10 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   // should match transformer.md (slug "transformer").
   const inboundCounts = new Map<string, number>()
   for (const p of pages) {
-    for (const link of p.outlinks) {
-      const lookup = link.toLowerCase()
+    for (const link of [...p.outlinks, ...p.related]) {
+      const lookup = normalizeReferenceKey(link)
       const target = slugMap.has(lookup)
-        ? relativeToSlug(getRelativePath(slugMap.get(lookup)!, wikiRoot)).toLowerCase()
+        ? normalizeReferenceKey(relativeToSlug(getRelativePath(slugMap.get(lookup)!, wikiRoot)))
         : lookup
       inboundCounts.set(target, (inboundCounts.get(target) ?? 0) + 1)
     }
@@ -117,7 +146,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
     const shortName = getRelativePath(p.path, wikiRoot)
 
     // Orphan: no inbound links (lowercased slug for case-insensitive match)
-    const inbound = inboundCounts.get(p.slug.toLowerCase()) ?? 0
+    const inbound = inboundCounts.get(normalizeReferenceKey(p.slug)) ?? 0
     if (inbound === 0) {
       results.push({
         type: "orphan",
@@ -128,19 +157,19 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
     }
 
     // No outbound links
-    if (p.outlinks.length === 0) {
+    if (p.outlinks.length === 0 && p.related.length === 0) {
       results.push({
         type: "no-outlinks",
         severity: "info",
         page: shortName,
-        detail: "This page has no [[wikilink]] references to other pages.",
+        detail: "This page has no [[wikilink]] or frontmatter related references to other pages.",
       })
     }
 
     // Broken links — case-insensitive matching.
     for (const link of p.outlinks) {
-      const lookup = link.toLowerCase()
-      const basename = getFileName(link).replace(/\.md$/, "").toLowerCase()
+      const lookup = normalizeReferenceKey(link)
+      const basename = normalizeReferenceKey(getFileName(link))
       const exists = slugMap.has(lookup) || slugMap.has(basename)
       if (!exists) {
         results.push({

@@ -30,10 +30,15 @@ export const GRAPH_MODE_OPTIONS: GraphModeOption[] = [
   { id: "maintenance", label: "Maintenance" },
 ]
 
+export function getDefaultHiddenTypesForMode(mode: GraphMode): ReadonlySet<string> {
+  if (mode === "evidence") return DEFAULT_HIDDEN_GRAPH_NODE_TYPES
+  return new Set([...DEFAULT_HIDDEN_GRAPH_NODE_TYPES, "source"])
+}
+
 export function createGraphFiltersForMode(mode: GraphMode): GraphFilterState {
   return {
     mode,
-    hiddenTypes: new Set(DEFAULT_HIDDEN_GRAPH_NODE_TYPES),
+    hiddenTypes: new Set(getDefaultHiddenTypesForMode(mode)),
     hiddenNodeIds: new Set(),
     hideStructural: true,
     hideIsolated: false,
@@ -43,7 +48,7 @@ export function createGraphFiltersForMode(mode: GraphMode): GraphFilterState {
 
 export const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
   mode: "knowledge",
-  hiddenTypes: new Set(DEFAULT_HIDDEN_GRAPH_NODE_TYPES),
+  hiddenTypes: new Set(getDefaultHiddenTypesForMode("knowledge")),
   hiddenNodeIds: new Set(),
   hideStructural: true,
   hideIsolated: false,
@@ -110,7 +115,7 @@ export function applyGraphFilters(
 }
 
 export function hasActiveGraphFilters(filters: GraphFilterState): boolean {
-  const defaultHidden = DEFAULT_HIDDEN_GRAPH_NODE_TYPES
+  const defaultHidden = getDefaultHiddenTypesForMode(filters.mode)
   const hiddenTypesMatchDefault =
     filters.hiddenTypes.size === defaultHidden.size &&
     [...defaultHidden].every((type) => filters.hiddenTypes.has(type))
