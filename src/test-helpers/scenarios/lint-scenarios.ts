@@ -9,6 +9,10 @@ function page(title: string, body: string): string {
   return `---\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
 }
 
+function pageWithRelated(title: string, related: string[], body: string): string {
+  return `---\ntitle: ${title}\nrelated: [${related.join(", ")}]\n---\n\n# ${title}\n\n${body}\n`
+}
+
 export const lintScenarios: LintScenario[] = [
   // 1. clean-wiki — fully interlinked, no findings
   {
@@ -103,7 +107,32 @@ export const lintScenarios: LintScenario[] = [
     },
   },
 
-  // 5. semantic-contradiction (LLM-backed)
+  // 5. related-frontmatter-counts-as-link — graph links may live in YAML
+  {
+    name: "structural/related-frontmatter-counts-as-link",
+    description:
+      "leaf.md has no body wikilinks but does have a related: frontmatter " +
+      "edge. Structural lint should treat that as an outbound link because " +
+      "the graph renders related edges.",
+    initialWiki: {
+      "wiki/index.md": "# Index\n\n- [[attention]]\n- [[transformer]]\n- [[leaf]]\n",
+      "wiki/attention.md": page("Attention", "Related: [[transformer]]."),
+      "wiki/transformer.md": page(
+        "Transformer",
+        "Uses [[attention]] and references [[leaf]] as a concept.",
+      ),
+      "wiki/leaf.md": pageWithRelated(
+        "Leaf",
+        ["attention"],
+        "This page describes a leaf concept using frontmatter relations.",
+      ),
+    },
+    expected: {
+      structural: [],
+    },
+  },
+
+  // 6. semantic-contradiction (LLM-backed)
   {
     name: "semantic/contradiction-found",
     description:

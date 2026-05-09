@@ -134,7 +134,7 @@ export function LintView() {
           useReviewStore.getState().addItem({
             type: "suggestion",
             title: `Add cross-references to ${result.page}`,
-            description: "This page has no outbound [[wikilinks]]. Consider adding cross-references to related entities and concepts.",
+            description: "This page has no outbound [[wikilinks]] or frontmatter related references. Consider adding cross-references to related entities and concepts.",
             affectedPages: [result.page],
             options: [
               { label: "Open & Edit", action: `open:${result.page}` },

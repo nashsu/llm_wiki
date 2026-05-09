@@ -62,6 +62,7 @@ export function findSurprisingConnections(
     if (source.type !== target.type) {
       const distantPairs = new Set([
         "source-concept", "concept-source",
+        "source-comparison", "comparison-source",
         "source-synthesis", "synthesis-source",
         "query-entity", "entity-query",
       ])
