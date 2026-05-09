@@ -116,6 +116,27 @@ describe("runSemanticLint — language directive", () => {
     expect(prompt).toContain("MANDATORY OUTPUT LANGUAGE: English")
     expect(prompt).not.toContain("MANDATORY OUTPUT LANGUAGE: Japanese")
   })
+
+  it("asks the model to detect wiki data quality failures", async () => {
+    const pages = [
+      makeFileNode("concepts/thin.md", "---\ntype: concept\ntitle: Thin\n---\n\n# Thin\n\nShort definition."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockResolvedValue(pages[0].content)
+    mockStreamChat.mockImplementation(async (_c, _m, cb) => {
+      cb.onToken("")
+      cb.onDone()
+    })
+
+    await runSemanticLint("/project", fakeLlmConfig())
+
+    const prompt = mockStreamChat.mock.calls[0][1][0].content
+    expect(prompt).toContain("thin-page")
+    expect(prompt).toContain("weak-source-trace")
+    expect(prompt).toContain("missing-operating-implication")
+    expect(prompt).toContain("source-coverage-gap")
+    expect(prompt).toContain("quality/coverage/needs_upgrade")
+  })
 })
 
 describe("runSemanticLint — activity & early returns", () => {

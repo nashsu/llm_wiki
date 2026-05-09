@@ -1,6 +1,7 @@
 import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
 import { shouldHideNodeType } from "@/lib/graph-visibility"
 import { DEFAULT_HIDDEN_GRAPH_NODE_TYPES } from "@/lib/graph-node-types"
+import { isGraphExcludedNode } from "@/lib/graph-exclusions"
 
 export type GraphMode = "knowledge" | "evidence" | "maintenance"
 
@@ -55,21 +56,8 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
   maxLinks: undefined,
 }
 
-const STRUCTURAL_IDS = new Set(["index", "overview", "log", "schema", "purpose"])
-
 export function isStructuralGraphNode(node: Pick<GraphNode, "id" | "path" | "type">): boolean {
-  const id = node.id.toLowerCase()
-  if (STRUCTURAL_IDS.has(id)) return true
-  if (node.type === "overview") return true
-
-  const normalizedPath = node.path.replace(/\\/g, "/").toLowerCase()
-  return (
-    normalizedPath.endsWith("/wiki/index.md") ||
-    normalizedPath.endsWith("/wiki/overview.md") ||
-    normalizedPath.endsWith("/wiki/log.md") ||
-    normalizedPath.endsWith("/purpose.md") ||
-    normalizedPath.endsWith("/schema.md")
-  )
+  return isGraphExcludedNode(node)
 }
 
 export function applyGraphFilters(

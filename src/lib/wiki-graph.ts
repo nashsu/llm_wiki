@@ -11,6 +11,7 @@ import {
   resolveWikiReference,
   type GraphEdgeType,
 } from "@/lib/graph-relations"
+import { isGraphInputExcludedPage } from "@/lib/graph-exclusions"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -177,6 +178,10 @@ export async function buildWikiGraph(
       content = await readFile(file.path)
     } catch {
       // Skip unreadable files
+      continue
+    }
+
+    if (isGraphInputExcludedPage(file.path, file.name, content)) {
       continue
     }
 

@@ -45,6 +45,8 @@ describe("graph filters", () => {
     expect(isStructuralGraphNode(nodes[0])).toBe(true)
     expect(isStructuralGraphNode({ ...nodes[1], id: "overview", path: "/p/wiki/concepts/overview.md" })).toBe(true)
     expect(isStructuralGraphNode({ ...nodes[1], type: "overview" })).toBe(true)
+    expect(isStructuralGraphNode({ ...nodes[1], id: "codex-chats", type: "source-map", path: "/p/wiki/sources/10_maps/codex-chats.md" })).toBe(true)
+    expect(isStructuralGraphNode({ ...nodes[1], id: "raw-registry", type: "registry", path: "/p/wiki/sources/raw-registry.md" })).toBe(true)
     expect(isStructuralGraphNode(nodes[1])).toBe(false)
   })
 

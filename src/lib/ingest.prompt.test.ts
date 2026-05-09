@@ -42,6 +42,9 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Key Entities")
     expect(prompt).toContain("## Key Concepts")
     expect(prompt).toContain("## Main Arguments & Findings")
+    expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("## Atomic Claims & Evidence")
+    expect(prompt).toContain("## Kevin / OS Implications")
     expect(prompt).toContain("## Recommendations")
     expect(prompt).not.toContain("Codexian Memory")
   })
@@ -120,6 +123,18 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("A comparison page in wiki/comparisons/ is REQUIRED")
     expect(prompt).toContain("wiki/comparisons/openclaw-vs-hermes.md")
     expect(prompt).toContain("type: comparison")
+  })
+
+  it("requires high-quality wiki sections and thin-page guardrails", () => {
+    const prompt = buildGenerationPrompt("", "", "", "important-source.md")
+    expect(prompt).toContain("## Quality Contract")
+    expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("## Atomic Claims")
+    expect(prompt).toContain("## Evidence Map")
+    expect(prompt).toContain("## Kevin 운영체계 적용")
+    expect(prompt).toContain("Thin page guard")
+    expect(prompt).toContain("needs_upgrade: true")
+    expect(prompt).toContain("quality — seed | draft | reviewed | canonical")
   })
 })
 

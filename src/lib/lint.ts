@@ -217,12 +217,15 @@ export async function runSemanticLint(
     (f) => f.name !== "log.md"
   )
 
-  // Build a compact summary of each page (frontmatter + first 500 chars)
+  // Build a compact summary of each page (frontmatter + first 900 chars).
+  // Semantic quality checks need enough body text to detect thin pages,
+  // missing operating criteria, and source-trace gaps without loading the
+  // entire wiki into the model.
   const summaries: string[] = []
   for (const f of wikiFiles) {
     try {
       const content = await readFile(f.path)
-      const preview = content.slice(0, 500) + (content.length > 500 ? "..." : "")
+      const preview = content.slice(0, 900) + (content.length > 900 ? "..." : "")
       const shortPath = getRelativePath(f.path, wikiRoot)
       summaries.push(`### ${shortPath}\n${preview}`)
     } catch {
@@ -243,6 +246,8 @@ export async function runSemanticLint(
 
   const prompt = [
     "You are a wiki quality analyst. Review the following wiki page summaries and identify issues.",
+    "Prioritize whether source material has been transformed into durable, source-grounded, reusable wiki knowledge.",
+    "A good wiki page is not merely a summary: it should preserve source trace, explain reusable claims, connect to existing pages, and expose operating implications.",
     "",
     buildLanguageDirective(summarySample),
     "",
@@ -257,11 +262,23 @@ export async function runSemanticLint(
     "- contradiction: two or more pages make conflicting claims",
     "- stale: information that appears outdated or superseded",
     "- missing-page: an important concept is heavily referenced but has no dedicated page",
+    "- thin-page: an important source/entity/concept page is too shallow to be useful",
+    "- weak-source-trace: a page makes claims without enough source grounding",
+    "- missing-quality-metadata: a page should carry quality/coverage/needs_upgrade metadata but does not",
+    "- missing-operating-implication: a page explains what something is but not why it matters to the user's operating system",
+    "- source-coverage-gap: a source summary appears to omit major source sections, claims, or caveats",
     "- suggestion: a question or source worth adding to the wiki",
     "",
     "Severities:",
     "- warning: should be addressed",
     "- info: nice to have",
+    "",
+    "Quality rubric:",
+    "- Flag important concept/entity/source pages that are only definitions or short summaries.",
+    "- Flag source pages that lack coverage, atomic claims, evidence, caveats, or clear promotion decisions.",
+    "- Flag concept pages that lack decision criteria, application conditions, or failure modes.",
+    "- Flag entity pages that lack role, constraints, and relationships to the user's AI Native Solo Business OS.",
+    "- Do not flag index, log, overview, registry, manifest, or source-map documents just because they are structural.",
     "",
     "Only report genuine issues. Do not invent problems. Output ONLY the ---LINT--- blocks, no other text.",
     "",
