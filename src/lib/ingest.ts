@@ -17,6 +17,7 @@ import {
   missingReferencesToReviewItems,
   type WikiPageSnapshot,
 } from "@/lib/ingest-integrity"
+import { syncObsidianGraphLinks } from "@/lib/obsidian-graph-links"
 import {
   extractAndSaveSourceImages,
   buildImageMarkdownSection,
@@ -806,6 +807,23 @@ async function appendActualIngestLog(
   if (!writtenPaths.includes("wiki/log.md")) writtenPaths.push("wiki/log.md")
 }
 
+async function syncObsidianGraphLinksAfterWrites(
+  projectPath: string,
+  writtenPaths: string[],
+  warnings?: string[],
+): Promise<void> {
+  try {
+    const graphLinkPaths = await syncObsidianGraphLinks(projectPath)
+    for (const p of graphLinkPaths) {
+      if (!writtenPaths.includes(p)) writtenPaths.push(p)
+    }
+  } catch (err) {
+    const msg = `Failed to sync Obsidian graph links: ${err instanceof Error ? err.message : String(err)}`
+    console.warn(`[ingest] ${msg}`)
+    warnings?.push(msg)
+  }
+}
+
 async function collectPostIngestReviewItems(
   projectPath: string,
   writtenPaths: string[],
@@ -903,6 +921,7 @@ async function autoIngestImpl(
     )
   }
   if (cachedFiles !== null && !cachedComparisonMissing) {
+    const cacheHitWrittenPaths = [...cachedFiles]
     try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
       const savedImages = await extractAndSaveSourceImages(pp, sp)
@@ -969,12 +988,22 @@ async function autoIngestImpl(
         err instanceof Error ? err.message : err,
       )
     }
+    await syncObsidianGraphLinksAfterWrites(pp, cacheHitWrittenPaths)
+    if (cacheHitWrittenPaths.length > cachedFiles.length) {
+      try {
+        const tree = await listDirectory(pp)
+        useWikiStore.getState().setFileTree(tree)
+        useWikiStore.getState().bumpDataVersion()
+      } catch {
+        // ignore
+      }
+    }
     activity.updateItem(activityId, {
       status: "done",
-      detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
-      filesWritten: cachedFiles,
+      detail: `Skipped (unchanged) — ${cacheHitWrittenPaths.length} files from previous ingest`,
+      filesWritten: cacheHitWrittenPaths,
     })
-    return cachedFiles
+    return cacheHitWrittenPaths
   }
 
   // ── Step 0.5: Extract embedded images ─────────────────────────
@@ -1288,6 +1317,10 @@ async function autoIngestImpl(
   // through the back door.
   if (!options.skipSourceSummary && mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
     await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+  }
+
+  if (writtenPaths.length > 0 && !signal?.aborted) {
+    await syncObsidianGraphLinksAfterWrites(pp, writtenPaths, writeWarnings)
   }
 
   if (writtenPaths.length > 0 && !signal?.aborted) {
@@ -2323,6 +2356,14 @@ export async function executeIngestWrites(
         `[executeIngestWrites:images] post-write injection failed:`,
         err instanceof Error ? err.message : err,
       )
+    }
+  }
+
+  if (writtenRelativePaths.length > 0 && !signal?.aborted) {
+    await syncObsidianGraphLinksAfterWrites(pp, writtenRelativePaths)
+    for (const relativePath of writtenRelativePaths) {
+      const fullPath = `${pp}/${relativePath}`
+      if (!writtenPaths.includes(fullPath)) writtenPaths.push(fullPath)
     }
   }
 

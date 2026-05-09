@@ -413,6 +413,99 @@ describe("comparison source enforcement", () => {
   })
 })
 
+describe("Obsidian graph link sync", () => {
+  it("adds graph_links for resolved related and source references after ingest", async () => {
+    ctx = { tmp: await createTempProject("ingest-obsidian-graph-links") }
+    await minimalProject(ctx.tmp.path)
+
+    await writeFileRaw(
+      path.join(ctx.tmp.path, "wiki", "entities", "openclaw.md"),
+      [
+        "---",
+        "type: entity",
+        "title: OpenClaw",
+        "tags: []",
+        "related: []",
+        "sources: []",
+        "---",
+        "",
+        "# OpenClaw",
+      ].join("\n"),
+    )
+
+    const sourceFullPath = path.join(ctx.tmp.path, "raw", "sources", "agent-note.md")
+    await writeFileRaw(sourceFullPath, "# Agent Note\n\nOpenClaw 운영 메모.\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Concepts\n- OpenClaw 운영\n",
+      [
+        "---FILE: wiki/sources/agent-note.md---",
+        "---",
+        "type: source",
+        "title: Agent Note",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: []",
+        "related: [openclaw]",
+        'sources: ["agent-note.md"]',
+        "confidence: medium",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# Agent Note",
+        "OpenClaw 요약.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/concepts/agent-ops.md---",
+        "---",
+        "type: concept",
+        "title: Agent Ops",
+        "created: 2026-05-09",
+        "updated: 2026-05-09",
+        "tags: []",
+        "related: [openclaw]",
+        'sources: ["agent-note.md"]',
+        "confidence: medium",
+        "last_reviewed: 2026-05-09",
+        "---",
+        "",
+        "# Agent Ops",
+        "OpenClaw 운영 개념.",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "concepts", "agent-ops.md"))
+    expect(content).toContain("graph_links:")
+    expect(content).toContain('  - "[[agent-note]]"')
+    expect(content).toContain('  - "[[openclaw]]"')
+  })
+})
+
 describe("deep research ingest options", () => {
   it("pins query-only source summary titles to the canonical research title", async () => {
     ctx = { tmp: await createTempProject("ingest-deep-research-source-title") }
