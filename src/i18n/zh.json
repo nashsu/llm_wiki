@@ -108,6 +108,7 @@
       "multimodal": "图片描述",
       "webSearch": "网页搜索",
       "network": "网络",
+      "agent": "智能体访问",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",
@@ -195,6 +196,25 @@
         "urlHelp": "完整 URL，必须带协议头。支持：http://、https://（当前版本不支持 SOCKS5）。",
         "bypassLocal": "本地地址不走代理（推荐）",
         "bypassLocalHelp": "对 localhost、127.0.0.0/8、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 以及 *.local 的请求会绕过代理。如果你用 Ollama / LM Studio 或局域网内的 LLM 服务，请保持开启。"
+      },
+      "agentAccess": {
+        "title": "智能体访问",
+        "description": "允许本机智能体通过 LLM Wiki MCP server 使用这个应用。",
+        "enable": "允许本机智能体使用 MCP",
+        "enabledHint": "把 MCP server 添加到智能体客户端后，智能体就能调用本地 LLM Wiki API。",
+        "disabledHint": "智能体 API 请求会收到明确的 disabled 错误，不会一直等到超时。",
+        "clipServer": "Clip 服务",
+        "mcpAccess": "MCP 访问",
+        "enabled": "已开启",
+        "disabled": "已关闭",
+        "currentProject": "当前项目",
+        "noProject": "请先打开一个项目。",
+        "disabledNotice": "使用 Codex 或其他本机智能体调用 MCP 工具前，请先打开这个开关。",
+        "codexCommand": "Codex 命令",
+        "jsonConfig": "MCP JSON 配置",
+        "restartHint": "把 MCP server 添加到智能体客户端后，开启一个新的智能体会话才能发现这些工具。",
+        "copy": "复制",
+        "copied": "已复制"
       },
       "output": {
         "title": "输出偏好",

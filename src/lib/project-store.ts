@@ -133,6 +133,18 @@ export async function loadProxyConfig(): Promise<ProxyConfig | null> {
   return (await store.get<ProxyConfig>(PROXY_CONFIG_KEY)) ?? null
 }
 
+const MCP_ACCESS_ENABLED_KEY = "mcpAccessEnabled"
+
+export async function saveMcpAccessEnabled(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(MCP_ACCESS_ENABLED_KEY, enabled)
+}
+
+export async function loadMcpAccessEnabled(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(MCP_ACCESS_ENABLED_KEY)) ?? false
+}
+
 export async function removeFromRecentProjects(
   path: string
 ): Promise<void> {

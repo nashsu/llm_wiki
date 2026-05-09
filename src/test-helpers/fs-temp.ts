@@ -82,6 +82,18 @@ export const realFs = {
     throw new Error("openProject not supported in tests")
   },
   clipServerStatus: async (): Promise<string> => "ok",
+  mcpServerConfig: async () => ({
+    scriptPath: "/repo/mcp-server/llmwiki-mcp.js",
+    codexCommand: 'codex mcp add llmwiki -- node "/repo/mcp-server/llmwiki-mcp.js"',
+    jsonConfig: JSON.stringify({
+      mcpServers: {
+        llmwiki: {
+          command: "node",
+          args: ["/repo/mcp-server/llmwiki-mcp.js"],
+        },
+      },
+    }),
+  }),
 }
 
 /**

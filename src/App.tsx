@@ -5,10 +5,11 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadMcpAccessEnabled } from "@/lib/project-store"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { startLocalApiBridge } from "@/lib/local-api-bridge"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
@@ -27,6 +28,7 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+    startLocalApiBridge()
   }, [])
 
   // Dev-only helper for visually testing the update-banner UX.
@@ -222,6 +224,8 @@ function App() {
         if (savedProxy) {
           useWikiStore.getState().setProxyConfig(savedProxy)
         }
+        const savedMcpAccessEnabled = await loadMcpAccessEnabled()
+        useWikiStore.getState().setMcpAccessEnabled(savedMcpAccessEnabled)
         const savedLang = await loadLanguage()
         if (savedLang) {
           await i18n.changeLanguage(savedLang)

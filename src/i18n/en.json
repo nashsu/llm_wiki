@@ -108,6 +108,7 @@
       "multimodal": "Image Captioning",
       "webSearch": "Web Search",
       "network": "Network",
+      "agent": "Agent Access",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",
@@ -195,6 +196,25 @@
         "urlHelp": "Full URL with scheme. Supported: http://, https://. (SOCKS5 not supported in this version.)",
         "bypassLocal": "Bypass proxy for local addresses (recommended)",
         "bypassLocalHelp": "Requests to localhost, 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, and *.local don't go through the proxy. Keep this on if you use Ollama / LM Studio / other local or LAN-deployed LLMs."
+      },
+      "agentAccess": {
+        "title": "Agent Access",
+        "description": "Allow local agents to use this app through the LLM Wiki MCP server.",
+        "enable": "Enable MCP access for local agents",
+        "enabledHint": "Agents can call the local LLM Wiki API after you add the MCP server to the agent client.",
+        "disabledHint": "Agent API requests will get a clear disabled error instead of waiting for a timeout.",
+        "clipServer": "Clip server",
+        "mcpAccess": "MCP access",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "currentProject": "Current project",
+        "noProject": "Open a project first.",
+        "disabledNotice": "Turn this on before using the MCP tools from Codex or another local agent.",
+        "codexCommand": "Codex command",
+        "jsonConfig": "MCP JSON config",
+        "restartHint": "After adding the MCP server to an agent client, start a new agent session so the tools are discovered.",
+        "copy": "Copy",
+        "copied": "Copied"
       },
       "output": {
         "title": "Output Preferences",

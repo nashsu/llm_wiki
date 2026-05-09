@@ -30,6 +30,7 @@ import { NetworkSection } from "./sections/network-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
+import { AgentAccessSection } from "./sections/agent-access-section"
 
 type CategoryId =
   | "llm"
@@ -37,6 +38,7 @@ type CategoryId =
   | "multimodal"
   | "web-search"
   | "network"
+  | "agent"
   | "output"
   | "interface"
   | "maintenance"
@@ -58,6 +60,7 @@ const CATEGORIES: Category[] = [
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "network", labelKey: "settings.categories.network", icon: Network },
+  { id: "agent", labelKey: "settings.categories.agent", icon: Bot },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
@@ -284,6 +287,8 @@ export function SettingsView() {
         return <WebSearchSection />
       case "network":
         return <NetworkSection draft={draft} setDraft={setDraft} />
+      case "agent":
+        return <AgentAccessSection />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
@@ -357,7 +362,7 @@ export function SettingsView() {
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
             - "about" / "maintenance" have no draft-bound fields */}
-        {active !== "about" && active !== "llm" && active !== "maintenance" && (
+        {active !== "about" && active !== "llm" && active !== "maintenance" && active !== "agent" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">

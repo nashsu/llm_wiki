@@ -209,6 +209,7 @@ interface WikiState {
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
   proxyConfig: ProxyConfig
+  mcpAccessEnabled: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -226,6 +227,7 @@ interface WikiState {
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
   setProxyConfig: (config: ProxyConfig) => void
+  setMcpAccessEnabled: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -297,6 +299,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     bypassLocal: true,
   },
 
+  mcpAccessEnabled: false,
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
@@ -305,6 +309,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
+  setMcpAccessEnabled: (mcpAccessEnabled) => set({ mcpAccessEnabled }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
