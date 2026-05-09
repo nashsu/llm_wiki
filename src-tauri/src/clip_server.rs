@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -11,7 +12,8 @@ static CURRENT_PROJECT: Mutex<String> = Mutex::new(String::new());
 static ALL_PROJECTS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (name, path)
 static PENDING_CLIPS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // (projectPath, filePath)
 static API_BRIDGE_REQUESTS: Mutex<Vec<ApiBridgeRequest>> = Mutex::new(Vec::new());
-static API_BRIDGE_RESPONSES: Mutex<HashMap<String, ApiBridgeResponse>> = Mutex::new(HashMap::new());
+static API_BRIDGE_RESPONSES: LazyLock<Mutex<HashMap<String, ApiBridgeResponse>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static API_BRIDGE_CVAR: Condvar = Condvar::new();
 
 /// Daemon status: 0=starting, 1=running, 2=port_conflict, 3=error
