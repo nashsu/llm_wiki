@@ -1,26 +1,38 @@
 import { describe, expect, it } from "vitest"
 import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
-import { applyGraphFilters, DEFAULT_GRAPH_FILTERS, hasActiveGraphFilters, isStructuralGraphNode, type GraphFilterState } from "./graph-filters"
+import { applyGraphFilters, createGraphFiltersForMode, DEFAULT_GRAPH_FILTERS, hasActiveGraphFilters, isStructuralGraphNode, type GraphFilterState } from "./graph-filters"
 
 const nodes: GraphNode[] = [
-  { id: "index", label: "Index", type: "other", path: "/p/wiki/index.md", linkCount: 4, community: 0 },
-  { id: "concept-a", label: "Concept A", type: "concept", path: "/p/wiki/concepts/a.md", linkCount: 2, community: 0 },
-  { id: "entity-b", label: "Entity B", type: "entity", path: "/p/wiki/entities/b.md", linkCount: 3, community: 0 },
-  { id: "source-c", label: "Source C", type: "source", path: "/p/wiki/sources/c.md", linkCount: 1, community: 1 },
-  { id: "isolated", label: "Isolated", type: "concept", path: "/p/wiki/concepts/isolated.md", linkCount: 0, community: 2 },
+  makeNode({ id: "index", label: "Index", type: "other", path: "/p/wiki/index.md", linkCount: 4, community: 0 }),
+  makeNode({ id: "concept-a", label: "Concept A", type: "concept", path: "/p/wiki/concepts/a.md", linkCount: 2, community: 0 }),
+  makeNode({ id: "entity-b", label: "Entity B", type: "entity", path: "/p/wiki/entities/b.md", sources: ["paper.md"], linkCount: 3, community: 0 }),
+  makeNode({ id: "source-c", label: "Source C", type: "source", path: "/p/wiki/sources/c.md", linkCount: 1, community: 1 }),
+  makeNode({ id: "query-d", label: "Query D", type: "query", path: "/p/wiki/queries/d.md", linkCount: 1, community: 1 }),
+  makeNode({ id: "isolated", label: "Isolated", type: "concept", path: "/p/wiki/concepts/isolated.md", linkCount: 0, community: 2 }),
 ]
 
 const edges: GraphEdge[] = [
-  { source: "index", target: "concept-a", weight: 1 },
-  { source: "index", target: "entity-b", weight: 1 },
-  { source: "concept-a", target: "entity-b", weight: 2 },
-  { source: "source-c", target: "entity-b", weight: 3 },
+  { source: "index", target: "concept-a", types: ["wikilink"], weight: 1 },
+  { source: "index", target: "entity-b", types: ["wikilink"], weight: 1 },
+  { source: "concept-a", target: "entity-b", types: ["related"], weight: 2 },
+  { source: "source-c", target: "entity-b", types: ["source"], weight: 3 },
+  { source: "query-d", target: "concept-a", types: ["wikilink"], weight: 1 },
 ]
+
+function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, "id" | "label" | "type" | "path" | "linkCount" | "community">): GraphNode {
+  return {
+    related: [],
+    sources: [],
+    unresolvedRelated: [],
+    unresolvedSources: [],
+    ...overrides,
+  }
+}
 
 function makeFilters(overrides: Partial<GraphFilterState> = {}): GraphFilterState {
   return {
-    ...DEFAULT_GRAPH_FILTERS,
-    hiddenTypes: new Set<string>(),
+    ...createGraphFiltersForMode("knowledge"),
+    hiddenTypes: new Set(DEFAULT_GRAPH_FILTERS.hiddenTypes),
     hiddenNodeIds: new Set<string>(),
     ...overrides,
   }
@@ -39,8 +51,8 @@ describe("graph filters", () => {
 
     expect(out.nodes.map((n) => n.id)).not.toContain("index")
     expect(out.edges).toEqual([
-      { source: "concept-a", target: "entity-b", weight: 2 },
-      { source: "source-c", target: "entity-b", weight: 3 },
+      { source: "concept-a", target: "entity-b", types: ["related"], weight: 2 },
+      { source: "source-c", target: "entity-b", types: ["source"], weight: 3 },
     ])
   })
 
@@ -61,7 +73,7 @@ describe("graph filters", () => {
     }))
 
     expect(out.nodes.map((n) => n.id)).not.toContain("entity-b")
-    expect(out.edges).toEqual([{ source: "index", target: "concept-a", weight: 1 }])
+    expect(out.edges).toEqual([{ source: "index", target: "concept-a", types: ["wikilink"], weight: 1 }])
   })
 
   it("hides hub nodes above the max link threshold", () => {
@@ -88,5 +100,37 @@ describe("graph filters", () => {
     expect(hasActiveGraphFilters(makeFilters({ hideStructural: false }))).toBe(false)
     expect(hasActiveGraphFilters(makeFilters())).toBe(true)
     expect(hasActiveGraphFilters(makeFilters({ hideStructural: false, hiddenNodeIds: new Set(["x"]) }))).toBe(true)
+  })
+
+  it("hides query nodes in knowledge mode but keeps evidence source edges", () => {
+    const out = applyGraphFilters(nodes, edges, makeFilters({ mode: "evidence" }))
+
+    expect(out.nodes.map((n) => n.id)).not.toContain("query-d")
+    expect(out.nodes.map((n) => n.id)).toContain("source-c")
+    expect(out.edges).toContainEqual({ source: "source-c", target: "entity-b", types: ["source"], weight: 3 })
+  })
+
+  it("focuses maintenance mode on isolated, unresolved, or source-less knowledge nodes", () => {
+    const broken = makeNode({
+      id: "broken",
+      label: "Broken",
+      type: "concept",
+      path: "/p/wiki/concepts/broken.md",
+      unresolvedRelated: ["missing"],
+      sources: ["paper.md"],
+      linkCount: 2,
+      community: 3,
+    })
+    const out = applyGraphFilters(
+      [...nodes, broken],
+      edges,
+      makeFilters({ mode: "maintenance" }),
+    )
+
+    expect(out.nodes.map((n) => n.id)).toContain("concept-a")
+    expect(out.nodes.map((n) => n.id)).toContain("isolated")
+    expect(out.nodes.map((n) => n.id)).toContain("broken")
+    expect(out.nodes.map((n) => n.id)).not.toContain("entity-b")
+    expect(out.nodes.map((n) => n.id)).not.toContain("query-d")
   })
 })

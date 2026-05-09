@@ -2,6 +2,15 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { buildRetrievalGraph, calculateRelevance } from "./graph-relevance"
 import { normalizePath } from "@/lib/path-utils"
+import {
+  buildGraphReferenceResolver,
+  fileNameToGraphId,
+  GRAPH_EDGE_TYPE_WEIGHT,
+  parseGraphPage,
+  resolveSourceReference,
+  resolveWikiReference,
+  type GraphEdgeType,
+} from "@/lib/graph-relations"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -10,6 +19,10 @@ export interface GraphNode {
   label: string
   type: string
   path: string
+  related: string[]
+  sources: string[]
+  unresolvedRelated: string[]
+  unresolvedSources: string[]
   linkCount: number // inbound + outbound
   community: number // community id from Louvain detection
 }
@@ -17,6 +30,7 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string
   target: string
+  types: GraphEdgeType[]
   weight: number // relevance score between source and target
 }
 
@@ -112,8 +126,6 @@ function detectCommunities(
   return { assignments, communities }
 }
 
-const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
-
 function flattenMdFiles(nodes: FileNode[]): FileNode[] {
   const files: FileNode[] = []
   for (const node of nodes) {
@@ -124,36 +136,6 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
     }
   }
   return files
-}
-
-function extractTitle(content: string, fileName: string): string {
-  const frontmatterTitleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
-  if (frontmatterTitleMatch) return frontmatterTitleMatch[1].trim()
-
-  const headingMatch = content.match(/^#\s+(.+)$/m)
-  if (headingMatch) return headingMatch[1].trim()
-
-  return fileName.replace(/\.md$/, "").replace(/-/g, " ")
-}
-
-function extractType(content: string): string {
-  const frontmatterTypeMatch = content.match(/^---\n[\s\S]*?^type:\s*["']?(.+?)["']?\s*$/m)
-  if (frontmatterTypeMatch) return frontmatterTypeMatch[1].trim().toLowerCase()
-  return "other"
-}
-
-function extractWikilinks(content: string): string[] {
-  const links: string[] = []
-  const regex = new RegExp(WIKILINK_REGEX.source, "g")
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(content)) !== null) {
-    links.push(match[1].trim())
-  }
-  return links
-}
-
-function fileNameToId(fileName: string): string {
-  return fileName.replace(/\.md$/, "")
 }
 
 export async function buildWikiGraph(
@@ -173,14 +155,23 @@ export async function buildWikiGraph(
     return { nodes: [], edges: [], communities: [] }
   }
 
-  // Build a map of id -> node data
   const nodeMap = new Map<
     string,
-    { id: string; label: string; type: string; path: string; links: string[] }
+    {
+      id: string
+      label: string
+      type: string
+      path: string
+      links: string[]
+      related: string[]
+      sources: string[]
+      unresolvedRelated: string[]
+      unresolvedSources: string[]
+    }
   >()
 
   for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
+    const id = fileNameToGraphId(file.name)
     let content = ""
     try {
       content = await readFile(file.path)
@@ -189,56 +180,47 @@ export async function buildWikiGraph(
       continue
     }
 
+    const page = parseGraphPage(content, file.name, file.path)
     nodeMap.set(id, {
       id,
-      label: extractTitle(content, file.name),
-      type: extractType(content),
+      label: page.title,
+      type: page.type,
       path: file.path,
-      links: extractWikilinks(content),
+      links: page.wikilinks,
+      related: page.related,
+      sources: page.sources,
+      unresolvedRelated: [],
+      unresolvedSources: [],
     })
   }
 
-  // Filter out query nodes (research results, saved chat answers) — they are
-  // intermediate artifacts, not knowledge structure. The entities/concepts
-  // extracted from them via auto-ingest are what belong in the graph.
-  const HIDDEN_TYPES = new Set(["query"])
-  for (const [id, node] of nodeMap) {
-    if (HIDDEN_TYPES.has(node.type)) {
-      nodeMap.delete(id)
-    }
-  }
+  const resolver = buildGraphReferenceResolver([...nodeMap.values()], wikiRoot)
 
-  // Count link references
-  const linkCounts = new Map<string, number>()
-  for (const [id] of nodeMap) {
-    linkCounts.set(id, 0)
-  }
+  const edgeMap = new Map<string, { source: string; target: string; types: Set<GraphEdgeType> }>()
 
-  const rawEdges: GraphEdge[] = []
-
-  for (const [sourceId, nodeData] of nodeMap) {
+  for (const [sourceId, nodeData] of nodeMap.entries()) {
     for (const targetRaw of nodeData.links) {
-      // Normalize target: try matching by id (case-insensitive, hyphen/space)
-      const targetId = resolveTarget(targetRaw, nodeMap)
+      const targetId = resolveWikiReference(targetRaw, resolver)
       if (targetId === null) continue
-      if (targetId === sourceId) continue
-
-      rawEdges.push({ source: sourceId, target: targetId, weight: 1 })
-
-      linkCounts.set(sourceId, (linkCounts.get(sourceId) ?? 0) + 1)
-      linkCounts.set(targetId, (linkCounts.get(targetId) ?? 0) + 1)
+      addGraphEdge(edgeMap, sourceId, targetId, "wikilink")
     }
-  }
 
-  // Deduplicate edges
-  const seenEdges = new Set<string>()
-  const dedupedEdges: { source: string; target: string }[] = []
-  for (const edge of rawEdges) {
-    const key = `${edge.source}:::${edge.target}`
-    const reverseKey = `${edge.target}:::${edge.source}`
-    if (!seenEdges.has(key) && !seenEdges.has(reverseKey)) {
-      seenEdges.add(key)
-      dedupedEdges.push(edge)
+    for (const targetRaw of nodeData.related) {
+      const targetId = resolveWikiReference(targetRaw, resolver)
+      if (targetId === null) {
+        nodeData.unresolvedRelated.push(targetRaw)
+        continue
+      }
+      addGraphEdge(edgeMap, sourceId, targetId, "related")
+    }
+
+    for (const sourceRaw of nodeData.sources) {
+      const targetId = resolveSourceReference(sourceRaw, resolver)
+      if (targetId === null) {
+        nodeData.unresolvedSources.push(sourceRaw)
+        continue
+      }
+      addGraphEdge(edgeMap, sourceId, targetId, "source")
     }
   }
 
@@ -252,17 +234,27 @@ export async function buildWikiGraph(
     // ignore — weights will default to 1
   }
 
-  const edges: GraphEdge[] = dedupedEdges.map((e) => {
-    let weight = 1
+  const edges: GraphEdge[] = [...edgeMap.values()].map((e) => {
+    const types = [...e.types].sort(sortEdgeTypes)
+    let weight = types.reduce((sum, type) => sum + GRAPH_EDGE_TYPE_WEIGHT[type], 0)
     if (retrievalGraph) {
       const nodeA = retrievalGraph.nodes.get(e.source)
       const nodeB = retrievalGraph.nodes.get(e.target)
       if (nodeA && nodeB) {
-        weight = calculateRelevance(nodeA, nodeB, retrievalGraph)
+        weight += calculateRelevance(nodeA, nodeB, retrievalGraph)
       }
     }
-    return { source: e.source, target: e.target, weight }
+    return { source: e.source, target: e.target, types, weight }
   })
+
+  const linkCounts = new Map<string, number>()
+  for (const id of nodeMap.keys()) {
+    linkCounts.set(id, 0)
+  }
+  for (const edge of edges) {
+    linkCounts.set(edge.source, (linkCounts.get(edge.source) ?? 0) + 1)
+    linkCounts.set(edge.target, (linkCounts.get(edge.target) ?? 0) + 1)
+  }
 
   // Build preliminary nodes for community detection
   const prelimNodes = Array.from(nodeMap.values()).map((n) => ({
@@ -278,6 +270,10 @@ export async function buildWikiGraph(
     label: n.label,
     type: n.type,
     path: n.path,
+    related: n.related,
+    sources: n.sources,
+    unresolvedRelated: n.unresolvedRelated,
+    unresolvedSources: n.unresolvedSources,
     linkCount: linkCounts.get(n.id) ?? 0,
     community: assignments.get(n.id) ?? 0,
   }))
@@ -285,20 +281,22 @@ export async function buildWikiGraph(
   return { nodes, edges, communities }
 }
 
-function resolveTarget(
-  raw: string,
-  nodeMap: Map<string, { id: string }>,
-): string | null {
-  // Direct match
-  if (nodeMap.has(raw)) return raw
-
-  // Normalize: lowercase, replace spaces with hyphens and vice versa
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeMap.keys()) {
-    if (id.toLowerCase() === normalized) return id
-    if (id.toLowerCase() === raw.toLowerCase()) return id
-    if (id.toLowerCase().replace(/\s+/g, "-") === normalized) return id
+function addGraphEdge(
+  edgeMap: Map<string, { source: string; target: string; types: Set<GraphEdgeType> }>,
+  source: string,
+  target: string,
+  type: GraphEdgeType,
+): void {
+  if (source === target) return
+  const key = [source, target].sort().join(":::")
+  const existing = edgeMap.get(key)
+  if (existing) {
+    existing.types.add(type)
+    return
   }
+  edgeMap.set(key, { source, target, types: new Set([type]) })
+}
 
-  return null
+function sortEdgeTypes(a: GraphEdgeType, b: GraphEdgeType): number {
+  return GRAPH_EDGE_TYPE_WEIGHT[a] - GRAPH_EDGE_TYPE_WEIGHT[b]
 }

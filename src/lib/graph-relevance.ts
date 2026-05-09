@@ -1,6 +1,13 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
+import {
+  buildGraphReferenceResolver,
+  fileNameToGraphId,
+  parseGraphPage,
+  resolveSourceReference,
+  resolveWikiReference,
+} from "@/lib/graph-relations"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -12,6 +19,10 @@ export interface RetrievalNode {
   readonly type: string
   readonly path: string
   readonly sources: readonly string[]
+  readonly related: readonly string[]
+  readonly wikiLinks: ReadonlySet<string>
+  readonly relatedLinks: ReadonlySet<string>
+  readonly sourceLinks: ReadonlySet<string>
   readonly outLinks: ReadonlySet<string>
   readonly inLinks: ReadonlySet<string>
 }
@@ -25,22 +36,22 @@ export interface RetrievalGraph {
 // Constants
 // ---------------------------------------------------------------------------
 
-const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
-
 const WEIGHTS = {
-  directLink: 3.0,
+  wikilink: 3.0,
+  relatedLink: 4.0,
+  sourceLink: 4.5,
   sourceOverlap: 4.0,
   commonNeighbor: 1.5,
   typeAffinity: 1.0,
 } as const
 
 const TYPE_AFFINITY: Record<string, Record<string, number>> = {
-  entity: { concept: 1.2, entity: 0.8, source: 1.0, synthesis: 1.0, query: 0.8, decision: 0.8 },
-  concept: { entity: 1.2, concept: 0.8, source: 1.0, synthesis: 1.2, query: 1.0 },
-  source: { entity: 1.0, concept: 1.0, source: 0.5, query: 0.8, synthesis: 1.0 },
-  query: { concept: 1.0, entity: 0.8, synthesis: 1.0, source: 0.8, query: 0.5, decision: 0.8 },
-  synthesis: { concept: 1.2, entity: 1.0, source: 1.0, query: 1.0, synthesis: 0.8, decision: 1.1 },
-  decision: { synthesis: 1.1, query: 0.8, source: 0.8 },
+  entity: { concept: 1.2, entity: 0.8, source: 1.0, query: 0.8, comparison: 0.9, synthesis: 1.0 },
+  concept: { entity: 1.2, concept: 0.8, source: 1.0, query: 1.0, comparison: 1.0, synthesis: 1.2 },
+  source: { entity: 1.0, concept: 1.0, source: 0.5, query: 0.8, comparison: 1.0, synthesis: 1.0 },
+  query: { concept: 1.0, entity: 0.8, source: 0.8, query: 0.5, comparison: 0.8, synthesis: 1.0 },
+  comparison: { concept: 1.0, entity: 0.9, source: 1.0, query: 0.8, comparison: 0.8, synthesis: 1.0 },
+  synthesis: { concept: 1.2, entity: 1.0, source: 1.0, query: 1.0, comparison: 1.0, synthesis: 0.8 },
 }
 
 // ---------------------------------------------------------------------------
@@ -63,79 +74,6 @@ function flattenMdFiles(nodes: readonly FileNode[]): FileNode[] {
     }
   }
   return files
-}
-
-function fileNameToId(fileName: string): string {
-  return fileName.replace(/\.md$/, "")
-}
-
-function extractFrontmatter(content: string): { title: string; type: string; sources: string[] } {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
-  const fm = fmMatch ? fmMatch[1] : ""
-
-  const titleMatch = fm.match(/^title:\s*["']?(.+?)["']?\s*$/m)
-  const typeMatch = fm.match(/^type:\s*["']?(.+?)["']?\s*$/m)
-
-  // Parse sources array from YAML frontmatter
-  const sources: string[] = []
-  const sourcesBlockMatch = fm.match(/^sources:\s*\n((?:\s+-\s+.+\n?)*)/m)
-  if (sourcesBlockMatch) {
-    const lines = sourcesBlockMatch[1].split("\n")
-    for (const line of lines) {
-      const itemMatch = line.match(/^\s+-\s+["']?(.+?)["']?\s*$/)
-      if (itemMatch) {
-        sources.push(itemMatch[1])
-      }
-    }
-  } else {
-    // Single-line: sources: ["a.pdf", "b.pdf"] or sources: [a.pdf]
-    const inlineMatch = fm.match(/^sources:\s*\[([^\]]*)\]/m)
-    if (inlineMatch) {
-      const items = inlineMatch[1].split(",")
-      for (const item of items) {
-        const trimmed = item.trim().replace(/^["']|["']$/g, "")
-        if (trimmed) sources.push(trimmed)
-      }
-    }
-  }
-
-  let title = titleMatch ? titleMatch[1].trim() : ""
-  if (!title) {
-    const headingMatch = content.match(/^#\s+(.+)$/m)
-    title = headingMatch ? headingMatch[1].trim() : ""
-  }
-
-  return {
-    title,
-    type: typeMatch ? typeMatch[1].trim().toLowerCase() : "other",
-    sources,
-  }
-}
-
-function extractWikilinks(content: string): string[] {
-  const links: string[] = []
-  const regex = new RegExp(WIKILINK_REGEX.source, "g")
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(content)) !== null) {
-    links.push(match[1].trim())
-  }
-  return links
-}
-
-function resolveTarget(
-  raw: string,
-  nodeIds: ReadonlySet<string>,
-): string | null {
-  if (nodeIds.has(raw)) return raw
-
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeIds) {
-    const idLower = id.toLowerCase()
-    if (idLower === normalized) return id
-    if (idLower === raw.toLowerCase()) return id
-    if (idLower.replace(/\s+/g, "-") === normalized) return id
-  }
-  return null
 }
 
 function getNeighbors(node: RetrievalNode): ReadonlySet<string> {
@@ -181,12 +119,12 @@ export async function buildRetrievalGraph(
     type: string
     path: string
     sources: string[]
+    related: string[]
     rawLinks: string[]
-    fileName: string
   }> = []
 
   for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
+    const id = fileNameToGraphId(file.name)
     let content = ""
     try {
       content = await readFile(file.path)
@@ -194,35 +132,47 @@ export async function buildRetrievalGraph(
       continue
     }
 
-    const fm = extractFrontmatter(content)
+    const page = parseGraphPage(content, file.name, file.path)
     rawNodes.push({
       id,
-      title: fm.title || file.name.replace(/\.md$/, "").replace(/-/g, " "),
-      type: fm.type,
+      title: page.title,
+      type: page.type,
       path: file.path,
-      sources: fm.sources,
-      rawLinks: extractWikilinks(content),
-      fileName: file.name,
+      sources: page.sources,
+      related: page.related,
+      rawLinks: page.wikilinks,
     })
   }
 
-  const nodeIds = new Set(rawNodes.map((n) => n.id))
+  const resolver = buildGraphReferenceResolver(rawNodes, wikiRoot)
 
   // Second pass: resolve links and build graph nodes
   const outLinksMap = new Map<string, Set<string>>()
   const inLinksMap = new Map<string, Set<string>>()
+  const wikiLinksMap = new Map<string, Set<string>>()
+  const relatedLinksMap = new Map<string, Set<string>>()
+  const sourceLinksMap = new Map<string, Set<string>>()
 
-  for (const id of nodeIds) {
+  for (const { id } of rawNodes) {
     outLinksMap.set(id, new Set())
     inLinksMap.set(id, new Set())
+    wikiLinksMap.set(id, new Set())
+    relatedLinksMap.set(id, new Set())
+    sourceLinksMap.set(id, new Set())
   }
 
   for (const raw of rawNodes) {
     for (const linkTarget of raw.rawLinks) {
-      const resolvedId = resolveTarget(linkTarget, nodeIds)
-      if (resolvedId === null || resolvedId === raw.id) continue
-      outLinksMap.get(raw.id)!.add(resolvedId)
-      inLinksMap.get(resolvedId)!.add(raw.id)
+      const resolvedId = resolveWikiReference(linkTarget, resolver)
+      addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, wikiLinksMap)
+    }
+    for (const linkTarget of raw.related) {
+      const resolvedId = resolveWikiReference(linkTarget, resolver)
+      addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, relatedLinksMap)
+    }
+    for (const sourceTarget of raw.sources) {
+      const resolvedId = resolveSourceReference(sourceTarget, resolver)
+      addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, sourceLinksMap)
     }
   }
 
@@ -235,6 +185,10 @@ export async function buildRetrievalGraph(
       type: raw.type,
       path: raw.path,
       sources: Object.freeze([...raw.sources]),
+      related: Object.freeze([...raw.related]),
+      wikiLinks: Object.freeze(wikiLinksMap.get(raw.id) ?? new Set<string>()),
+      relatedLinks: Object.freeze(relatedLinksMap.get(raw.id) ?? new Set<string>()),
+      sourceLinks: Object.freeze(sourceLinksMap.get(raw.id) ?? new Set<string>()),
       outLinks: Object.freeze(outLinksMap.get(raw.id) ?? new Set<string>()),
       inLinks: Object.freeze(inLinksMap.get(raw.id) ?? new Set<string>()),
     })
@@ -252,10 +206,16 @@ export function calculateRelevance(
 ): number {
   if (nodeA.id === nodeB.id) return 0
 
-  // Signal 1: Direct links (weight 3.0)
-  const forwardLinks = nodeA.outLinks.has(nodeB.id) ? 1 : 0
-  const backwardLinks = nodeB.outLinks.has(nodeA.id) ? 1 : 0
-  const directLinkScore = (forwardLinks + backwardLinks) * WEIGHTS.directLink
+  // Signal 1: Direct relationship edges.
+  const wikilinkScore =
+    (Number(nodeA.wikiLinks.has(nodeB.id)) + Number(nodeB.wikiLinks.has(nodeA.id))) *
+    WEIGHTS.wikilink
+  const relatedLinkScore =
+    (Number(nodeA.relatedLinks.has(nodeB.id)) + Number(nodeB.relatedLinks.has(nodeA.id))) *
+    WEIGHTS.relatedLink
+  const sourceLinkScore =
+    (Number(nodeA.sourceLinks.has(nodeB.id)) + Number(nodeB.sourceLinks.has(nodeA.id))) *
+    WEIGHTS.sourceLink
 
   // Signal 2: Source overlap (weight 4.0)
   const sourcesA = new Set(nodeA.sources)
@@ -284,7 +244,20 @@ export function calculateRelevance(
   const affinityMap = TYPE_AFFINITY[nodeA.type]
   const typeAffinityScore = (affinityMap?.[nodeB.type] ?? 0.5) * WEIGHTS.typeAffinity
 
-  return directLinkScore + sourceOverlapScore + commonNeighborScore + typeAffinityScore
+  return wikilinkScore + relatedLinkScore + sourceLinkScore + sourceOverlapScore + commonNeighborScore + typeAffinityScore
+}
+
+function addResolvedLink(
+  sourceId: string,
+  targetId: string | null,
+  outLinksMap: Map<string, Set<string>>,
+  inLinksMap: Map<string, Set<string>>,
+  typedLinksMap: Map<string, Set<string>>,
+): void {
+  if (targetId === null || targetId === sourceId) return
+  outLinksMap.get(sourceId)!.add(targetId)
+  inLinksMap.get(targetId)!.add(sourceId)
+  typedLinksMap.get(sourceId)!.add(targetId)
 }
 
 export function getRelatedNodes(

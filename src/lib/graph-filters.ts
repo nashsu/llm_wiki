@@ -1,7 +1,16 @@
 import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
 import { shouldHideNodeType } from "@/lib/graph-visibility"
+import { DEFAULT_HIDDEN_GRAPH_NODE_TYPES } from "@/lib/graph-node-types"
+
+export type GraphMode = "knowledge" | "evidence" | "maintenance"
+
+export interface GraphModeOption {
+  id: GraphMode
+  label: string
+}
 
 export interface GraphFilterState {
+  mode: GraphMode
   hiddenTypes: ReadonlySet<string>
   hiddenNodeIds: ReadonlySet<string>
   hideStructural: boolean
@@ -15,8 +24,26 @@ export interface FilteredGraph {
   hiddenNodeIds: Set<string>
 }
 
+export const GRAPH_MODE_OPTIONS: GraphModeOption[] = [
+  { id: "knowledge", label: "Knowledge" },
+  { id: "evidence", label: "Evidence" },
+  { id: "maintenance", label: "Maintenance" },
+]
+
+export function createGraphFiltersForMode(mode: GraphMode): GraphFilterState {
+  return {
+    mode,
+    hiddenTypes: new Set(DEFAULT_HIDDEN_GRAPH_NODE_TYPES),
+    hiddenNodeIds: new Set(),
+    hideStructural: true,
+    hideIsolated: false,
+    maxLinks: undefined,
+  }
+}
+
 export const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
-  hiddenTypes: new Set(),
+  mode: "knowledge",
+  hiddenTypes: new Set(DEFAULT_HIDDEN_GRAPH_NODE_TYPES),
   hiddenNodeIds: new Set(),
   hideStructural: true,
   hideIsolated: false,
@@ -64,6 +91,10 @@ export function applyGraphFilters(
       hiddenNodeIds.add(node.id)
       continue
     }
+    if (filters.mode === "maintenance" && !isMaintenanceGraphNode(node)) {
+      hiddenNodeIds.add(node.id)
+      continue
+    }
     if (filters.maxLinks !== undefined && node.linkCount > filters.maxLinks) {
       hiddenNodeIds.add(node.id)
     }
@@ -79,11 +110,30 @@ export function applyGraphFilters(
 }
 
 export function hasActiveGraphFilters(filters: GraphFilterState): boolean {
+  const defaultHidden = DEFAULT_HIDDEN_GRAPH_NODE_TYPES
+  const hiddenTypesMatchDefault =
+    filters.hiddenTypes.size === defaultHidden.size &&
+    [...defaultHidden].every((type) => filters.hiddenTypes.has(type))
+
   return (
+    filters.mode !== "knowledge" ||
     filters.hideStructural ||
     filters.hideIsolated ||
-    filters.hiddenTypes.size > 0 ||
+    !hiddenTypesMatchDefault ||
     filters.hiddenNodeIds.size > 0 ||
     filters.maxLinks !== undefined
   )
+}
+
+export function isMaintenanceGraphNode(node: GraphNode): boolean {
+  const unresolvedCount =
+    (node.unresolvedRelated?.length ?? 0) + (node.unresolvedSources?.length ?? 0)
+  if (unresolvedCount > 0) return true
+  if (node.linkCount <= 0) return true
+  if (isKnowledgeNodeType(node.type) && (node.sources?.length ?? 0) === 0) return true
+  return false
+}
+
+function isKnowledgeNodeType(type: string): boolean {
+  return type === "entity" || type === "concept" || type === "comparison" || type === "synthesis"
 }

@@ -17,29 +17,9 @@ import { findSurprisingConnections, detectKnowledgeGaps, type SurprisingConnecti
 import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { normalizePath } from "@/lib/path-utils"
-import { applyGraphFilters, DEFAULT_GRAPH_FILTERS, hasActiveGraphFilters, type GraphFilterState } from "@/lib/graph-filters"
-
-const NODE_TYPE_COLORS: Record<string, string> = {
-  entity: "#60a5fa",    // blue-400
-  concept: "#c084fc",   // purple-400
-  source: "#fb923c",    // orange-400
-  query: "#4ade80",     // green-400
-  synthesis: "#f87171",  // red-400
-  overview: "#facc15",  // yellow-400
-  comparison: "#2dd4bf", // teal-400
-  other: "#94a3b8",     // slate-400
-}
-
-const NODE_TYPE_LABELS: Record<string, string> = {
-  entity: "Entity",
-  concept: "Concept",
-  source: "Source",
-  query: "Query",
-  synthesis: "Synthesis",
-  overview: "Overview",
-  comparison: "Comparison",
-  other: "Other",
-}
+import { applyGraphFilters, createGraphFiltersForMode, GRAPH_MODE_OPTIONS, hasActiveGraphFilters, isStructuralGraphNode, type GraphFilterState, type GraphMode } from "@/lib/graph-filters"
+import { getGraphNodeTypeColor, getGraphNodeTypeEntries } from "@/lib/graph-node-types"
+import type { GraphEdgeType } from "@/lib/graph-relations"
 
 const COMMUNITY_COLORS = [
   "#60a5fa",  // blue-400
@@ -80,7 +60,30 @@ const DARK_GRAPH_THEME = {
 }
 
 function nodeColor(type: string): string {
-  return NODE_TYPE_COLORS[type] ?? NODE_TYPE_COLORS.other
+  return getGraphNodeTypeColor(type)
+}
+
+function edgeTypeLabel(types: readonly GraphEdgeType[]): string {
+  return types.map((type) => {
+    if (type === "wikilink") return "wikilink"
+    if (type === "related") return "related"
+    return "source"
+  }).join(" + ")
+}
+
+function edgeVisual(types: readonly GraphEdgeType[], normalizedWeight: number): { color: string; size: number } {
+  const hasSource = types.includes("source")
+  const hasRelated = types.includes("related")
+  const color = hasSource
+    ? `rgba(249,115,22,${0.45 + normalizedWeight * 0.45})`
+    : hasRelated
+      ? `rgba(37,99,235,${0.4 + normalizedWeight * 0.45})`
+      : `rgba(100,116,139,${0.25 + normalizedWeight * 0.55})`
+  const relationBonus = hasSource ? 1.2 : hasRelated ? 0.7 : 0
+  return {
+    color,
+    size: 0.5 + normalizedWeight * 2.4 + relationBonus,
+  }
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -191,7 +194,11 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
   const loadGraph = useLoadGraph()
 
   useEffect(() => {
-    const dataKey = nodes.map((n) => n.id).sort().join(",") + "|" + edges.length
+    const edgeKey = edges
+      .map((e) => `${e.source}->${e.target}:${e.types.join(",")}`)
+      .sort()
+      .join(",")
+    const dataKey = nodes.map((n) => n.id).sort().join(",") + "|" + edgeKey
     const needsLayout = dataKey !== lastLayoutDataKey
 
     const graph = new Graph()
@@ -222,14 +229,12 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
         const edgeKey = `${edge.source}->${edge.target}`
         if (!graph.hasEdge(edgeKey) && !graph.hasEdge(`${edge.target}->${edge.source}`)) {
           const normalizedWeight = edge.weight / maxWeight // 0..1
-          const size = 0.5 + normalizedWeight * 3.5 // 0.5..4
-          // Stronger relationships → darker color
-          const alpha = Math.round(40 + normalizedWeight * 180) // 40..220
-          const color = `rgba(100,116,139,${alpha / 255})` // slate-500 with variable opacity
+          const visual = edgeVisual(edge.types, normalizedWeight)
           graph.addEdgeWithKey(edgeKey, edge.source, edge.target, {
-            color,
-            size,
+            color: visual.color,
+            size: visual.size,
             weight: edge.weight,
+            relationLabel: edgeTypeLabel(edge.types),
           })
         }
       }
@@ -437,11 +442,7 @@ export function GraphView() {
   const [isResizing, setIsResizing] = useState(false)
   const [legendCollapsed, setLegendCollapsed] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
-  const [filters, setFilters] = useState<GraphFilterState>(() => ({
-    ...DEFAULT_GRAPH_FILTERS,
-    hiddenTypes: new Set(),
-    hiddenNodeIds: new Set(),
-  }))
+  const [filters, setFilters] = useState<GraphFilterState>(() => createGraphFiltersForMode("knowledge"))
   const [nodeMenu, setNodeMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement>(null)
   const isDarkGraph = useDocumentDarkMode()
@@ -509,12 +510,14 @@ export function GraphView() {
   }, [])
 
   const resetFilters = useCallback(() => {
-    setFilters({
-      ...DEFAULT_GRAPH_FILTERS,
-      hiddenTypes: new Set(),
-      hiddenNodeIds: new Set(),
-    })
+    setFilters((prev) => createGraphFiltersForMode(prev.mode))
     setNodeMenu(null)
+  }, [])
+
+  const setGraphMode = useCallback((mode: GraphMode) => {
+    setFilters(createGraphFiltersForMode(mode))
+    setNodeMenu(null)
+    setHighlightedNodes(new Set())
   }, [])
 
   const handleResearchClick = useCallback(async (gapTitle: string, gapDescription: string, gapType: string) => {
@@ -602,16 +605,22 @@ export function GraphView() {
     return () => observer.disconnect()
   }, [isResizing])
 
-  // Count nodes by type for legend
-  const typeCounts = nodes.reduce<Record<string, number>>((acc, n) => {
-    acc[n.type] = (acc[n.type] ?? 0) + 1
-    return acc
-  }, {})
-
   const filteredGraph = useMemo(
     () => applyGraphFilters(nodes, edges, filters),
     [nodes, edges, filters],
   )
+  const visibleTypeCounts = filteredGraph.nodes.reduce<Record<string, number>>((acc, n) => {
+    acc[n.type] = (acc[n.type] ?? 0) + 1
+    return acc
+  }, {})
+  const filterableTypeCounts = nodes.reduce<Record<string, number>>((acc, n) => {
+    if (!isStructuralGraphNode(n)) {
+      acc[n.type] = (acc[n.type] ?? 0) + 1
+    }
+    return acc
+  }, {})
+  const visibleTypeEntries = getGraphNodeTypeEntries(visibleTypeCounts)
+  const filterableTypeEntries = getGraphNodeTypeEntries(filterableTypeCounts)
   const hiddenCount = nodes.length - filteredGraph.nodes.length
   const filtersActive = hasActiveGraphFilters(filters)
   const contextNode = nodeMenu ? nodes.find((node) => node.id === nodeMenu.nodeId) : null
@@ -660,7 +669,8 @@ export function GraphView() {
         const w = attrs.weight ?? 1
         result.color = graphTheme.highlightedEdge
         result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
-        result.label = `relevance: ${w.toFixed(1)}`
+        const relationLabel = attrs.relationLabel ? `${attrs.relationLabel} · ` : ""
+        result.label = `${relationLabel}relevance: ${w.toFixed(1)}`
         result.forceLabel = true
       }
       return result
@@ -716,7 +726,7 @@ export function GraphView() {
           </div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.nodes.length}/{nodes.length} pages</span>
-            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.edges.length}/{edges.length} links</span>
+            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.edges.length}/{edges.length} relations</span>
             {hiddenCount > 0 && (
               <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
                 {hiddenCount} hidden
@@ -725,6 +735,19 @@ export function GraphView() {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <div className="mr-1 flex items-center rounded-md border bg-muted/30 p-0.5">
+            {GRAPH_MODE_OPTIONS.map((option) => (
+              <Button
+                key={option.id}
+                variant={filters.mode === option.id ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setGraphMode(option.id)}
+                className="h-6 px-2 text-xs"
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
           <Button
             variant={showFilters ? "secondary" : "ghost"}
             size="sm"
@@ -880,9 +903,7 @@ export function GraphView() {
                 <div className="space-y-1.5">
                   <div className="font-medium text-muted-foreground">Node types</div>
                   <div className="grid grid-cols-2 gap-1">
-                    {Object.entries(NODE_TYPE_LABELS)
-                      .filter(([type]) => (typeCounts[type] ?? 0) > 0)
-                      .map(([type, label]) => (
+                    {filterableTypeEntries.map(([type, label, count]) => (
                         <label key={type} className="flex min-w-0 items-center gap-1.5">
                           <input
                             type="checkbox"
@@ -897,7 +918,7 @@ export function GraphView() {
                             }}
                           />
                           <span className="truncate">{label}</span>
-                          <span className="text-muted-foreground/60">{typeCounts[type]}</span>
+                          <span className="text-muted-foreground/60">{count}</span>
                         </label>
                       ))}
                   </div>
@@ -997,9 +1018,7 @@ export function GraphView() {
               colorMode === "type" ? (
                 <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto legend-scroll" style={{ direction: "rtl" }}>
                   <div className="flex flex-col gap-0.5" style={{ direction: "ltr" }}>
-                    {Object.entries(NODE_TYPE_LABELS)
-                      .filter(([type]) => (typeCounts[type] ?? 0) > 0)
-                      .map(([type, label]) => {
+                    {visibleTypeEntries.map(([type, label, count]) => {
                         const isHidden = filters.hiddenTypes.has(type)
                         return (
                           <div
@@ -1023,14 +1042,14 @@ export function GraphView() {
                             <span
                               className="inline-block h-3 w-3 rounded-full shrink-0 shadow-sm"
                               style={{
-                                backgroundColor: isHidden ? "#94a3b8" : NODE_TYPE_COLORS[type],
-                                boxShadow: `0 0 4px ${hexToRgba(isHidden ? "#94a3b8" : NODE_TYPE_COLORS[type] ?? "#94a3b8", 0.4)}`,
+                                backgroundColor: isHidden ? "#94a3b8" : getGraphNodeTypeColor(type),
+                                boxShadow: `0 0 4px ${hexToRgba(isHidden ? "#94a3b8" : getGraphNodeTypeColor(type), 0.4)}`,
                               }}
                             />
                             <span className={hoveredType === type ? "text-foreground font-medium" : "text-muted-foreground"}>
                               {label}
                             </span>
-                            <span className="text-muted-foreground/60 ml-auto">{typeCounts[type]}</span>
+                            <span className="text-muted-foreground/60 ml-auto">{count}</span>
                             {isHidden && <span className="text-muted-foreground/60 text-[10px]">hidden</span>}
                           </div>
                         )
