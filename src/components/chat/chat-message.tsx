@@ -288,8 +288,8 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   concept: { icon: Lightbulb, color: "text-purple-500" },
   source: { icon: BookOpen, color: "text-orange-500" },
   query: { icon: HelpCircle, color: "text-green-500" },
-  synthesis: { icon: GitMerge, color: "text-red-500" },
   comparison: { icon: BarChart3, color: "text-teal-500" },
+  synthesis: { icon: GitMerge, color: "text-red-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
   decision: { icon: CheckSquare, color: "text-lime-500" },
   clip: { icon: Globe, color: "text-blue-400" },
@@ -300,8 +300,8 @@ function getRefType(path: string): string {
   if (path.includes("/concepts/")) return "concept"
   if (path.includes("/sources/")) return "source"
   if (path.includes("/queries/")) return "query"
-  if (path.includes("/synthesis/")) return "synthesis"
   if (path.includes("/comparisons/")) return "comparison"
+  if (path.includes("/synthesis/")) return "synthesis"
   if (path.includes("/decisions/")) return "decision"
   if (path.includes("overview")) return "overview"
   if (path.includes("raw/sources/")) return "clip"
@@ -370,8 +370,9 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
           `${pp}/wiki/concepts/${id}.md`,
           `${pp}/wiki/sources/${id}.md`,
           `${pp}/wiki/queries/${id}.md`,
-          `${pp}/wiki/synthesis/${id}.md`,
           `${pp}/wiki/comparisons/${id}.md`,
+          `${pp}/wiki/synthesis/${id}.md`,
+          `${pp}/wiki/decisions/${id}.md`,
           `${pp}/wiki/${id}.md`,
         ]
         for (const candidate of candidates) {
@@ -482,8 +483,9 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
               `${pp}/wiki/concepts/${id}.md`,
               `${pp}/wiki/sources/${id}.md`,
               `${pp}/wiki/queries/${id}.md`,
-              `${pp}/wiki/synthesis/${id}.md`,
               `${pp}/wiki/comparisons/${id}.md`,
+              `${pp}/wiki/synthesis/${id}.md`,
+              `${pp}/wiki/decisions/${id}.md`,
               `${pp}/wiki/${id}.md`,
             ]
             for (const candidate of candidates) {
@@ -593,7 +595,7 @@ function extractCitedPages(text: string): CitedPage[] {
   if (wikilinks) {
     const seen = new Set<string>()
     const pages: CitedPage[] = []
-    const WIKI_DIRS = ["entities", "concepts", "sources", "queries", "synthesis", "comparisons"]
+    const WIKI_DIRS = ["entities", "concepts", "sources", "queries", "comparisons", "synthesis", "decisions"]
 
     for (const link of wikilinks) {
       const nameMatch = link.match(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/)
@@ -892,6 +894,7 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
       `${pp}/wiki/queries/${pageName}.md`,
       `${pp}/wiki/comparisons/${pageName}.md`,
       `${pp}/wiki/synthesis/${pageName}.md`,
+      `${pp}/wiki/decisions/${pageName}.md`,
       `${pp}/wiki/${pageName}.md`,
     ]
 

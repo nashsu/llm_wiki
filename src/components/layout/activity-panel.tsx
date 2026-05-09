@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
-  RotateCcw, X, Clock,
+  RotateCcw, X, Clock, CheckSquare,
 } from "lucide-react"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -14,8 +14,9 @@ const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   entities: Users,
   concepts: Lightbulb,
   queries: HelpCircle,
-  synthesis: GitMerge,
   comparisons: BarChart3,
+  synthesis: GitMerge,
+  decisions: CheckSquare,
 }
 
 function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } {

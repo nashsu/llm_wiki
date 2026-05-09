@@ -10,6 +10,7 @@ import {
   Calendar,
   Hash,
   CheckSquare,
+  GitMerge,
 } from "lucide-react"
 
 export interface WikiTypeStyle {
@@ -77,6 +78,12 @@ export const WIKI_TYPE_STYLES: Record<string, WikiTypeStyle> = {
     icon: BookOpen,
     chipClass: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
     dotClass: "bg-indigo-500",
+  },
+  synthesis: {
+    label: "Synthesis",
+    icon: GitMerge,
+    chipClass: "bg-red-500/15 text-red-700 dark:text-red-300",
+    dotClass: "bg-red-500",
   },
   decision: {
     label: "Decision",

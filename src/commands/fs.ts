@@ -55,6 +55,22 @@ export async function createDirectory(path: string): Promise<void> {
   return invoke<void>("create_directory", { path })
 }
 
+const STANDARD_WIKI_DIRS = [
+  "raw/sources",
+  "wiki/sources",
+  "wiki/entities",
+  "wiki/concepts",
+  "wiki/queries",
+  "wiki/comparisons",
+  "wiki/synthesis",
+]
+
+async function ensureStandardWikiDirectories(projectPath: string): Promise<void> {
+  await Promise.all(
+    STANDARD_WIKI_DIRS.map((dir) => createDirectory(`${projectPath}/${dir}`)),
+  )
+}
+
 export async function fileExists(path: string): Promise<boolean> {
   return invoke<boolean>("file_exists", { path })
 }
@@ -80,6 +96,7 @@ export async function createProject(
   path: string,
 ): Promise<WikiProject> {
   const raw = await invoke<RawProject>("create_project", { name, path })
+  await ensureStandardWikiDirectories(raw.path)
   const id = await ensureProjectId(raw.path)
   await upsertProjectInfo(id, raw.path, raw.name)
   return { id, name: raw.name, path: raw.path }
@@ -87,6 +104,7 @@ export async function createProject(
 
 export async function openProject(path: string): Promise<WikiProject> {
   const raw = await invoke<RawProject>("open_project", { path })
+  await ensureStandardWikiDirectories(raw.path)
   const id = await ensureProjectId(raw.path)
   await upsertProjectInfo(id, raw.path, raw.name)
   return { id, name: raw.name, path: raw.path }
