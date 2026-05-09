@@ -127,20 +127,20 @@ describe("Google buildBody — vision content", () => {
 })
 
 describe("Ollama / custom (chat_completions) — vision content", () => {
-  it("ollama uses OpenAI-shaped image_url block (works on /v1/chat/completions for vision-capable models)", () => {
+  it("ollama uses native /api/chat image fields", () => {
     const cfg = mkConfig({
       provider: "ollama",
       model: "qwen2.5vl",
       ollamaUrl: "http://localhost:11434",
+      maxContextSize: 32768,
     })
     const body = getProviderConfig(cfg).buildBody([visionMessage()]) as {
-      messages: Array<{ content: unknown }>
+      messages: Array<{ content: unknown; images?: string[] }>
+      options: { num_ctx: number }
     }
-    const content = body.messages[0].content as Array<{ type: string }>
-    expect(content[1]).toMatchObject({
-      type: "image_url",
-      image_url: { url: `data:image/png;base64,${TINY_PNG_B64}` },
-    })
+    expect(body.messages[0].content).toBe("What's in this image?")
+    expect(body.messages[0].images).toEqual([TINY_PNG_B64])
+    expect(body.options.num_ctx).toBe(32768)
   })
 
   it("custom endpoint in chat_completions mode emits the same image_url block", () => {

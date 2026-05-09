@@ -127,6 +127,25 @@ describe("normalizeEndpoint — anthropic_messages mode", () => {
   })
 })
 
+describe("normalizeEndpoint — ollama_native mode", () => {
+  it("accepts the native Ollama bare host without a /v1 warning", () => {
+    const r = normalizeEndpoint("http://localhost:11434", "ollama_native")
+    expect(r.normalized).toBe("http://localhost:11434")
+    expect(r.changed).toBe(false)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it("still strips pasted request paths", () => {
+    const r = normalizeEndpoint(
+      "http://localhost:11434/v1/chat/completions",
+      "ollama_native",
+    )
+    expect(r.normalized).toBe("http://localhost:11434/v1")
+    expect(r.changed).toBe(true)
+    expect(r.warning).toMatch(/chat\/completions/)
+  })
+})
+
 describe("normalizeEndpoint — URL well-formedness catches", () => {
   it("flags a 5-octet IP-shaped host as malformed (real user paste)", () => {
     // Real user paste: "http://192.168.1.1.50:8000/v1".

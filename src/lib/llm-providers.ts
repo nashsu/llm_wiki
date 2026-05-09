@@ -127,6 +127,17 @@ function parseOpenAiLine(line: string): string | null {
   }
 }
 
+function parseOllamaLine(line: string): string | null {
+  try {
+    const parsed = JSON.parse(line) as {
+      message?: { content?: string }
+    }
+    return parsed.message?.content ?? null
+  } catch {
+    return null
+  }
+}
+
 function parseAnthropicLine(line: string): string | null {
   if (!line.startsWith("data: ")) return null
   const data = line.slice(6).trim()
@@ -206,6 +217,47 @@ function toOpenAiContent(content: string | ContentBlock[]): unknown {
       image_url: { url: `data:${b.mediaType};base64,${b.dataBase64}` },
     }
   })
+}
+
+function toOllamaMessage(message: ChatMessage): unknown {
+  if (typeof message.content === "string") return message
+
+  const text = message.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("")
+  const images = message.content
+    .filter((b) => b.type === "image")
+    .map((b) => (b.type === "image" ? b.dataBase64 : ""))
+
+  return {
+    role: message.role,
+    content: text,
+    ...(images.length > 0 ? { images } : {}),
+  }
+}
+
+function buildOllamaBody(
+  config: LlmConfig,
+  messages: ChatMessage[],
+  overrides?: RequestOverrides,
+): Record<string, unknown> {
+  const reasoning = effectiveReasoning(config, overrides)
+  const options: Record<string, unknown> = {}
+  if (overrides?.temperature !== undefined) options.temperature = overrides.temperature
+  if (overrides?.top_p !== undefined) options.top_p = overrides.top_p
+  if (overrides?.top_k !== undefined) options.top_k = overrides.top_k
+  if (overrides?.max_tokens !== undefined) options.num_predict = overrides.max_tokens
+  if (overrides?.stop !== undefined) options.stop = overrides.stop
+  if (config.maxContextSize > 0) options.num_ctx = config.maxContextSize
+
+  return {
+    model: config.model,
+    messages: messages.map(toOllamaMessage),
+    stream: true,
+    ...(reasoning.mode === "off" ? { think: false } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
+  }
 }
 
 function buildOpenAiBody(
@@ -584,16 +636,13 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         ollamaBase = ollamaBase.replace(/\/v1$/i, "")
       }
       return {
-        url: `${ollamaBase}/v1/chat/completions`,
+        url: `${ollamaBase}/api/chat`,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
           ...localLlmOriginHeader(),
         },
-        buildBody: (messages, overrides) => ({
-          ...buildOpenAiCompatibleBody(config, messages, overrides),
-          model,
-        }),
-        parseStream: parseOpenAiLine,
+        buildBody: (messages, overrides) => buildOllamaBody(config, messages, overrides),
+        parseStream: parseOllamaLine,
       }
     }
 

@@ -17,7 +17,7 @@
  * gateways really do mount the API at a bare host.
  */
 
-export type EndpointMode = "chat_completions" | "anthropic_messages"
+export type EndpointMode = "chat_completions" | "anthropic_messages" | "ollama_native"
 
 export interface NormalizedEndpoint {
   /** The cleaned-up URL to store. Empty string for empty input. */
@@ -111,8 +111,8 @@ export function normalizeEndpoint(raw: string, mode: EndpointMode): NormalizedEn
 
   // After stripping, check for the "bare host, no version segment" case.
   // Only hint for chat_completions — anthropic_messages endpoints sit at
-  // various non-/v1 paths (MiniMax `/anthropic`, Anthropic native `/`)
-  // and we can't reliably flag them.
+  // various non-/v1 paths (MiniMax `/anthropic`, Anthropic native `/`),
+  // and native Ollama uses a bare host such as `http://localhost:11434`.
   if (mode === "chat_completions") {
     try {
       const u = new URL(url)

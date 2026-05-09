@@ -240,7 +240,7 @@ function PresetRow({
           {(preset.provider === "custom" || preset.provider === "ollama") && (
             <EndpointField
               value={baseUrl}
-              mode={apiMode}
+              mode={preset.provider === "ollama" ? "ollama_native" : apiMode}
               placeholder={preset.baseUrl ?? "https://your-api.example.com/v1"}
               onChange={(v) => onChange({ baseUrl: v })}
             />
@@ -360,7 +360,7 @@ function ReasoningControls({
 
 interface EndpointFieldProps {
   value: string
-  mode: "chat_completions" | "anthropic_messages"
+  mode: "chat_completions" | "anthropic_messages" | "ollama_native"
   placeholder: string
   onChange: (value: string) => void
 }
