@@ -345,7 +345,10 @@ export async function sweepResolvedReviews(
   if (!matchesCurrentProject(projectPath)) return 0
 
   const store = useReviewStore.getState()
-  const pending = store.items.filter((i) => !i.resolved)
+  const pp = normalizePath(projectPath)
+  const pending = store.items.filter(
+    (i) => !i.resolved && normalizePath(i.projectPath) === pp,
+  )
 
   if (pending.length === 0) return 0
 

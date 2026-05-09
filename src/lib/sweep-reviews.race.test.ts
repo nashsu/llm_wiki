@@ -35,6 +35,8 @@ function fileNode(name: string): FileNode {
 
 function addPending(items: Array<Partial<ReviewItem>>) {
   const input = items.map((p) => ({
+    projectId: "proj",
+    projectPath: useWikiStore.getState().project?.path ?? "/project",
     type: "missing-page" as ReviewItem["type"],
     title: "X",
     description: "",

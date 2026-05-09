@@ -26,6 +26,8 @@ let tmp: { path: string; cleanup: () => Promise<void> }
 function makeReview(overrides: Partial<ReviewItem> = {}): ReviewItem {
   return {
     id: "r-1",
+    projectId: "proj-1",
+    projectPath: tmp?.path ?? "/persist-project",
     type: "missing-page",
     title: "Attention",
     description: "",

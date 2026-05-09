@@ -17,6 +17,8 @@ import {
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { resolveDocumentLlmConfig } from "@/lib/document-llm"
+import { loadReviewItems, saveReviewItems } from "@/lib/persist"
+import { ensureProjectId } from "@/lib/project-identity"
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -677,9 +679,30 @@ async function autoIngestImpl(
   }
 
   // ── Step 4: Parse review items ────────────────────────────────
-  const reviewItems = parseReviewBlocks(generation, sp)
+  const stableProjectId = await ensureProjectId(pp).catch(() => pp)
+  const reviewItems = parseReviewBlocks(
+    generation,
+    stableProjectId,
+    pp,
+    sp,
+  )
   if (reviewItems.length > 0) {
-    useReviewStore.getState().addItems(reviewItems)
+    const currentProjectPath = normalizePath(useWikiStore.getState().project?.path ?? "")
+    if (currentProjectPath === pp) {
+      const reviewStore = useReviewStore.getState()
+      reviewStore.addItems(reviewItems)
+      await saveReviewItems(pp, reviewStore.items).catch(() => {})
+    } else {
+      const existing = await loadReviewItems(pp).catch(() => [])
+      const reviewStore = useReviewStore.getState()
+      reviewStore.addItems(existing)
+      reviewStore.addItems(reviewItems)
+      const merged = reviewStore.items.filter((item) => normalizePath(item.projectPath) === pp)
+      reviewStore.setItems(
+        reviewStore.items.filter((item) => normalizePath(item.projectPath) !== pp),
+      )
+      await saveReviewItems(pp, merged).catch(() => {})
+    }
   }
 
   // ── Step 5: Save to cache ───────────────────────────────────
@@ -892,6 +915,8 @@ const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*
 
 function parseReviewBlocks(
   text: string,
+  projectId: string,
+  projectPath: string,
   sourcePath: string,
 ): Omit<ReviewItem, "id" | "resolved" | "createdAt">[] {
   const items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[] = []
@@ -940,6 +965,8 @@ function parseReviewBlocks(
       .trim()
 
     items.push({
+      projectId,
+      projectPath,
       type,
       title,
       description,

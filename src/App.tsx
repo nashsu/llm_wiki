@@ -308,11 +308,10 @@ function App() {
     // Load persisted review items
     try {
       const savedReview = await loadReviewItems(proj.path)
-      if (savedReview.length > 0) {
-        useReviewStore.getState().setItems(savedReview)
-      }
+      useReviewStore.getState().setItems(savedReview)
     } catch {
       // ignore, start fresh
+      useReviewStore.getState().setItems([])
     }
     // Load persisted chat history
     try {

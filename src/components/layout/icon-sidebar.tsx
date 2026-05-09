@@ -10,6 +10,7 @@ import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useTranslation } from "react-i18next"
 import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
+import { normalizePath } from "@/lib/path-utils"
 
 type NavView = WikiState["activeView"]
 
@@ -30,7 +31,10 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   const { t } = useTranslation()
   const activeView = useWikiStore((s) => s.activeView)
   const setActiveView = useWikiStore((s) => s.setActiveView)
-  const pendingCount = useReviewStore((s) => s.items.filter((i) => !i.resolved).length)
+  const currentProjectPath = useWikiStore((s) => s.project?.path ? normalizePath(s.project.path) : "")
+  const pendingCount = useReviewStore((s) =>
+    s.items.filter((i) => !i.resolved && normalizePath(i.projectPath) === currentProjectPath).length,
+  )
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
   const researchActiveCount = useResearchStore((s) => s.tasks.filter((t) => t.status !== "done" && t.status !== "error").length)
   const toggleResearchPanel = useResearchStore((s) => s.setPanelOpen)

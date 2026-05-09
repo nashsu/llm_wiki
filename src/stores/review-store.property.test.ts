@@ -19,6 +19,8 @@ const typeArb = fc.constantFrom<ReviewItem["type"]>(
 )
 
 const reviewInputArb = fc.record({
+  projectId: fc.constant("proj-1"),
+  projectPath: fc.constant("/project-1"),
   type: typeArb,
   title: fc.string({ minLength: 1, maxLength: 60 }),
   description: fc.string({ maxLength: 100 }),
@@ -39,6 +41,8 @@ describe("review-store addItems — dedupe invariants", () => {
 
         for (const batch of batches) {
           const input = batch.map((b) => ({
+            projectId: b.projectId,
+            projectPath: b.projectPath,
             type: b.type,
             title: b.title,
             description: b.description,
@@ -69,6 +73,8 @@ describe("review-store addItems — dedupe invariants", () => {
           for (const pages of affectedBatches) {
             useReviewStore.getState().addItems([
               {
+                projectId: "proj-1",
+                projectPath: "/project-1",
                 type,
                 title,
                 description: "",
@@ -99,13 +105,13 @@ describe("review-store addItems — dedupe invariants", () => {
           useReviewStore.setState({ items: [] })
 
           useReviewStore.getState().addItems([
-            { type, title, description: "", options: [], affectedPages: ["first.md"] },
+            { projectId: "proj-1", projectPath: "/project-1", type, title, description: "", options: [], affectedPages: ["first.md"] },
           ])
           const firstId = useReviewStore.getState().items[0].id
           useReviewStore.getState().resolveItem(firstId, "auto-resolved")
 
           useReviewStore.getState().addItems([
-            { type, title, description: "", options: [], affectedPages: ["second.md"] },
+            { projectId: "proj-1", projectPath: "/project-1", type, title, description: "", options: [], affectedPages: ["second.md"] },
           ])
 
           const all = useReviewStore.getState().items

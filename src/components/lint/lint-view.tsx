@@ -115,6 +115,8 @@ export function LintView() {
           // Option: remove the broken link from the page, or send to Review for manual fix
           const pagePath = `${pp}/wiki/${result.page}`
           useReviewStore.getState().addItem({
+            projectId: project.id,
+            projectPath: pp,
             type: "confirm",
             title: `Fix broken link in ${result.page}`,
             description: result.detail,
@@ -132,6 +134,8 @@ export function LintView() {
         case "no-outlinks": {
           // Send to Review — user should add links manually
           useReviewStore.getState().addItem({
+            projectId: project.id,
+            projectPath: pp,
             type: "suggestion",
             title: `Add cross-references to ${result.page}`,
             description: "This page has no outbound [[wikilinks]]. Consider adding cross-references to related entities and concepts.",
@@ -148,6 +152,8 @@ export function LintView() {
         default: {
           // Semantic issues → send to Review for manual resolution
           useReviewStore.getState().addItem({
+            projectId: project.id,
+            projectPath: pp,
             type: "confirm",
             title: result.detail.slice(0, 80),
             description: result.detail,

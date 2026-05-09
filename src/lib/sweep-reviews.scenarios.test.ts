@@ -85,6 +85,8 @@ async function setupScenario(scenario: SweepScenario): Promise<RunContext> {
   useReviewStore.setState({
     items: reviewsRaw.map((r) => ({
       id: r.id,
+      projectId: "proj-scenario",
+      projectPath: tmp.path,
       type: r.type,
       title: r.title,
       description: r.description ?? "",

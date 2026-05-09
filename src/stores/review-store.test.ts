@@ -4,6 +4,8 @@ import { useReviewStore, type ReviewItem } from "./review-store"
 // Minimal builder so each test only specifies what it cares about.
 function makeInput(overrides: Partial<Omit<ReviewItem, "id" | "resolved" | "createdAt">> = {}) {
   return {
+    projectId: "proj-1",
+    projectPath: "/project-1",
     type: "missing-page" as ReviewItem["type"],
     title: "Attention",
     description: "description",
@@ -63,6 +65,14 @@ describe("review-store addItems dedupe", () => {
     useReviewStore.getState().addItems([
       makeInput({ type: "missing-page", title: "Attention" }),
       makeInput({ type: "duplicate", title: "Attention" }),
+    ])
+    expect(useReviewStore.getState().items).toHaveLength(2)
+  })
+
+  it("does NOT merge items from different projects even with the same normalized title", () => {
+    useReviewStore.getState().addItems([
+      makeInput({ title: "Attention", projectId: "proj-1", projectPath: "/project-1" }),
+      makeInput({ title: "Attention", projectId: "proj-2", projectPath: "/project-2" }),
     ])
     expect(useReviewStore.getState().items).toHaveLength(2)
   })
