@@ -4,6 +4,7 @@ use std::path::Path;
 
 use calamine::{Reader, open_workbook_auto, Data};
 
+use crate::commands::file_sync;
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::FileNode;
 
@@ -899,8 +900,11 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
             }
+            file_sync::mark_app_write_path(p);
             fs::write(&path, contents)
-                .map_err(|e| format!("Failed to write file '{}': {}", path, e))
+                .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+            file_sync::mark_app_write_path(p);
+            Ok(())
         })
     })
     .await
@@ -1002,8 +1006,10 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
             }
+            file_sync::mark_app_write_path(dest);
             fs::copy(&source, &destination)
                 .map_err(|e| format!("Failed to copy '{}' to '{}': {}", source, destination, e))?;
+            file_sync::mark_app_write_path(dest);
             Ok(())
         })
     })
@@ -1019,6 +1025,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
         run_guarded("copy_directory", || {
             let src = Path::new(&source);
             let dest = Path::new(&destination);
+            file_sync::mark_app_write_path(dest);
 
             if !src.is_dir() {
                 return Err(format!("'{}' is not a directory", source));
@@ -1053,6 +1060,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
                         fs::copy(&path, &dest_path).map_err(|e| {
                             format!("Failed to copy '{}': {}", path.display(), e)
                         })?;
+                        file_sync::mark_app_write_path(&dest_path);
                         files.push(dest_path.to_string_lossy().replace('\\', "/"));
                     }
                 }
@@ -1072,13 +1080,16 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
             let p = Path::new(&path);
+            file_sync::mark_app_write_path(p);
             if p.is_dir() {
                 fs::remove_dir_all(&path)
-                    .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))
+                    .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))?;
             } else {
                 fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to delete file '{}': {}", path, e))
+                    .map_err(|e| format!("Failed to delete file '{}': {}", path, e))?;
             }
+            file_sync::mark_app_write_path(p);
+            Ok(())
         })
     })
     .await

@@ -52,6 +52,9 @@ export interface SettingsDraft {
 
   // UI
   uiLanguage: string
+
+  // Project sync
+  projectFileSyncEnabled: boolean
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

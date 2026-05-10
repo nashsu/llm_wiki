@@ -166,6 +166,7 @@ export async function loadLanguage(): Promise<string | null> {
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"
 const PROJECT_OUTPUT_LANGUAGE_KEY = "projectOutputLanguages"
+const PROJECT_FILE_SYNC_KEY = "projectFileSyncEnabled"
 
 export async function saveOutputLanguage(lang: OutputLanguage, projectId?: string): Promise<void> {
   const store = await getStore()
@@ -183,6 +184,29 @@ export async function loadOutputLanguage(projectId?: string): Promise<OutputLang
     return projectLanguages?.[projectId] ?? null
   }
   return (await store.get<OutputLanguage>(OUTPUT_LANGUAGE_KEY)) ?? null
+}
+
+export async function saveProjectFileSyncEnabled(enabled: boolean, projectId?: string): Promise<void> {
+  const store = await getStore()
+  if (projectId) {
+    const existing = (await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)) ?? {}
+    await store.set(PROJECT_FILE_SYNC_KEY, { ...existing, [projectId]: enabled })
+    return
+  }
+  const existing = (await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)) ?? {}
+  await store.set(PROJECT_FILE_SYNC_KEY, { ...existing, default: enabled })
+}
+
+export async function loadProjectFileSyncEnabled(projectId?: string): Promise<boolean> {
+  const store = await getStore()
+  const settings = await store.get<Record<string, boolean>>(PROJECT_FILE_SYNC_KEY)
+  if (projectId && settings && typeof settings[projectId] === "boolean") {
+    return settings[projectId]
+  }
+  if (settings && typeof settings.default === "boolean") {
+    return settings.default
+  }
+  return true
 }
 
 // ── Update-check persistence ──────────────────────────────────────────────

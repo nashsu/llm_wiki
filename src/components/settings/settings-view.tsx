@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
-import { saveLanguage } from "@/lib/project-store"
+import { loadProjectFileSyncEnabled, saveLanguage } from "@/lib/project-store"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
@@ -73,6 +73,7 @@ function initialDraft(
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
+  projectFileSyncEnabled: boolean,
 ): SettingsDraft {
   return {
     provider: llm.provider,
@@ -104,6 +105,7 @@ function initialDraft(
     proxyUrl: proxy.url,
     proxyBypassLocal: proxy.bypassLocal,
     uiLanguage,
+    projectFileSyncEnabled,
   }
 }
 
@@ -134,6 +136,7 @@ export function SettingsView() {
 
   const [active, setActive] = useState<CategoryId>("llm")
   const [saved, setSaved] = useState(false)
+  const [projectFileSyncEnabled, setProjectFileSyncEnabled] = useState(true)
   const [draft, setDraftState] = useState<SettingsDraft>(() =>
     initialDraft(
       llmConfig,
@@ -143,8 +146,25 @@ export function SettingsView() {
       proxyConfig,
       maxHistoryMessages,
       i18n.language,
+      projectFileSyncEnabled,
     ),
   )
+
+  useEffect(() => {
+    let cancelled = false
+    loadProjectFileSyncEnabled(project?.id).then((enabled) => {
+      if (cancelled) return
+      setProjectFileSyncEnabled(enabled)
+      setDraftState((prev) => ({ ...prev, projectFileSyncEnabled: enabled }))
+    }).catch(() => {
+      if (cancelled) return
+      setProjectFileSyncEnabled(true)
+      setDraftState((prev) => ({ ...prev, projectFileSyncEnabled: true }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [project?.id])
 
   // Resync draft from store if it changes out-of-band (e.g. project switch).
   // IMPORTANT: keep the current draft.uiLanguage instead of re-reading
@@ -164,6 +184,7 @@ export function SettingsView() {
         proxyConfig,
         maxHistoryMessages,
         prev.uiLanguage,
+        projectFileSyncEnabled,
       ),
     )
   }, [
@@ -173,6 +194,7 @@ export function SettingsView() {
     outputLanguage,
     proxyConfig,
     maxHistoryMessages,
+    projectFileSyncEnabled,
   ])
 
   const setDraft: DraftSetter = useCallback((key, value) => {
@@ -186,6 +208,7 @@ export function SettingsView() {
       saveMultimodalConfig,
       saveOutputLanguage,
       saveProxyConfig,
+      saveProjectFileSyncEnabled,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -240,6 +263,18 @@ export function SettingsView() {
     await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
     setProxyConfig(newProxy)
     await saveProxyConfig(newProxy)
+    await saveProjectFileSyncEnabled(draft.projectFileSyncEnabled, project?.id)
+    setProjectFileSyncEnabled(draft.projectFileSyncEnabled)
+    if (project) {
+      const { startProjectFileSync, stopProjectFileSync } = await import("@/lib/project-file-sync")
+      if (draft.projectFileSyncEnabled) {
+        await startProjectFileSync(project).catch((err) =>
+          console.error("Failed to start project file sync:", err)
+        )
+      } else {
+        await stopProjectFileSync()
+      }
+    }
     // Apply the proxy env vars LIVE so the next outbound request
     // picks them up — no app restart needed. tauri-plugin-http
     // builds a fresh reqwest client per fetch and reqwest reads
@@ -289,7 +324,7 @@ export function SettingsView() {
       case "interface":
         return <InterfaceSection draft={draft} setDraft={setDraft} />
       case "maintenance":
-        return <MaintenanceSection />
+        return <MaintenanceSection draft={draft} setDraft={setDraft} />
       case "changelog":
         return <ChangelogSection />
       case "about":
@@ -356,8 +391,8 @@ export function SettingsView() {
 
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
-            - "about" / "maintenance" have no draft-bound fields */}
-        {active !== "about" && active !== "llm" && active !== "maintenance" && (
+            - "about" has no draft-bound fields */}
+        {active !== "about" && active !== "llm" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">

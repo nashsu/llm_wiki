@@ -73,6 +73,7 @@ pub fn run() {
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.
             app.manage(commands::claude_cli::ClaudeCliState::default());
+            app.manage(commands::file_sync::FileSyncState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -89,6 +90,7 @@ pub fn run() {
             commands::fs::read_file_as_base64,
             commands::project::create_project,
             commands::project::open_project,
+            commands::project::open_project_folder,
             clip_server_status,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
@@ -107,6 +109,12 @@ pub fn run() {
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,
             commands::extract_images::extract_and_save_office_images_cmd,
+            commands::file_sync::start_project_file_watcher,
+            commands::file_sync::stop_project_file_watcher,
+            commands::file_sync::rescan_project_files,
+            commands::file_sync::get_file_change_queue,
+            commands::file_sync::retry_file_change_task,
+            commands::file_sync::ignore_file_change_task,
             set_proxy_env,
         ])
         .on_window_event(|window, event| {

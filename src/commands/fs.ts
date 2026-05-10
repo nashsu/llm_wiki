@@ -83,6 +83,10 @@ export async function openProject(path: string): Promise<WikiProject> {
   return { id, name: raw.name, path: raw.path }
 }
 
+export async function openProjectFolder(path: string): Promise<void> {
+  return invoke<void>("open_project_folder", { path })
+}
+
 export async function clipServerStatus(): Promise<string> {
   return invoke<string>("clip_server_status")
 }

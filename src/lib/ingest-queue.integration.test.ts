@@ -98,6 +98,24 @@ describe("ingest-queue persistence — write", () => {
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
   })
 
+  it("deduplicates repeated pending tasks for the same source", async () => {
+    await enqueueBatch(TEST_ID_A, [
+      { sourcePath: "raw/sources/a.md", folderContext: "" },
+      { sourcePath: `${tmp.path}/raw/sources/a.md`, folderContext: "" },
+    ])
+    await waitFor(async () => {
+      try {
+        const parsed = JSON.parse(await readQueueFile())
+        return parsed.length === 1
+      } catch {
+        return false
+      }
+    })
+    const parsed = JSON.parse(await readQueueFile())
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
+  })
+
   it("persists Unicode source paths without corruption", async () => {
     await enqueueBatch(TEST_ID_A, [
       { sourcePath: "raw/sources/注意力机制.pdf", folderContext: "AI研究 > 论文" },
