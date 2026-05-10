@@ -223,6 +223,54 @@ describe("sweep — rule-based auto-resolution", () => {
     expect(resolved).toBe(0)
     expect(useReviewStore.getState().items[0].resolved).toBe(false)
   })
+
+  it("does not resolve app-generated missing-page reviews from source-summary titles", async () => {
+    setProject("/project")
+    disableLlm()
+    addPending([{ title: "Missing wiki page: dify", type: "missing-page" }])
+
+    mockListDirectory.mockResolvedValue([fileNode("dify-source.md")])
+    mockReadFile.mockResolvedValue("---\ntype: source\ntitle: Dify\n---\n")
+
+    const resolved = await sweepResolvedReviews("/project")
+    expect(resolved).toBe(0)
+    expect(useReviewStore.getState().items[0].resolved).toBe(false)
+  })
+
+  it("auto-resolves app-generated missing-page reviews when the affected page no longer links the target", async () => {
+    setProject("/project")
+    disableLlm()
+    addPending([{
+      title: "Missing wiki page: dify",
+      type: "missing-page",
+      affectedPages: ["wiki/index.md"],
+    }])
+
+    mockListDirectory.mockResolvedValue([fileNode("index.md")])
+    mockReadFile.mockResolvedValue("# Index\nPlain dify mention without a wikilink.")
+
+    const resolved = await sweepResolvedReviews("/project")
+    expect(resolved).toBe(1)
+    expect(useReviewStore.getState().items[0].resolved).toBe(true)
+    expect(useReviewStore.getState().items[0].resolvedAction).toBe("auto-resolved")
+  })
+
+  it("keeps app-generated missing-page reviews pending while the affected page still links the target", async () => {
+    setProject("/project")
+    disableLlm()
+    addPending([{
+      title: "Missing wiki page: dify",
+      type: "missing-page",
+      affectedPages: ["wiki/index.md"],
+    }])
+
+    mockListDirectory.mockResolvedValue([fileNode("index.md")])
+    mockReadFile.mockResolvedValue("# Index\nStill points to [[dify]].")
+
+    const resolved = await sweepResolvedReviews("/project")
+    expect(resolved).toBe(0)
+    expect(useReviewStore.getState().items[0].resolved).toBe(false)
+  })
 })
 
 describe("sweep — LLM batch loop", () => {

@@ -25,6 +25,7 @@ import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-reso
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { appendLogContent } from "@/lib/log-append"
+import { canonicalizeWikiTitle } from "@/lib/wiki-title"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 // Module-level cache of source file names
@@ -167,12 +168,11 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     const pp = normalizePath(project.path)
     setSaving(true)
     try {
-      // Generate a unique filename for this save.
-      // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
-      // (so CJK titles don't collapse to empty) and the HHMMSS
-      // timestamp suffix guarantees same-day saves stay distinct.
+      // Generate a unique readable filename for this save.
+      // See `src/lib/wiki-filename.ts` — the file stem is Unicode-aware
+      // and keeps spaces so Obsidian sidebars stay human-readable.
       const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
+      const title = canonicalizeWikiTitle(firstLine.slice(0, 60), "저장된 질의")
       const { date, fileName } = makeQueryFileName(title)
 
       // Strip hidden sources comment and thinking blocks from content

@@ -7,7 +7,7 @@
 // Common prefixes LLM may prepend in English or Chinese review titles.
 // Kept in one place so dedupe and sweep agree on what "the same concept" means.
 const REVIEW_TITLE_PREFIX_RE =
-  /^(missing[\s-]?page[:：]\s*|duplicate[\s-]?page[:：]\s*|possible[\s-]?duplicate[:：]\s*|缺失页面[:：]\s*|缺少页面[:：]\s*|重复页面[:：]\s*|疑似重复[:：]\s*)/i
+  /^(missing\s+wiki\s+page[:：]\s*|missing[\s-]?page[:：]\s*|duplicate[\s-]?page[:：]\s*|possible[\s-]?duplicate[:：]\s*|缺失页面[:：]\s*|缺少页面[:：]\s*|重复页面[:：]\s*|疑似重复[:：]\s*)/i
 
 /**
  * Normalize a review title for equality comparison:

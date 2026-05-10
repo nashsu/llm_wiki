@@ -1,11 +1,20 @@
 import { useState, useEffect, useCallback } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { invoke } from "@tauri-apps/api/core"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
-import { copyFile, listDirectory, readFile, writeFile, deleteFile, findRelatedWikiPages, preprocessFile } from "@/commands/fs"
+import {
+  copyFile,
+  createDirectory,
+  fileExists,
+  listDirectory,
+  readFile,
+  writeFile,
+  deleteFile,
+  findRelatedWikiPages,
+  preprocessFile,
+} from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { enqueueIngest, enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
@@ -19,6 +28,7 @@ import {
   collectAllFilesIncludingDot,
   decideDeleteClick,
 } from "@/lib/sources-tree-delete"
+import { buildRawDocumentNamePlan, buildRawFolderName } from "@/lib/wiki-title"
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -119,7 +129,9 @@ export function SourcesView() {
     const importedPaths: string[] = []
     for (const sourcePath of paths) {
       const originalName = getFileName(sourcePath) || "unknown"
-      const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
+      const titleSeed = await readImportTitleSeed(sourcePath, originalName)
+      const rawNamePlan = buildRawDocumentNamePlan(originalName, titleSeed)
+      const destPath = await getUniqueDestPath(`${pp}/raw/sources`, rawNamePlan.fileName)
       try {
         await copyFile(sourcePath, destPath)
         importedPaths.push(destPath)
@@ -155,17 +167,14 @@ export function SourcesView() {
 
     setImporting(true)
     const pp = normalizePath(project.path)
-    const folderName = getFileName(selected) || "imported"
-    const destDir = `${pp}/raw/sources/${folderName}`
+    const folderName = buildRawFolderName(getFileName(selected) || "imported")
+    const destDir = await getUniqueDirectoryPath(`${pp}/raw/sources`, folderName)
 
     try {
-      // Recursively copy the folder
-      const copiedFiles: string[] = await invoke("copy_directory", {
-        source: selected,
-        destination: destDir,
-      })
+      const copiedFiles = await copyDirectoryWithNormalizedNames(selected, destDir)
+      const contextRoot = getFileName(destDir) || folderName
 
-      console.log(`[Folder Import] Copied ${copiedFiles.length} files from ${folderName}`)
+      console.log(`[Folder Import] Copied ${copiedFiles.length} files from ${contextRoot}`)
 
       // Preprocess all files
       for (const filePath of copiedFiles) {
@@ -195,8 +204,8 @@ export function SourcesView() {
             const parts = relPath.split("/")
             parts.pop() // remove filename
             const context = parts.length > 0
-              ? `${folderName} > ${parts.join(" > ")}`
-              : folderName
+              ? `${contextRoot} > ${parts.join(" > ")}`
+              : contextRoot
             return { sourcePath: filePath, folderContext: context }
           })
 
@@ -537,6 +546,78 @@ async function getUniqueDestPath(dir: string, fileName: string): Promise<string>
 
   // Shouldn't happen, but fallback
   return `${dir}/${nameWithoutExt}-${date}-${Date.now()}${ext}`
+}
+
+const TITLE_SEED_EXTENSIONS = new Set([
+  "md",
+  "mdx",
+  "txt",
+  "html",
+  "htm",
+  "xml",
+  "json",
+  "jsonl",
+  "csv",
+  "tsv",
+  "yaml",
+  "yml",
+  "ndjson",
+])
+
+async function readImportTitleSeed(path: string, fileName: string): Promise<string> {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? ""
+  if (!TITLE_SEED_EXTENSIONS.has(ext)) return ""
+  try {
+    return await readFile(path)
+  } catch {
+    return ""
+  }
+}
+
+async function getUniqueDirectoryPath(dir: string, folderName: string): Promise<string> {
+  const basePath = `${dir}/${folderName}`
+  if (!(await fileExists(basePath))) return basePath
+
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  const withDate = `${dir}/${folderName}-${date}`
+  if (!(await fileExists(withDate))) return withDate
+
+  for (let i = 2; i <= 99; i++) {
+    const withCounter = `${dir}/${folderName}-${date}-${i}`
+    if (!(await fileExists(withCounter))) return withCounter
+  }
+
+  return `${dir}/${folderName}-${date}-${Date.now()}`
+}
+
+async function copyDirectoryWithNormalizedNames(sourceDir: string, destDir: string): Promise<string[]> {
+  await createDirectory(destDir)
+  const nodes = await listDirectory(sourceDir)
+  const copiedFiles: string[] = []
+  await copyTreeNodesWithNormalizedNames(nodes, destDir, copiedFiles)
+  return copiedFiles
+}
+
+async function copyTreeNodesWithNormalizedNames(
+  nodes: FileNode[],
+  destDir: string,
+  copiedFiles: string[],
+): Promise<void> {
+  for (const node of nodes) {
+    if (node.is_dir) {
+      const folderName = buildRawFolderName(node.name)
+      const childDestDir = await getUniqueDirectoryPath(destDir, folderName)
+      await createDirectory(childDestDir)
+      await copyTreeNodesWithNormalizedNames(node.children ?? [], childDestDir, copiedFiles)
+      continue
+    }
+
+    const titleSeed = await readImportTitleSeed(node.path, node.name)
+    const rawNamePlan = buildRawDocumentNamePlan(node.name, titleSeed)
+    const destPath = await getUniqueDestPath(destDir, rawNamePlan.fileName)
+    await copyFile(node.path, destPath)
+    copiedFiles.push(destPath)
+  }
 }
 
 function filterTree(nodes: FileNode[]): FileNode[] {

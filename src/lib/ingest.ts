@@ -6,7 +6,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
-import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import { checkIngestCache, INGEST_PIPELINE_VERSION, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
@@ -57,6 +57,17 @@ function resolveCaptionConfig(
 import { buildLanguageDirective } from "@/lib/output-language"
 import { detectLanguage } from "@/lib/detect-language"
 import { sameScriptFamily } from "@/lib/language-metadata"
+import {
+  buildSourceSummaryPlan,
+  extractMarkdownTitle,
+  type SourceSummaryPlan,
+  wikiTitleLanguagePolicy,
+} from "@/lib/wiki-title"
+import {
+  assessWikiPageQuality,
+  buildQualityRepairPrompt,
+} from "@/lib/wiki-quality-gate"
+import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -145,6 +156,13 @@ export function isSafeIngestPath(p: string): boolean {
 // indentation ≤ 3 spaces is still a fence; 4+ spaces is an indented code
 // block and doesn't use fence markers.
 const FENCE_LINE = /^\s{0,3}(```+|~~~+)/
+const QUALITY_REPAIR_MAX_BLOCKS = 4
+const QUALITY_REPAIR_MAX_ROUNDS = 2
+const INGEST_VERIFICATION_MAX_QUERIES = 2
+const INGEST_VERIFICATION_RESULTS_PER_QUERY = 3
+const INGEST_EXTRA_CONTENT_PAGE_LIMIT = 2
+const INGEST_QUALITY_VALUES = new Set(["seed", "draft", "reviewed", "canonical"])
+const INGEST_COVERAGE_VALUES = new Set(["low", "medium", "high"])
 
 /**
  * Parse an LLM stage-2 generation into FILE blocks.
@@ -274,7 +292,21 @@ export function languageRule(sourceContent: string = ""): string {
   return buildLanguageDirective(sourceContent)
 }
 
-function slugifyWikiStem(input: string): string {
+function readableWikiStem(input: string): string {
+  const stem = input
+    .normalize("NFKC")
+    .trim()
+    .replace(/[‐‑‒–—―_-]+/gu, " ")
+    .replace(/[\\/:*?"<>|#[\]`]+/gu, " ")
+    .replace(/[^\p{L}\p{N}\s().,&+]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 96)
+    .trim()
+  return stem || "source"
+}
+
+function legacySlugifyWikiStem(input: string): string {
   const slug = input
     .normalize("NFKC")
     .toLowerCase()
@@ -297,7 +329,16 @@ function shortStableHash(input: string): string {
 }
 
 function makeSourceConceptSlug(sourceBaseName: string): string {
-  return `${slugifyWikiStem(sourceBaseName)}-${shortStableHash(sourceBaseName)}-concept`
+  return `${readableWikiStem(sourceBaseName)} ${shortStableHash(sourceBaseName)} concept`
+}
+
+function sourceSummaryPlanWithPath(
+  plan: SourceSummaryPlan,
+  path: string,
+): SourceSummaryPlan {
+  const fileName = path.split("/").pop() ?? plan.fileName
+  const slug = fileName.replace(/\.md$/iu, "")
+  return { ...plan, path, fileName, slug }
 }
 
 const COMPARISON_SIGNAL_RE = /\b(vs\.?|versus|compare[sd]?|comparison|trade-?off)\b|비교|대비|차이|선택\s*기준|장단점/iu
@@ -306,8 +347,32 @@ function getSourceBaseName(sourceFileName: string): string {
   return sourceFileName.replace(/\.[^.]+$/, "")
 }
 
+function legacySourceSummaryPath(sourceFileName: string): string {
+  return `wiki/sources/${legacySlugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+}
+
+async function resolveSourceSummaryPlan(
+  projectPath: string,
+  sourceFileName: string,
+  sourceContent = "",
+  explicitTitle?: string,
+): Promise<SourceSummaryPlan> {
+  const plan = buildSourceSummaryPlan(sourceFileName, sourceContent, explicitTitle)
+  const legacyPath = legacySourceSummaryPath(sourceFileName)
+  if (legacyPath === plan.path) return plan
+
+  const [canonical, legacy] = await Promise.all([
+    tryReadFile(`${projectPath}/${plan.path}`),
+    tryReadFile(`${projectPath}/${legacyPath}`),
+  ])
+  if (!canonical && legacy) {
+    return sourceSummaryPlanWithPath(plan, legacyPath)
+  }
+  return plan
+}
+
 export function makeComparisonPagePath(sourceFileName: string): string {
-  return `wiki/comparisons/${slugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+  return `wiki/comparisons/${readableWikiStem(getSourceBaseName(sourceFileName))}.md`
 }
 
 function isComparisonPagePath(path: string): boolean {
@@ -357,6 +422,10 @@ export function shouldForceComparisonPage(
 
 function yamlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+function currentIngestDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 function stripFrontmatter(markdown: string): string {
@@ -458,6 +527,10 @@ function buildFallbackComparisonPage(
     `sources: [${yamlString(sourceFileName)}]`,
     "confidence: medium",
     `last_reviewed: ${date}`,
+    "quality: draft",
+    "coverage: medium",
+    "needs_upgrade: true",
+    "source_count: 1",
     "---",
     "",
     `# ${title}`,
@@ -473,6 +546,10 @@ function buildFallbackComparisonPage(
     "",
     `## ${copy.evidenceHeading}`,
     evidence || copy.evidenceFallback,
+    "",
+    "## 검증 및 최신성",
+    "- 이 fallback 비교 페이지는 원본 source와 Stage 1 분석을 기준으로 만든 최소 구조입니다.",
+    "- 최신 상태, 공식 문서, 외부 근거가 필요한 claim은 별도 검증 후 `needs_upgrade: false`로 낮춥니다.",
   ].join("\n")
 }
 
@@ -481,6 +558,7 @@ async function ensureComparisonPageForComparisonSource(params: {
   sourceFileName: string
   sourceContent: string
   analysis: string
+  verificationContext: string
   llmConfig: LlmConfig
   writtenPaths: string[]
   signal?: AbortSignal
@@ -490,6 +568,7 @@ async function ensureComparisonPageForComparisonSource(params: {
     sourceFileName,
     sourceContent,
     analysis,
+    verificationContext,
     llmConfig,
     writtenPaths,
     signal,
@@ -524,13 +603,17 @@ async function ensureComparisonPageForComparisonSource(params: {
     "",
     "Page requirements:",
     "- type must be `comparison`.",
+    "- Include quality, coverage, needs_upgrade, and source_count frontmatter.",
     "- Compare the main alternatives side by side.",
     "- Include a compact comparison table when the source supports it.",
-    "- Include decision criteria, recommended use, risks, and source-grounded conclusion.",
+    "- Include decision criteria, recommended use, risks, source-grounded conclusion, and verification/currentness notes.",
     "- Do not create entity, concept, source, index, overview, or log pages.",
     "",
     "## Stage 1 Analysis",
     analysis,
+    "",
+    "## Ingest Verification / Currentness Context",
+    verificationContext,
     "",
     "## Original Source Content",
     sourceContent,
@@ -545,9 +628,19 @@ async function ensureComparisonPageForComparisonSource(params: {
       signal,
       4096,
     )
+    const repairedGeneration = await repairGeneratedQualityIssues({
+      generation,
+      llmConfig,
+      sourceFileName,
+      sourceContent,
+      analysis,
+      verificationContext,
+      signal,
+      onWarning: (msg) => warnings.push(msg),
+    })
     const result = await writeFileBlocks(
       projectPath,
-      generation,
+      repairedGeneration,
       llmConfig,
       sourceFileName,
       signal,
@@ -607,6 +700,417 @@ async function generateOneFileBlock(
   return out
 }
 
+function serializeFileBlock(block: ParsedFileBlock): string {
+  return [`---FILE: ${block.path}---`, block.content.trim(), "---END FILE---"].join("\n")
+}
+
+function extractReviewBlocks(text: string): string[] {
+  return Array.from(text.matchAll(REVIEW_BLOCK_REGEX)).map((m) => m[0].trim())
+}
+
+function shouldHoldGeneratedPageForQuality(assessment: ReturnType<typeof assessWikiPageQuality>): boolean {
+  if (!assessment.shouldRepair) return false
+  if (assessment.pageType === "source") {
+    // Source summaries are evidence-trace pages and are hidden from the
+    // Knowledge graph by default. Keep weak source summaries writable so
+    // raw provenance is not lost, then surface quality review items after
+    // ingest. Durable knowledge nodes below are held more aggressively.
+    return false
+  }
+  return true
+}
+
+function qualityHoldReviewBlock(
+  assessment: ReturnType<typeof assessWikiPageQuality>,
+): string {
+  const needsVerification = assessment.issues.some((issue) => issue.type === "missing-verification")
+  return [
+    `---REVIEW: suggestion | Quality hold: ${assessment.path}---`,
+    "Generated wiki content was held before writing because it did not satisfy the ingest quality gate.",
+    "",
+    ...assessment.issues.map((issue) => `- ${issue.type}: ${issue.message}`),
+    "",
+    "Regenerate this page from the raw source, downgrade it into a draft outside the active wiki graph, or skip it if it is not durable knowledge.",
+    "OPTIONS: Create Page | Skip",
+    `PAGES: ${assessment.path}`,
+    needsVerification
+      ? "SEARCH: source claim verification | latest official documentation | cross-check technical claim"
+      : "",
+    "---END REVIEW---",
+  ].filter(Boolean).join("\n")
+}
+
+function normalizeWikiTarget(raw: string): string {
+  const cleaned = raw
+    .split("|")[0]
+    .split("#")[0]
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^wiki\//i, "")
+    .replace(/\.md$/i, "")
+  const base = cleaned.split("/").filter(Boolean).pop() ?? cleaned
+  return base.toLowerCase()
+}
+
+function targetFromWikiPath(relativePath: string): string {
+  return normalizeWikiTarget(relativePath)
+}
+
+function stripHeldWikilinks(content: string, heldTargets: Set<string>): string {
+  if (heldTargets.size === 0) return content
+  return content.replace(/\[\[([^\]]+?)\]\]/g, (full, raw: string) => {
+    const target = normalizeWikiTarget(raw)
+    if (!heldTargets.has(target)) return full
+    const alias = raw.includes("|") ? raw.split("|").slice(1).join("|").trim() : ""
+    const label = alias || raw.split("#")[0].split("|")[0].trim()
+    return label.replace(/^wiki\//i, "").replace(/\.md$/i, "")
+  })
+}
+
+function stripUnknownWikilinks(content: string, knownTargets: Set<string>): string {
+  return content.replace(/\[\[([^\]]+?)\]\]/g, (full, raw: string) => {
+    const target = normalizeWikiTarget(raw)
+    if (!target || knownTargets.has(target)) return full
+    const alias = raw.includes("|") ? raw.split("|").slice(1).join("|").trim() : ""
+    const label = alias || raw.split("#")[0].split("|")[0].trim()
+    return label.replace(/^wiki\//i, "").replace(/\.md$/i, "")
+  })
+}
+
+function pruneHeldRelatedFrontmatter(content: string, heldTargets: Set<string>): string {
+  if (heldTargets.size === 0) return content
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  const lines = parsed.payload.split("\n")
+  const next = lines.map((line) => {
+    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
+    if (!match) return line
+    const kept = match[2]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => !heldTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
+    return `${match[1]}[${kept.join(", ")}]`
+  })
+
+  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+}
+
+function pruneUnknownRelatedFrontmatter(content: string, knownTargets: Set<string>): string {
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  const lines = parsed.payload.split("\n")
+  const next = lines.map((line) => {
+    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
+    if (!match) return line
+    const kept = match[2]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => knownTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
+    return `${match[1]}[${kept.join(", ")}]`
+  })
+
+  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+}
+
+function stripHeldTargetsFromGeneratedBlock(block: ParsedFileBlock, heldTargets: Set<string>): ParsedFileBlock {
+  if (heldTargets.size === 0) return block
+  const withoutBodyLinks = stripHeldWikilinks(block.content, heldTargets)
+  return {
+    ...block,
+    content: pruneHeldRelatedFrontmatter(withoutBodyLinks, heldTargets),
+  }
+}
+
+function stripUnknownTargetsFromGeneratedBlock(block: ParsedFileBlock, knownTargets: Set<string>): ParsedFileBlock {
+  const withoutBodyLinks = stripUnknownWikilinks(block.content, knownTargets)
+  return {
+    ...block,
+    content: pruneUnknownRelatedFrontmatter(withoutBodyLinks, knownTargets),
+  }
+}
+
+function holdLowQualityGeneratedPages(
+  generation: string,
+  options: {
+    expectedDate?: string
+    onWarning?: (message: string) => void
+  } = {},
+): string {
+  const { blocks, warnings } = parseFileBlocks(generation)
+  if (blocks.length === 0) return generation
+
+  const kept: ParsedFileBlock[] = []
+  const heldReviews: string[] = []
+  const heldTargets = new Set<string>()
+  const expectedDate = options.expectedDate ?? currentIngestDate()
+  for (const block of blocks) {
+    const normalizedBlock = {
+      ...block,
+      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
+    }
+    const assessment = assessWikiPageQuality(normalizedBlock.path, normalizedBlock.content, {
+      expectedDate,
+      enforceIngestDates: true,
+    })
+    if (shouldHoldGeneratedPageForQuality(assessment)) {
+      const msg = `Held "${block.path}" before write — ${assessment.issues.map((i) => i.type).join(", ")}.`
+      console.warn(`[ingest:quality] ${msg}`)
+      options.onWarning?.(msg)
+      heldTargets.add(targetFromWikiPath(block.path))
+      heldReviews.push(qualityHoldReviewBlock(assessment))
+      continue
+    }
+    kept.push(normalizedBlock)
+  }
+
+  if (warnings.length > 0) {
+    options.onWarning?.(`Generation parse warnings before quality hold: ${warnings.join(" · ")}`)
+  }
+
+  return [
+    ...kept.map((block) => serializeFileBlock(stripHeldTargetsFromGeneratedBlock(block, heldTargets))),
+    ...extractReviewBlocks(generation),
+    ...heldReviews,
+  ].join("\n\n")
+}
+
+function collectTargetsFromTree(nodes: FileNode[], targets = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      collectTargetsFromTree(node.children, targets)
+      continue
+    }
+    if (!node.is_dir && node.name.endsWith(".md")) {
+      targets.add(normalizeWikiTarget(node.name))
+    }
+  }
+  return targets
+}
+
+async function collectExistingWikiTargets(projectPath: string): Promise<Set<string>> {
+  try {
+    const tree = await listDirectory(`${normalizePath(projectPath)}/wiki`)
+    return collectTargetsFromTree(tree)
+  } catch {
+    return new Set()
+  }
+}
+
+async function stripUnresolvedGeneratedWikilinks(
+  projectPath: string,
+  generation: string,
+): Promise<string> {
+  const { blocks } = parseFileBlocks(generation)
+  if (blocks.length === 0) return generation
+
+  const knownTargets = await collectExistingWikiTargets(projectPath)
+  for (const block of blocks) {
+    knownTargets.add(targetFromWikiPath(block.path))
+  }
+
+  return [
+    ...blocks.map((block) => serializeFileBlock(stripUnknownTargetsFromGeneratedBlock(block, knownTargets))),
+    ...extractReviewBlocks(generation),
+  ].join("\n\n")
+}
+
+function normalizeVerificationQuery(raw: string): string {
+  return raw
+    .replace(/^\s*[-*]\s*/, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160)
+}
+
+export function extractVerificationSearchQueries(
+  analysis: string,
+  limit = INGEST_VERIFICATION_MAX_QUERIES,
+): string[] {
+  const queries: string[] = []
+
+  for (const match of analysis.matchAll(/^\s*(?:SEARCH|Search queries?|검색)\s*:\s*(.+)$/gim)) {
+    const parts = match[1].split("|")
+    for (const part of parts) {
+      const query = normalizeVerificationQuery(part)
+      if (query.length >= 4) queries.push(query)
+    }
+  }
+
+  const section = analysis.match(/##\s*Verification & Freshness Plan\s*([\s\S]*?)(?=\n##\s+|$)/i)?.[1] ?? ""
+  for (const line of section.split("\n")) {
+    if (/^\s*(?:SEARCH|Search queries?|검색)\s*:/i.test(line)) continue
+    if (!/(search|검색|verify|latest|current|최신|검증)/i.test(line)) continue
+    const query = normalizeVerificationQuery(
+      line
+        .replace(/^\s*[-*]\s*/, "")
+        .replace(/^(?:query|search|검색)\s*\d*\s*[:：-]\s*/i, ""),
+    )
+    if (query.length >= 12 && query.length <= 160) queries.push(query)
+  }
+
+  return Array.from(new Set(queries)).slice(0, limit)
+}
+
+function formatVerificationResults(
+  query: string,
+  results: WebSearchResult[],
+): string {
+  if (results.length === 0) return `### Query: ${query}\nNo results returned.`
+  return [
+    `### Query: ${query}`,
+    ...results.map((result, index) => [
+      `[${index + 1}] ${result.title} (${result.source || "unknown source"})`,
+      result.url,
+      result.snippet,
+    ].filter(Boolean).join("\n")),
+  ].join("\n\n")
+}
+
+async function buildIngestVerificationContext(params: {
+  analysis: string
+  sourceFileName: string
+  onWarning?: (message: string) => void
+}): Promise<string> {
+  const queries = extractVerificationSearchQueries(params.analysis)
+  if (queries.length === 0) {
+    return [
+      "## Ingest Verification Status",
+      "Stage 1 did not request external verification search.",
+      "Use the raw source as the primary evidence and avoid latest/current claims unless the source supports them.",
+    ].join("\n")
+  }
+
+  const searchConfig = resolveSearchConfig(useWikiStore.getState().searchApiConfig)
+  if (searchConfig.provider === "none" || !searchConfig.apiKey) {
+    return [
+      "## Ingest Verification Status",
+      "Stage 1 requested external verification, but web search is not configured.",
+      "Do not write unverified latest/current claims as canonical facts.",
+      "Convert them into REVIEW blocks, 열린 질문, or `needs_upgrade: true` notes.",
+      "",
+      "## Requested Verification Queries",
+      ...queries.map((query) => `- ${query}`),
+    ].join("\n")
+  }
+
+  const sections: string[] = []
+  for (const query of queries) {
+    try {
+      const results = await webSearch(query, searchConfig, INGEST_VERIFICATION_RESULTS_PER_QUERY)
+      sections.push(formatVerificationResults(query, results))
+    } catch (err) {
+      const message = `Ingest verification search failed for "${query}": ${err instanceof Error ? err.message : String(err)}`
+      params.onWarning?.(message)
+      sections.push(`### Query: ${query}\nSearch failed. Treat this claim as unverified during ingest.`)
+    }
+  }
+
+  return [
+    "## Ingest Verification Search Results",
+    `Source being ingested: ${params.sourceFileName}`,
+    "Use these results only as currentness/cross-check context. Keep them separate from raw-source evidence.",
+    "",
+    ...sections,
+  ].join("\n")
+}
+
+async function repairGeneratedQualityIssues(params: {
+  generation: string
+  llmConfig: LlmConfig
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext?: string
+  signal?: AbortSignal
+  onWarning?: (message: string) => void
+}): Promise<string> {
+  const { blocks, warnings } = parseFileBlocks(params.generation)
+  if (blocks.length === 0) return params.generation
+
+  const out: ParsedFileBlock[] = []
+  let repairsAttempted = 0
+  const expectedDate = currentIngestDate()
+
+  for (const block of blocks) {
+    let current = {
+      ...block,
+      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
+    }
+    let assessment = assessWikiPageQuality(current.path, current.content, {
+      expectedDate,
+      enforceIngestDates: true,
+    })
+
+    for (
+      let round = 0;
+      assessment.shouldRepair &&
+        repairsAttempted < QUALITY_REPAIR_MAX_BLOCKS &&
+        round < QUALITY_REPAIR_MAX_ROUNDS;
+      round++
+    ) {
+      repairsAttempted += 1
+      const prompt = buildQualityRepairPrompt({
+        relativePath: current.path,
+        content: current.content,
+        sourceFileName: params.sourceFileName,
+        sourceContent: params.sourceContent,
+        analysis: params.analysis,
+        verificationContext: params.verificationContext,
+        issues: assessment.issues,
+        expectedDate,
+      })
+
+      try {
+        const repaired = await generateOneFileBlock(
+          params.llmConfig,
+          prompt.system,
+          prompt.user,
+          params.signal,
+          6144,
+        )
+        const parsed = parseFileBlocks(repaired).blocks.find((b) => b.path === current.path)
+        if (parsed) {
+          current = {
+            ...parsed,
+            content: normalizeIngestFrontmatter(parsed.path, parsed.content, expectedDate),
+          }
+          assessment = assessWikiPageQuality(current.path, current.content, {
+            expectedDate,
+            enforceIngestDates: true,
+          })
+          continue
+        }
+        params.onWarning?.(`Quality repair for "${current.path}" did not return the expected FILE block; keeping current version.`)
+        break
+      } catch (err) {
+        params.onWarning?.(
+          `Quality repair failed for "${current.path}": ${err instanceof Error ? err.message : String(err)}`,
+        )
+        break
+      }
+    }
+
+    out.push(current)
+  }
+
+  const reviewBlocks = extractReviewBlocks(params.generation)
+  const repairedGeneration = [
+    ...out.map(serializeFileBlock),
+    ...reviewBlocks,
+  ].join("\n\n")
+
+  if (warnings.length > 0) {
+    params.onWarning?.(`Generation parse warnings before repair: ${warnings.join(" · ")}`)
+  }
+
+  return repairedGeneration
+}
+
 async function generateOllamaSplitFileBlocks(params: {
   llmConfig: LlmConfig
   schema: string
@@ -614,8 +1118,10 @@ async function generateOllamaSplitFileBlocks(params: {
   index: string
   fileName: string
   overview: string
+  sourceSummaryPlan: SourceSummaryPlan
   sourceContent: string
   analysis: string
+  verificationContext: string
   signal?: AbortSignal
   onProgress?: (detail: string) => void
   options?: AutoIngestOptions
@@ -627,14 +1133,17 @@ async function generateOllamaSplitFileBlocks(params: {
     index,
     fileName,
     overview,
+    sourceSummaryPlan,
     sourceContent,
     analysis,
+    verificationContext,
     signal,
     onProgress,
     options,
   } = params
-  const sourceBaseName = getSourceBaseName(fileName)
-  const conceptSlug = makeSourceConceptSlug(sourceBaseName)
+  const sourcePageSlug = sourceSummaryPlan.slug
+  const sourceSubjectSlug = sourceSummaryPlan.titleSlug
+  const conceptSlug = makeSourceConceptSlug(sourceSubjectSlug)
   const comparisonIntent = shouldForceComparisonPage(fileName, sourceContent, analysis)
   const comparisonPath = makeComparisonPagePath(fileName)
   const comparisonSlug = comparisonPath.split("/").pop()?.replace(/\.md$/, "") ?? ""
@@ -648,11 +1157,20 @@ async function generateOllamaSplitFileBlocks(params: {
     "The last line must be exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
     `Use created/updated/last_reviewed date ${date}.`,
+    "Allowed quality values are only seed, draft, reviewed, canonical. Never use gold.",
     `The sources array MUST include "${fileName}" for source-derived content.`,
     "Use compact Korean prose. Prefer fewer, stronger sections over many thin pages.",
+    "Treat raw source content as evidence, not guaranteed truth. Mark outdated, disputed, or insufficiently verified claims as verification needs.",
+    "If Ingest Verification Search Results are supplied, use them in this ingest pass and keep them separate from raw-source evidence.",
+    "If latest/current data is needed but not supplied, add explicit follow-up search questions instead of pretending certainty.",
+    "Do not set coverage: high with needs_upgrade: false unless a substantial verification/currentness section explains what was checked.",
+    "Do not add wikilinks to pages that do not already exist or are not emitted in this response; use plain text or review items for candidates.",
     "",
     language,
+    "",
+    wikiTitleLanguagePolicy(),
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
@@ -666,6 +1184,9 @@ async function generateOllamaSplitFileBlocks(params: {
     "## Stage 1 analysis",
     analysis,
     "",
+    "## Ingest verification / currentness context",
+    verificationContext,
+    "",
     "## Original source content",
     sourceContent,
   ].join("\n")
@@ -673,19 +1194,21 @@ async function generateOllamaSplitFileBlocks(params: {
   const tasks = [
     ...(!options?.skipSourceSummary ? [{
       label: "source summary",
-      path: `wiki/sources/${sourceBaseName}.md`,
+      path: sourceSummaryPlan.path,
       user: [
         sharedContext,
         "",
-        `Generate exactly one source summary page at wiki/sources/${sourceBaseName}.md.`,
+        `Generate exactly one source summary page at ${sourceSummaryPlan.path}.`,
         "type must be `source`.",
-        options?.sourceSummaryTitle
-          ? `Use frontmatter title and H1 exactly: ${options.sourceSummaryTitle}.`
+        options?.sourceSummaryTitle?.trim()
+          ? `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`
+          : `Use "${sourceSummaryPlan.title}" as the fallback subject title.`,
+        !options?.sourceSummaryTitle?.trim()
+          ? "Because this is a `wiki/sources/` page, prefer a concise Korean frontmatter title and H1 when that is natural; preserve proper nouns and legal/product names."
           : "",
-        options?.sourceSummaryTitle
-          ? "Do not use the original research question as the page title."
-          : "",
+        "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
+        "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
     }] : []),
@@ -723,7 +1246,7 @@ async function generateOllamaSplitFileBlocks(params: {
         "Generate exactly one updated index page at wiki/index.md.",
         "type must be `index`.",
         `Preserve existing entries from the current index and add links for ${[
-          `[[${sourceBaseName}]]`,
+          `[[${sourcePageSlug}]]`,
           comparisonIntent && comparisonSlug ? `[[${comparisonSlug}]]` : "",
           `[[${conceptSlug}]]`,
         ].filter(Boolean).join(", ")}.`,
@@ -813,7 +1336,7 @@ async function syncObsidianGraphLinksAfterWrites(
   warnings?: string[],
 ): Promise<void> {
   try {
-    const graphLinkPaths = await syncObsidianGraphLinks(projectPath)
+    const graphLinkPaths = await syncObsidianGraphLinks(projectPath, writtenPaths)
     for (const p of graphLinkPaths) {
       if (!writtenPaths.includes(p)) writtenPaths.push(p)
     }
@@ -834,7 +1357,34 @@ async function collectPostIngestReviewItems(
     pages,
     writtenPaths.map((p) => p.replace(/^wiki\//, "")),
   )
-  return missingReferencesToReviewItems(missing, sourcePath)
+  const missingItems = missingReferencesToReviewItems(missing, sourcePath)
+  const writtenSet = new Set(writtenPaths.map((p) => p.replace(/^wiki\//, "")))
+  const qualityItems = pages
+    .filter((page) => writtenSet.has(page.relativePath))
+    .map((page) => assessWikiPageQuality(`wiki/${page.relativePath}`, page.content))
+    .filter((assessment) => assessment.issues.length > 0)
+    .map((assessment) => ({
+      type: "suggestion" as const,
+      title: `Quality upgrade needed: ${assessment.path}`,
+      description: [
+        "Generated wiki page did not fully satisfy the post-ingest quality gate.",
+        "",
+        ...assessment.issues.map((issue) => `- ${issue.type}: ${issue.message}`),
+        "",
+        "Repair the page, downgrade it with `quality: seed|draft` and `needs_upgrade: true`, or convert weak claims into review/search questions.",
+      ].join("\n"),
+      sourcePath,
+      affectedPages: [assessment.path],
+      searchQueries: assessment.issues.some((issue) => issue.type === "missing-verification")
+        ? ["source claim verification", "latest documentation official source", "cross check technical claim"]
+        : undefined,
+      options: [
+        { label: "Create Page", action: "Create Page" },
+        { label: "Skip", action: "Skip" },
+      ],
+    }))
+
+  return [...missingItems, ...qualityItems]
 }
 
 /**
@@ -874,8 +1424,6 @@ async function autoIngestImpl(
   const sp = normalizePath(sourcePath)
   const activity = useActivityStore.getState()
   const fileName = getFileName(sp)
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -887,11 +1435,14 @@ async function autoIngestImpl(
 
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
     tryReadFile(sp),
-    tryReadFile(`${pp}/schema.md`),
-    tryReadFile(`${pp}/purpose.md`),
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+
+  const sourceSummaryPlan = await resolveSourceSummaryPlan(pp, fileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSummaryPath = sourceSummaryPlan.path
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -903,7 +1454,7 @@ async function autoIngestImpl(
   // re-running them costs only the extraction time and converges the
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
-  let cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
+  let cachedFiles = await checkIngestCache(pp, fileName, sourceContent, INGEST_PIPELINE_VERSION)
   if (options.skipSourceSummary && cachedFiles?.includes(sourceSummaryPath)) {
     console.log(
       `[ingest-cache] cache miss for ${fileName}: source-summary output is disabled for this ingest`,
@@ -970,14 +1521,14 @@ async function autoIngestImpl(
               )
             }
           }
-          await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+          await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
           // Re-embed the source-summary page so caption text lands
           // in the search index. Without this step, search by image
           // content stays empty for files ingested before captioning
           // was added — the safety-net section was just rewritten
           // with captions, but the embeddings still reflect the old
           // empty-alt content.
-          await reembedSourceSummary(pp, fileName)
+          await reembedSourceSummary(pp, fileName, sourceSummaryPlan)
         }
       } else {
         console.log(`[ingest:diag] cache-hit branch: skipping injection (no images returned from extraction)`)
@@ -1160,6 +1711,24 @@ async function autoIngestImpl(
     throw new Error(analysisActivity.detail || "Analysis stream failed")
   }
 
+  // ── Step 1.5: Ingest verification/currentness context ────────
+  //
+  // Deep Research remains a user-facing follow-up tool, but ingest now
+  // has its own quality loop. If Stage 1 identifies claims that need
+  // truth checking or latest/current data and web search is configured,
+  // we gather a small evidence packet before generation. If search is
+  // unavailable, the packet explicitly tells generation/repair to mark
+  // those claims as unverified instead of canonizing them.
+  activity.updateItem(activityId, { detail: "Checking verification and freshness needs..." })
+  const verificationContext = await buildIngestVerificationContext({
+    analysis,
+    sourceFileName: fileName,
+    onWarning: (msg) => {
+      console.warn(`[ingest:verification] ${msg}`)
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+
   // ── Step 2: Generation ────────────────────────────────────────
   // LLM takes the analysis as context and produces wiki files + review items
   activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
@@ -1175,8 +1744,10 @@ async function autoIngestImpl(
         index,
         fileName,
         overview,
+        sourceSummaryPlan,
         sourceContent: truncatedContent,
         analysis,
+        verificationContext,
         signal,
         onProgress: (detail) => activity.updateItem(activityId, { detail }),
         options,
@@ -1191,7 +1762,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent, options) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent, options, sourceSummaryPlan) },
         {
           role: "user",
           content: [
@@ -1204,6 +1775,10 @@ async function autoIngestImpl(
             "## Stage 1 Analysis (context only — do not repeat)",
             "",
             analysis,
+            "",
+            "## Ingest Verification / Currentness Context",
+            "",
+            verificationContext,
             "",
             "## Original Source Content",
             "",
@@ -1234,6 +1809,27 @@ async function autoIngestImpl(
     throw new Error(generationActivity.detail || "Generation stream failed")
   }
 
+  generation = await repairGeneratedQualityIssues({
+    generation,
+    llmConfig,
+    sourceFileName: fileName,
+    sourceContent: truncatedContent,
+    analysis,
+    verificationContext,
+    signal,
+    onWarning: (msg) => {
+      console.warn(`[ingest:quality] ${msg}`)
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+  generation = holdLowQualityGeneratedPages(generation, {
+    expectedDate: currentIngestDate(),
+    onWarning: (msg) => {
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+  generation = await stripUnresolvedGeneratedWikilinks(pp, generation)
+
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
   const { writtenPaths, warnings: writeWarnings, hardFailures } = await writeFileBlocks(
@@ -1243,6 +1839,7 @@ async function autoIngestImpl(
     fileName,
     signal,
     options,
+    sourceSummaryPlan,
   )
 
   // Surface parser / writer warnings to the activity panel so users
@@ -1268,7 +1865,7 @@ async function autoIngestImpl(
   // task for retry rather than "success".
   if (!options.skipSourceSummary && !hasSourceSummary && !signal?.aborted) {
     const date = new Date().toISOString().slice(0, 10)
-    const fallbackTitle = options.sourceSummaryTitle?.trim() || `Source: ${fileName}`
+    const fallbackTitle = sourceSummaryPlan.title
     const fallbackContent = [
       "---",
       `type: source`,
@@ -1278,12 +1875,39 @@ async function autoIngestImpl(
       `sources: ["${fileName}"]`,
       `tags: []`,
       `related: []`,
+      "confidence: low",
+      `last_reviewed: ${date}`,
+      "quality: draft",
+      "coverage: low",
+      "needs_upgrade: true",
+      "source_count: 1",
       "---",
       "",
       `# ${fallbackTitle}`,
       "",
+      "## 요약",
       analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
       "",
+      "## Source Coverage Matrix",
+      "- Fallback summary generated because the model did not emit a valid source summary page.",
+      "",
+      "## Atomic Claims",
+      "- Claim extraction requires manual or automated repair.",
+      "",
+      "## Evidence Map",
+      "- Primary evidence: original raw source file.",
+      "",
+      "## 검증 및 최신성",
+      "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
+      "",
+      "## Kevin 운영체계 적용",
+      "- 적용 판단은 원본 source 재검토 후 확정합니다.",
+      "",
+      "## 운영 노트",
+      "- This page is intentionally marked `needs_upgrade: true`.",
+      "",
+      "## 열린 질문",
+      "- Which claims require external verification or latest/current checks?",
     ].join("\n")
     try {
       await writeFile(sourceSummaryFullPath, fallbackContent)
@@ -1299,6 +1923,7 @@ async function autoIngestImpl(
       sourceFileName: fileName,
       sourceContent: truncatedContent,
       analysis,
+      verificationContext,
       llmConfig,
       writtenPaths,
       signal,
@@ -1316,7 +1941,7 @@ async function autoIngestImpl(
   // want the safety-net section to slip image refs into the wiki
   // through the back door.
   if (!options.skipSourceSummary && mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
-    await injectImagesIntoSourceSummary(pp, fileName, savedImages)
+    await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
   }
 
   if (writtenPaths.length > 0 && !signal?.aborted) {
@@ -1369,7 +1994,7 @@ async function autoIngestImpl(
   // — they represent deterministic decisions and caching them is
   // safe.
   if (writtenPaths.length > 0 && hardFailures.length === 0) {
-    await saveIngestCache(pp, fileName, sourceContent, writtenPaths)
+    await saveIngestCache(pp, fileName, sourceContent, writtenPaths, INGEST_PIPELINE_VERSION)
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${fileName}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
@@ -1445,6 +2070,138 @@ function contentMatchesTargetLanguage(content: string, target: string): boolean 
   return !detectedIsCjk
 }
 
+interface IngestWritePolicy {
+  plannedPaths: Set<string>
+  sourceSummaryPaths: Set<string>
+  extraContentLimit: number
+  extraContentWritten: number
+  sourceSummaryWritten: boolean
+}
+
+function buildIngestWritePolicy(
+  sourceFileName: string,
+  sourceSummaryPlan: SourceSummaryPlan,
+  options: AutoIngestOptions,
+): IngestWritePolicy {
+  const sourceSummaryPaths = new Set<string>()
+  if (!options.skipSourceSummary) {
+    sourceSummaryPaths.add(sourceSummaryPlan.path)
+    sourceSummaryPaths.add(legacySourceSummaryPath(sourceFileName))
+  }
+
+  const plannedPaths = new Set<string>([
+    "wiki/index.md",
+    "wiki/overview.md",
+    `wiki/concepts/${makeSourceConceptSlug(sourceSummaryPlan.titleSlug)}.md`,
+  ])
+  for (const sourcePath of sourceSummaryPaths) plannedPaths.add(sourcePath)
+
+  return {
+    plannedPaths,
+    sourceSummaryPaths,
+    extraContentLimit: INGEST_EXTRA_CONTENT_PAGE_LIMIT,
+    extraContentWritten: 0,
+    sourceSummaryWritten: false,
+  }
+}
+
+function isExtraContentPagePath(relativePath: string): boolean {
+  return /^(wiki\/(?:entities|concepts|comparisons|queries|synthesis)\/)[^/]+\.md$/u.test(relativePath)
+}
+
+function hasCanonicalWikiFileName(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/")
+  const fileName = normalized.split("/").pop() ?? ""
+  const stem = fileName.replace(/\.md$/iu, "")
+  return Boolean(stem) && fileName === `${readableWikiStem(stem)}.md`
+}
+
+function canonicalizeGeneratedWikiPath(
+  relativePath: string,
+  content: string,
+  sourceSummaryPlan: SourceSummaryPlan,
+): string {
+  const normalized = relativePath.replace(/\\/g, "/")
+  if (
+    normalized === "wiki/log.md" ||
+    normalized === "wiki/index.md" ||
+    normalized === "wiki/overview.md" ||
+    normalized.endsWith("/log.md") ||
+    normalized.endsWith("/index.md") ||
+    normalized.endsWith("/overview.md")
+  ) {
+    return normalized
+  }
+
+  if (normalized.startsWith("wiki/sources/")) return sourceSummaryPlan.path
+  if (normalized.startsWith("wiki/entities/")) return normalized
+
+  const match = normalized.match(/^(wiki\/(?:concepts|queries|comparisons|synthesis)\/)([^/]+)\.md$/u)
+  if (!match) return normalized
+
+  const fallback = match[2].replace(/[‐‑‒–—―_-]+/gu, " ")
+  const title = extractMarkdownTitle(content, fallback)
+  const stem = readableWikiStem(title)
+  return `${match[1]}${stem}.md`
+}
+
+function shouldWriteIngestPath(
+  relativePath: string,
+  _content: string,
+  _sourceFileName: string,
+  policy: IngestWritePolicy,
+): { allowed: boolean; reason?: string } {
+  if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
+    return { allowed: true }
+  }
+
+  if (policy.sourceSummaryPaths.has(relativePath)) {
+    if (policy.sourceSummaryWritten) {
+      return {
+        allowed: false,
+        reason: "source summary for this source was already written",
+      }
+    }
+    policy.sourceSummaryWritten = true
+    return { allowed: true }
+  }
+
+  if (policy.plannedPaths.has(relativePath)) {
+    return { allowed: true }
+  }
+
+  if (relativePath.startsWith("wiki/sources/")) {
+    return {
+      allowed: false,
+      reason: "only the planned source-summary path is allowed for this ingest",
+    }
+  }
+
+  if (!isExtraContentPagePath(relativePath)) {
+    return {
+      allowed: false,
+      reason: "path is outside allowed content directories",
+    }
+  }
+
+  if (!hasCanonicalWikiFileName(relativePath)) {
+    return {
+      allowed: false,
+      reason: "filename must follow the readable natural-language title policy",
+    }
+  }
+
+  if (policy.extraContentWritten >= policy.extraContentLimit) {
+    return {
+      allowed: false,
+      reason: `extra content page limit reached (${policy.extraContentLimit})`,
+    }
+  }
+
+  policy.extraContentWritten += 1
+  return { allowed: true }
+}
+
 function applyCanonicalPageTitle(content: string, title: string): string {
   const canonicalTitle = title.trim()
   if (!canonicalTitle) return content
@@ -1476,6 +2233,91 @@ function applyCanonicalPageTitle(content: string, title: string): string {
   return `# ${canonicalTitle}\n\n${out}`
 }
 
+function isIngestContentPage(relativePath: string): boolean {
+  return /^wiki\/(?:sources|entities|concepts|comparisons|queries|synthesis)\/[^/]+\.md$/u.test(
+    relativePath.replace(/\\/g, "/"),
+  )
+}
+
+function extractFrontmatterPayload(content: string): { payload: string; body: string } | null {
+  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  if (!match) return null
+  return {
+    payload: match[1],
+    body: content.slice(match[0].length).trimStart(),
+  }
+}
+
+function readYamlScalar(payload: string, field: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = new RegExp(`^${escaped}\\s*:\\s*(.*?)\\s*$`, "mi").exec(payload)
+  return match?.[1]?.replace(/^["']|["']$/g, "").trim() ?? ""
+}
+
+function upsertYamlScalar(payload: string, field: string, value: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const line = `${field}: ${value}`
+  const re = new RegExp(`^${escaped}\\s*:.*$`, "mi")
+  if (re.test(payload)) return payload.replace(re, line)
+  return `${payload.trimEnd()}\n${line}`
+}
+
+function replaceFrontmatterPayload(payload: string, body: string): string {
+  return ["---", payload.trimEnd(), "---", "", body].join("\n").trimEnd() + "\n"
+}
+
+function hasGeneratedFreshnessSection(content: string): boolean {
+  return /^#{2,3}\s+(검증 및 최신성|검증|최신성|Verification & Freshness|Freshness & Verification|Source Cross-Check|Currentness)\b/im.test(
+    content,
+  )
+}
+
+function normalizeIngestFrontmatter(relativePath: string, content: string, date: string): string {
+  if (!isIngestContentPage(relativePath)) return content
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  let payload = parsed.payload
+  payload = upsertYamlScalar(payload, "created", date)
+  payload = upsertYamlScalar(payload, "updated", date)
+  payload = upsertYamlScalar(payload, "last_reviewed", date)
+
+  const quality = readYamlScalar(payload, "quality").toLowerCase()
+  const coverage = readYamlScalar(payload, "coverage").toLowerCase()
+  const needsUpgrade = readYamlScalar(payload, "needs_upgrade").toLowerCase()
+  const sourceCount = readYamlScalar(payload, "source_count")
+
+  let forceNeedsUpgrade = false
+  if (quality && !INGEST_QUALITY_VALUES.has(quality)) {
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    forceNeedsUpgrade = true
+  }
+  if (coverage && !INGEST_COVERAGE_VALUES.has(coverage)) {
+    payload = upsertYamlScalar(payload, "coverage", "medium")
+    forceNeedsUpgrade = true
+  }
+  if (needsUpgrade && needsUpgrade !== "true" && needsUpgrade !== "false") {
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  }
+  if (sourceCount && !/^[1-9]\d*$/.test(sourceCount)) {
+    payload = upsertYamlScalar(payload, "source_count", "1")
+  }
+
+  const claimsFullyVerified =
+    readYamlScalar(payload, "coverage").toLowerCase() === "high" &&
+    readYamlScalar(payload, "needs_upgrade").toLowerCase() === "false"
+  const bodyCandidate = replaceFrontmatterPayload(payload, parsed.body)
+  if (claimsFullyVerified && !hasGeneratedFreshnessSection(bodyCandidate)) {
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    payload = upsertYamlScalar(payload, "coverage", "medium")
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  } else if (forceNeedsUpgrade) {
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  }
+
+  return replaceFrontmatterPayload(payload, parsed.body)
+}
+
 async function writeFileBlocks(
   projectPath: string,
   text: string,
@@ -1483,11 +2325,12 @@ async function writeFileBlocks(
   sourceFileName: string,
   signal?: AbortSignal,
   options: AutoIngestOptions = {},
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(sourceFileName, "", options.sourceSummaryTitle),
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
-  const sourceSummaryPath = `wiki/sources/${sourceFileName.replace(/\.[^.]+$/, "")}.md`
+  const writePolicy = buildIngestWritePolicy(sourceFileName, sourceSummaryPlan, options)
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
   // (disk full, permission, OS-level errors). Distinct from soft drops
   // (language mismatch, parse warnings, path-traversal rejections):
@@ -1499,9 +2342,19 @@ async function writeFileBlocks(
   const hardFailures: string[] = []
 
   const targetLang = useWikiStore.getState().outputLanguage
+  const ingestDate = currentIngestDate()
 
-  for (const { path: relativePath, content: rawContent } of blocks) {
-    if (options.skipSourceSummary && relativePath === sourceSummaryPath) {
+  for (const { path: rawRelativePath, content: rawContent } of blocks) {
+    const relativePath = canonicalizeGeneratedWikiPath(
+      rawRelativePath,
+      rawContent,
+      sourceSummaryPlan,
+    )
+    if (relativePath !== rawRelativePath) {
+      const msg = `Rewrote generated path "${rawRelativePath}" to "${relativePath}" using the readable title policy.`
+      warnings.push(msg)
+    }
+    if (options.skipSourceSummary && relativePath.startsWith("wiki/sources/")) {
       const msg = `Dropped "${relativePath}" — source-summary output is disabled for this ingest.`
       console.warn(`[ingest] ${msg}`)
       warnings.push(msg)
@@ -1517,8 +2370,22 @@ async function writeFileBlocks(
     // unparseable frontmatter and the read-time fallback had to
     // paper over it forever.
     let content = sanitizeIngestedFileContent(rawContent)
-    if (relativePath === sourceSummaryPath && options.sourceSummaryTitle) {
-      content = applyCanonicalPageTitle(content, options.sourceSummaryTitle)
+    if (writePolicy.sourceSummaryPaths.has(relativePath)) {
+      content = applyCanonicalPageTitle(
+        content,
+        options.sourceSummaryTitle?.trim()
+          ? sourceSummaryPlan.title
+          : extractMarkdownTitle(content, sourceSummaryPlan.title),
+      )
+    }
+    content = normalizeIngestFrontmatter(relativePath, content, ingestDate)
+
+    const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
+    if (!decision.allowed) {
+      const msg = `Dropped "${relativePath}" — ${decision.reason}.`
+      console.warn(`[ingest] ${msg}`)
+      warnings.push(msg)
+      continue
     }
 
     // Language guard: reject individual FILE blocks whose body contradicts
@@ -1704,21 +2571,45 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- What evidence supports them?",
     "- How strong is the evidence?",
     "",
+    "## Source Coverage Matrix",
+    "- List the source's major sections, headings, tables, and conclusions.",
+    "- For each item, mark whether it should be reflected, deferred, or ignored in the wiki.",
+    "- Explain the reason and the target wiki page or review/query item.",
+    "",
+    "## Atomic Claims & Evidence",
+    "- Break important source claims into reusable atomic claims.",
+    "- For each claim, include source evidence, confidence, caveats, and the likely wiki target.",
+    "- Do not inflate weak source statements into strong facts.",
+    "",
     "## Connections to Existing Wiki",
     "- What existing pages does this source relate to?",
     "- Does it strengthen, challenge, or extend existing knowledge?",
+    "- Which existing pages should be updated instead of creating new thin pages?",
     "",
     "## Contradictions & Tensions",
     "- Does anything in this source conflict with existing wiki content?",
     "- Are there internal tensions or caveats?",
     "",
+    "## Verification & Freshness Plan",
+    "- Identify claims that require truth checking, source cross-checking, or latest/current data.",
+    "- Separate source-grounded claims from claims that need external verification.",
+    "- If the source is time-sensitive, list what should be checked with web search before making canonical claims.",
+    "- Suggest 2-3 focused search queries only when verification or missing context is genuinely needed.",
+    "- When search is needed, include exactly one machine-readable line: `SEARCH: query 1 | query 2 | query 3`.",
+    "",
+    "## Kevin / OS Implications",
+    "- What does this source change for Kevin's AI Native Solo Business OS?",
+    "- Map implications to Agent Engineering, Memory Systems, Content Factory, Infra, Business, Growth, Product, or Personal OS when relevant.",
+    "- Prefer concrete operating criteria over generic inspiration.",
+    "",
     "## Recommendations",
     "- What wiki pages should be created or updated?",
     "- What should be emphasized vs. de-emphasized?",
     "- Any open questions worth flagging for the user?",
+    "- Assign a quality recommendation: seed, draft, reviewed, or canonical.",
     "",
     "",
-    "Be thorough but concise. Focus on what's genuinely important.",
+    "Be thorough but concise. Focus on what's genuinely important, source-grounded, and reusable.",
     "",
     "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
     "",
@@ -1738,23 +2629,27 @@ export function buildGenerationPrompt(
   overview?: string,
   sourceContent: string = "",
   options: AutoIngestOptions = {},
+  sourceSummaryPlanOverride?: SourceSummaryPlan,
 ): string {
-  // Use original filename (without extension) as the source summary page name
-  const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
+  const date = currentIngestDate()
+  const sourceSummaryPlan = sourceSummaryPlanOverride ??
+    buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSubjectSlug = sourceSummaryPlan.titleSlug
   const sourceSummaryInstruction = options.skipSourceSummary
     ? [
         "1. Do NOT generate a source summary page in wiki/sources/ for this source.",
         "   This source is a Deep Research query record; the curated synthesis/comparison page already exists.",
       ]
     : [
-        `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
-        ...(options.sourceSummaryTitle
-          ? [
-              `   For that source summary page, use frontmatter title and H1 exactly: "${options.sourceSummaryTitle}".`,
-              "   Do not use the original research question as the page title.",
-            ]
-          : []),
-      ]
+        `1. A source summary page at **${sourceSummaryPlan.path}** (MUST use this exact path)`,
+        options.sourceSummaryTitle?.trim()
+          ? `   For that source summary page, use frontmatter title and H1 exactly: "${sourceSummaryPlan.title}".`
+          : `   For that source summary page, use "${sourceSummaryPlan.title}" as the fallback subject title.`,
+        !options.sourceSummaryTitle?.trim()
+          ? "   Prefer a concise Korean frontmatter title and H1 when that is natural; preserve proper nouns and legal/product names."
+          : "",
+        "   Do not use the original filename, raw research question, or command text as the page title.",
+      ].filter(Boolean)
 
   return [
     "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
@@ -1762,9 +2657,12 @@ export function buildGenerationPrompt(
     "",
     languageRule(sourceContent),
     "",
+    wikiTitleLanguagePolicy(),
+    "",
     `## IMPORTANT: Source File`,
     `The original source file is: **${sourceFileName}**`,
     `All wiki pages generated from this source MUST include this filename in their frontmatter \`sources\` field.`,
+    `The current ingest date is **${date}**. Use this exact date for created, updated, and last_reviewed on newly generated pages.`,
     "",
     "## What to generate",
     "",
@@ -1773,11 +2671,50 @@ export function buildGenerationPrompt(
     "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
     "4. A comparison page in wiki/comparisons/ is REQUIRED when the source filename, title, tags, headings, or body clearly compare alternatives (for example: `vs`, `versus`, `comparison`, `비교`, `대비`, comparison tables, trade-off / selection-criteria sections).",
     options.skipSourceSummary
-      ? `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
-      : `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceBaseName)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
+      ? `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
+      : `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
     "5. Synthesis, query, or decision pages only when the analysis clearly recommends reusable cross-source content",
     "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
     "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "",
+    "## Quality Contract",
+    "",
+    "Do not create average one-paragraph wiki stubs for important material.",
+    "High-quality source-derived pages should show that the source was digested, not merely summarized.",
+    "",
+    "For source summary pages, include these sections when the source is important:",
+    "- ## 요약",
+    "- ## Source Coverage Matrix",
+    "- ## Atomic Claims",
+    "- ## Evidence Map",
+    "- ## 검증 및 최신성",
+    "- ## 오래 유지할 개념",
+    "- ## 관련 엔티티",
+    "- ## Kevin 운영체계 적용",
+    "- ## 운영 노트",
+    "- ## 열린 질문",
+    "",
+    "For concept pages, include definition, decision criteria, application conditions, failure modes or caveats, source trace, and links to related pages.",
+    "For entity pages, include what it is, its role in the user's operating system, relevant constraints, and how it connects to other tools or concepts.",
+    "For synthesis pages, extract cross-source operating principles and state what changed in the user's model.",
+    "",
+    "Verification and freshness:",
+    "- Treat the raw source as primary evidence, not guaranteed truth.",
+    "- If a claim could be outdated, disputed, or hallucinated, mark it as requiring verification instead of writing it as fact.",
+    "- If web evidence is supplied in the analysis, cross-check claims against it and cite the evidence.",
+    "- If `Ingest Verification Search Results` are supplied, use them during this ingest pass; do not postpone those checks to Deep Research.",
+    "- If web evidence is NOT supplied, create a REVIEW block or 열린 질문 for external verification/search.",
+    "- Never claim latest/current status unless the source or supplied web evidence supports it.",
+    "- Do not set `coverage: high` with `needs_upgrade: false` unless a substantial verification/currentness section explains what was checked.",
+    "",
+    "Thin page guard:",
+    "- Prefer updating an existing page over creating a new page that only defines a term.",
+    "- If a new page would be thin, create a REVIEW block or query page instead.",
+    "- Do not promote one-off terms into concept/entity pages unless the analysis shows reusable value.",
+    "- If a page is useful but still incomplete, mark it with `quality: seed` or `quality: draft` and `needs_upgrade: true`.",
+    "- Add `freshness_required: true` when a page depends on current product status, APIs, pricing, laws, benchmarks, or other fast-changing facts.",
+    "- If you mention an important candidate page but do not actually emit that FILE block, write it as plain text or a REVIEW item; do not add a wikilink to a missing page.",
+    "- `wiki/index.md` must link only to existing pages from the Current Wiki Index or FILE blocks emitted in this response.",
     "",
     "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "",
@@ -1798,14 +2735,23 @@ export function buildGenerationPrompt(
     "Required fields and types:",
     "  • type     — one of: source | entity | concept | comparison | synthesis | query | decision",
     "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
-    "  • created  — date in YYYY-MM-DD form (no quotes)",
-    "  • updated  — same as created",
+    "               Use a concise content title. Do not prefix with Research, Research Log, Source, or Deep Research.",
+    "               Do not include raw filenames, date suffixes, or instruction words like 조사해줘/정리해줘.",
+    "               For all wiki folders except `wiki/entities/`, prefer Korean title and H1. For `wiki/entities/`, keep the official/original entity name.",
+    `  • created  — ${date} (date in YYYY-MM-DD form, no quotes)`,
+    `  • updated  — ${date} (same as created for newly generated pages)`,
     "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
     "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
     "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
     `  • sources  — array of source filenames; MUST include "${sourceFileName}".`,
     "  • confidence — low | medium | high",
-    "  • last_reviewed — date in YYYY-MM-DD form",
+    `  • last_reviewed — ${date}`,
+    "",
+    "Required quality fields for content pages:",
+    "  • quality — seed | draft | reviewed | canonical. Never write gold.",
+    "  • coverage — low | medium | high",
+    "  • needs_upgrade — true | false",
+    "  • source_count — number, preferably the count of source filenames in `sources`",
     "",
     "Concrete example of a complete, parseable page (everything between the two `---` lines",
     "is the frontmatter; the heading and prose below are the body):",
@@ -1826,7 +2772,7 @@ export function buildGenerationPrompt(
     "",
     "Other rules:",
     "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
-    "- Use kebab-case filenames",
+    "- Use readable natural-language filenames with spaces outside `wiki/entities/`; do not insert hyphen separators unless they are part of an official name",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
     "",
@@ -1900,6 +2846,8 @@ export function buildGenerationPrompt(
     "---",
     "",
     languageRule(sourceContent),
+    "",
+    wikiTitleLanguagePolicy(),
   ].filter(Boolean).join("\n")
 }
 
@@ -1913,6 +2861,11 @@ async function tryReadFile(path: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+async function readProjectControlDoc(projectPath: string, fileName: "schema.md" | "purpose.md"): Promise<string> {
+  return (await tryReadFile(`${projectPath}/${fileName}`))
+    || (await tryReadFile(`${projectPath}/wiki/${fileName}`))
 }
 
 /**
@@ -2028,10 +2981,10 @@ async function injectImagesIntoSourceSummary(
   pp: string,
   fileName: string,
   savedImages: { relPath: string; page: number | null; sha256?: string }[],
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(fileName),
 ): Promise<void> {
   if (savedImages.length === 0) return
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryPath = `wiki/sources/${sourceBaseName}.md`
+  const sourceSummaryPath = sourceSummaryPlan.path
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   console.log(`[ingest:diag] injectImagesIntoSourceSummary: target=${sourceSummaryFullPath}, images=${savedImages.length}`)
   try {
@@ -2065,15 +3018,45 @@ async function injectImagesIntoSourceSummary(
       const stubFrontmatter = [
         "---",
         "type: source",
-        `title: "Source: ${fileName}"`,
+        `title: ${yamlString(sourceSummaryPlan.title)}`,
         `created: ${date}`,
         `updated: ${date}`,
         `sources: ["${fileName}"]`,
         "tags: []",
         "related: []",
+        "confidence: low",
+        `last_reviewed: ${date}`,
+        "quality: seed",
+        "coverage: low",
+        "needs_upgrade: true",
+        "source_count: 1",
         "---",
         "",
-        `# Source: ${fileName}`,
+        `# ${sourceSummaryPlan.title}`,
+        "",
+        "## 요약",
+        "이미지 참조를 보존하기 위해 생성된 최소 source summary입니다.",
+        "",
+        "## Source Coverage Matrix",
+        "- 원본 source 요약은 아직 충분히 반영되지 않았습니다.",
+        "",
+        "## Atomic Claims",
+        "- 원본 claim 추출이 필요합니다.",
+        "",
+        "## Evidence Map",
+        "- Primary evidence: original raw source file and extracted image references.",
+        "",
+        "## 검증 및 최신성",
+        "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
+        "",
+        "## Kevin 운영체계 적용",
+        "- 적용 판단은 원본 재검토 후 확정합니다.",
+        "",
+        "## 운영 노트",
+        "- This page is intentionally marked `needs_upgrade: true`.",
+        "",
+        "## 열린 질문",
+        "- 어떤 이미지와 claim이 장기 지식으로 승격되어야 하는가?",
         "",
       ].join("\n")
       await writeFile(sourceSummaryFullPath, stubFrontmatter + wrapped)
@@ -2103,23 +3086,26 @@ async function injectImagesIntoSourceSummary(
  * already exist in the step-6 logic. Wrapping them once here
  * avoids drift between the two paths if either side changes.
  */
-async function reembedSourceSummary(pp: string, fileName: string): Promise<void> {
+async function reembedSourceSummary(
+  pp: string,
+  fileName: string,
+  sourceSummaryPlan: SourceSummaryPlan = buildSourceSummaryPlan(fileName),
+): Promise<void> {
   const embCfg = useWikiStore.getState().embeddingConfig
   if (!embCfg.enabled || !embCfg.model) return
-  const sourceBaseName = fileName.replace(/\.[^.]+$/, "")
-  const sourceSummaryFullPath = `${pp}/wiki/sources/${sourceBaseName}.md`
+  const sourceSummaryFullPath = `${pp}/${sourceSummaryPlan.path}`
   try {
     const content = await readFile(sourceSummaryFullPath)
     const titleMatch = content.match(
       /^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m,
     )
-    const title = titleMatch ? titleMatch[1].trim() : sourceBaseName
+    const title = titleMatch ? titleMatch[1].trim() : sourceSummaryPlan.title
     const { embedPage } = await import("@/lib/embedding")
-    await embedPage(pp, sourceBaseName, title, content, embCfg)
-    console.log(`[ingest:caption] re-embedded ${sourceBaseName} with captioned alt text`)
+    await embedPage(pp, sourceSummaryPlan.slug, title, content, embCfg)
+    console.log(`[ingest:caption] re-embedded ${sourceSummaryPlan.slug} with captioned alt text`)
   } catch (err) {
     console.warn(
-      `[ingest:caption] re-embed failed for ${sourceBaseName}:`,
+      `[ingest:caption] re-embed failed for ${sourceSummaryPlan.slug}:`,
       err instanceof Error ? err.message : err,
     )
   }
@@ -2157,8 +3143,8 @@ export async function startIngest(
 
   const [sourceContent, schema, purpose, index] = await Promise.all([
     tryReadFile(sp),
-    tryReadFile(`${pp}/wiki/schema.md`),
-    tryReadFile(`${pp}/wiki/purpose.md`),
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
   ])
 
@@ -2224,8 +3210,9 @@ export async function executeIngestWrites(
   const pp = normalizePath(projectPath)
   const store = getStore()
 
-  const [schema, index] = await Promise.all([
-    tryReadFile(`${pp}/wiki/schema.md`),
+  const [schema, purpose, index] = await Promise.all([
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
   ])
 
@@ -2238,6 +3225,7 @@ export async function executeIngestWrites(
     "",
     userGuidance ? `Additional guidance: ${userGuidance}` : "",
     "",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
     index ? `## Current Wiki Index\n${index}` : "",
     "",
@@ -2274,6 +3262,8 @@ export async function executeIngestWrites(
     "You are a wiki generation assistant. Your task is to produce structured wiki file contents.",
     "",
     languageRule(historyText),
+    wikiTitleLanguagePolicy(),
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
   ]
     .filter(Boolean)
@@ -2344,8 +3334,10 @@ export async function executeIngestWrites(
       const savedImages = await extractAndSaveSourceImages(pp, ingestSource)
       if (savedImages.length > 0) {
         const fileName = getFileName(ingestSource)
-        await injectImagesIntoSourceSummary(pp, fileName, savedImages)
-        const sourceSummaryPath = `wiki/sources/${fileName.replace(/\.[^.]+$/, "")}.md`
+        const sourceContent = await tryReadFile(ingestSource)
+        const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent)
+        await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
+        const sourceSummaryPath = sourceSummaryPlan.path
         if (!writtenRelativePaths.includes(sourceSummaryPath)) {
           writtenRelativePaths.push(sourceSummaryPath)
           writtenPaths.push(`${pp}/${sourceSummaryPath}`)

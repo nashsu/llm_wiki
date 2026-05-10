@@ -19,6 +19,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { normalizeReviewTitle } from "@/lib/review-utils"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { isGraphInputExcludedPage, isGraphInputExcludedPath } from "@/lib/graph-exclusions"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -59,12 +60,13 @@ async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
     const files = flattenMdFiles(tree)
 
     for (const file of files) {
+      if (isGraphInputExcludedPath(file.path, file.name)) continue
       const id = file.name.replace(/\.md$/, "").toLowerCase()
-      byId.add(id)
 
       let title: string | null = null
       try {
         const content = await readFile(file.path)
+        if (isGraphInputExcludedPage(file.path, file.name, content)) continue
         const match = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
         if (match) {
           title = match[1].trim()
@@ -74,6 +76,7 @@ async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
         // skip unreadable files
       }
 
+      byId.add(id)
       pages.push({ id, title })
     }
   } catch {
@@ -97,10 +100,14 @@ function extractCandidateNames(item: ReviewItem): string[] {
     names.add(cleaned)
   }
 
-  // Also check affectedPages — these reference files directly
-  for (const page of item.affectedPages ?? []) {
-    const base = page.split("/").pop()?.replace(/\.md$/, "")
-    if (base) names.add(base.toLowerCase())
+  // For missing-page reviews, affectedPages are the pages that contain
+  // the broken reference, not the missing target itself. Including them
+  // made "Missing wiki page: dify" resolve just because index.md existed.
+  if (item.type !== "missing-page") {
+    for (const page of item.affectedPages ?? []) {
+      const base = page.split("/").pop()?.replace(/\.md$/, "")
+      if (base) names.add(base.toLowerCase())
+    }
   }
 
   return Array.from(names)
@@ -111,7 +118,7 @@ function pageExists(name: string, index: WikiIndex): boolean {
   const normalized = name.trim().toLowerCase()
   if (!normalized) return false
 
-  // Exact filename match (kebab-case or matching existing id)
+  // Exact filename match, including older hyphenated ids that may still exist.
   if (index.byId.has(normalized)) return true
   if (index.byId.has(normalized.replace(/\s+/g, "-"))) return true
 
@@ -121,16 +128,70 @@ function pageExists(name: string, index: WikiIndex): boolean {
   return false
 }
 
+function strictMissingWikiPageTargetExists(item: ReviewItem, index: Pick<WikiIndex, "byId">): boolean {
+  const titleName = normalizeReviewTitle(item.title)
+  if (!titleName || titleName.length > 100) return false
+  const normalized = titleName.trim().toLowerCase()
+  return index.byId.has(normalized) || index.byId.has(normalized.replace(/\s+/g, "-"))
+}
+
 function affectedPageExists(path: string, index: Pick<WikiIndex, "byId">): boolean {
   const base = path.split("/").pop()?.replace(/\.md$/, "").toLowerCase()
   return Boolean(base && index.byId.has(base))
 }
 
+function normalizeWikiTargetName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "-")
+}
+
+function contentReferencesWikiTarget(content: string, target: string): boolean {
+  const normalizedTarget = normalizeWikiTargetName(target)
+  for (const match of content.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)) {
+    if (normalizeWikiTargetName(match[1]) === normalizedTarget) return true
+  }
+  return false
+}
+
+async function missingPageReferenceStillPresent(
+  projectPath: string,
+  item: ReviewItem,
+): Promise<boolean> {
+  const target = normalizeReviewTitle(item.title)
+  if (!target) return true
+
+  const affected = item.affectedPages ?? []
+  if (affected.length === 0) return true
+
+  const pp = normalizePath(projectPath)
+  for (const affectedPath of affected) {
+    const fullPath = affectedPath.startsWith("/")
+      ? normalizePath(affectedPath)
+      : `${pp}/${affectedPath}`
+    try {
+      const content = await readFile(fullPath)
+      if (contentReferencesWikiTarget(content, target)) return true
+    } catch {
+      // Keep pending when the affected page exists but cannot be inspected.
+      return true
+    }
+  }
+
+  return false
+}
+
 export function canApplyLlmReviewResolution(
   item: ReviewItem,
-  index: Pick<WikiIndex, "byId">,
+  index: Pick<WikiIndex, "byId" | "byTitle">,
 ): boolean {
   if (item.type === "contradiction" || item.type === "confirm") return false
+
+  if (
+    item.type === "missing-page" &&
+    /^missing\s+wiki\s+page[:：]/i.test(item.title) &&
+    !strictMissingWikiPageTargetExists(item, index)
+  ) {
+    return false
+  }
 
   const affected = item.affectedPages ?? []
   if (affected.length === 0) return true
@@ -385,8 +446,14 @@ export async function sweepResolvedReviews(
     let resolvedByRule = false
 
     if (item.type === "missing-page") {
-      const names = extractCandidateNames(item)
-      if (names.length > 0 && names.some((n) => pageExists(n, index))) {
+      const strictAppMissingPage = /^missing\s+wiki\s+page[:：]/i.test(item.title)
+      let resolvedMissingPage = strictAppMissingPage
+        ? strictMissingWikiPageTargetExists(item, index)
+        : extractCandidateNames(item).some((n) => pageExists(n, index))
+      if (strictAppMissingPage && !resolvedMissingPage) {
+        resolvedMissingPage = !(await missingPageReferenceStillPresent(projectPath, item))
+      }
+      if (resolvedMissingPage) {
         store.resolveItem(item.id, "auto-resolved")
         ruleResolved++
         resolvedByRule = true

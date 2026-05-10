@@ -1209,7 +1209,7 @@ export function GraphView() {
                       checked={filters.hideStructural}
                       onChange={(e) => setFilters((prev) => ({ ...prev, hideStructural: e.target.checked }))}
                     />
-                    <span>Hide index / overview / log</span>
+                    <span>Hide structural maps / indexes</span>
                   </label>
                   <label className="flex items-center gap-2">
                     <input

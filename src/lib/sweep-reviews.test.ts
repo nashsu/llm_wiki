@@ -154,7 +154,10 @@ describe("canApplyLlmReviewResolution", () => {
       ],
     })
 
-    expect(canApplyLlmReviewResolution(item, { byId: new Set(["self-wiki"]) })).toBe(false)
+    expect(canApplyLlmReviewResolution(item, {
+      byId: new Set(["self-wiki"]),
+      byTitle: new Set(),
+    })).toBe(false)
   })
 
   it("allows an LLM-resolved suggestion only when all affected pages exist", () => {
@@ -167,13 +170,31 @@ describe("canApplyLlmReviewResolution", () => {
 
     expect(canApplyLlmReviewResolution(item, {
       byId: new Set(["self-wiki", "security-guidelines-for-personal-data"]),
+      byTitle: new Set(),
     })).toBe(true)
   })
 
   it("never lets LLM cleanup resolve confirmation or contradiction items", () => {
-    const index = { byId: new Set(["profile"]) }
+    const index = { byId: new Set(["profile"]), byTitle: new Set<string>() }
 
     expect(canApplyLlmReviewResolution(makeReview({ type: "confirm" }), index)).toBe(false)
     expect(canApplyLlmReviewResolution(makeReview({ type: "contradiction" }), index)).toBe(false)
+  })
+
+  it("keeps a missing-page review pending until that exact target exists", () => {
+    const item = makeReview({
+      type: "missing-page",
+      title: "Missing wiki page: dify",
+      affectedPages: ["wiki/index.md"],
+    })
+
+    expect(canApplyLlmReviewResolution(item, {
+      byId: new Set(["index"]),
+      byTitle: new Set(["Index", "dify"]),
+    })).toBe(false)
+    expect(canApplyLlmReviewResolution(item, {
+      byId: new Set(["index", "dify"]),
+      byTitle: new Set(["Index"]),
+    })).toBe(true)
   })
 })

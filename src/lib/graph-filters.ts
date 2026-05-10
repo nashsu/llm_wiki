@@ -1,6 +1,7 @@
 import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
 import { shouldHideNodeType } from "@/lib/graph-visibility"
 import { DEFAULT_HIDDEN_GRAPH_NODE_TYPES } from "@/lib/graph-node-types"
+import { isGraphExcludedNode } from "@/lib/graph-exclusions"
 
 export type GraphMode = "knowledge" | "evidence" | "maintenance"
 
@@ -32,6 +33,7 @@ export const GRAPH_MODE_OPTIONS: GraphModeOption[] = [
 
 export function getDefaultHiddenTypesForMode(mode: GraphMode): ReadonlySet<string> {
   if (mode === "evidence") return DEFAULT_HIDDEN_GRAPH_NODE_TYPES
+  if (mode === "maintenance") return DEFAULT_HIDDEN_GRAPH_NODE_TYPES
   return new Set([...DEFAULT_HIDDEN_GRAPH_NODE_TYPES, "source"])
 }
 
@@ -55,21 +57,8 @@ export const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
   maxLinks: undefined,
 }
 
-const STRUCTURAL_IDS = new Set(["index", "overview", "log", "schema", "purpose"])
-
 export function isStructuralGraphNode(node: Pick<GraphNode, "id" | "path" | "type">): boolean {
-  const id = node.id.toLowerCase()
-  if (STRUCTURAL_IDS.has(id)) return true
-  if (node.type === "overview") return true
-
-  const normalizedPath = node.path.replace(/\\/g, "/").toLowerCase()
-  return (
-    normalizedPath.endsWith("/wiki/index.md") ||
-    normalizedPath.endsWith("/wiki/overview.md") ||
-    normalizedPath.endsWith("/wiki/log.md") ||
-    normalizedPath.endsWith("/purpose.md") ||
-    normalizedPath.endsWith("/schema.md")
-  )
+  return isGraphExcludedNode(node)
 }
 
 export function applyGraphFilters(
@@ -135,7 +124,21 @@ export function isMaintenanceGraphNode(node: GraphNode): boolean {
     (node.unresolvedRelated?.length ?? 0) + (node.unresolvedSources?.length ?? 0)
   if (unresolvedCount > 0) return true
   if (node.linkCount <= 0) return true
+  if (isLowQualityGraphNode(node)) return true
   if (isKnowledgeNodeType(node.type) && (node.sources?.length ?? 0) === 0) return true
+  return false
+}
+
+function isLowQualityGraphNode(node: GraphNode): boolean {
+  if (node.needsUpgrade === true) return true
+  if (node.quality === "seed" || node.quality === "draft") return true
+  if (node.coverage === "low") return true
+  if (node.type === "source" && node.sourceCount === undefined) return true
+  if (isKnowledgeNodeType(node.type) && (
+    node.quality === undefined ||
+    node.coverage === undefined ||
+    node.needsUpgrade === undefined
+  )) return true
   return false
 }
 

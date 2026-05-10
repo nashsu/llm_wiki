@@ -41,7 +41,7 @@ describe("normalizeLogAppendContent", () => {
 })
 
 describe("appendLogContent", () => {
-  it("appends only the log entry and preserves the existing frontmatter block", () => {
+  it("prepends only the log entry after the title and preserves the existing frontmatter block", () => {
     const existing = [
       "---",
       "type: log",
@@ -49,6 +49,10 @@ describe("appendLogContent", () => {
       "---",
       "",
       "# Wiki Log",
+      "",
+      "## [2026-05-07] ingest | Older",
+      "",
+      "- Older entry.",
     ].join("\n")
     const incoming = [
       "---",
@@ -68,5 +72,8 @@ describe("appendLogContent", () => {
     expect(appended.match(/^---$/gm)).toHaveLength(2)
     expect(appended).toContain("# Wiki Log")
     expect(appended).toContain("## [2026-05-08] ingest | Source")
+    expect(appended.indexOf("## [2026-05-08] ingest | Source")).toBeLessThan(
+      appended.indexOf("## [2026-05-07] ingest | Older"),
+    )
   })
 })

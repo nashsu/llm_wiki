@@ -8,6 +8,7 @@ import {
   resolveSourceReference,
   resolveWikiReference,
 } from "@/lib/graph-relations"
+import { isGraphViewExcludedPage } from "@/lib/graph-exclusions"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,6 +130,10 @@ export async function buildRetrievalGraph(
     try {
       content = await readFile(file.path)
     } catch {
+      continue
+    }
+
+    if (isGraphViewExcludedPage(file.path, file.name, content)) {
       continue
     }
 

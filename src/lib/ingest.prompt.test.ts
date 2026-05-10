@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import {
   buildAnalysisPrompt,
+  extractVerificationSearchQueries,
   buildGenerationPrompt,
   makeComparisonPagePath,
   shouldForceComparisonPage,
@@ -42,6 +43,11 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Key Entities")
     expect(prompt).toContain("## Key Concepts")
     expect(prompt).toContain("## Main Arguments & Findings")
+    expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("## Atomic Claims & Evidence")
+    expect(prompt).toContain("## Verification & Freshness Plan")
+    expect(prompt).toContain("SEARCH: query 1 | query 2 | query 3")
+    expect(prompt).toContain("## Kevin / OS Implications")
     expect(prompt).toContain("## Recommendations")
     expect(prompt).not.toContain("Codexian Memory")
   })
@@ -95,9 +101,9 @@ describe("buildGenerationPrompt language directive", () => {
       "딥리서치 기록",
       { sourceSummaryTitle: "안드레 카파시 스킬" },
     )
-    expect(prompt).toContain("A source summary page at **wiki/sources/deep-research-karpathy.md**")
-    expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬"')
-    expect(prompt).toContain("Do not use the original research question as the page title")
+    expect(prompt).toContain("A source summary page at **wiki/sources/안드레 카파시 스킬 소스 요약.md**")
+    expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬 소스 요약"')
+    expect(prompt).toContain("Do not use the original filename, raw research question, or command text as the page title")
   })
 
   it("does not generate Codex memory page types or profile review guardrails", () => {
@@ -118,8 +124,44 @@ describe("buildGenerationPrompt language directive", () => {
   it("requires a comparison page for explicitly comparative sources", () => {
     const prompt = buildGenerationPrompt("", "", "", "OpenClaw vs Hermes.md")
     expect(prompt).toContain("A comparison page in wiki/comparisons/ is REQUIRED")
-    expect(prompt).toContain("wiki/comparisons/openclaw-vs-hermes.md")
+    expect(prompt).toContain("wiki/comparisons/OpenClaw vs Hermes.md")
     expect(prompt).toContain("type: comparison")
+  })
+
+  it("requires high-quality wiki sections and thin-page guardrails", () => {
+    const prompt = buildGenerationPrompt("", "", "", "important-source.md")
+    expect(prompt).toContain("## Quality Contract")
+    expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("## Atomic Claims")
+    expect(prompt).toContain("## Evidence Map")
+    expect(prompt).toContain("## 검증 및 최신성")
+    expect(prompt).toContain("## Kevin 운영체계 적용")
+    expect(prompt).toContain("Thin page guard")
+    expect(prompt).toContain("Verification and freshness")
+    expect(prompt).toContain("Treat the raw source as primary evidence")
+    expect(prompt).toContain("Ingest Verification Search Results")
+    expect(prompt).toContain("do not postpone those checks to Deep Research")
+    expect(prompt).toContain("Never claim latest/current status")
+    expect(prompt).toContain("Do not set `coverage: high` with `needs_upgrade: false`")
+    expect(prompt).toContain("`wiki/index.md` must link only to existing pages")
+    expect(prompt).toContain("needs_upgrade: true")
+    expect(prompt).toContain("quality — seed | draft | reviewed | canonical")
+    expect(prompt).toContain("Never write gold")
+  })
+})
+
+describe("ingest verification query extraction", () => {
+  it("extracts machine-readable verification search queries from analysis", () => {
+    const analysis = [
+      "## Verification & Freshness Plan",
+      "- 확인 필요",
+      "SEARCH: Codex CLI latest release official docs | Claude Code MCP skills current docs | Hermes memory architecture source verification",
+    ].join("\n")
+
+    expect(extractVerificationSearchQueries(analysis)).toEqual([
+      "Codex CLI latest release official docs",
+      "Claude Code MCP skills current docs",
+    ])
   })
 })
 
@@ -127,7 +169,7 @@ describe("comparison source detection", () => {
   it("detects comparison intent from filename", () => {
     expect(shouldForceComparisonPage("OpenClaw vs Hermes.md")).toBe(true)
     expect(makeComparisonPagePath("OpenClaw vs Hermes.md")).toBe(
-      "wiki/comparisons/openclaw-vs-hermes.md",
+      "wiki/comparisons/OpenClaw vs Hermes.md",
     )
   })
 

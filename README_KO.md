@@ -347,6 +347,25 @@ npm run tauri dev      # 개발 실행
 npm run tauri build    # 프로덕션 빌드
 ```
 
+### 설치 앱 검증
+
+ingest, review, graph처럼 실제 운영 품질에 영향을 주는 로직을 바꾼 뒤에는 `npm run build`만으로 끝내지 않습니다. 앱을 설치하고 실행한 다음, 실행 중인 번들이 최신 `/Applications/LLM Wiki.app`인지 확인합니다.
+
+```bash
+npm run install:macos
+open -a "LLM Wiki"
+npm run verify:macos-app
+```
+
+Vault까지 함께 증명하려면 큐 처리, stale missing-page review, unresolved wikilink 검사용 경로를 넘깁니다.
+
+```bash
+LLM_WIKI_VERIFY_VAULT="/path/to/LLM WIKI Vault" \
+LLM_WIKI_VERIFY_SOURCE="local-deep-researcher.md" \
+LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entities/local-deep-researcher.md,wiki/index.md" \
+npm run verify:macos-app
+```
+
 ### Chrome Extension
 
 1. `chrome://extensions`를 엽니다.

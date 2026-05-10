@@ -15,7 +15,7 @@ const SEARCH_PROVIDERS = [
   {
     id: "tavily",
     label: "Tavily",
-    hint: "General web search for Deep Research",
+    hint: "General web search for Deep Research and ingest verification",
     keyPlaceholder: "Enter your Tavily API key (tavily.com)",
   },
   {
@@ -61,7 +61,7 @@ export function WebSearchSection() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")} (Deep Research)</h2>
+        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")} (Deep Research / Ingest Verification)</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.webSearch.description")}
         </p>

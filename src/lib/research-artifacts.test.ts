@@ -77,9 +77,9 @@ describe("research save plan", () => {
 
     expect(plan.primaryType).toBe("synthesis")
     expect(plan.queryRecordPath).toBe(
-      "wiki/queries/deep-research-hermes에-대해서-조사해서-최신자료-기준으로-정리해줘-2026-05-09-123456.md",
+      "wiki/queries/Hermes Agent Operating Model (20260509 123456).md",
     )
-    expect(plan.primaryPath).toBe("wiki/synthesis/hermes-agent-operating-model.md")
+    expect(plan.primaryPath).toBe("wiki/synthesis/Hermes Agent Operating Model.md")
     expect(plan.related).toEqual(["obsidian"])
   })
 
@@ -92,7 +92,7 @@ describe("research save plan", () => {
     })
 
     expect(plan.primaryType).toBe("comparison")
-    expect(plan.primaryPath).toBe("wiki/comparisons/openclaw-vs-hermes.md")
+    expect(plan.primaryPath).toBe("wiki/comparisons/OpenClaw vs Hermes.md")
   })
 
   it("strips thinking and model-emitted frontmatter before page construction", () => {
@@ -108,6 +108,12 @@ describe("research save plan", () => {
     })
 
     expect(page).toContain("type: synthesis")
+    expect(page).toContain("quality: draft")
+    expect(page).toContain("coverage: medium")
+    expect(page).toContain("needs_upgrade: true")
+    expect(page).toContain("freshness_required: true")
+    expect(page).toContain("source_count: 1")
+    expect(page).toContain("## Verification & Freshness")
     expect(page).not.toContain("<think>")
     expect(page).not.toContain("title: X\n---\n# X")
   })
@@ -129,9 +135,16 @@ describe("research save plan", () => {
       references: "1. Source",
     })
 
-    expect(page).toContain('title: "Research Log: 안드레 카파시 스킬"')
-    expect(page).toContain("# Research Log: 안드레 카파시 스킬")
+    expect(page).toContain('title: "안드레 카파시 스킬"')
+    expect(page).toContain('original_query: "안드레이 카파시 (Andrej Karpathy)가 만든 skill 조사해서 핵심 인싸이트 정리해줘."')
+    expect(page).toContain("# 안드레 카파시 스킬")
     expect(page).toContain("## Original Query")
+    expect(page).toContain("quality: draft")
+    expect(page).toContain("coverage: medium")
+    expect(page).toContain("needs_upgrade: true")
+    expect(page).toContain("freshness_required: true")
+    expect(page).toContain("source_count: 1")
+    expect(page).toContain("## Evidence / Source Trace")
     expect(page).toContain("조사해서 핵심 인싸이트 정리해줘")
   })
 })

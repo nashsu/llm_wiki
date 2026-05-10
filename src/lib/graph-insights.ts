@@ -1,4 +1,5 @@
 import type { GraphNode, GraphEdge, CommunityInfo } from "./wiki-graph"
+import { isGraphExcludedNode } from "@/lib/graph-exclusions"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,16 +39,13 @@ export function findSurprisingConnections(
   const degreeMap = new Map(nodes.map((n) => [n.id, n.linkCount]))
   const maxDegree = Math.max(...nodes.map((n) => n.linkCount), 1)
 
-  // Structural pages that link to everything — exclude from analysis
-  const STRUCTURAL_IDS = new Set(["index", "log", "overview"])
-
   const scored: SurprisingConnection[] = []
 
   for (const edge of edges) {
     const source = nodeMap.get(edge.source)
     const target = nodeMap.get(edge.target)
     if (!source || !target) continue
-    if (STRUCTURAL_IDS.has(source.id) || STRUCTURAL_IDS.has(target.id)) continue
+    if (isGraphExcludedNode(source) || isGraphExcludedNode(target)) continue
 
     let score = 0
     const reasons: string[] = []
@@ -121,9 +119,9 @@ export function detectKnowledgeGaps(
   const gaps: KnowledgeGap[] = []
   const nodeMap = new Map(nodes.map((n) => [n.id, n]))
 
-  // 1. Isolated nodes (degree ≤ 1, exclude overview/index)
+  // 1. Isolated nodes (degree ≤ 1, exclude structural/index-like pages)
   const isolatedNodes = nodes.filter(
-    (n) => n.linkCount <= 1 && n.type !== "overview" && n.id !== "index" && n.id !== "log",
+    (n) => n.linkCount <= 1 && !isGraphExcludedNode(n),
   )
   if (isolatedNodes.length > 0) {
     const topIsolated = isolatedNodes.slice(0, 5)
@@ -164,11 +162,9 @@ export function detectKnowledgeGaps(
     }
   }
 
-  const STRUCTURAL_IDS = new Set(["index", "log", "overview"])
-
   const bridgeNodes = nodes
     .filter((n) => {
-      if (STRUCTURAL_IDS.has(n.id)) return false
+      if (isGraphExcludedNode(n)) return false
       const neighborComms = communityNeighbors.get(n.id)
       return neighborComms && neighborComms.size >= 3
     })

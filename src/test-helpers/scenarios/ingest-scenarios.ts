@@ -40,6 +40,45 @@ Each ingested source has a summary page here.
 Each concept gets its own page.
 `
 
+function conceptBlock(path: string, title: string, source: string, claim: string): string {
+  return [
+    `---FILE: ${path}---`,
+    "---",
+    "type: concept",
+    `title: ${title}`,
+    "created: 2026-05-09",
+    "updated: 2026-05-09",
+    "tags: [test]",
+    "related: [attention]",
+    `sources: [${source}]`,
+    "confidence: medium",
+    "last_reviewed: 2026-05-09",
+    "quality: reviewed",
+    "coverage: high",
+    "needs_upgrade: false",
+    "source_count: 1",
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    "## Definition",
+    `${claim} This definition is long enough to prove the source was digested into a reusable wiki concept.`,
+    "",
+    "## Decision Criteria",
+    "Keep this concept when it changes how an agent, model, or wiki operator should choose an implementation path.",
+    "",
+    "## Application Conditions",
+    "Use this concept when the source claim is reusable across more than one query, note, or engineering decision.",
+    "",
+    "## Caveats",
+    "Do not promote the concept as canonical if the source is weak, outdated, or only provides a passing mention.",
+    "",
+    "## Source Trace",
+    `- Primary source: ${source}`,
+    "---END FILE---",
+  ].join("\n")
+}
+
 export const ingestScenarios: IngestScenario[] = [
   // 1. basic-new-source — new concept wiki page + source summary, no reviews
   {
@@ -77,18 +116,12 @@ export const ingestScenarios: IngestScenario[] = [
     generationResponse: [
       "I'll create one concept page and the source summary.",
       "",
-      "---FILE: wiki/concepts/rope.md---",
-      "---",
-      "title: Rotary Position Embedding",
-      "tags: [positional-encoding]",
-      "sources: [rope-paper.md]",
-      "---",
-      "",
-      "# Rotary Position Embedding",
-      "",
-      "RoPE rotates pairs of dimensions in [[attention]] queries and keys",
-      "to encode absolute position while preserving relative-position invariance.",
-      "---END FILE---",
+      conceptBlock(
+        "wiki/concepts/rope.md",
+        "Rotary Position Embedding",
+        "rope-paper.md",
+        "RoPE rotates pairs of dimensions in [[attention]] queries and keys to encode absolute position while preserving relative-position invariance.",
+      ),
       "",
       "---FILE: wiki/sources/rope-paper.md---",
       "---",
@@ -103,19 +136,16 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/rope.md",
-        "wiki/sources/rope-paper.md",
+        "wiki/concepts/Rotary Position Embedding.md",
+        "wiki/sources/Rotary Position Embedding 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/rope.md": [
+        "wiki/concepts/Rotary Position Embedding.md": [
           "title: Rotary Position Embedding",
-          "[[attention]]",
+          "attention",
         ],
-        "wiki/sources/rope-paper.md": ["rope-paper.md"],
+        "wiki/sources/Rotary Position Embedding 소스 요약.md": ["rope-paper.md"],
       },
-      reviewsCreated: [
-        { type: "missing-page", titleContains: "attention" },
-      ],
     },
   },
 
@@ -159,7 +189,7 @@ export const ingestScenarios: IngestScenario[] = [
       "---END REVIEW---",
     ].join("\n"),
     expected: {
-      writtenPaths: ["wiki/sources/flash-attention.md"],
+      writtenPaths: ["wiki/sources/FlashAttention 소스 요약.md"],
       reviewsCreated: [
         { type: "missing-page", titleContains: "FlashAttention" },
         { type: "suggestion", titleContains: "IO-aware" },
@@ -188,15 +218,12 @@ export const ingestScenarios: IngestScenario[] = [
       "## Connections to Existing Wiki\n" +
       "- Multi-head attention is a variant of attention — existing [[attention]] page should be linked.\n",
     generationResponse: [
-      "---FILE: wiki/concepts/multi-head-attention.md---",
-      "---",
-      "title: Multi-Head Attention",
-      "---",
-      "",
-      "# Multi-Head Attention",
-      "",
-      "Multi-head [[attention]] runs several attention layers in parallel.",
-      "---END FILE---",
+      conceptBlock(
+        "wiki/concepts/multi-head-attention.md",
+        "Multi-Head Attention",
+        "multi-head.md",
+        "Multi-head [[attention]] runs several attention layers in parallel so separate heads can capture different token relations.",
+      ),
       "",
       "---FILE: wiki/sources/multi-head.md---",
       "---",
@@ -210,11 +237,11 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/multi-head-attention.md",
-        "wiki/sources/multi-head.md",
+        "wiki/concepts/Multi Head Attention.md",
+        "wiki/sources/Multi Head Attention 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/multi-head-attention.md": ["[[attention]]"],
+        "wiki/concepts/Multi Head Attention.md": ["[[attention]]"],
       },
     },
   },
@@ -236,15 +263,12 @@ export const ingestScenarios: IngestScenario[] = [
     },
     analysisResponse: "## 核心概念\n- Transformer：基于注意力机制的架构\n",
     generationResponse: [
-      "---FILE: wiki/concepts/transformer.md---",
-      "---",
-      "title: Transformer",
-      "---",
-      "",
-      "# Transformer",
-      "",
-      "Transformer 是一种基于 [[注意力机制]] 的神经网络架构。",
-      "---END FILE---",
+      conceptBlock(
+        "wiki/concepts/transformer.md",
+        "Transformer",
+        "transformer-survey.md",
+        "Transformer 是一种基于 [[注意力机制]] 的神经网络架构，并且该测试页保留了足够的来源追踪和适用条件。",
+      ),
       "",
       "---FILE: wiki/sources/transformer-survey.md---",
       "---",
@@ -258,18 +282,15 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/transformer.md",
-        "wiki/sources/transformer-survey.md",
+        "wiki/concepts/Transformer.md",
+        "wiki/sources/Transformer 综述 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/transformer.md": [
+        "wiki/concepts/Transformer.md": [
           "title: Transformer",
-          "[[注意力机制]]",
+          "注意力机制",
         ],
       },
-      reviewsCreated: [
-        { type: "missing-page", titleContains: "注意力机制" },
-      ],
     },
   },
 ]

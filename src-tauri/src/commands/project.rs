@@ -60,11 +60,16 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
 
 ## 파일명 규칙
 
-- 파일명은 `kebab-case.md`를 사용한다.
-- entity는 가능하면 공식 명칭에 맞춘다(예: `gpt-4.md`, `openai.md`).
-- concept은 설명적인 명사구를 사용한다(예: `chain-of-thought.md`).
-- source는 `author-year-slug.md` 형식을 권장한다(예: `wei-2022-chain-of-thought.md`).
-- query는 질문을 slug로 바꾼다(예: `does-scale-improve-reasoning.md`).
+- 파일명은 사람이 읽기 쉬운 자연어 제목을 그대로 반영한다(예: `에이전트 오케스트레이션.md`).
+- 단어 구분을 위해 하이픈을 넣지 않는다. 하이픈은 공식 명칭, 표준 날짜, 원제에 꼭 필요한 경우에만 유지한다.
+- Unicode 한글과 공백을 허용한다. Obsidian 탐색에 한글이 더 명확하면 영어로 억지 변환하지 않는다.
+- `wiki/entities/`는 가능하면 공식 명칭이나 원어 명칭을 제목과 파일명에 반영한다(예: `gpt-4.md`, `openai.md`).
+- `wiki/entities/` 이외의 wiki 폴더는 frontmatter `title`과 H1을 한글 우선으로 쓴다. 고유명사, 제품명, 법령명, 약어는 필요한 경우 원어를 유지한다.
+- concept은 설명적인 한글 명사구를 우선한다(예: `에이전트 오케스트레이션.md`).
+- source는 원본의 핵심 주제를 한글 제목으로 정리하고 필요하면 `소스 요약`을 붙인다(예: `대한민국 판례 저장소 소스 요약.md`).
+- query는 질문의 핵심 주제를 한글 제목으로 정리하고 필요하면 `질의 기록`을 붙인다(예: `그래프 DB 도입 기준 질의 기록.md`).
+- `raw/sources/`, `raw/assets/`는 import 시 원문 내용은 바꾸지 않되, 파일명은 title 기반 자연어 제목으로 정리한다.
+- Review/Chat 등 App UI에서 사용자가 직접 저장하거나 생성하는 문서도 같은 제목 규칙을 적용한다.
 
 ## Frontmatter
 

@@ -15,12 +15,17 @@ export interface ParsedGraphPage {
   wikilinks: string[]
   related: string[]
   sources: string[]
+  quality?: string
+  coverage?: string
+  needsUpgrade?: boolean
+  sourceCount?: number
 }
 
 export interface GraphResolvableNode {
   id: string
   type: string
   path: string
+  sources?: string[]
 }
 
 export interface GraphReferenceResolver {
@@ -53,6 +58,10 @@ export function parseGraphPage(
     wikilinks: extractWikilinks(body),
     related: arrayValue(frontmatter?.related),
     sources: arrayValue(frontmatter?.sources),
+    quality: normalizedScalar(frontmatter?.quality),
+    coverage: normalizedScalar(frontmatter?.coverage),
+    needsUpgrade: booleanValue(frontmatter?.needs_upgrade),
+    sourceCount: positiveIntegerValue(frontmatter?.source_count),
   }
 }
 
@@ -84,6 +93,10 @@ export function buildGraphReferenceResolver(
       addIdLookup(sourceIds, node.id, node.id)
       addIdLookup(sourceIds, fileName, node.id)
       addIdLookup(sourceIds, fileNameToGraphId(fileName), node.id)
+      for (const sourceName of node.sources ?? []) {
+        addIdLookup(sourceIds, sourceName, node.id)
+        addIdLookup(sourceIds, stripAnyExtension(sourceName), node.id)
+      }
 
       if (relativeWikiPath) {
         addPathLookup(sourcePaths, `wiki/${relativeWikiPath}`, node.id)
@@ -146,6 +159,23 @@ function scalarValue(value: FrontmatterValue | undefined): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+function normalizedScalar(value: FrontmatterValue | undefined): string | undefined {
+  return scalarValue(value)?.trim().toLowerCase() || undefined
+}
+
+function booleanValue(value: FrontmatterValue | undefined): boolean | undefined {
+  const scalar = scalarValue(value)?.trim().toLowerCase()
+  if (scalar === "true") return true
+  if (scalar === "false") return false
+  return undefined
+}
+
+function positiveIntegerValue(value: FrontmatterValue | undefined): number | undefined {
+  const scalar = scalarValue(value)
+  if (!scalar || !/^[1-9]\d*$/.test(scalar.trim())) return undefined
+  return Number(scalar.trim())
 }
 
 function arrayValue(value: FrontmatterValue | undefined): string[] {
@@ -221,6 +251,10 @@ function normalizeSlashes(value: string): string {
 
 function stripMdExtension(value: string): string {
   return value.replace(/\.md$/i, "")
+}
+
+function stripAnyExtension(value: string): string {
+  return value.replace(/\.[^./\\]+$/i, "")
 }
 
 function basename(path: string): string {
