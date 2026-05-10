@@ -155,6 +155,7 @@ export function buildResearchRecordPage(args: {
 }): string {
   const body = stripLeadingHeading(args.content)
   const title = canonicalizeWikiTitle(args.title, args.topic.trim() || "Deep Research")
+  const sourceCount = countReferences(args.references)
   return [
     "---",
     "type: query",
@@ -168,6 +169,11 @@ export function buildResearchRecordPage(args: {
     "sources: []",
     "confidence: medium",
     `last_reviewed: ${args.date}`,
+    "quality: draft",
+    "coverage: medium",
+    "needs_upgrade: true",
+    "freshness_required: true",
+    `source_count: ${sourceCount}`,
     "---",
     "",
     `# ${title}`,
@@ -177,6 +183,18 @@ export function buildResearchRecordPage(args: {
     args.topic,
     "",
     body,
+    "",
+    "## Evidence / Source Trace",
+    "",
+    "This query record is grounded in the web results listed in References. Treat snippets and search-result summaries as currentness signals, not as canonical source text.",
+    "",
+    "## Verification & Freshness",
+    "",
+    "External facts, product status, pricing, API behavior, release dates, and benchmark claims should remain reviewable unless confirmed by the cited primary source.",
+    "",
+    "## Reuse / Upgrade Decision",
+    "",
+    "Keep this page as a query record until the findings are promoted into a concept, entity, comparison, or synthesis page with durable source trace.",
     "",
     "## References",
     "",
@@ -195,6 +213,7 @@ export function buildPrimaryResearchPage(args: {
   related: string[]
 }): string {
   const body = stripLeadingHeading(args.content)
+  const sourceCount = countReferences(args.references)
   const tags = args.type === "comparison"
     ? "[research, comparison]"
     : args.type === "synthesis"
@@ -212,17 +231,42 @@ export function buildPrimaryResearchPage(args: {
     `sources: ["${escapeYaml(args.queryRecordFileName)}"]`,
     "confidence: medium",
     `last_reviewed: ${args.date}`,
+    "quality: draft",
+    "coverage: medium",
+    "needs_upgrade: true",
+    "freshness_required: true",
+    `source_count: ${sourceCount}`,
     "---",
     "",
     `# ${args.title}`,
     "",
     body,
     "",
+    "## Evidence / Source Trace",
+    "",
+    `This page is derived from the linked Deep Research query record: \`${args.queryRecordFileName}\`. Use the References below for source trace and keep search-result snippets separate from confirmed source claims.`,
+    "",
+    "## Verification & Freshness",
+    "",
+    "Current or fast-changing claims should be rechecked against primary sources before this page is marked reviewed or canonical.",
+    "",
+    "## Reuse / Upgrade Decision",
+    "",
+    "Promote this page only after the durable operating pattern, limits, and source-backed claims are separated from one-off search findings.",
+    "",
     "## References",
     "",
     args.references,
     "",
   ].join("\n")
+}
+
+function countReferences(references: string): number {
+  const numbered = references
+    .split("\n")
+    .filter((line) => /^\s*\d+\.\s+/.test(line))
+    .length
+  return Math.max(1, numbered)
 }
 
 function hasComparisonTable(text: string): boolean {

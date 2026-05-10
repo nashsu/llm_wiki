@@ -6,6 +6,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { parseFrontmatter, type FrontmatterValue } from "@/lib/frontmatter"
+import { isGraphInputExcludedPage, isGraphInputExcludedPath } from "@/lib/graph-exclusions"
 
 export interface LintResult {
   type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
@@ -27,6 +28,31 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
     }
   }
   return files
+}
+
+type LintWikiPage = {
+  file: FileNode
+  content: string
+  shortPath: string
+}
+
+async function readLintWikiPages(wikiRoot: string, files: FileNode[]): Promise<LintWikiPage[]> {
+  const pages: LintWikiPage[] = []
+  for (const file of files) {
+    if (isGraphInputExcludedPath(file.path, file.name)) continue
+    try {
+      const content = await readFile(file.path)
+      if (isGraphInputExcludedPage(file.path, file.name, content)) continue
+      pages.push({
+        file,
+        content,
+        shortPath: getRelativePath(file.path, wikiRoot),
+      })
+    } catch {
+      // skip unreadable files
+    }
+  }
+  return pages
 }
 
 function extractWikilinks(content: string): string[] {
@@ -103,11 +129,8 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
     return []
   }
 
-  const wikiFiles = flattenMdFiles(tree)
-  // Exclude index.md and log.md from orphan checks
-  const contentFiles = wikiFiles.filter(
-    (f) => f.name !== "index.md" && f.name !== "log.md"
-  )
+  const contentPages = await readLintWikiPages(wikiRoot, flattenMdFiles(tree))
+  const contentFiles = contentPages.map((page) => page.file)
 
   const slugMap = buildSlugMap(contentFiles, wikiRoot)
 
@@ -115,16 +138,11 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
   type PageData = { path: string; slug: string; outlinks: string[]; related: string[] }
   const pages: PageData[] = []
 
-  for (const f of contentFiles) {
-    try {
-      const content = await readFile(f.path)
-      const slug = relativeToSlug(getRelativePath(f.path, wikiRoot))
-      const outlinks = extractWikilinks(content)
-      const related = extractRelated(content)
-      pages.push({ path: f.path, slug, outlinks, related })
-    } catch {
-      // skip unreadable files
-    }
+  for (const page of contentPages) {
+    const slug = relativeToSlug(page.shortPath)
+    const outlinks = extractWikilinks(page.content)
+    const related = extractRelated(page.content)
+    pages.push({ path: page.file.path, slug, outlinks, related })
   }
 
   // Build inbound link count. Lookups are case-insensitive — [[Transformer]]
@@ -213,24 +231,16 @@ export async function runSemanticLint(
     return []
   }
 
-  const wikiFiles = flattenMdFiles(tree).filter(
-    (f) => f.name !== "log.md"
-  )
+  const wikiFiles = await readLintWikiPages(wikiRoot, flattenMdFiles(tree))
 
   // Build a compact summary of each page (frontmatter + first 900 chars).
   // Semantic quality checks need enough body text to detect thin pages,
   // missing operating criteria, and source-trace gaps without loading the
   // entire wiki into the model.
   const summaries: string[] = []
-  for (const f of wikiFiles) {
-    try {
-      const content = await readFile(f.path)
-      const preview = content.slice(0, 900) + (content.length > 900 ? "..." : "")
-      const shortPath = getRelativePath(f.path, wikiRoot)
-      summaries.push(`### ${shortPath}\n${preview}`)
-    } catch {
-      // skip
-    }
+  for (const page of wikiFiles) {
+    const preview = page.content.slice(0, 900) + (page.content.length > 900 ? "..." : "")
+    summaries.push(`### ${page.shortPath}\n${preview}`)
   }
 
   if (summaries.length === 0) {
@@ -278,7 +288,7 @@ export async function runSemanticLint(
     "- Flag source pages that lack coverage, atomic claims, evidence, caveats, or clear promotion decisions.",
     "- Flag concept pages that lack decision criteria, application conditions, or failure modes.",
     "- Flag entity pages that lack role, constraints, and relationships to the user's AI Native Solo Business OS.",
-    "- Do not flag index, log, overview, registry, manifest, or source-map documents just because they are structural.",
+    "- Structural/index/archive documents are excluded from this lint input before analysis.",
     "",
     "Only report genuine issues. Do not invent problems. Output ONLY the ---LINT--- blocks, no other text.",
     "",

@@ -160,15 +160,16 @@ describe("buildWikiGraph", () => {
     expect(graph.nodes.find((node) => node.id === "concept-a")?.unresolvedRelated).toEqual(["Entity B Title"])
   })
 
-  it("keeps query nodes in graph data for mode filters", async () => {
+  it("excludes query records before graph metrics are built", async () => {
     installWiki({
-      [`${WIKI}/concepts/concept-a.md`]: page("type: concept\ntitle: Concept A"),
-      [`${WIKI}/queries/research-question.md`]: page("type: query\ntitle: Research Question"),
+      [`${WIKI}/concepts/concept-a.md`]: page("type: concept\ntitle: Concept A", "[[research-question]]"),
+      [`${WIKI}/queries/research-question.md`]: page("type: query\ntitle: Research Question", "[[concept-a]]"),
     })
 
     const graph = await buildWikiGraph(PROJECT)
 
-    expect(graph.nodes.map((node) => [node.id, node.type])).toContainEqual(["research-question", "query"])
+    expect(graph.nodes.map((node) => node.id)).toEqual(["concept-a"])
+    expect(graph.edges).toEqual([])
   })
 
   it("excludes structural and index-like pages before graph metrics are built", async () => {
@@ -183,6 +184,10 @@ describe("buildWikiGraph", () => {
       [`${WIKI}/sources/manifest.md`]: page("type: source\ntitle: Source Manifest"),
       [`${WIKI}/sources/raw-registry.md`]: page(
         "type: registry\ntitle: Raw Registry",
+        "[[concept-a]]",
+      ),
+      [`${WIKI}/queries/research-question.md`]: page(
+        "type: query\ntitle: Research Question",
         "[[concept-a]]",
       ),
     })
@@ -204,6 +209,7 @@ describe("buildWikiGraph", () => {
       ),
       [`${WIKI}/sources/registry.md`]: page("type: source\ntitle: Source Registry"),
       [`${WIKI}/sources/raw-manifest.md`]: page("type: manifest\ntitle: Raw Manifest"),
+      [`${WIKI}/queries/research-question.md`]: page("type: query\ntitle: Research Question"),
     })
 
     const graph = await buildRetrievalGraph(PROJECT, 1)

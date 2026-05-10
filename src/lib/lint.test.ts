@@ -137,6 +137,30 @@ describe("runSemanticLint — language directive", () => {
     expect(prompt).toContain("source-coverage-gap")
     expect(prompt).toContain("quality/coverage/needs_upgrade")
   })
+
+  it("excludes structural and archive pages from semantic lint input", async () => {
+    const pages = [
+      makeFileNode("overview.md", "---\ntype: overview\ntitle: Overview\n---\n\n# Overview"),
+      makeFileNode("codex-memory/session.md", "---\ntype: concept\ntitle: Session\n---\n\n# Session"),
+      makeFileNode("concepts/real.md", "---\ntype: concept\ntitle: Real\n---\n\n# Real\n\nReusable page."),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+    mockStreamChat.mockImplementation(async (_c, _m, cb) => {
+      cb.onToken("")
+      cb.onDone()
+    })
+
+    await runSemanticLint("/project", fakeLlmConfig())
+
+    const prompt = mockStreamChat.mock.calls[0][1][0].content
+    expect(prompt).toContain("concepts/real.md")
+    expect(prompt).not.toContain("overview.md")
+    expect(prompt).not.toContain("codex-memory/session.md")
+  })
 })
 
 describe("runSemanticLint — activity & early returns", () => {

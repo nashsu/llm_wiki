@@ -8,6 +8,8 @@ type GraphExclusionNode = {
 
 const STRUCTURAL_IDS = new Set(["index", "overview", "log", "schema", "purpose"])
 const STRUCTURAL_TYPES = new Set(["index", "overview", "log", "schema", "purpose"])
+const OPERATIONAL_TYPES = new Set(["query"])
+const OPERATIONAL_PATH_SEGMENTS = new Set(["queries"])
 const INDEX_LIKE_IDS = new Set([
   "index-map",
   "manifest",
@@ -29,12 +31,18 @@ const INDEX_LIKE_TYPES = new Set([
 ])
 
 const EXCLUDED_PATH_SEGMENTS = new Set([
+  "_retired",
   "10_maps",
+  "backup",
+  "backups",
+  "codex-memory",
+  "low-quality",
   "maps",
   "manifest",
   "manifests",
   "registries",
   "registry",
+  "retired",
 ])
 
 const EXCLUDED_FILE_SUFFIXES = [
@@ -59,6 +67,14 @@ export function isGraphInputExcludedPage(filePath: string, fileName: string, con
   return EXCLUDED_FIELD_NAMES.some((field) => frontmatterValueHasExcludedKind(frontmatter[field]))
 }
 
+export function isGraphViewExcludedPage(filePath: string, fileName: string, content: string): boolean {
+  if (isGraphInputExcludedPage(filePath, fileName, content)) return true
+  if (hasOperationalPathSegment(filePath)) return true
+
+  const frontmatter = parseFrontmatter(content).frontmatter
+  return frontmatterValueHasOperationalKind(frontmatter?.type)
+}
+
 export function isGraphInputExcludedPath(filePath: string, fileName: string): boolean {
   const id = fileNameToId(fileName)
   if (STRUCTURAL_IDS.has(id)) return true
@@ -75,9 +91,9 @@ export function isGraphExcludedNode(node: GraphExclusionNode): boolean {
   if (INDEX_LIKE_IDS.has(id)) return true
 
   const type = normalizeKind(node.type ?? "")
-  if (STRUCTURAL_TYPES.has(type) || INDEX_LIKE_TYPES.has(type)) return true
+  if (STRUCTURAL_TYPES.has(type) || INDEX_LIKE_TYPES.has(type) || OPERATIONAL_TYPES.has(type)) return true
 
-  return isGraphInputExcludedPath(node.path, `${node.id}.md`)
+  return hasOperationalPathSegment(node.path) || isGraphInputExcludedPath(node.path, `${node.id}.md`)
 }
 
 function frontmatterValueHasExcludedKind(value: FrontmatterValue | undefined): boolean {
@@ -87,9 +103,20 @@ function frontmatterValueHasExcludedKind(value: FrontmatterValue | undefined): b
   return isExcludedKind(value ?? "")
 }
 
+function frontmatterValueHasOperationalKind(value: FrontmatterValue | undefined): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => isOperationalKind(item))
+  }
+  return isOperationalKind(value ?? "")
+}
+
 function isExcludedKind(raw: string): boolean {
   const kind = normalizeKind(raw)
   return STRUCTURAL_TYPES.has(kind) || INDEX_LIKE_TYPES.has(kind)
+}
+
+function isOperationalKind(raw: string): boolean {
+  return OPERATIONAL_TYPES.has(normalizeKind(raw))
 }
 
 function fileNameToId(fileName: string): string {
@@ -102,6 +129,10 @@ function normalizePathSegments(filePath: string): string[] {
     .toLowerCase()
     .split("/")
     .filter(Boolean)
+}
+
+function hasOperationalPathSegment(filePath: string): boolean {
+  return normalizePathSegments(filePath).some((segment) => OPERATIONAL_PATH_SEGMENTS.has(segment))
 }
 
 function normalizeKind(value: string): string {

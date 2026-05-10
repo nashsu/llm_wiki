@@ -57,6 +57,7 @@ export async function createDirectory(path: string): Promise<void> {
 
 const STANDARD_WIKI_DIRS = [
   "raw/sources",
+  "raw/assets",
   "wiki/sources",
   "wiki/entities",
   "wiki/concepts",

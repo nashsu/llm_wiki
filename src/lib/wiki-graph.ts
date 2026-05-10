@@ -11,7 +11,7 @@ import {
   resolveWikiReference,
   type GraphEdgeType,
 } from "@/lib/graph-relations"
-import { isGraphInputExcludedPage } from "@/lib/graph-exclusions"
+import { isGraphViewExcludedPage } from "@/lib/graph-exclusions"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -22,6 +22,10 @@ export interface GraphNode {
   path: string
   related: string[]
   sources: string[]
+  quality?: string
+  coverage?: string
+  needsUpgrade?: boolean
+  sourceCount?: number
   unresolvedRelated: string[]
   unresolvedSources: string[]
   linkCount: number // inbound + outbound
@@ -166,6 +170,10 @@ export async function buildWikiGraph(
       links: string[]
       related: string[]
       sources: string[]
+      quality?: string
+      coverage?: string
+      needsUpgrade?: boolean
+      sourceCount?: number
       unresolvedRelated: string[]
       unresolvedSources: string[]
     }
@@ -181,7 +189,7 @@ export async function buildWikiGraph(
       continue
     }
 
-    if (isGraphInputExcludedPage(file.path, file.name, content)) {
+    if (isGraphViewExcludedPage(file.path, file.name, content)) {
       continue
     }
 
@@ -194,6 +202,10 @@ export async function buildWikiGraph(
       links: page.wikilinks,
       related: page.related,
       sources: page.sources,
+      quality: page.quality,
+      coverage: page.coverage,
+      needsUpgrade: page.needsUpgrade,
+      sourceCount: page.sourceCount,
       unresolvedRelated: [],
       unresolvedSources: [],
     })
@@ -277,6 +289,10 @@ export async function buildWikiGraph(
     path: n.path,
     related: n.related,
     sources: n.sources,
+    quality: n.quality,
+    coverage: n.coverage,
+    needsUpgrade: n.needsUpgrade,
+    sourceCount: n.sourceCount,
     unresolvedRelated: n.unresolvedRelated,
     unresolvedSources: n.unresolvedSources,
     linkCount: linkCounts.get(n.id) ?? 0,

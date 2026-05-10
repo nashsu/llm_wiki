@@ -594,7 +594,7 @@ bandwidth.
 
 Attention architectures should be understood as kernel methods in
 disguise. The "softmax attention" label in papers and textbooks is
-misleading and should be retired in favor of the Gaussian description.
+misleading and should be replaced by the Gaussian description.
 
 ## Related Claim
 

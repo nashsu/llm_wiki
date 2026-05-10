@@ -292,7 +292,7 @@ export const LLM_PRESETS: LlmPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     defaultModel: "MiniMax-M2.7",
     apiMode: "anthropic_messages",
-    // Current-gen only. M2 and M2.1 are legacy and being retired —
+    // Current-gen only. M2 and M2.1 are legacy and being phased out —
     // users who need them can type the id into the custom input.
     suggestedModels: ["MiniMax-M2.7", "MiniMax-M2.5"],
     suggestedContextSize: 200000,

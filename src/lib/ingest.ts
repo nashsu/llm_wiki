@@ -59,7 +59,9 @@ import { detectLanguage } from "@/lib/detect-language"
 import { sameScriptFamily } from "@/lib/language-metadata"
 import {
   buildSourceSummaryPlan,
+  extractMarkdownTitle,
   type SourceSummaryPlan,
+  wikiTitleLanguagePolicy,
 } from "@/lib/wiki-title"
 import {
   assessWikiPageQuality,
@@ -290,7 +292,21 @@ export function languageRule(sourceContent: string = ""): string {
   return buildLanguageDirective(sourceContent)
 }
 
-function slugifyWikiStem(input: string): string {
+function readableWikiStem(input: string): string {
+  const stem = input
+    .normalize("NFKC")
+    .trim()
+    .replace(/[‐‑‒–—―_-]+/gu, " ")
+    .replace(/[\\/:*?"<>|#[\]`]+/gu, " ")
+    .replace(/[^\p{L}\p{N}\s().,&+]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 96)
+    .trim()
+  return stem || "source"
+}
+
+function legacySlugifyWikiStem(input: string): string {
   const slug = input
     .normalize("NFKC")
     .toLowerCase()
@@ -313,7 +329,7 @@ function shortStableHash(input: string): string {
 }
 
 function makeSourceConceptSlug(sourceBaseName: string): string {
-  return `${slugifyWikiStem(sourceBaseName)}-${shortStableHash(sourceBaseName)}-concept`
+  return `${readableWikiStem(sourceBaseName)} ${shortStableHash(sourceBaseName)} concept`
 }
 
 function sourceSummaryPlanWithPath(
@@ -332,7 +348,7 @@ function getSourceBaseName(sourceFileName: string): string {
 }
 
 function legacySourceSummaryPath(sourceFileName: string): string {
-  return `wiki/sources/${slugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+  return `wiki/sources/${legacySlugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
 }
 
 async function resolveSourceSummaryPlan(
@@ -356,7 +372,7 @@ async function resolveSourceSummaryPlan(
 }
 
 export function makeComparisonPagePath(sourceFileName: string): string {
-  return `wiki/comparisons/${slugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+  return `wiki/comparisons/${readableWikiStem(getSourceBaseName(sourceFileName))}.md`
 }
 
 function isComparisonPagePath(path: string): boolean {
@@ -1154,6 +1170,8 @@ async function generateOllamaSplitFileBlocks(params: {
     "",
     language,
     "",
+    wikiTitleLanguagePolicy(),
+    "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
     index ? `## Current Wiki Index\n${index}` : "",
@@ -1182,7 +1200,12 @@ async function generateOllamaSplitFileBlocks(params: {
         "",
         `Generate exactly one source summary page at ${sourceSummaryPlan.path}.`,
         "type must be `source`.",
-        `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`,
+        options?.sourceSummaryTitle?.trim()
+          ? `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`
+          : `Use "${sourceSummaryPlan.title}" as the fallback subject title.`,
+        !options?.sourceSummaryTitle?.trim()
+          ? "Because this is a `wiki/sources/` page, prefer a concise Korean frontmatter title and H1 when that is natural; preserve proper nouns and legal/product names."
+          : "",
         "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
         "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
@@ -1412,8 +1435,8 @@ async function autoIngestImpl(
 
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
     tryReadFile(sp),
-    tryReadFile(`${pp}/schema.md`),
-    tryReadFile(`${pp}/purpose.md`),
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
@@ -2090,7 +2113,36 @@ function hasCanonicalWikiFileName(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, "/")
   const fileName = normalized.split("/").pop() ?? ""
   const stem = fileName.replace(/\.md$/iu, "")
-  return Boolean(stem) && fileName === `${slugifyWikiStem(stem)}.md`
+  return Boolean(stem) && fileName === `${readableWikiStem(stem)}.md`
+}
+
+function canonicalizeGeneratedWikiPath(
+  relativePath: string,
+  content: string,
+  sourceSummaryPlan: SourceSummaryPlan,
+): string {
+  const normalized = relativePath.replace(/\\/g, "/")
+  if (
+    normalized === "wiki/log.md" ||
+    normalized === "wiki/index.md" ||
+    normalized === "wiki/overview.md" ||
+    normalized.endsWith("/log.md") ||
+    normalized.endsWith("/index.md") ||
+    normalized.endsWith("/overview.md")
+  ) {
+    return normalized
+  }
+
+  if (normalized.startsWith("wiki/sources/")) return sourceSummaryPlan.path
+  if (normalized.startsWith("wiki/entities/")) return normalized
+
+  const match = normalized.match(/^(wiki\/(?:concepts|queries|comparisons|synthesis)\/)([^/]+)\.md$/u)
+  if (!match) return normalized
+
+  const fallback = match[2].replace(/[‐‑‒–—―_-]+/gu, " ")
+  const title = extractMarkdownTitle(content, fallback)
+  const stem = readableWikiStem(title)
+  return `${match[1]}${stem}.md`
 }
 
 function shouldWriteIngestPath(
@@ -2135,7 +2187,7 @@ function shouldWriteIngestPath(
   if (!hasCanonicalWikiFileName(relativePath)) {
     return {
       allowed: false,
-      reason: "filename must be canonical kebab-case",
+      reason: "filename must follow the readable natural-language title policy",
     }
   }
 
@@ -2292,7 +2344,16 @@ async function writeFileBlocks(
   const targetLang = useWikiStore.getState().outputLanguage
   const ingestDate = currentIngestDate()
 
-  for (const { path: relativePath, content: rawContent } of blocks) {
+  for (const { path: rawRelativePath, content: rawContent } of blocks) {
+    const relativePath = canonicalizeGeneratedWikiPath(
+      rawRelativePath,
+      rawContent,
+      sourceSummaryPlan,
+    )
+    if (relativePath !== rawRelativePath) {
+      const msg = `Rewrote generated path "${rawRelativePath}" to "${relativePath}" using the readable title policy.`
+      warnings.push(msg)
+    }
     if (options.skipSourceSummary && relativePath.startsWith("wiki/sources/")) {
       const msg = `Dropped "${relativePath}" — source-summary output is disabled for this ingest.`
       console.warn(`[ingest] ${msg}`)
@@ -2310,7 +2371,12 @@ async function writeFileBlocks(
     // paper over it forever.
     let content = sanitizeIngestedFileContent(rawContent)
     if (writePolicy.sourceSummaryPaths.has(relativePath)) {
-      content = applyCanonicalPageTitle(content, sourceSummaryPlan.title)
+      content = applyCanonicalPageTitle(
+        content,
+        options.sourceSummaryTitle?.trim()
+          ? sourceSummaryPlan.title
+          : extractMarkdownTitle(content, sourceSummaryPlan.title),
+      )
     }
     content = normalizeIngestFrontmatter(relativePath, content, ingestDate)
 
@@ -2576,15 +2642,22 @@ export function buildGenerationPrompt(
       ]
     : [
         `1. A source summary page at **${sourceSummaryPlan.path}** (MUST use this exact path)`,
-        `   For that source summary page, use frontmatter title and H1 exactly: "${sourceSummaryPlan.title}".`,
+        options.sourceSummaryTitle?.trim()
+          ? `   For that source summary page, use frontmatter title and H1 exactly: "${sourceSummaryPlan.title}".`
+          : `   For that source summary page, use "${sourceSummaryPlan.title}" as the fallback subject title.`,
+        !options.sourceSummaryTitle?.trim()
+          ? "   Prefer a concise Korean frontmatter title and H1 when that is natural; preserve proper nouns and legal/product names."
+          : "",
         "   Do not use the original filename, raw research question, or command text as the page title.",
-      ]
+      ].filter(Boolean)
 
   return [
     "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
     "Do not output chain-of-thought, hidden reasoning, or explanatory preamble. Reason internally and output only the requested FILE/REVIEW blocks.",
     "",
     languageRule(sourceContent),
+    "",
+    wikiTitleLanguagePolicy(),
     "",
     `## IMPORTANT: Source File`,
     `The original source file is: **${sourceFileName}**`,
@@ -2598,8 +2671,8 @@ export function buildGenerationPrompt(
     "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
     "4. A comparison page in wiki/comparisons/ is REQUIRED when the source filename, title, tags, headings, or body clearly compare alternatives (for example: `vs`, `versus`, `comparison`, `비교`, `대비`, comparison tables, trade-off / selection-criteria sections).",
     options.skipSourceSummary
-      ? `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
-      : `   For such sources, create **wiki/comparisons/${slugifyWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
+      ? `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
+      : `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
     "5. Synthesis, query, or decision pages only when the analysis clearly recommends reusable cross-source content",
     "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
     "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
@@ -2639,6 +2712,7 @@ export function buildGenerationPrompt(
     "- If a new page would be thin, create a REVIEW block or query page instead.",
     "- Do not promote one-off terms into concept/entity pages unless the analysis shows reusable value.",
     "- If a page is useful but still incomplete, mark it with `quality: seed` or `quality: draft` and `needs_upgrade: true`.",
+    "- Add `freshness_required: true` when a page depends on current product status, APIs, pricing, laws, benchmarks, or other fast-changing facts.",
     "- If you mention an important candidate page but do not actually emit that FILE block, write it as plain text or a REVIEW item; do not add a wikilink to a missing page.",
     "- `wiki/index.md` must link only to existing pages from the Current Wiki Index or FILE blocks emitted in this response.",
     "",
@@ -2663,6 +2737,7 @@ export function buildGenerationPrompt(
     "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
     "               Use a concise content title. Do not prefix with Research, Research Log, Source, or Deep Research.",
     "               Do not include raw filenames, date suffixes, or instruction words like 조사해줘/정리해줘.",
+    "               For all wiki folders except `wiki/entities/`, prefer Korean title and H1. For `wiki/entities/`, keep the official/original entity name.",
     `  • created  — ${date} (date in YYYY-MM-DD form, no quotes)`,
     `  • updated  — ${date} (same as created for newly generated pages)`,
     "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
@@ -2697,7 +2772,7 @@ export function buildGenerationPrompt(
     "",
     "Other rules:",
     "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
-    "- Use kebab-case filenames",
+    "- Use readable natural-language filenames with spaces outside `wiki/entities/`; do not insert hyphen separators unless they are part of an official name",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
     "",
@@ -2771,6 +2846,8 @@ export function buildGenerationPrompt(
     "---",
     "",
     languageRule(sourceContent),
+    "",
+    wikiTitleLanguagePolicy(),
   ].filter(Boolean).join("\n")
 }
 
@@ -2784,6 +2861,11 @@ async function tryReadFile(path: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+async function readProjectControlDoc(projectPath: string, fileName: "schema.md" | "purpose.md"): Promise<string> {
+  return (await tryReadFile(`${projectPath}/${fileName}`))
+    || (await tryReadFile(`${projectPath}/wiki/${fileName}`))
 }
 
 /**
@@ -3061,8 +3143,8 @@ export async function startIngest(
 
   const [sourceContent, schema, purpose, index] = await Promise.all([
     tryReadFile(sp),
-    tryReadFile(`${pp}/wiki/schema.md`),
-    tryReadFile(`${pp}/wiki/purpose.md`),
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
   ])
 
@@ -3128,8 +3210,9 @@ export async function executeIngestWrites(
   const pp = normalizePath(projectPath)
   const store = getStore()
 
-  const [schema, index] = await Promise.all([
-    tryReadFile(`${pp}/wiki/schema.md`),
+  const [schema, purpose, index] = await Promise.all([
+    readProjectControlDoc(pp, "schema.md"),
+    readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
   ])
 
@@ -3142,6 +3225,7 @@ export async function executeIngestWrites(
     "",
     userGuidance ? `Additional guidance: ${userGuidance}` : "",
     "",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
     index ? `## Current Wiki Index\n${index}` : "",
     "",
@@ -3178,6 +3262,8 @@ export async function executeIngestWrites(
     "You are a wiki generation assistant. Your task is to produce structured wiki file contents.",
     "",
     languageRule(historyText),
+    wikiTitleLanguagePolicy(),
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
     schema ? `## Wiki Schema\n${schema}` : "",
   ]
     .filter(Boolean)

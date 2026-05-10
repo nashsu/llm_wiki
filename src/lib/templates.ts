@@ -31,11 +31,16 @@ const BASE_PURPOSE_LANGUAGE_POLICY = `## 작성 언어 원칙
 - \`wiki/index.md\`, \`wiki/log.md\`, \`wiki/overview.md\` 등 주요 문서는 한국어 작성을 기본 원칙으로 한다.
 - 고유명사와 원문 제목은 필요하면 원어를 유지하되, 설명과 판단은 한국어로 정리한다.`
 
-const BASE_NAMING = `- 파일명: \`kebab-case.md\`
-- 엔티티: 가능하면 공식 명칭에 맞춘다(예: \`openai.md\`, \`gpt-4.md\`)
-- 개념: 설명적인 명사구를 사용한다(예: \`chain-of-thought.md\`)
-- 원본 요약: \`author-year-slug.md\` 형식을 권장한다(예: \`wei-2022-cot.md\`)
-- 질의: 질문을 slug로 바꾼다(예: \`does-scale-improve-reasoning.md\`)`
+const BASE_NAMING = `- 파일명: 사람이 읽기 쉬운 자연어 제목을 그대로 반영한다(예: \`에이전트 오케스트레이션.md\`).
+- 단어 구분을 위해 하이픈을 넣지 않는다. 하이픈은 공식 명칭, 표준 날짜, 원제에 꼭 필요한 경우에만 유지한다.
+- Unicode 한글과 공백을 허용한다. Obsidian 탐색에 한글이 더 명확하면 영어로 억지 변환하지 않는다.
+- \`wiki/entities/\`: 가능하면 공식 명칭이나 원어 명칭을 제목과 파일명에 반영한다(예: \`openai.md\`, \`gpt-4.md\`).
+- \`wiki/entities/\` 이외의 wiki 폴더: frontmatter \`title\`과 H1은 한글 우선으로 쓴다. 고유명사, 제품명, 법령명, 약어는 필요한 경우 원어를 유지한다.
+- 개념: 설명적인 한글 명사구를 우선한다(예: \`에이전트 오케스트레이션.md\`).
+- 원본 요약: 원본의 핵심 주제를 한글 제목으로 정리하고 필요하면 \`소스 요약\`을 붙인다(예: \`대한민국 판례 저장소 소스 요약.md\`).
+- 질의: 질문의 핵심 주제를 한글 제목으로 정리하고 필요하면 \`질의 기록\`을 붙인다(예: \`그래프 DB 도입 기준 질의 기록.md\`).
+- \`raw/sources/\`, \`raw/assets/\`: import 시 원문 내용은 바꾸지 않되, 파일명은 title 기반 자연어 제목으로 정리한다.
+- Review/Chat 등 App UI에서 사용자가 직접 저장하거나 생성하는 문서도 같은 제목 규칙을 적용한다.`
 
 const BASE_FRONTMATTER = `모든 페이지는 YAML frontmatter를 포함한다:
 
@@ -110,9 +115,9 @@ ${BASE_LANGUAGE_POLICY}
 ## 파일명 규칙
 
 ${BASE_NAMING}
-- Thesis: 가설을 slug로 만든다(예: \`scaling-improves-reasoning.md\`)
-- Methodology: 방법론 이름을 사용한다(예: \`systematic-review.md\`, \`ablation-study.md\`)
-- Finding: 발견 내용을 설명하는 slug를 쓴다(예: \`larger-models-better-few-shot.md\`)
+- Thesis: 가설을 자연어 제목으로 만든다(예: \`스케일링과 추론 성능.md\`)
+- Methodology: 방법론 이름을 사용한다(예: \`Systematic Review.md\`, \`Ablation Study.md\`)
+- Finding: 발견 내용을 설명하는 자연어 제목을 쓴다(예: \`대형 모델의 Few Shot 성능.md\`)
 
 ## Frontmatter
 
@@ -235,10 +240,10 @@ ${BASE_LANGUAGE_POLICY}
 ## 파일명 규칙
 
 ${BASE_NAMING}
-- Character: 인물명을 kebab-case로 쓴다(예: \`elizabeth-bennet.md\`)
-- Theme: 주제를 나타내는 명사구를 쓴다(예: \`social-class-mobility.md\`, \`deception-vs-honesty.md\`)
-- Plot thread: 서사 흐름 설명을 사용한다(예: \`darcys-redemption-arc.md\`)
-- Chapter: \`ch-NN-slug.md\` 형식을 사용한다(예: \`ch-01-opening-scene.md\`)
+- Character: 인물명 그대로 쓴다(예: \`Elizabeth Bennet.md\`)
+- Theme: 주제를 나타내는 명사구를 쓴다(예: \`Social Class Mobility.md\`, \`Deception vs Honesty.md\`)
+- Plot thread: 서사 흐름 설명을 사용한다(예: \`Darcy Redemption Arc.md\`)
+- Chapter: 표준 번호만 유지하고 제목은 자연어로 쓴다(예: \`Ch 01 Opening Scene.md\`)
 
 ## Frontmatter
 
@@ -356,9 +361,9 @@ ${BASE_LANGUAGE_POLICY}
 ## 파일명 규칙
 
 ${BASE_NAMING}
-- Goal: 원하는 결과를 slug로 쓴다(예: \`run-a-marathon.md\`, \`learn-spanish.md\`)
-- Habit: 행동 이름을 쓴다(예: \`daily-meditation.md\`, \`morning-pages.md\`)
-- Reflection: 유형과 날짜를 함께 쓴다(예: \`weekly-2024-03.md\`, \`quarterly-2024-q1.md\`)
+- Goal: 원하는 결과를 자연어 제목으로 쓴다(예: \`마라톤 완주.md\`, \`스페인어 학습.md\`)
+- Habit: 행동 이름을 쓴다(예: \`Daily Meditation.md\`, \`Morning Pages.md\`)
+- Reflection: 유형과 표준 날짜를 함께 쓴다(예: \`Weekly 2024-03.md\`, \`Quarterly 2024 Q1.md\`)
 - Journal: 날짜 slug를 쓴다(예: \`2024-03-15.md\`)
 
 ## Frontmatter
@@ -488,8 +493,8 @@ ${BASE_LANGUAGE_POLICY}
 
 ${BASE_NAMING}
 - Meeting: \`YYYY-MM-DD-slug.md\` 형식을 쓴다(예: \`2024-03-15-sprint-planning.md\`)
-- Project: 설명적인 slug를 쓴다(예: \`payments-redesign.md\`)
-- Stakeholder: 사람이나 팀 이름을 kebab-case로 쓴다(예: \`alice-chen.md\`, \`platform-team.md\`)
+- Project: 설명적인 자연어 제목을 쓴다(예: \`Payments Redesign.md\`)
+- Stakeholder: 사람이나 팀 이름 그대로 쓴다(예: \`Alice Chen.md\`, \`Platform Team.md\`)
 
 ## Frontmatter
 

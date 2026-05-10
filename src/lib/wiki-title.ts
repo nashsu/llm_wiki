@@ -9,8 +9,29 @@ export interface SourceSummaryPlan {
   path: string
 }
 
+export interface RawDocumentNamePlan {
+  title: string
+  slug: string
+  extension: string
+  fileName: string
+}
+
 const NOISY_TITLE_PREFIX_RE = /^(?:research\s+log|research|source|deep\s+research)\s*[:：-]\s*/iu
+const DATETIME_SUFFIX_RE = /(?:[-_\s(]*(?:20\d{2})[-_.년\s]?(?:0?[1-9]|1[0-2])[-_.월\s]?(?:0?[1-9]|[12]\d|3[01])(?:일)?(?:[-_.\s]?(?:[01]?\d|2[0-3])[:_.-]?[0-5]\d[:_.-]?[0-5]\d)?[)]*)$/u
 const DATE_SUFFIX_RE = /(?:[-_\s(]*(?:20\d{2})[-_.년\s]?(?:0?[1-9]|1[0-2])[-_.월\s]?(?:0?[1-9]|[12]\d|3[01])(?:일)?[)]*)$/u
+
+export function wikiTitleLanguagePolicy(): string {
+  return [
+    "## Wiki Title Policy",
+    "- For every generated wiki page outside `wiki/entities/`, prefer Korean frontmatter `title` and Korean H1.",
+    "- `wiki/entities/` is the exception: keep the official/original name for tools, products, people, organizations, models, laws, protocols, and datasets.",
+    "- Preserve proper nouns, product names, legal names, acronyms, and source terms inside Korean titles when translating them would reduce precision.",
+    "- Outside `wiki/entities/`, filenames should use readable natural-language file stems with spaces, matching the page title as closely as possible.",
+    "- Do not insert hyphens as word separators in generated titles or filenames. Use hyphens only when they are part of an official name that would be wrong without them.",
+    "- Use Korean role suffixes such as `소스 요약`, `질의 기록`, and `비교 분석` when they prevent same-title collisions across wiki folders.",
+    "- Never use raw filenames, command text, Research/Deep Research prefixes, or date suffixes as page titles.",
+  ].join("\n")
+}
 
 export function canonicalizeWikiTitle(value: string, fallback = "Untitled"): string {
   const fallbackTitle = fallback.trim() || "Untitled"
@@ -19,6 +40,7 @@ export function canonicalizeWikiTitle(value: string, fallback = "Untitled"): str
   title = title.replace(/^연구\s*[:：-]\s*/u, "")
   title = title.replace(/\bdeep\s*research\b/giu, "")
   title = title.replace(/\s*기록\s*$/u, "")
+  title = title.replace(DATETIME_SUFFIX_RE, "")
   title = title.replace(DATE_SUFFIX_RE, "")
   title = title
     .replace(/에\s*대해서/gu, " ")
@@ -67,7 +89,7 @@ export function extractMarkdownTitle(content: string, fallback: string): string 
 }
 
 export function buildResearchQueryFileName(title: string, date: string, time: string): string {
-  return `${makeQuerySlug(canonicalizeWikiTitle(title, "research"))}-${date}-${time}.md`
+  return `${makeQuerySlug(canonicalizeWikiTitle(title, "research"))} (${date.replace(/-/g, "")} ${time}).md`
 }
 
 export function buildSourceSummaryPlan(
@@ -76,11 +98,12 @@ export function buildSourceSummaryPlan(
   explicitTitle?: string,
 ): SourceSummaryPlan {
   const fallback = titleFromFileName(sourceFileName)
-  const title = explicitTitle?.trim()
+  const baseTitle = explicitTitle?.trim()
     ? canonicalizeWikiTitle(explicitTitle, fallback)
     : extractMarkdownTitle(sourceContent, fallback)
-  const titleSlug = makeQuerySlug(title)
-  const slug = titleSlug.endsWith("-source") ? titleSlug : `${titleSlug}-source`
+  const title = /소스\s*요약$/u.test(baseTitle) ? baseTitle : `${baseTitle} 소스 요약`
+  const titleSlug = makeQuerySlug(baseTitle)
+  const slug = makeQuerySlug(title)
   return {
     title,
     titleSlug,
@@ -93,10 +116,33 @@ export function buildSourceSummaryPlan(
 export function titleFromFileName(fileName: string): string {
   const stem = stripMd(fileName)
     .replace(/\.[^.]+$/u, "")
-    .replace(/[-_]+/g, " ")
+    .replace(/[‐‑‒–—―_-]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
   return canonicalizeWikiTitle(stem || fileName, "Untitled")
+}
+
+export function buildRawDocumentNamePlan(
+  originalFileName: string,
+  sourceContent = "",
+): RawDocumentNamePlan {
+  const extension = extensionFromFileName(originalFileName)
+  const fallback = titleFromFileName(originalFileName)
+  const title = sourceContent.trim()
+    ? extractMarkdownTitle(sourceContent, fallback)
+    : fallback
+  const slug = makeQuerySlug(title)
+
+  return {
+    title,
+    slug,
+    extension,
+    fileName: extension ? `${slug}${extension}` : slug,
+  }
+}
+
+export function buildRawFolderName(originalName: string): string {
+  return makeQuerySlug(titleFromFileName(originalName))
 }
 
 function normalizeTitleText(value: string): string {
@@ -117,6 +163,11 @@ function normalizeComparable(value: string): string {
 
 function stripMd(value: string): string {
   return value.replace(/\.md$/iu, "")
+}
+
+function extensionFromFileName(fileName: string): string {
+  const match = fileName.trim().match(/(\.[A-Za-z0-9]{1,12})$/u)
+  return match ? match[1].toLowerCase() : ""
 }
 
 function scalar(value: string | string[] | undefined): string | null {

@@ -371,7 +371,7 @@ describe("ollama split ingest", () => {
 
     const conceptPath = written.find((p) => p.startsWith("wiki/concepts/"))
     expect(conceptPath).toMatch(
-      /^wiki\/concepts\/나를-기억하는-llm-위키-설계법-[a-z0-9]{6}-concept\.md$/,
+      /^wiki\/concepts\/나를 기억하는 LLM 위키 설계법 [a-z0-9]{6} concept\.md$/,
     )
     expect(conceptPath).not.toBe("wiki/concepts/source-concept-concept.md")
     expect(await fileExists(path.join(ctx.tmp.path, conceptPath!))).toBe(true)
@@ -477,7 +477,7 @@ describe("comparison source enforcement", () => {
       },
     )
 
-    const comparisonPath = "wiki/comparisons/openclaw-vs-hermes.md"
+    const comparisonPath = "wiki/comparisons/OpenClaw vs Hermes.md"
     expect(written).toContain(comparisonPath)
     const content = await readFileRaw(path.join(ctx.tmp.path, comparisonPath))
     expect(content).toContain("type: comparison")
@@ -595,9 +595,9 @@ describe("Obsidian graph link sync", () => {
       },
     )
 
-    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "concepts", "agent-ops.md"))
+    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "concepts", "Agent Ops.md"))
     expect(content).toContain("graph_links:")
-    expect(content).toContain('  - "[[agent-note]]"')
+    expect(content).toContain('  - "[[Agent Note 소스 요약]]"')
     expect(content).toContain('  - "[[openclaw]]"')
   })
 })
@@ -718,7 +718,7 @@ describe("ingest write scope guard", () => {
     )
 
     const today = new Date().toISOString().slice(0, 10)
-    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "dify-source.md"))
+    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "Dify 소스 요약.md"))
     expect(sourceSummary).toContain(`created: ${today}`)
     expect(sourceSummary).toContain(`updated: ${today}`)
     expect(sourceSummary).toContain(`last_reviewed: ${today}`)
@@ -843,16 +843,16 @@ describe("ingest write scope guard", () => {
     )
 
     expect(written).toContain("wiki/sources/codexian.md")
-    expect(written).toContain("wiki/concepts/one.md")
-    expect(written).toContain("wiki/concepts/two.md")
+    expect(written).toContain("wiki/concepts/One.md")
+    expect(written).toContain("wiki/concepts/Two.md")
     expect(written).toContain("wiki/index.md")
     expect(written).toContain("wiki/overview.md")
     expect(written).not.toContain("wiki/sources/codexian-source.md")
     expect(written).not.toContain("wiki/comparisons/OpenClaw vs Hermes.md")
-    expect(written).not.toContain("wiki/concepts/three.md")
+    expect(written).not.toContain("wiki/concepts/Three.md")
     expect(await fileExists(path.join(ctx.tmp.path, "wiki", "sources", "codexian-source.md"))).toBe(false)
     expect(await fileExists(path.join(ctx.tmp.path, "wiki", "comparisons", "OpenClaw vs Hermes.md"))).toBe(false)
-    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "concepts", "three.md"))).toBe(false)
+    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "concepts", "Three.md"))).toBe(false)
   })
 })
 
@@ -896,7 +896,7 @@ describe("deep research ingest options", () => {
     pendingResponses = [
       "## Key Concepts\n- 카파시 스킬\n",
       [
-        "---FILE: wiki/sources/안드레-카파시-스킬-source.md---",
+        "---FILE: wiki/sources/안드레 카파시 스킬 소스 요약.md---",
         "---",
         "type: source",
         "title: Research: 안드레이 카파시가 만든 skill 조사해서 핵심 인사이트 정리해줘",
@@ -932,10 +932,10 @@ describe("deep research ingest options", () => {
       { sourceSummaryTitle: "안드레 카파시 스킬" },
     )
 
-    expect(written).toContain("wiki/sources/안드레-카파시-스킬-source.md")
-    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "안드레-카파시-스킬-source.md"))
-    expect(content).toContain('title: "안드레 카파시 스킬"')
-    expect(content).toContain("# 안드레 카파시 스킬")
+    expect(written).toContain("wiki/sources/안드레 카파시 스킬 소스 요약.md")
+    const content = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "안드레 카파시 스킬 소스 요약.md"))
+    expect(content).toContain('title: "안드레 카파시 스킬 소스 요약"')
+    expect(content).toContain("# 안드레 카파시 스킬 소스 요약")
     expect(content).not.toContain("# Research: 안드레이 카파시")
   })
 
@@ -1085,8 +1085,8 @@ describe("deep research ingest options", () => {
 
     expect(written).not.toContain("wiki/sources/deep-research-karpathy.md")
     expect(await fileExists(path.join(ctx.tmp.path, "wiki", "sources", "deep-research-karpathy.md"))).toBe(false)
-    expect(written).toContain("wiki/concepts/karpathy-skills.md")
-    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "concepts", "karpathy-skills.md"))).toBe(true)
+    expect(written).toContain("wiki/concepts/카파시 스킬.md")
+    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "concepts", "카파시 스킬.md"))).toBe(true)
   })
 })
 

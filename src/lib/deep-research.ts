@@ -13,6 +13,7 @@ import {
   buildResearchSavePlan,
   cleanResearchSynthesis,
 } from "@/lib/research-artifacts"
+import { wikiTitleLanguagePolicy } from "@/lib/wiki-title"
 
 /**
  * Queue a deep research task. Automatically starts processing if under concurrency limit.
@@ -123,6 +124,8 @@ async function executeResearch(
       "",
       buildLanguageDirective(topic),
       "",
+      wikiTitleLanguagePolicy(),
+      "",
       "## Cross-referencing (IMPORTANT)",
       "- The wiki already has existing pages listed in the Wiki Index below.",
       "- When your synthesis mentions an entity or concept that exists in the wiki, ALWAYS use [[wikilink]] syntax to link to it.",
@@ -134,9 +137,14 @@ async function executeResearch(
       "- Do not prefix the title with Research, Research Log, Source, or Deep Research",
       "- Do not include instruction words like 조사해줘, 정리해줘, 확인하고, or 최신자료 기준 in the title",
       "- Organize into clear sections with headings",
+      "- Do not list search results one by one; synthesize them into reusable wiki knowledge",
       "- Cite web sources using [N] notation",
       "- Note contradictions or gaps",
       "- Suggest additional sources worth finding",
+      "- Separate source-grounded claims from claims that still need primary-source verification",
+      "- Include freshness/currentness limits for product status, pricing, APIs, releases, benchmarks, or fast-changing facts",
+      "- Explain what the result changes for the user's AI Native Solo Business OS when relevant",
+      "- If the answer should become durable knowledge, state whether it should be promoted to concept, entity, comparison, or synthesis",
       "- Neutral, encyclopedic tone",
       "",
       wikiIndex ? `## Existing Wiki Index (link to these pages with [[wikilink]])\n${wikiIndex}` : "",

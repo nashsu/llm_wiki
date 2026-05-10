@@ -3,46 +3,44 @@
  *
  * Why this exists as its own module:
  *   The previous inline logic stripped all non-ASCII chars from the
- *   slug — which made every CJK-titled conversation collapse to an
- *   empty slug and collide into `-YYYY-MM-DD.md` for the day, so the
- *   user could only keep ONE save per day. This pure module makes
- *   the filename policy trivially testable.
+ *   file stem — which made every CJK-titled conversation collapse to
+ *   an empty stem and collide into a single file for the day. This
+ *   pure module makes the filename policy trivially testable.
  *
  * Filename shape:
- *   {slug}-{YYYY-MM-DD}-{HHMMSS}.md
+ *   {readable title} ({YYYYMMDD} {HHMMSS}).md
  *
- * Slug rules:
+ * File stem rules:
  *   - Unicode-aware: keeps letters & digits across all scripts
- *     (Latin, CJK, Cyrillic, Arabic …) plus ASCII hyphens.
+ *     (Latin, CJK, Cyrillic, Arabic …).
  *   - NFKC-normalized so full-width characters don't drift from
  *     half-width equivalents.
- *   - Lowercased (no-op for scripts without case).
- *   - Whitespace → hyphen.
- *   - Collapses runs of hyphens, trims leading/trailing hyphens.
- *   - Truncated to 50 characters.
- *   - Falls back to `"query"` when nothing usable remains.
+ *   - Keeps readable spaces for Obsidian sidebars and graph labels.
+ *   - Hyphens are not inserted as separators. Existing hyphens are
+ *     treated as spacing unless the caller deliberately keeps an
+ *     official name in the title before calling this helper.
+ *   - Truncated to 80 characters.
+ *   - Falls back to `"저장된 질의"` when nothing usable remains.
  *
  * The trailing timestamp guarantees same-day saves stay distinct
  * even when the title yields an identical slug (e.g. several Chinese
  * conversations with the same topic, or repeated "Untitled" saves).
  */
 
-/** Produce just the slug — exported for tests / callers that want
- *  to reuse it in places like the index.md wikilink target. */
+/** Produce the readable file stem. The historical name is kept because
+ *  several callers still use `slug` as their variable name. */
 export function makeQuerySlug(title: string): string {
-  const slug = title
+  const stem = title
     .normalize("NFKC")
     .trim()
-    .replace(/\s+/g, "-")
-    // Keep Unicode letters, Unicode digits, and the ASCII hyphen.
-    // Stripping emoji / punctuation keeps the filename
-    // filesystem-safe across Windows / macOS / Linux.
-    .replace(/[^\p{L}\p{N}-]/gu, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .toLowerCase()
-    .slice(0, 50)
-  return slug.length > 0 ? slug : "query"
+    .replace(/[‐‑‒–—―_-]+/gu, " ")
+    .replace(/[\\/:*?"<>|#[\]`]+/gu, " ")
+    .replace(/[^\p{L}\p{N}\s().,&+]/gu, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 80)
+    .trim()
+  return stem.length > 0 ? stem : "저장된 질의"
 }
 
 /** Produce the full wiki filename. Accepts an injected `now` for
@@ -56,11 +54,12 @@ export function makeQueryFileName(
   // the same save produces different filenames on different machines.
   const iso = now.toISOString() // e.g. 2026-04-23T14:30:52.123Z
   const date = iso.slice(0, 10) // 2026-04-23
+  const compactDate = date.replace(/-/g, "")
   const time = iso.slice(11, 19).replace(/:/g, "") // 143052
   return {
     slug,
     date,
     time,
-    fileName: `${slug}-${date}-${time}.md`,
+    fileName: `${slug} (${compactDate} ${time}).md`,
   }
 }

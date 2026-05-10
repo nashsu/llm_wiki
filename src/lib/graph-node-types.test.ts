@@ -8,7 +8,7 @@ import {
 } from "./graph-node-types"
 
 describe("graph node types", () => {
-  it("keeps query pages available but hidden by default", () => {
+  it("keeps legacy query graph metadata hidden by default", () => {
     expect(isDefaultHiddenGraphNodeType("query")).toBe(true)
     expect(isDefaultHiddenGraphNodeType(" Query ")).toBe(true)
     expect(isDefaultHiddenGraphNodeType("concept")).toBe(false)
@@ -42,7 +42,7 @@ describe("graph node types", () => {
     expect(entries.map(([type]) => type)).not.toContain("query")
   })
 
-  it("keeps query available when a real query node exists", () => {
+  it("keeps query styling available for legacy or custom graph data", () => {
     const entries = getGraphNodeTypeEntries({
       entity: 1,
       query: 2,

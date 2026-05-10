@@ -19,6 +19,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { normalizeReviewTitle } from "@/lib/review-utils"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { isGraphInputExcludedPage, isGraphInputExcludedPath } from "@/lib/graph-exclusions"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -59,12 +60,13 @@ async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
     const files = flattenMdFiles(tree)
 
     for (const file of files) {
+      if (isGraphInputExcludedPath(file.path, file.name)) continue
       const id = file.name.replace(/\.md$/, "").toLowerCase()
-      byId.add(id)
 
       let title: string | null = null
       try {
         const content = await readFile(file.path)
+        if (isGraphInputExcludedPage(file.path, file.name, content)) continue
         const match = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
         if (match) {
           title = match[1].trim()
@@ -74,6 +76,7 @@ async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
         // skip unreadable files
       }
 
+      byId.add(id)
       pages.push({ id, title })
     }
   } catch {
@@ -115,7 +118,7 @@ function pageExists(name: string, index: WikiIndex): boolean {
   const normalized = name.trim().toLowerCase()
   if (!normalized) return false
 
-  // Exact filename match (kebab-case or matching existing id)
+  // Exact filename match, including older hyphenated ids that may still exist.
   if (index.byId.has(normalized)) return true
   if (index.byId.has(normalized.replace(/\s+/g, "-"))) return true
 
@@ -152,7 +155,6 @@ function contentReferencesWikiTarget(content: string, target: string): boolean {
 async function missingPageReferenceStillPresent(
   projectPath: string,
   item: ReviewItem,
-  index: Pick<WikiIndex, "byId">,
 ): Promise<boolean> {
   const target = normalizeReviewTitle(item.title)
   if (!target) return true
@@ -162,8 +164,6 @@ async function missingPageReferenceStillPresent(
 
   const pp = normalizePath(projectPath)
   for (const affectedPath of affected) {
-    if (!affectedPageExists(affectedPath, index)) continue
-
     const fullPath = affectedPath.startsWith("/")
       ? normalizePath(affectedPath)
       : `${pp}/${affectedPath}`
@@ -451,7 +451,7 @@ export async function sweepResolvedReviews(
         ? strictMissingWikiPageTargetExists(item, index)
         : extractCandidateNames(item).some((n) => pageExists(n, index))
       if (strictAppMissingPage && !resolvedMissingPage) {
-        resolvedMissingPage = !(await missingPageReferenceStillPresent(projectPath, item, index))
+        resolvedMissingPage = !(await missingPageReferenceStillPresent(projectPath, item))
       }
       if (resolvedMissingPage) {
         store.resolveItem(item.id, "auto-resolved")

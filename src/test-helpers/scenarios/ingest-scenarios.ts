@@ -136,15 +136,15 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/rope.md",
-        "wiki/sources/rope-paper.md",
+        "wiki/concepts/Rotary Position Embedding.md",
+        "wiki/sources/Rotary Position Embedding 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/rope.md": [
+        "wiki/concepts/Rotary Position Embedding.md": [
           "title: Rotary Position Embedding",
           "attention",
         ],
-        "wiki/sources/rope-paper.md": ["rope-paper.md"],
+        "wiki/sources/Rotary Position Embedding 소스 요약.md": ["rope-paper.md"],
       },
     },
   },
@@ -189,7 +189,7 @@ export const ingestScenarios: IngestScenario[] = [
       "---END REVIEW---",
     ].join("\n"),
     expected: {
-      writtenPaths: ["wiki/sources/flash-attention.md"],
+      writtenPaths: ["wiki/sources/FlashAttention 소스 요약.md"],
       reviewsCreated: [
         { type: "missing-page", titleContains: "FlashAttention" },
         { type: "suggestion", titleContains: "IO-aware" },
@@ -237,11 +237,11 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/multi-head-attention.md",
-        "wiki/sources/multi-head.md",
+        "wiki/concepts/Multi Head Attention.md",
+        "wiki/sources/Multi Head Attention 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/multi-head-attention.md": ["[[attention]]"],
+        "wiki/concepts/Multi Head Attention.md": ["[[attention]]"],
       },
     },
   },
@@ -282,11 +282,11 @@ export const ingestScenarios: IngestScenario[] = [
     ].join("\n"),
     expected: {
       writtenPaths: [
-        "wiki/concepts/transformer.md",
-        "wiki/sources/transformer-survey.md",
+        "wiki/concepts/Transformer.md",
+        "wiki/sources/Transformer 综述 소스 요약.md",
       ],
       fileContains: {
-        "wiki/concepts/transformer.md": [
+        "wiki/concepts/Transformer.md": [
           "title: Transformer",
           "注意力机制",
         ],

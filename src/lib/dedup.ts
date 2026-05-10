@@ -40,7 +40,7 @@ import {
 // ──────────────────────────────────────────────────────────────────
 
 export interface EntitySummary {
-  /** kebab-case slug (basename without `.md`). */
+  /** Filename stem / page id (basename without `.md`). */
   slug: string
   /** Path relative to project root, e.g. `wiki/entities/foo.md`. */
   path: string

@@ -101,8 +101,8 @@ describe("buildGenerationPrompt language directive", () => {
       "딥리서치 기록",
       { sourceSummaryTitle: "안드레 카파시 스킬" },
     )
-    expect(prompt).toContain("A source summary page at **wiki/sources/안드레-카파시-스킬-source.md**")
-    expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬"')
+    expect(prompt).toContain("A source summary page at **wiki/sources/안드레 카파시 스킬 소스 요약.md**")
+    expect(prompt).toContain('use frontmatter title and H1 exactly: "안드레 카파시 스킬 소스 요약"')
     expect(prompt).toContain("Do not use the original filename, raw research question, or command text as the page title")
   })
 
@@ -124,7 +124,7 @@ describe("buildGenerationPrompt language directive", () => {
   it("requires a comparison page for explicitly comparative sources", () => {
     const prompt = buildGenerationPrompt("", "", "", "OpenClaw vs Hermes.md")
     expect(prompt).toContain("A comparison page in wiki/comparisons/ is REQUIRED")
-    expect(prompt).toContain("wiki/comparisons/openclaw-vs-hermes.md")
+    expect(prompt).toContain("wiki/comparisons/OpenClaw vs Hermes.md")
     expect(prompt).toContain("type: comparison")
   })
 
@@ -169,7 +169,7 @@ describe("comparison source detection", () => {
   it("detects comparison intent from filename", () => {
     expect(shouldForceComparisonPage("OpenClaw vs Hermes.md")).toBe(true)
     expect(makeComparisonPagePath("OpenClaw vs Hermes.md")).toBe(
-      "wiki/comparisons/openclaw-vs-hermes.md",
+      "wiki/comparisons/OpenClaw vs Hermes.md",
     )
   })
 
