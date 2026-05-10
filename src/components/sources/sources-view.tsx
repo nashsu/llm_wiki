@@ -6,13 +6,13 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
-import { enqueueIngest } from "@/lib/ingest-queue"
 import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import {
   deleteSourceFile,
   deleteSourceFolder,
+  enqueueSourceIngest,
   importSourceFiles,
   importSourceFolder,
 } from "@/lib/source-lifecycle"
@@ -223,7 +223,7 @@ export function SourcesView() {
     // who expected a fresh-import re-run. One button, one path now.
     setIngestingPath(node.path)
     try {
-      await enqueueIngest(project.id, node.path)
+      await enqueueSourceIngest(project, [node.path], llmConfig)
     } catch (err) {
       console.error("Failed to enqueue ingest:", err)
     } finally {

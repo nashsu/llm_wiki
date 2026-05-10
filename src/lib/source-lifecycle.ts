@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/core"
 import {
+  copyDirectory,
   copyFile,
   deleteFile,
-  findRelatedWikiPages,
+  fileExists,
   listDirectory,
   preprocessFile,
   readFile,
@@ -10,10 +10,9 @@ import {
 } from "@/commands/fs"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
-import { enqueueBatch, enqueueIngest } from "@/lib/ingest-queue"
+import { enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, normalizePath } from "@/lib/path-utils"
-import { decidePageFate } from "@/lib/source-delete-decision"
 import {
   parseFrontmatterArray,
   parseSources,
@@ -25,6 +24,7 @@ import { removePageEmbedding } from "@/lib/embedding"
 import {
   buildDeletedKeys,
   cleanIndexListing,
+  normalizeWikiRefKey,
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
 import { collectAllFilesIncludingDot } from "@/lib/sources-tree-delete"
@@ -57,8 +57,16 @@ export interface DeleteSourceFolderResult {
   deletedWikiPaths: string[]
 }
 
+export interface DeleteSourcesResult {
+  deletedWikiPaths: string[]
+  rewrittenSourcePages: number
+  skippedPages: number
+}
+
 export function isIngestableSourcePath(path: string): boolean {
-  const fileName = normalizePath(path).split("/").pop() ?? ""
+  const normalized = normalizePath(path)
+  if (normalized.split("/").includes(".cache")) return false
+  const fileName = normalized.split("/").pop() ?? ""
   if (!fileName || fileName.startsWith(".")) return false
   const ext = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
   return ext ? INGESTABLE_SOURCE_EXTENSIONS.has(ext) : false
@@ -67,7 +75,12 @@ export function isIngestableSourcePath(path: string): boolean {
 export function folderContextForSourcePath(sourcePath: string, sourcesRoot = "raw/sources"): string {
   const path = normalizePath(sourcePath)
   const root = normalizePath(sourcesRoot)
-  const rel = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path
+  const rawMarker = "/raw/sources/"
+  const rel = path.startsWith(`${root}/`)
+    ? path.slice(root.length + 1)
+    : path.includes(rawMarker)
+      ? path.slice(path.indexOf(rawMarker) + rawMarker.length)
+      : path
   const parts = rel.split("/")
   parts.pop()
   return parts.join(" > ")
@@ -113,13 +126,7 @@ export async function importSourceFiles(
     }
   }
 
-  if (hasUsableLlm(llmConfig)) {
-    for (const destPath of importedPaths) {
-      enqueueIngest(project.id, destPath).catch((err) =>
-        console.error("Failed to enqueue ingest:", err),
-      )
-    }
-  }
+  await enqueueSourceIngest(project, importedPaths, llmConfig)
 
   return importedPaths
 }
@@ -132,10 +139,7 @@ export async function importSourceFolder(
   const pp = normalizePath(project.path)
   const folderName = getFileName(selectedFolder) || "imported"
   const destDir = `${pp}/raw/sources/${folderName}`
-  const copiedFiles: string[] = await invoke("copy_directory", {
-    source: selectedFolder,
-    destination: destDir,
-  })
+  const copiedFiles = await copyDirectory(selectedFolder, destDir)
 
   for (const filePath of copiedFiles) {
     preprocessFile(filePath).catch(() => {})
@@ -156,55 +160,89 @@ export async function deleteSourceFile(
   sourcePath: string,
   options: { fileAlreadyDeleted?: boolean; logReason?: string } = {},
 ): Promise<DeleteSourceResult> {
-  const pp = normalizePath(projectPath)
-  const normalizedSource = normalizePath(sourcePath)
-  const fileName = normalizedSource.split("/").pop() ?? ""
-  if (!fileName) return { deletedWikiPaths: [], rewrittenSourcePages: 0 }
-
-  const relatedPages = await findRelatedWikiPages(pp, fileName)
-  const candidatePages = new Set(relatedPages)
-
-  try {
-    const wikiTree = await listDirectory(`${pp}/wiki`)
-    for (const file of flattenMd(wikiTree)) {
-      try {
-        const content = await readFile(file.path)
-        if (parseSources(content).some((source) => sourceMatchesDeletedFile(source, fileName))) {
-          candidatePages.add(file.path)
-        }
-      } catch {
-        // Ignore unreadable pages; related-pages matching may still cover them.
-      }
-    }
-  } catch (err) {
-    console.warn("[source-lifecycle] failed to scan wiki sources during delete:", err)
+  const result = await deleteSourceFiles(projectPath, [sourcePath], options)
+  return {
+    deletedWikiPaths: result.deletedWikiPaths,
+    rewrittenSourcePages: result.rewrittenSourcePages,
   }
+}
+
+export async function deleteSourceFiles(
+  projectPath: string,
+  sourcePaths: string[],
+  options: { fileAlreadyDeleted?: boolean; logReason?: string } = {},
+): Promise<DeleteSourcesResult> {
+  const pp = normalizePath(projectPath)
+  const normalizedSources = sourcePaths.map(normalizePath)
+  const fileNames = normalizedSources
+    .map((source) => source.split("/").pop() ?? "")
+    .filter(Boolean)
+
+  if (fileNames.length === 0) {
+    return { deletedWikiPaths: [], rewrittenSourcePages: 0, skippedPages: 0 }
+  }
+
+  const deletingNames = new Set(fileNames.map((name) => name.toLowerCase()))
 
   if (!options.fileAlreadyDeleted) {
-    await deleteFile(normalizedSource)
+    for (const source of normalizedSources) {
+      await deleteFile(source)
+    }
   }
 
-  try {
-    await deleteFile(`${pp}/raw/sources/.cache/${fileName}.txt`)
-  } catch {
-    // cache file may not exist
+  for (const fileName of fileNames) {
+    try {
+      await deleteFile(`${pp}/raw/sources/.cache/${fileName}.txt`)
+    } catch {
+      // cache file may not exist
+    }
+    try {
+      await removeFromIngestCache(pp, fileName)
+    } catch {
+      // non-critical
+    }
   }
 
   const pagesToDelete: string[] = []
   let rewrittenSourcePages = 0
+  let skippedPages = 0
 
-  for (const pagePath of candidatePages) {
+  let allMd: FileNode[] = []
+  try {
+    allMd = flattenMd(await listDirectory(`${pp}/wiki`))
+  } catch (err) {
+    console.warn("[source-lifecycle] failed to scan wiki sources during delete:", err)
+  }
+
+  for (const file of allMd) {
+    let content: string
     try {
-      const content = await readFile(pagePath)
-      const decision = decidePageFate(parseSources(content), fileName)
-      if (decision.action === "keep") {
-        await writeFile(pagePath, writeSources(content, decision.updatedSources))
-        rewrittenSourcePages++
-      } else if (decision.action === "delete") {
-        pagesToDelete.push(pagePath)
-      }
+      content = await readFile(file.path)
     } catch (err) {
-      console.error(`Failed to process wiki page ${pagePath}:`, err)
+      console.warn(`[source-lifecycle] failed to read ${file.path}:`, err)
+      continue
+    }
+
+    const sources = parseSources(content)
+    if (sources.length === 0) {
+      skippedPages++
+      continue
+    }
+
+    const survivors = sources.filter((source) => !sourceNameMatchesAny(source, deletingNames))
+    if (survivors.length === sources.length) {
+      continue
+    }
+
+    if (survivors.length === 0) {
+      pagesToDelete.push(file.path)
+    } else {
+      try {
+        await writeFile(file.path, writeSources(content, survivors))
+        rewrittenSourcePages++
+      } catch (err) {
+        console.warn(`[source-lifecycle] failed to rewrite sources for ${file.path}:`, err)
+      }
     }
   }
 
@@ -215,19 +253,19 @@ export async function deleteSourceFile(
     deletedWikiPaths = result.deletedPaths
   }
 
-  try {
-    await removeFromIngestCache(pp, fileName)
-  } catch {
-    // non-critical
-  }
-
-  await appendSourceDeleteLog(pp, fileName, {
+  await appendSourceDeleteLog(pp, fileNames, {
     reason: options.logReason ?? (options.fileAlreadyDeleted ? "external delete" : "delete"),
     deletedWikiCount: deletedWikiPaths.length,
     keptWikiCount: rewrittenSourcePages,
   })
 
-  return { deletedWikiPaths, rewrittenSourcePages }
+  if (skippedPages > 0) {
+    console.debug(
+      `[source-lifecycle] skipped ${skippedPages} wiki pages with no parseable sources while deleting ${fileNames.length} source(s)`,
+    )
+  }
+
+  return { deletedWikiPaths, rewrittenSourcePages, skippedPages }
 }
 
 export async function deleteSourceFolder(
@@ -236,16 +274,13 @@ export async function deleteSourceFolder(
   options: { folderAlreadyDeleted?: boolean } = {},
 ): Promise<DeleteSourceFolderResult> {
   const deletedWikiPaths: string[] = []
-  for (const file of collectAllFilesIncludingDot(folder)) {
-    try {
-      const result = await deleteSourceFile(projectPath, file.path, {
-        fileAlreadyDeleted: options.folderAlreadyDeleted,
-        logReason: options.folderAlreadyDeleted ? "external folder delete" : "folder delete",
-      })
-      deletedWikiPaths.push(...result.deletedWikiPaths)
-    } catch (err) {
-      console.warn(`Failed to delete ${file.path} during source folder delete:`, err)
-    }
+  const files = collectAllFilesIncludingDot(folder).map((file) => file.path)
+  if (files.length > 0) {
+    const result = await deleteSourceFiles(projectPath, files, {
+      fileAlreadyDeleted: options.folderAlreadyDeleted,
+      logReason: options.folderAlreadyDeleted ? "external folder delete" : "folder delete",
+    })
+    deletedWikiPaths.push(...result.deletedWikiPaths)
   }
 
   if (!options.folderAlreadyDeleted) {
@@ -280,7 +315,6 @@ export async function cleanupDeletedWikiPages(
   }
 
   const deletedKeys = buildDeletedKeys(deletedInfos)
-  const deletedSlugSet = new Set(deletedInfos.map((info) => normalizeCleanupKey(info.slug)))
   const wikiTree = await listDirectory(`${pp}/wiki`)
   const allMd = flattenMd(wikiTree)
 
@@ -300,7 +334,7 @@ export async function cleanupDeletedWikiPages(
 
     const related = parseFrontmatterArray(updated, "related")
     if (related.length > 0) {
-      const filtered = related.filter((s) => !deletedSlugSet.has(normalizeCleanupKey(s)))
+      const filtered = related.filter((s) => !deletedKeys.has(normalizeWikiRefKey(s)))
       if (filtered.length !== related.length) {
         updated = writeFrontmatterArray(updated, "related", filtered)
       }
@@ -319,9 +353,7 @@ export async function cleanupDeletedWikiPages(
 async function getUniqueDestPath(dir: string, fileName: string): Promise<string> {
   const basePath = `${dir}/${fileName}`
 
-  try {
-    await readFile(basePath)
-  } catch {
+  if (!(await fileExists(basePath))) {
     return basePath
   }
 
@@ -330,17 +362,13 @@ async function getUniqueDestPath(dir: string, fileName: string): Promise<string>
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
 
   const withDate = `${dir}/${nameWithoutExt}-${date}${ext}`
-  try {
-    await readFile(withDate)
-  } catch {
+  if (!(await fileExists(withDate))) {
     return withDate
   }
 
   for (let i = 2; i <= 99; i++) {
     const withCounter = `${dir}/${nameWithoutExt}-${date}-${i}${ext}`
-    try {
-      await readFile(withCounter)
-    } catch {
+    if (!(await fileExists(withCounter))) {
       return withCounter
     }
   }
@@ -350,17 +378,20 @@ async function getUniqueDestPath(dir: string, fileName: string): Promise<string>
 
 async function appendSourceDeleteLog(
   projectPath: string,
-  fileName: string,
+  fileNames: string | string[],
   detail: { reason: string; deletedWikiCount: number; keptWikiCount: number },
 ): Promise<void> {
   try {
+    const names = Array.isArray(fileNames) ? fileNames : [fileNames]
     const logPath = `${projectPath}/wiki/log.md`
     const logContent = await readFile(logPath).catch(() => "# Wiki Log\n")
     const date = new Date().toISOString().slice(0, 10)
-    const logEntry = `\n## [${date}] ${detail.reason} | ${fileName}\n\nDeleted source file and ${detail.deletedWikiCount} wiki pages.${detail.keptWikiCount > 0 ? ` ${detail.keptWikiCount} shared pages kept (have other sources).` : ""}\n`
+    const subject = names.length === 1 ? names[0] : `${names.length} source files`
+    const listed = names.length === 1 ? "" : `\n\nSources:\n${names.map((name) => `- ${name}`).join("\n")}`
+    const logEntry = `\n## [${date}] ${detail.reason} | ${subject}\n\nDeleted ${names.length} source file${names.length === 1 ? "" : "s"} and ${detail.deletedWikiCount} wiki pages.${detail.keptWikiCount > 0 ? ` ${detail.keptWikiCount} shared pages kept (have other sources).` : ""}${listed}\n`
     await writeFile(logPath, logContent.trimEnd() + logEntry)
-  } catch {
-    // non-critical
+  } catch (err) {
+    console.warn("[source-lifecycle] failed to append delete log:", err)
   }
 }
 
@@ -379,13 +410,9 @@ function flattenMd(nodes: readonly FileNode[]): FileNode[] {
   return out
 }
 
-function sourceMatchesDeletedFile(source: string, fileName: string): boolean {
+function sourceNameMatchesAny(source: string, deletingNames: Set<string>): boolean {
   const normalizedSource = normalizePath(source).split("/").pop()?.toLowerCase() ?? ""
-  return normalizedSource === fileName.toLowerCase()
-}
-
-function normalizeCleanupKey(value: string): string {
-  return value.toLowerCase().replace(/[\s\-_]+/g, "")
+  return deletingNames.has(normalizedSource)
 }
 
 function withRootContext(context: string, rootContext?: string): string {

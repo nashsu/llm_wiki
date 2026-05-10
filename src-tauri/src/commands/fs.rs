@@ -134,6 +134,7 @@ fn write_cache(original: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent).ok();
     }
+    crate::commands::file_sync::mark_app_write_path(&cache_path);
     fs::write(&cache_path, text)
         .map_err(|e| format!("Failed to write cache: {}", e))
 }

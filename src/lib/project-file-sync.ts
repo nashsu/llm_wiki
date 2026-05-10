@@ -7,12 +7,12 @@ import {
 } from "@/commands/file-sync"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { normalizePath } from "@/lib/path-utils"
+import { getFileStem, normalizePath } from "@/lib/path-utils"
 import type { WikiProject } from "@/types/wiki"
 import type { FileChangeTask } from "@/commands/file-sync"
 import {
   cleanupDeletedWikiPages,
-  deleteSourceFile,
+  deleteSourceFiles,
   enqueueSourceIngest,
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
@@ -98,10 +98,18 @@ function scheduleRefreshAfterFileChanges(tasks: FileChangeTask[]): void {
     const tasks = [...pendingChangeTasks.values()]
     pendingRefreshPaths.clear()
     pendingChangeTasks.clear()
-    void refreshAfterFileChanges(project, paths)
-    void enqueueRawSourceChanges(project, tasks)
-    void cleanupDeletedFiles(project, tasks)
+    void processFileChangeBatch(project, paths, tasks)
   }, 250)
+}
+
+async function processFileChangeBatch(
+  project: WikiProject,
+  paths: string[],
+  tasks: FileChangeTask[],
+): Promise<void> {
+  await cleanupDeletedFiles(project, tasks)
+  await enqueueRawSourceChanges(project, tasks)
+  await refreshAfterFileChanges(project, paths)
 }
 
 async function refreshAfterFileChanges(project: WikiProject, relativePaths: string[]): Promise<void> {
@@ -163,20 +171,23 @@ async function cleanupDeletedFiles(project: WikiProject, tasks: FileChangeTask[]
   const rawSources = deleted.filter(isRawSourcePathForCascade)
   const wikiPages = deleted.filter(isWikiPageForCascade)
 
-  for (const rel of rawSources) {
+  let deletedWikiSlugs = new Set<string>()
+  if (rawSources.length > 0) {
     try {
-      await deleteSourceFile(project.path, rel, {
+      const result = await deleteSourceFiles(project.path, rawSources, {
         fileAlreadyDeleted: true,
-        logReason: "external delete",
+        logReason: rawSources.length === 1 ? "external delete" : "external batch delete",
       })
+      deletedWikiSlugs = new Set(result.deletedWikiPaths.map((path) => getFileStem(path)))
     } catch (err) {
-      console.error(`[file-sync] failed to clean deleted raw source ${rel}:`, err)
+      console.error("[file-sync] failed to clean deleted raw sources:", err)
     }
   }
 
-  if (wikiPages.length > 0) {
+  const wikiPagesToClean = wikiPages.filter((path) => !deletedWikiSlugs.has(getFileStem(path)))
+  if (wikiPagesToClean.length > 0) {
     try {
-      await cleanupDeletedWikiPages(project.path, wikiPages)
+      await cleanupDeletedWikiPages(project.path, wikiPagesToClean)
     } catch (err) {
       console.error("[file-sync] failed to clean deleted wiki pages:", err)
     }
@@ -193,9 +204,11 @@ function isRawSourcePathForCascade(relativePath: string): boolean {
 
 function isWikiPageForCascade(relativePath: string): boolean {
   const path = normalizePath(relativePath)
-  if (!path.startsWith("wiki/") || !path.endsWith(".md")) return false
-  if (path === "wiki/index.md" || path === "wiki/log.md" || path === "wiki/overview.md") {
+  const lower = path.toLowerCase()
+  if (!lower.startsWith("wiki/") || !lower.endsWith(".md")) return false
+  const name = lower.split("/").pop()
+  if (name === "index.md" || name === "log.md" || name === "overview.md") {
     return false
   }
-  return !path.startsWith("wiki/media/")
+  return !lower.startsWith("wiki/media/")
 }

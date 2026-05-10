@@ -30,7 +30,6 @@ export function SearchView() {
   const project = useWikiStore((s) => s.project)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
-  const setActiveView = useWikiStore((s) => s.setActiveView)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
 
   const [query, setQuery] = useState("")
@@ -120,7 +119,6 @@ export function SearchView() {
       const content = await readFile(path)
       setSelectedFile(path)
       setFileContent(content)
-      setActiveView("wiki")
     } catch (err) {
       console.error("Failed to open search result:", err)
     }
@@ -178,7 +176,6 @@ export function SearchView() {
       setPendingScrollImageSrc(scrollTarget)
       setSelectedFile(openPath)
       setFileContent(content)
-      setActiveView("wiki")
       setLightbox(null)
     } catch (err) {
       console.error("Failed to jump to source:", err)

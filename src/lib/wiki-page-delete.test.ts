@@ -357,7 +357,7 @@ describe("cascadeDeleteWikiPagesWithRefs", () => {
           "---",
           "type: project",
           "title: Migration",
-          "related: [alice-chen, bob, carol]",
+          "related: [alice-chen.md, wiki/entities/bob.md, carol]",
           "---",
           "",
           "Project body.",
@@ -378,9 +378,44 @@ describe("cascadeDeleteWikiPagesWithRefs", () => {
       (c) => c[0] === `${PROJECT}/wiki/projects/migration.md`,
     )!
     const written = projWrite[1]
-    // alice-chen filtered out; bob & carol kept.
+    // alice-chen filtered out even when stored with a .md suffix; bob & carol kept.
     expect(written).not.toMatch(/\balice-chen\b/)
-    expect(written).toContain("bob")
+    expect(written).toContain("wiki/entities/bob.md")
+    expect(written).toContain("carol")
+  })
+
+  it("drops path-style `related:` entries that point at deleted pages", async () => {
+    const target = `${PROJECT}/wiki/entities/bob.md`
+    mockReadFile.mockImplementation(async (p: string) => {
+      if (p === target) return `---\ntitle: "Bob"\n---\nbody`
+      if (p === `${PROJECT}/wiki/projects/migration.md`) {
+        return [
+          "---",
+          "type: project",
+          "title: Migration",
+          "related: [alice-chen, wiki/entities/bob.md, carol]",
+          "---",
+          "",
+          "Project body.",
+        ].join("\n")
+      }
+      throw new Error(`unexpected read ${p}`)
+    })
+    mockListDirectory.mockResolvedValueOnce([
+      dirNode("wiki", [
+        dirNode("wiki/entities", [fileNode("wiki/entities/bob.md")]),
+        dirNode("wiki/projects", [fileNode("wiki/projects/migration.md")]),
+      ]),
+    ])
+
+    await cascadeDeleteWikiPagesWithRefs(PROJECT, [target])
+
+    const projWrite = mockWriteFile.mock.calls.find(
+      (c) => c[0] === `${PROJECT}/wiki/projects/migration.md`,
+    )!
+    const written = projWrite[1]
+    expect(written).toContain("alice-chen")
+    expect(written).not.toContain("wiki/entities/bob.md")
     expect(written).toContain("carol")
   })
 

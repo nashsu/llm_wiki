@@ -27,6 +27,13 @@ export async function copyFile(
   return invoke("copy_file", { source, destination })
 }
 
+export async function copyDirectory(
+  source: string,
+  destination: string
+): Promise<string[]> {
+  return invoke<string[]>("copy_directory", { source, destination })
+}
+
 export async function preprocessFile(path: string): Promise<string> {
   return invoke<string>("preprocess_file", { path })
 }
