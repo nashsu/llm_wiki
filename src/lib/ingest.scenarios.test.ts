@@ -603,6 +603,143 @@ describe("Obsidian graph link sync", () => {
 })
 
 describe("ingest write scope guard", () => {
+  it("normalizes overclaimed source metadata and strips links to held pages", async () => {
+    ctx = { tmp: await createTempProject("ingest-quality-held-link-prune") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(ctx.tmp.path, "raw", "sources", "dify.md")
+    await writeFileRaw(sourceFullPath, "# Dify\n\nDify platform source.\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Entities\n- Dify\n\n## Verification & Freshness Plan\n- 최신 공식 문서 확인 필요.",
+      [
+        "---FILE: wiki/sources/dify-source.md---",
+        "---",
+        "type: source",
+        "title: dify",
+        "created: 2024-05-10",
+        "updated: 2024-05-10",
+        "tags: [ai-agent]",
+        "related: [dify, ghost-tool]",
+        'sources: ["dify.md"]',
+        "confidence: high",
+        "last_reviewed: 2024-05-10",
+        "quality: gold",
+        "coverage: high",
+        "needs_upgrade: false",
+        "source_count: 1",
+        "---",
+        "",
+        "# dify",
+        "",
+        "## 요약",
+        "Dify는 LLM 애플리케이션 운영을 돕는 플랫폼입니다.",
+        "",
+        "## Source Coverage Matrix",
+        "- 기능, 배포, 운영 항목을 검토해야 합니다.",
+        "",
+        "## Atomic Claims",
+        "- Dify는 workflow와 RAG 기능을 제공합니다.",
+        "",
+        "## Evidence Map",
+        "- Primary source: dify.md",
+        "",
+        "## Kevin 운영체계 적용",
+        "- AI Agent Engineering과 Infra 계층 후보입니다.",
+        "",
+        "## 운영 노트",
+        "- 최신 공식 문서 확인 전에는 운영 기준으로 확정하지 않습니다.",
+        "",
+        "## 열린 질문",
+        "- Dify의 최신 기능과 MCP 호환성을 확인해야 합니다.",
+        "",
+        "본문에서 [[dify]] 후보와 [[ghost-tool]] 미생성 후보를 언급합니다.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/entities/dify.md---",
+        "---",
+        "type: entity",
+        "title: Dify",
+        "created: 2024-05-10",
+        "updated: 2024-05-10",
+        "tags: []",
+        "related: []",
+        'sources: ["dify.md"]',
+        "confidence: medium",
+        "last_reviewed: 2024-05-10",
+        "quality: reviewed",
+        "coverage: high",
+        "needs_upgrade: false",
+        "source_count: 1",
+        "---",
+        "",
+        "# Dify",
+        "",
+        "짧은 entity stub.",
+        "---END FILE---",
+        "",
+        "---FILE: wiki/index.md---",
+        "---",
+        "type: index",
+        "title: Index",
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Index",
+        "- [[dify]] — 보류 후보",
+        "- [[ghost-tool]] — 미생성 후보",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-4",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    const today = new Date().toISOString().slice(0, 10)
+    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, "wiki", "sources", "dify-source.md"))
+    expect(sourceSummary).toContain(`created: ${today}`)
+    expect(sourceSummary).toContain(`updated: ${today}`)
+    expect(sourceSummary).toContain(`last_reviewed: ${today}`)
+    expect(sourceSummary).not.toContain("quality: gold")
+    expect(sourceSummary).toContain("quality: draft")
+    expect(sourceSummary).toContain("needs_upgrade: true")
+    expect(sourceSummary).not.toContain("[[dify]]")
+    expect(sourceSummary).not.toContain("[[ghost-tool]]")
+    expect(sourceSummary).toContain("ghost-tool")
+    expect(sourceSummary).not.toContain("related: [dify")
+    expect(sourceSummary).not.toContain("ghost-tool]")
+
+    const indexContent = await readFileRaw(path.join(ctx.tmp.path, "wiki", "index.md"))
+    expect(indexContent).not.toContain("[[dify]]")
+    expect(indexContent).not.toContain("[[ghost-tool]]")
+    expect(indexContent).toContain("dify")
+    expect(indexContent).toContain("ghost-tool")
+    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "entities", "dify.md"))).toBe(false)
+    expect(useReviewStore.getState().items.some((item) => item.title === "Quality hold: wiki/entities/dify.md")).toBe(true)
+  })
+
   it("reuses an existing legacy source page and drops over-generated or noncanonical paths", async () => {
     ctx = { tmp: await createTempProject("ingest-write-scope-guard") }
     await minimalProject(ctx.tmp.path)

@@ -169,13 +169,19 @@ function hasGraphLinks(content: string): boolean {
 export function buildObsidianGraphLinkUpdates(
   pages: readonly ObsidianGraphLinkPage[],
   wikiRoot: string,
+  pathsToUpdate?: readonly string[],
 ): ObsidianGraphLinkUpdate[] {
   const resolvablePages = buildResolvablePages(pages, wikiRoot)
   const resolver = buildGraphReferenceResolver(resolvablePages, wikiRoot)
   const byId = new Map(resolvablePages.map((page) => [page.id, page]))
+  const scopedPaths = pathsToUpdate
+    ? new Set(pathsToUpdate.map((path) => normalizeRelativePath(path)))
+    : null
   const updates: ObsidianGraphLinkUpdate[] = []
 
   for (const page of resolvablePages) {
+    if (scopedPaths && !scopedPaths.has(page.relativePath)) continue
+
     if (isStructuralPage(page)) {
       if (hasGraphLinks(page.content)) {
         updates.push({
@@ -213,7 +219,10 @@ export function buildObsidianGraphLinkUpdates(
   return updates
 }
 
-export async function syncObsidianGraphLinks(projectPath: string): Promise<string[]> {
+export async function syncObsidianGraphLinks(
+  projectPath: string,
+  pathsToUpdate?: readonly string[],
+): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const wikiRoot = `${pp}/wiki`
   let tree: FileNode[]
@@ -236,7 +245,11 @@ export async function syncObsidianGraphLinks(projectPath: string): Promise<strin
     }
   }
 
-  const updates = buildObsidianGraphLinkUpdates(pages, wikiRoot)
+  const updates = buildObsidianGraphLinkUpdates(
+    pages,
+    wikiRoot,
+    pathsToUpdate?.map((path) => normalizeRelativePath(path)),
+  )
   const written: string[] = []
   for (const update of updates) {
     const relativePath = normalizeRelativePath(update.relativePath)

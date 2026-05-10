@@ -10,6 +10,10 @@ describe("normalizeReviewTitle", () => {
     expect(normalizeReviewTitle("Missing page: Attention")).toBe("attention")
   })
 
+  it("strips English 'Missing wiki page:' prefix", () => {
+    expect(normalizeReviewTitle("Missing wiki page: dify")).toBe("dify")
+  })
+
   it("strips hyphenated 'Missing-Page:' prefix", () => {
     expect(normalizeReviewTitle("Missing-Page: Attention")).toBe("attention")
   })

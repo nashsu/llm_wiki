@@ -5,6 +5,8 @@ import {
 } from "./wiki-quality-gate"
 
 describe("wiki quality gate", () => {
+  const today = new Date().toISOString().slice(0, 10)
+
   it("flags thin source summaries that miss evidence and quality metadata", () => {
     const assessment = assessWikiPageQuality(
       "wiki/sources/codexian.md",
@@ -58,6 +60,8 @@ describe("wiki quality gate", () => {
         "| claim | source |",
         "| --- | --- |",
         "| CLI wrapper | codexian.md |",
+        "## 검증 및 최신성",
+        "원본 source 기준 claim과 외부 최신성 확인이 필요한 claim을 분리하고, 공식 release 확인 전에는 최신 상태를 확정하지 않는다.",
         "## 오래 유지할 개념",
         "- [[memory-map]]",
         "## 관련 엔티티",
@@ -75,6 +79,49 @@ describe("wiki quality gate", () => {
     expect(assessment.shouldRepair).toBe(false)
   })
 
+  it("flags invalid quality labels and stale ingest dates", () => {
+    const assessment = assessWikiPageQuality(
+      "wiki/sources/dify-source.md",
+      [
+        "---",
+        "type: source",
+        "title: Dify",
+        'sources: ["dify.md"]',
+        "confidence: high",
+        "created: 2024-05-10",
+        "updated: 2024-05-10",
+        "last_reviewed: 2024-05-10",
+        "quality: gold",
+        "coverage: high",
+        "needs_upgrade: false",
+        "source_count: 1",
+        "---",
+        "",
+        "# Dify",
+        "",
+        "## 요약",
+        "충분한 요약입니다. ".repeat(90),
+        "## Source Coverage Matrix",
+        "- 반영.",
+        "## Atomic Claims",
+        "- claim.",
+        "## Evidence Map",
+        "- raw evidence.",
+        "## 운영 노트",
+        "- 운영 노트.",
+        "## 열린 질문",
+        "- 최신 공식 문서 확인 필요.",
+        "## Kevin 운영체계 적용",
+        "운영 적용.",
+      ].join("\n"),
+      { expectedDate: today, enforceIngestDates: true },
+    )
+
+    expect(assessment.issues.map((i) => i.type)).toContain("invalid-quality-metadata")
+    expect(assessment.issues.map((i) => i.type)).toContain("stale-or-invalid-metadata-date")
+    expect(assessment.issues.map((i) => i.type)).toContain("missing-verification")
+  })
+
   it("builds a repair prompt that keeps verification inside ingest", () => {
     const prompt = buildQualityRepairPrompt({
       relativePath: "wiki/sources/codexian.md",
@@ -84,12 +131,15 @@ describe("wiki quality gate", () => {
       analysis: "analysis",
       verificationContext: "## Ingest Verification Search Results\n[1] official result",
       issues: [{ type: "missing-verification", message: "needs freshness check" }],
+      expectedDate: today,
     })
 
     expect(prompt.system).toContain("---FILE: wiki/sources/codexian.md---")
     expect(prompt.system).toContain("latest data or truth verification")
     expect(prompt.system).toContain("follow-up search questions")
     expect(prompt.system).toContain("Use supplied ingest verification search results")
+    expect(prompt.system).toContain(`Use created/updated/last_reviewed date exactly ${today}`)
+    expect(prompt.system).toContain("Never use gold")
     expect(prompt.user).toContain("## Original raw source")
     expect(prompt.user).toContain("## Ingest verification / currentness context")
     expect(prompt.user).toContain("official result")

@@ -97,10 +97,14 @@ function extractCandidateNames(item: ReviewItem): string[] {
     names.add(cleaned)
   }
 
-  // Also check affectedPages — these reference files directly
-  for (const page of item.affectedPages ?? []) {
-    const base = page.split("/").pop()?.replace(/\.md$/, "")
-    if (base) names.add(base.toLowerCase())
+  // For missing-page reviews, affectedPages are the pages that contain
+  // the broken reference, not the missing target itself. Including them
+  // made "Missing wiki page: dify" resolve just because index.md existed.
+  if (item.type !== "missing-page") {
+    for (const page of item.affectedPages ?? []) {
+      const base = page.split("/").pop()?.replace(/\.md$/, "")
+      if (base) names.add(base.toLowerCase())
+    }
   }
 
   return Array.from(names)
@@ -121,16 +125,73 @@ function pageExists(name: string, index: WikiIndex): boolean {
   return false
 }
 
+function strictMissingWikiPageTargetExists(item: ReviewItem, index: Pick<WikiIndex, "byId">): boolean {
+  const titleName = normalizeReviewTitle(item.title)
+  if (!titleName || titleName.length > 100) return false
+  const normalized = titleName.trim().toLowerCase()
+  return index.byId.has(normalized) || index.byId.has(normalized.replace(/\s+/g, "-"))
+}
+
 function affectedPageExists(path: string, index: Pick<WikiIndex, "byId">): boolean {
   const base = path.split("/").pop()?.replace(/\.md$/, "").toLowerCase()
   return Boolean(base && index.byId.has(base))
 }
 
-export function canApplyLlmReviewResolution(
+function normalizeWikiTargetName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "-")
+}
+
+function contentReferencesWikiTarget(content: string, target: string): boolean {
+  const normalizedTarget = normalizeWikiTargetName(target)
+  for (const match of content.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)) {
+    if (normalizeWikiTargetName(match[1]) === normalizedTarget) return true
+  }
+  return false
+}
+
+async function missingPageReferenceStillPresent(
+  projectPath: string,
   item: ReviewItem,
   index: Pick<WikiIndex, "byId">,
+): Promise<boolean> {
+  const target = normalizeReviewTitle(item.title)
+  if (!target) return true
+
+  const affected = item.affectedPages ?? []
+  if (affected.length === 0) return true
+
+  const pp = normalizePath(projectPath)
+  for (const affectedPath of affected) {
+    if (!affectedPageExists(affectedPath, index)) continue
+
+    const fullPath = affectedPath.startsWith("/")
+      ? normalizePath(affectedPath)
+      : `${pp}/${affectedPath}`
+    try {
+      const content = await readFile(fullPath)
+      if (contentReferencesWikiTarget(content, target)) return true
+    } catch {
+      // Keep pending when the affected page exists but cannot be inspected.
+      return true
+    }
+  }
+
+  return false
+}
+
+export function canApplyLlmReviewResolution(
+  item: ReviewItem,
+  index: Pick<WikiIndex, "byId" | "byTitle">,
 ): boolean {
   if (item.type === "contradiction" || item.type === "confirm") return false
+
+  if (
+    item.type === "missing-page" &&
+    /^missing\s+wiki\s+page[:：]/i.test(item.title) &&
+    !strictMissingWikiPageTargetExists(item, index)
+  ) {
+    return false
+  }
 
   const affected = item.affectedPages ?? []
   if (affected.length === 0) return true
@@ -385,8 +446,14 @@ export async function sweepResolvedReviews(
     let resolvedByRule = false
 
     if (item.type === "missing-page") {
-      const names = extractCandidateNames(item)
-      if (names.length > 0 && names.some((n) => pageExists(n, index))) {
+      const strictAppMissingPage = /^missing\s+wiki\s+page[:：]/i.test(item.title)
+      let resolvedMissingPage = strictAppMissingPage
+        ? strictMissingWikiPageTargetExists(item, index)
+        : extractCandidateNames(item).some((n) => pageExists(n, index))
+      if (strictAppMissingPage && !resolvedMissingPage) {
+        resolvedMissingPage = !(await missingPageReferenceStillPresent(projectPath, item, index))
+      }
+      if (resolvedMissingPage) {
         store.resolveItem(item.id, "auto-resolved")
         ruleResolved++
         resolvedByRule = true

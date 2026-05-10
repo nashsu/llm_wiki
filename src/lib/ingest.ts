@@ -159,6 +159,8 @@ const QUALITY_REPAIR_MAX_ROUNDS = 2
 const INGEST_VERIFICATION_MAX_QUERIES = 2
 const INGEST_VERIFICATION_RESULTS_PER_QUERY = 3
 const INGEST_EXTRA_CONTENT_PAGE_LIMIT = 2
+const INGEST_QUALITY_VALUES = new Set(["seed", "draft", "reviewed", "canonical"])
+const INGEST_COVERAGE_VALUES = new Set(["low", "medium", "high"])
 
 /**
  * Parse an LLM stage-2 generation into FILE blocks.
@@ -404,6 +406,10 @@ export function shouldForceComparisonPage(
 
 function yamlString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+function currentIngestDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 function stripFrontmatter(markdown: string): string {
@@ -718,35 +724,181 @@ function qualityHoldReviewBlock(
   ].filter(Boolean).join("\n")
 }
 
+function normalizeWikiTarget(raw: string): string {
+  const cleaned = raw
+    .split("|")[0]
+    .split("#")[0]
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^wiki\//i, "")
+    .replace(/\.md$/i, "")
+  const base = cleaned.split("/").filter(Boolean).pop() ?? cleaned
+  return base.toLowerCase()
+}
+
+function targetFromWikiPath(relativePath: string): string {
+  return normalizeWikiTarget(relativePath)
+}
+
+function stripHeldWikilinks(content: string, heldTargets: Set<string>): string {
+  if (heldTargets.size === 0) return content
+  return content.replace(/\[\[([^\]]+?)\]\]/g, (full, raw: string) => {
+    const target = normalizeWikiTarget(raw)
+    if (!heldTargets.has(target)) return full
+    const alias = raw.includes("|") ? raw.split("|").slice(1).join("|").trim() : ""
+    const label = alias || raw.split("#")[0].split("|")[0].trim()
+    return label.replace(/^wiki\//i, "").replace(/\.md$/i, "")
+  })
+}
+
+function stripUnknownWikilinks(content: string, knownTargets: Set<string>): string {
+  return content.replace(/\[\[([^\]]+?)\]\]/g, (full, raw: string) => {
+    const target = normalizeWikiTarget(raw)
+    if (!target || knownTargets.has(target)) return full
+    const alias = raw.includes("|") ? raw.split("|").slice(1).join("|").trim() : ""
+    const label = alias || raw.split("#")[0].split("|")[0].trim()
+    return label.replace(/^wiki\//i, "").replace(/\.md$/i, "")
+  })
+}
+
+function pruneHeldRelatedFrontmatter(content: string, heldTargets: Set<string>): string {
+  if (heldTargets.size === 0) return content
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  const lines = parsed.payload.split("\n")
+  const next = lines.map((line) => {
+    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
+    if (!match) return line
+    const kept = match[2]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => !heldTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
+    return `${match[1]}[${kept.join(", ")}]`
+  })
+
+  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+}
+
+function pruneUnknownRelatedFrontmatter(content: string, knownTargets: Set<string>): string {
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  const lines = parsed.payload.split("\n")
+  const next = lines.map((line) => {
+    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
+    if (!match) return line
+    const kept = match[2]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => knownTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
+    return `${match[1]}[${kept.join(", ")}]`
+  })
+
+  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+}
+
+function stripHeldTargetsFromGeneratedBlock(block: ParsedFileBlock, heldTargets: Set<string>): ParsedFileBlock {
+  if (heldTargets.size === 0) return block
+  const withoutBodyLinks = stripHeldWikilinks(block.content, heldTargets)
+  return {
+    ...block,
+    content: pruneHeldRelatedFrontmatter(withoutBodyLinks, heldTargets),
+  }
+}
+
+function stripUnknownTargetsFromGeneratedBlock(block: ParsedFileBlock, knownTargets: Set<string>): ParsedFileBlock {
+  const withoutBodyLinks = stripUnknownWikilinks(block.content, knownTargets)
+  return {
+    ...block,
+    content: pruneUnknownRelatedFrontmatter(withoutBodyLinks, knownTargets),
+  }
+}
+
 function holdLowQualityGeneratedPages(
   generation: string,
-  onWarning?: (message: string) => void,
+  options: {
+    expectedDate?: string
+    onWarning?: (message: string) => void
+  } = {},
 ): string {
   const { blocks, warnings } = parseFileBlocks(generation)
   if (blocks.length === 0) return generation
 
   const kept: ParsedFileBlock[] = []
   const heldReviews: string[] = []
+  const heldTargets = new Set<string>()
+  const expectedDate = options.expectedDate ?? currentIngestDate()
   for (const block of blocks) {
-    const assessment = assessWikiPageQuality(block.path, block.content)
+    const normalizedBlock = {
+      ...block,
+      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
+    }
+    const assessment = assessWikiPageQuality(normalizedBlock.path, normalizedBlock.content, {
+      expectedDate,
+      enforceIngestDates: true,
+    })
     if (shouldHoldGeneratedPageForQuality(assessment)) {
       const msg = `Held "${block.path}" before write — ${assessment.issues.map((i) => i.type).join(", ")}.`
       console.warn(`[ingest:quality] ${msg}`)
-      onWarning?.(msg)
+      options.onWarning?.(msg)
+      heldTargets.add(targetFromWikiPath(block.path))
       heldReviews.push(qualityHoldReviewBlock(assessment))
       continue
     }
-    kept.push(block)
+    kept.push(normalizedBlock)
   }
 
   if (warnings.length > 0) {
-    onWarning?.(`Generation parse warnings before quality hold: ${warnings.join(" · ")}`)
+    options.onWarning?.(`Generation parse warnings before quality hold: ${warnings.join(" · ")}`)
   }
 
   return [
-    ...kept.map(serializeFileBlock),
+    ...kept.map((block) => serializeFileBlock(stripHeldTargetsFromGeneratedBlock(block, heldTargets))),
     ...extractReviewBlocks(generation),
     ...heldReviews,
+  ].join("\n\n")
+}
+
+function collectTargetsFromTree(nodes: FileNode[], targets = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (node.is_dir && node.children) {
+      collectTargetsFromTree(node.children, targets)
+      continue
+    }
+    if (!node.is_dir && node.name.endsWith(".md")) {
+      targets.add(normalizeWikiTarget(node.name))
+    }
+  }
+  return targets
+}
+
+async function collectExistingWikiTargets(projectPath: string): Promise<Set<string>> {
+  try {
+    const tree = await listDirectory(`${normalizePath(projectPath)}/wiki`)
+    return collectTargetsFromTree(tree)
+  } catch {
+    return new Set()
+  }
+}
+
+async function stripUnresolvedGeneratedWikilinks(
+  projectPath: string,
+  generation: string,
+): Promise<string> {
+  const { blocks } = parseFileBlocks(generation)
+  if (blocks.length === 0) return generation
+
+  const knownTargets = await collectExistingWikiTargets(projectPath)
+  for (const block of blocks) {
+    knownTargets.add(targetFromWikiPath(block.path))
+  }
+
+  return [
+    ...blocks.map((block) => serializeFileBlock(stripUnknownTargetsFromGeneratedBlock(block, knownTargets))),
+    ...extractReviewBlocks(generation),
   ].join("\n\n")
 }
 
@@ -866,10 +1018,17 @@ async function repairGeneratedQualityIssues(params: {
 
   const out: ParsedFileBlock[] = []
   let repairsAttempted = 0
+  const expectedDate = currentIngestDate()
 
   for (const block of blocks) {
-    let current = block
-    let assessment = assessWikiPageQuality(current.path, current.content)
+    let current = {
+      ...block,
+      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
+    }
+    let assessment = assessWikiPageQuality(current.path, current.content, {
+      expectedDate,
+      enforceIngestDates: true,
+    })
 
     for (
       let round = 0;
@@ -887,6 +1046,7 @@ async function repairGeneratedQualityIssues(params: {
         analysis: params.analysis,
         verificationContext: params.verificationContext,
         issues: assessment.issues,
+        expectedDate,
       })
 
       try {
@@ -899,8 +1059,14 @@ async function repairGeneratedQualityIssues(params: {
         )
         const parsed = parseFileBlocks(repaired).blocks.find((b) => b.path === current.path)
         if (parsed) {
-          current = parsed
-          assessment = assessWikiPageQuality(current.path, current.content)
+          current = {
+            ...parsed,
+            content: normalizeIngestFrontmatter(parsed.path, parsed.content, expectedDate),
+          }
+          assessment = assessWikiPageQuality(current.path, current.content, {
+            expectedDate,
+            enforceIngestDates: true,
+          })
           continue
         }
         params.onWarning?.(`Quality repair for "${current.path}" did not return the expected FILE block; keeping current version.`)
@@ -977,11 +1143,14 @@ async function generateOllamaSplitFileBlocks(params: {
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
     "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
     `Use created/updated/last_reviewed date ${date}.`,
+    "Allowed quality values are only seed, draft, reviewed, canonical. Never use gold.",
     `The sources array MUST include "${fileName}" for source-derived content.`,
     "Use compact Korean prose. Prefer fewer, stronger sections over many thin pages.",
     "Treat raw source content as evidence, not guaranteed truth. Mark outdated, disputed, or insufficiently verified claims as verification needs.",
     "If Ingest Verification Search Results are supplied, use them in this ingest pass and keep them separate from raw-source evidence.",
     "If latest/current data is needed but not supplied, add explicit follow-up search questions instead of pretending certainty.",
+    "Do not set coverage: high with needs_upgrade: false unless a substantial verification/currentness section explains what was checked.",
+    "Do not add wikilinks to pages that do not already exist or are not emitted in this response; use plain text or review items for candidates.",
     "",
     language,
     "",
@@ -1016,7 +1185,7 @@ async function generateOllamaSplitFileBlocks(params: {
         `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`,
         "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
-        "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
+        "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
     }] : []),
@@ -1144,7 +1313,7 @@ async function syncObsidianGraphLinksAfterWrites(
   warnings?: string[],
 ): Promise<void> {
   try {
-    const graphLinkPaths = await syncObsidianGraphLinks(projectPath)
+    const graphLinkPaths = await syncObsidianGraphLinks(projectPath, writtenPaths)
     for (const p of graphLinkPaths) {
       if (!writtenPaths.includes(p)) writtenPaths.push(p)
     }
@@ -1630,9 +1799,13 @@ async function autoIngestImpl(
       activity.updateItem(activityId, { detail: msg })
     },
   })
-  generation = holdLowQualityGeneratedPages(generation, (msg) => {
-    activity.updateItem(activityId, { detail: msg })
+  generation = holdLowQualityGeneratedPages(generation, {
+    expectedDate: currentIngestDate(),
+    onWarning: (msg) => {
+      activity.updateItem(activityId, { detail: msg })
+    },
   })
+  generation = await stripUnresolvedGeneratedWikilinks(pp, generation)
 
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
@@ -1700,6 +1873,9 @@ async function autoIngestImpl(
       "",
       "## Evidence Map",
       "- Primary evidence: original raw source file.",
+      "",
+      "## 검증 및 최신성",
+      "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
       "",
       "## Kevin 운영체계 적용",
       "- 적용 판단은 원본 source 재검토 후 확정합니다.",
@@ -2005,6 +2181,91 @@ function applyCanonicalPageTitle(content: string, title: string): string {
   return `# ${canonicalTitle}\n\n${out}`
 }
 
+function isIngestContentPage(relativePath: string): boolean {
+  return /^wiki\/(?:sources|entities|concepts|comparisons|queries|synthesis)\/[^/]+\.md$/u.test(
+    relativePath.replace(/\\/g, "/"),
+  )
+}
+
+function extractFrontmatterPayload(content: string): { payload: string; body: string } | null {
+  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  if (!match) return null
+  return {
+    payload: match[1],
+    body: content.slice(match[0].length).trimStart(),
+  }
+}
+
+function readYamlScalar(payload: string, field: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = new RegExp(`^${escaped}\\s*:\\s*(.*?)\\s*$`, "mi").exec(payload)
+  return match?.[1]?.replace(/^["']|["']$/g, "").trim() ?? ""
+}
+
+function upsertYamlScalar(payload: string, field: string, value: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const line = `${field}: ${value}`
+  const re = new RegExp(`^${escaped}\\s*:.*$`, "mi")
+  if (re.test(payload)) return payload.replace(re, line)
+  return `${payload.trimEnd()}\n${line}`
+}
+
+function replaceFrontmatterPayload(payload: string, body: string): string {
+  return ["---", payload.trimEnd(), "---", "", body].join("\n").trimEnd() + "\n"
+}
+
+function hasGeneratedFreshnessSection(content: string): boolean {
+  return /^#{2,3}\s+(검증 및 최신성|검증|최신성|Verification & Freshness|Freshness & Verification|Source Cross-Check|Currentness)\b/im.test(
+    content,
+  )
+}
+
+function normalizeIngestFrontmatter(relativePath: string, content: string, date: string): string {
+  if (!isIngestContentPage(relativePath)) return content
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return content
+
+  let payload = parsed.payload
+  payload = upsertYamlScalar(payload, "created", date)
+  payload = upsertYamlScalar(payload, "updated", date)
+  payload = upsertYamlScalar(payload, "last_reviewed", date)
+
+  const quality = readYamlScalar(payload, "quality").toLowerCase()
+  const coverage = readYamlScalar(payload, "coverage").toLowerCase()
+  const needsUpgrade = readYamlScalar(payload, "needs_upgrade").toLowerCase()
+  const sourceCount = readYamlScalar(payload, "source_count")
+
+  let forceNeedsUpgrade = false
+  if (quality && !INGEST_QUALITY_VALUES.has(quality)) {
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    forceNeedsUpgrade = true
+  }
+  if (coverage && !INGEST_COVERAGE_VALUES.has(coverage)) {
+    payload = upsertYamlScalar(payload, "coverage", "medium")
+    forceNeedsUpgrade = true
+  }
+  if (needsUpgrade && needsUpgrade !== "true" && needsUpgrade !== "false") {
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  }
+  if (sourceCount && !/^[1-9]\d*$/.test(sourceCount)) {
+    payload = upsertYamlScalar(payload, "source_count", "1")
+  }
+
+  const claimsFullyVerified =
+    readYamlScalar(payload, "coverage").toLowerCase() === "high" &&
+    readYamlScalar(payload, "needs_upgrade").toLowerCase() === "false"
+  const bodyCandidate = replaceFrontmatterPayload(payload, parsed.body)
+  if (claimsFullyVerified && !hasGeneratedFreshnessSection(bodyCandidate)) {
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    payload = upsertYamlScalar(payload, "coverage", "medium")
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  } else if (forceNeedsUpgrade) {
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  }
+
+  return replaceFrontmatterPayload(payload, parsed.body)
+}
+
 async function writeFileBlocks(
   projectPath: string,
   text: string,
@@ -2029,6 +2290,7 @@ async function writeFileBlocks(
   const hardFailures: string[] = []
 
   const targetLang = useWikiStore.getState().outputLanguage
+  const ingestDate = currentIngestDate()
 
   for (const { path: relativePath, content: rawContent } of blocks) {
     if (options.skipSourceSummary && relativePath.startsWith("wiki/sources/")) {
@@ -2050,6 +2312,7 @@ async function writeFileBlocks(
     if (writePolicy.sourceSummaryPaths.has(relativePath)) {
       content = applyCanonicalPageTitle(content, sourceSummaryPlan.title)
     }
+    content = normalizeIngestFrontmatter(relativePath, content, ingestDate)
 
     const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
     if (!decision.allowed) {
@@ -2302,6 +2565,7 @@ export function buildGenerationPrompt(
   options: AutoIngestOptions = {},
   sourceSummaryPlanOverride?: SourceSummaryPlan,
 ): string {
+  const date = currentIngestDate()
   const sourceSummaryPlan = sourceSummaryPlanOverride ??
     buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
   const sourceSubjectSlug = sourceSummaryPlan.titleSlug
@@ -2325,6 +2589,7 @@ export function buildGenerationPrompt(
     `## IMPORTANT: Source File`,
     `The original source file is: **${sourceFileName}**`,
     `All wiki pages generated from this source MUST include this filename in their frontmatter \`sources\` field.`,
+    `The current ingest date is **${date}**. Use this exact date for created, updated, and last_reviewed on newly generated pages.`,
     "",
     "## What to generate",
     "",
@@ -2349,6 +2614,7 @@ export function buildGenerationPrompt(
     "- ## Source Coverage Matrix",
     "- ## Atomic Claims",
     "- ## Evidence Map",
+    "- ## 검증 및 최신성",
     "- ## 오래 유지할 개념",
     "- ## 관련 엔티티",
     "- ## Kevin 운영체계 적용",
@@ -2366,12 +2632,15 @@ export function buildGenerationPrompt(
     "- If `Ingest Verification Search Results` are supplied, use them during this ingest pass; do not postpone those checks to Deep Research.",
     "- If web evidence is NOT supplied, create a REVIEW block or 열린 질문 for external verification/search.",
     "- Never claim latest/current status unless the source or supplied web evidence supports it.",
+    "- Do not set `coverage: high` with `needs_upgrade: false` unless a substantial verification/currentness section explains what was checked.",
     "",
     "Thin page guard:",
     "- Prefer updating an existing page over creating a new page that only defines a term.",
     "- If a new page would be thin, create a REVIEW block or query page instead.",
     "- Do not promote one-off terms into concept/entity pages unless the analysis shows reusable value.",
     "- If a page is useful but still incomplete, mark it with `quality: seed` or `quality: draft` and `needs_upgrade: true`.",
+    "- If you mention an important candidate page but do not actually emit that FILE block, write it as plain text or a REVIEW item; do not add a wikilink to a missing page.",
+    "- `wiki/index.md` must link only to existing pages from the Current Wiki Index or FILE blocks emitted in this response.",
     "",
     "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "",
@@ -2394,17 +2663,17 @@ export function buildGenerationPrompt(
     "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
     "               Use a concise content title. Do not prefix with Research, Research Log, Source, or Deep Research.",
     "               Do not include raw filenames, date suffixes, or instruction words like 조사해줘/정리해줘.",
-    "  • created  — date in YYYY-MM-DD form (no quotes)",
-    "  • updated  — same as created",
+    `  • created  — ${date} (date in YYYY-MM-DD form, no quotes)`,
+    `  • updated  — ${date} (same as created for newly generated pages)`,
     "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
     "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
     "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
     `  • sources  — array of source filenames; MUST include "${sourceFileName}".`,
     "  • confidence — low | medium | high",
-    "  • last_reviewed — date in YYYY-MM-DD form",
+    `  • last_reviewed — ${date}`,
     "",
     "Required quality fields for content pages:",
-    "  • quality — seed | draft | reviewed | canonical",
+    "  • quality — seed | draft | reviewed | canonical. Never write gold.",
     "  • coverage — low | medium | high",
     "  • needs_upgrade — true | false",
     "  • source_count — number, preferably the count of source filenames in `sources`",
@@ -2694,6 +2963,9 @@ async function injectImagesIntoSourceSummary(
         "",
         "## Evidence Map",
         "- Primary evidence: original raw source file and extracted image references.",
+        "",
+        "## 검증 및 최신성",
+        "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
         "",
         "## Kevin 운영체계 적용",
         "- 적용 판단은 원본 재검토 후 확정합니다.",

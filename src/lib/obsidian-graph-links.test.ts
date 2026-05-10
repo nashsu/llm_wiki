@@ -83,4 +83,30 @@ graph_links:
     expect(update?.content).not.toContain("graph_links:")
     expect(update?.content).not.toContain("[[source-a]]")
   })
+
+  it("can scope graph_links updates to files written by the current ingest", () => {
+    const updates = buildObsidianGraphLinkUpdates([
+      page(
+        "concepts/current.md",
+        `
+type: concept
+title: Current
+related: [openclaw]
+sources: []
+        `,
+      ),
+      page(
+        "concepts/old.md",
+        `
+type: concept
+title: Old
+related: [openclaw]
+sources: []
+        `,
+      ),
+      page("entities/openclaw.md", "type: entity\ntitle: OpenClaw\nrelated: []\nsources: []"),
+    ], wikiRoot, ["wiki/concepts/current.md"])
+
+    expect(updates.map((u) => u.relativePath)).toEqual(["concepts/current.md"])
+  })
 })

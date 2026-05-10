@@ -142,13 +142,10 @@ export const ingestScenarios: IngestScenario[] = [
       fileContains: {
         "wiki/concepts/rope.md": [
           "title: Rotary Position Embedding",
-          "[[attention]]",
+          "attention",
         ],
         "wiki/sources/rope-paper.md": ["rope-paper.md"],
       },
-      reviewsCreated: [
-        { type: "missing-page", titleContains: "attention" },
-      ],
     },
   },
 
@@ -291,12 +288,9 @@ export const ingestScenarios: IngestScenario[] = [
       fileContains: {
         "wiki/concepts/transformer.md": [
           "title: Transformer",
-          "[[注意力机制]]",
+          "注意力机制",
         ],
       },
-      reviewsCreated: [
-        { type: "missing-page", titleContains: "注意力机制" },
-      ],
     },
   },
 ]

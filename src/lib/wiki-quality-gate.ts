@@ -3,6 +3,8 @@ import { parseFrontmatter } from "@/lib/frontmatter"
 export type WikiQualityIssueType =
   | "thin-page"
   | "missing-quality-metadata"
+  | "invalid-quality-metadata"
+  | "stale-or-invalid-metadata-date"
   | "weak-source-trace"
   | "source-coverage-gap"
   | "missing-operating-implication"
@@ -20,7 +22,14 @@ export interface WikiQualityAssessment {
   shouldRepair: boolean
 }
 
+export interface WikiQualityOptions {
+  expectedDate?: string
+  enforceIngestDates?: boolean
+}
+
 const QUALITY_FIELDS = ["quality", "coverage", "needs_upgrade", "source_count"]
+const QUALITY_VALUES = new Set(["seed", "draft", "reviewed", "canonical"])
+const COVERAGE_VALUES = new Set(["low", "medium", "high"])
 
 const STRUCTURAL_TYPES = new Set(["index", "overview", "log", "schema", "purpose"])
 
@@ -74,11 +83,37 @@ function missingFrontmatterQualityFields(content: string): string[] {
   return QUALITY_FIELDS.filter((field) => !(field in fm))
 }
 
+function frontmatterScalar(content: string, field: string): string {
+  const value = parseFrontmatter(content).frontmatter?.[field]
+  if (Array.isArray(value)) return value.join(", ")
+  return value ?? ""
+}
+
+function isTrue(value: string): boolean {
+  return value.trim().toLowerCase() === "true"
+}
+
+function isFalse(value: string): boolean {
+  return value.trim().toLowerCase() === "false"
+}
+
 function hasSourceTrace(content: string): boolean {
   const fm = parseFrontmatter(content).frontmatter ?? {}
   const sources = fm.sources
   if (Array.isArray(sources) && sources.length > 0) return true
   return /##\s*(?:Evidence Map|Source Trace|References|근거|출처)/iu.test(content)
+}
+
+function hasFreshnessSection(content: string): boolean {
+  return hasAnySubstantialHeading(content, [
+    "검증 및 최신성",
+    "검증",
+    "최신성",
+    "Verification & Freshness",
+    "Freshness & Verification",
+    "Source Cross-Check",
+    "Currentness",
+  ])
 }
 
 function getMinimumBodyLength(pageType: string): number {
@@ -97,6 +132,7 @@ function isThin(content: string, pageType: string): boolean {
 export function assessWikiPageQuality(
   relativePath: string,
   content: string,
+  options: WikiQualityOptions = {},
 ): WikiQualityAssessment {
   const pageType = inferPageType(relativePath, content)
   const issues: WikiQualityIssue[] = []
@@ -111,6 +147,42 @@ export function assessWikiPageQuality(
       type: "missing-quality-metadata",
       message: `Missing quality metadata: ${missingQualityFields.join(", ")}`,
     })
+  }
+
+  const quality = frontmatterScalar(content, "quality").trim().toLowerCase()
+  const coverage = frontmatterScalar(content, "coverage").trim().toLowerCase()
+  const needsUpgrade = frontmatterScalar(content, "needs_upgrade").trim().toLowerCase()
+  const sourceCount = frontmatterScalar(content, "source_count").trim()
+  const invalidMetadata: string[] = []
+  if (quality && !QUALITY_VALUES.has(quality)) {
+    invalidMetadata.push(`quality must be seed|draft|reviewed|canonical, got "${quality}"`)
+  }
+  if (coverage && !COVERAGE_VALUES.has(coverage)) {
+    invalidMetadata.push(`coverage must be low|medium|high, got "${coverage}"`)
+  }
+  if (needsUpgrade && !isTrue(needsUpgrade) && !isFalse(needsUpgrade)) {
+    invalidMetadata.push(`needs_upgrade must be true|false, got "${needsUpgrade}"`)
+  }
+  if (sourceCount && !/^[1-9]\d*$/.test(sourceCount)) {
+    invalidMetadata.push(`source_count must be a positive integer, got "${sourceCount}"`)
+  }
+  if (invalidMetadata.length > 0) {
+    issues.push({
+      type: "invalid-quality-metadata",
+      message: invalidMetadata.join("; "),
+    })
+  }
+
+  if (options.enforceIngestDates && options.expectedDate) {
+    const staleFields = ["created", "updated", "last_reviewed"].filter(
+      (field) => frontmatterScalar(content, field).trim() !== options.expectedDate,
+    )
+    if (staleFields.length > 0) {
+      issues.push({
+        type: "stale-or-invalid-metadata-date",
+        message: `Ingest metadata dates must be ${options.expectedDate}: ${staleFields.join(", ")}`,
+      })
+    }
   }
 
   if (!hasSourceTrace(content)) {
@@ -132,6 +204,7 @@ export function assessWikiPageQuality(
       "Source Coverage Matrix",
       "Atomic Claims",
       "Evidence Map",
+      "검증 및 최신성",
       "운영 노트",
       "열린 질문",
     ]
@@ -178,12 +251,19 @@ export function assessWikiPageQuality(
   }
 
   if (pageType === "query" || pageType === "synthesis" || pageType === "comparison") {
-    if (!hasAnyHeading(content, ["검증", "최신성", "Evidence", "Source Cross-Check", "근거"])) {
+    if (!hasFreshnessSection(content) && !hasAnyHeading(content, ["Evidence", "근거"])) {
       issues.push({
         type: "missing-verification",
         message: "Research page lacks verification, freshness, or evidence cross-check section.",
       })
     }
+  }
+
+  if (coverage === "high" && isFalse(needsUpgrade) && !hasFreshnessSection(content)) {
+    issues.push({
+      type: "missing-verification",
+      message: "coverage: high with needs_upgrade: false requires a substantial verification/currentness section.",
+    })
   }
 
   return {
@@ -202,6 +282,7 @@ export function buildQualityRepairPrompt(args: {
   analysis: string
   verificationContext?: string
   issues: WikiQualityIssue[]
+  expectedDate?: string
 }): { system: string; user: string } {
   const issueText = args.issues.map((i) => `- ${i.type}: ${i.message}`).join("\n")
   return {
@@ -214,8 +295,12 @@ export function buildQualityRepairPrompt(args: {
       "",
       "Quality requirements:",
       "- Add frontmatter fields: quality, coverage, needs_upgrade, source_count.",
+      "- Allowed quality values are only seed, draft, reviewed, canonical. Never use gold.",
+      args.expectedDate
+        ? `- Use created/updated/last_reviewed date exactly ${args.expectedDate}.`
+        : "- Use the current ingest date for created/updated/last_reviewed.",
       "- Preserve valid existing frontmatter and wikilinks.",
-      "- For source pages, include Source Coverage Matrix, Atomic Claims, Evidence Map, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
+      "- For source pages, include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       "- Required sections must contain real source-derived content, not empty headings or placeholder bullets.",
       "- For concept pages, include definition, decision criteria, application conditions, failure modes/caveats, and source trace.",
       "- For entity pages, include what it is, OS role, constraints/risks, connections, and source trace.",
@@ -223,6 +308,7 @@ export function buildQualityRepairPrompt(args: {
       "- Use supplied ingest verification search results when they exist, but keep raw-source evidence separate from external evidence.",
       "- Do not invent facts. If raw evidence is insufficient, mark quality: draft, needs_upgrade: true, and state what must be verified.",
       "- If latest data or truth verification is needed but no web evidence is supplied, add explicit follow-up search questions instead of pretending certainty.",
+      "- Do not set coverage: high together with needs_upgrade: false unless the page states what was checked for freshness/currentness.",
     ].join("\n"),
     user: [
       `## Page path\n${args.relativePath}`,

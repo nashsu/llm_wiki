@@ -413,6 +413,25 @@ The app icon is intentionally stored in every place the app renders it, so produ
 
 When changing the icon, update these files together and rebuild the Tauri app. Updating only `icon.icns` is not enough because the sidebar logo is a separate frontend asset. On macOS, install the rebuilt app with `npm run install:macos`; this fully replaces the old bundle, clears the app WebView cache, verifies that the installed executable references the same bundled sidebar logo as the newly built app, and locks the installed app bundle so stale local copies cannot overwrite it on restart. The same script unlocks the existing bundle before replacing it during the next intentional install.
 
+### Installed App Verification
+
+After changing ingest, review, graph, or other production-critical logic, do not stop at `npm run build`. Install the app, launch it, then prove that the running bundle is the updated `/Applications/LLM Wiki.app`:
+
+```bash
+npm run install:macos
+open -a "LLM Wiki"
+npm run verify:macos-app
+```
+
+For a Vault-backed proof, pass the project path and pages that should be checked for drained ingest queue, stale missing-page reviews, and unresolved wikilinks:
+
+```bash
+LLM_WIKI_VERIFY_VAULT="/path/to/LLM WIKI Vault" \
+LLM_WIKI_VERIFY_SOURCE="local-deep-researcher.md" \
+LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entities/local-deep-researcher.md,wiki/index.md" \
+npm run verify:macos-app
+```
+
 ### Chrome Extension
 
 1. Open `chrome://extensions`
