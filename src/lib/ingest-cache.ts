@@ -11,11 +11,14 @@ interface CacheEntry {
   hash: string
   timestamp: number
   filesWritten: string[]
+  pipelineVersion?: string
 }
 
 interface CacheData {
   entries: Record<string, CacheEntry> // keyed by source filename
 }
+
+export const INGEST_PIPELINE_VERSION = "quality-v2"
 
 async function sha256(content: string): Promise<string> {
   const encoder = new TextEncoder()
@@ -62,6 +65,7 @@ export async function checkIngestCache(
   projectPath: string,
   sourceFileName: string,
   sourceContent: string,
+  pipelineVersion: string = INGEST_PIPELINE_VERSION,
 ): Promise<string[] | null> {
   const cache = await loadCache(projectPath)
   const entry = cache.entries[sourceFileName]
@@ -69,6 +73,12 @@ export async function checkIngestCache(
 
   const currentHash = await sha256(sourceContent)
   if (entry.hash !== currentHash) return null
+  if (entry.pipelineVersion !== pipelineVersion) {
+    console.log(
+      `[ingest-cache] cache miss for ${sourceFileName}: pipeline ${entry.pipelineVersion ?? "legacy"} != ${pipelineVersion}`,
+    )
+    return null
+  }
 
   const pp = normalizePath(projectPath)
   for (const filePath of entry.filesWritten) {
@@ -100,6 +110,7 @@ export async function saveIngestCache(
   sourceFileName: string,
   sourceContent: string,
   filesWritten: string[],
+  pipelineVersion: string = INGEST_PIPELINE_VERSION,
 ): Promise<void> {
   const cache = await loadCache(projectPath)
   const hash = await sha256(sourceContent)
@@ -108,6 +119,7 @@ export async function saveIngestCache(
     hash,
     timestamp: Date.now(),
     filesWritten,
+    pipelineVersion,
   }
   await saveCache(projectPath, { entries: newEntries })
 }

@@ -187,7 +187,7 @@
       },
       "webSearch": {
         "title": "Web Search",
-        "description": "Used by Deep Research to pull fresh external context."
+        "description": "Used by Deep Research and ingest-time verification to pull fresh external context."
       },
       "network": {
         "title": "Network",

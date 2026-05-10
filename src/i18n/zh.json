@@ -187,7 +187,7 @@
       },
       "webSearch": {
         "title": "网页搜索",
-        "description": "Deep Research 会用它拉取最新的外部上下文。"
+        "description": "Deep Research 和 ingest 阶段验证会用它拉取最新的外部上下文。"
       },
       "network": {
         "title": "网络",

@@ -6,7 +6,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
-import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import { checkIngestCache, INGEST_PIPELINE_VERSION, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
@@ -61,6 +61,11 @@ import {
   buildSourceSummaryPlan,
   type SourceSummaryPlan,
 } from "@/lib/wiki-title"
+import {
+  assessWikiPageQuality,
+  buildQualityRepairPrompt,
+} from "@/lib/wiki-quality-gate"
+import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -149,6 +154,11 @@ export function isSafeIngestPath(p: string): boolean {
 // indentation ≤ 3 spaces is still a fence; 4+ spaces is an indented code
 // block and doesn't use fence markers.
 const FENCE_LINE = /^\s{0,3}(```+|~~~+)/
+const QUALITY_REPAIR_MAX_BLOCKS = 4
+const QUALITY_REPAIR_MAX_ROUNDS = 2
+const INGEST_VERIFICATION_MAX_QUERIES = 2
+const INGEST_VERIFICATION_RESULTS_PER_QUERY = 3
+const INGEST_EXTRA_CONTENT_PAGE_LIMIT = 2
 
 /**
  * Parse an LLM stage-2 generation into FILE blocks.
@@ -304,10 +314,43 @@ function makeSourceConceptSlug(sourceBaseName: string): string {
   return `${slugifyWikiStem(sourceBaseName)}-${shortStableHash(sourceBaseName)}-concept`
 }
 
+function sourceSummaryPlanWithPath(
+  plan: SourceSummaryPlan,
+  path: string,
+): SourceSummaryPlan {
+  const fileName = path.split("/").pop() ?? plan.fileName
+  const slug = fileName.replace(/\.md$/iu, "")
+  return { ...plan, path, fileName, slug }
+}
+
 const COMPARISON_SIGNAL_RE = /\b(vs\.?|versus|compare[sd]?|comparison|trade-?off)\b|비교|대비|차이|선택\s*기준|장단점/iu
 
 function getSourceBaseName(sourceFileName: string): string {
   return sourceFileName.replace(/\.[^.]+$/, "")
+}
+
+function legacySourceSummaryPath(sourceFileName: string): string {
+  return `wiki/sources/${slugifyWikiStem(getSourceBaseName(sourceFileName))}.md`
+}
+
+async function resolveSourceSummaryPlan(
+  projectPath: string,
+  sourceFileName: string,
+  sourceContent = "",
+  explicitTitle?: string,
+): Promise<SourceSummaryPlan> {
+  const plan = buildSourceSummaryPlan(sourceFileName, sourceContent, explicitTitle)
+  const legacyPath = legacySourceSummaryPath(sourceFileName)
+  if (legacyPath === plan.path) return plan
+
+  const [canonical, legacy] = await Promise.all([
+    tryReadFile(`${projectPath}/${plan.path}`),
+    tryReadFile(`${projectPath}/${legacyPath}`),
+  ])
+  if (!canonical && legacy) {
+    return sourceSummaryPlanWithPath(plan, legacyPath)
+  }
+  return plan
 }
 
 export function makeComparisonPagePath(sourceFileName: string): string {
@@ -462,6 +505,10 @@ function buildFallbackComparisonPage(
     `sources: [${yamlString(sourceFileName)}]`,
     "confidence: medium",
     `last_reviewed: ${date}`,
+    "quality: draft",
+    "coverage: medium",
+    "needs_upgrade: true",
+    "source_count: 1",
     "---",
     "",
     `# ${title}`,
@@ -477,6 +524,10 @@ function buildFallbackComparisonPage(
     "",
     `## ${copy.evidenceHeading}`,
     evidence || copy.evidenceFallback,
+    "",
+    "## 검증 및 최신성",
+    "- 이 fallback 비교 페이지는 원본 source와 Stage 1 분석을 기준으로 만든 최소 구조입니다.",
+    "- 최신 상태, 공식 문서, 외부 근거가 필요한 claim은 별도 검증 후 `needs_upgrade: false`로 낮춥니다.",
   ].join("\n")
 }
 
@@ -485,6 +536,7 @@ async function ensureComparisonPageForComparisonSource(params: {
   sourceFileName: string
   sourceContent: string
   analysis: string
+  verificationContext: string
   llmConfig: LlmConfig
   writtenPaths: string[]
   signal?: AbortSignal
@@ -494,6 +546,7 @@ async function ensureComparisonPageForComparisonSource(params: {
     sourceFileName,
     sourceContent,
     analysis,
+    verificationContext,
     llmConfig,
     writtenPaths,
     signal,
@@ -528,13 +581,17 @@ async function ensureComparisonPageForComparisonSource(params: {
     "",
     "Page requirements:",
     "- type must be `comparison`.",
+    "- Include quality, coverage, needs_upgrade, and source_count frontmatter.",
     "- Compare the main alternatives side by side.",
     "- Include a compact comparison table when the source supports it.",
-    "- Include decision criteria, recommended use, risks, and source-grounded conclusion.",
+    "- Include decision criteria, recommended use, risks, source-grounded conclusion, and verification/currentness notes.",
     "- Do not create entity, concept, source, index, overview, or log pages.",
     "",
     "## Stage 1 Analysis",
     analysis,
+    "",
+    "## Ingest Verification / Currentness Context",
+    verificationContext,
     "",
     "## Original Source Content",
     sourceContent,
@@ -549,9 +606,19 @@ async function ensureComparisonPageForComparisonSource(params: {
       signal,
       4096,
     )
+    const repairedGeneration = await repairGeneratedQualityIssues({
+      generation,
+      llmConfig,
+      sourceFileName,
+      sourceContent,
+      analysis,
+      verificationContext,
+      signal,
+      onWarning: (msg) => warnings.push(msg),
+    })
     const result = await writeFileBlocks(
       projectPath,
-      generation,
+      repairedGeneration,
       llmConfig,
       sourceFileName,
       signal,
@@ -611,6 +678,257 @@ async function generateOneFileBlock(
   return out
 }
 
+function serializeFileBlock(block: ParsedFileBlock): string {
+  return [`---FILE: ${block.path}---`, block.content.trim(), "---END FILE---"].join("\n")
+}
+
+function extractReviewBlocks(text: string): string[] {
+  return Array.from(text.matchAll(REVIEW_BLOCK_REGEX)).map((m) => m[0].trim())
+}
+
+function shouldHoldGeneratedPageForQuality(assessment: ReturnType<typeof assessWikiPageQuality>): boolean {
+  if (!assessment.shouldRepair) return false
+  if (assessment.pageType === "source") {
+    // Source summaries are evidence-trace pages and are hidden from the
+    // Knowledge graph by default. Keep weak source summaries writable so
+    // raw provenance is not lost, then surface quality review items after
+    // ingest. Durable knowledge nodes below are held more aggressively.
+    return false
+  }
+  return true
+}
+
+function qualityHoldReviewBlock(
+  assessment: ReturnType<typeof assessWikiPageQuality>,
+): string {
+  const needsVerification = assessment.issues.some((issue) => issue.type === "missing-verification")
+  return [
+    `---REVIEW: suggestion | Quality hold: ${assessment.path}---`,
+    "Generated wiki content was held before writing because it did not satisfy the ingest quality gate.",
+    "",
+    ...assessment.issues.map((issue) => `- ${issue.type}: ${issue.message}`),
+    "",
+    "Regenerate this page from the raw source, downgrade it into a draft outside the active wiki graph, or skip it if it is not durable knowledge.",
+    "OPTIONS: Create Page | Skip",
+    `PAGES: ${assessment.path}`,
+    needsVerification
+      ? "SEARCH: source claim verification | latest official documentation | cross-check technical claim"
+      : "",
+    "---END REVIEW---",
+  ].filter(Boolean).join("\n")
+}
+
+function holdLowQualityGeneratedPages(
+  generation: string,
+  onWarning?: (message: string) => void,
+): string {
+  const { blocks, warnings } = parseFileBlocks(generation)
+  if (blocks.length === 0) return generation
+
+  const kept: ParsedFileBlock[] = []
+  const heldReviews: string[] = []
+  for (const block of blocks) {
+    const assessment = assessWikiPageQuality(block.path, block.content)
+    if (shouldHoldGeneratedPageForQuality(assessment)) {
+      const msg = `Held "${block.path}" before write — ${assessment.issues.map((i) => i.type).join(", ")}.`
+      console.warn(`[ingest:quality] ${msg}`)
+      onWarning?.(msg)
+      heldReviews.push(qualityHoldReviewBlock(assessment))
+      continue
+    }
+    kept.push(block)
+  }
+
+  if (warnings.length > 0) {
+    onWarning?.(`Generation parse warnings before quality hold: ${warnings.join(" · ")}`)
+  }
+
+  return [
+    ...kept.map(serializeFileBlock),
+    ...extractReviewBlocks(generation),
+    ...heldReviews,
+  ].join("\n\n")
+}
+
+function normalizeVerificationQuery(raw: string): string {
+  return raw
+    .replace(/^\s*[-*]\s*/, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160)
+}
+
+export function extractVerificationSearchQueries(
+  analysis: string,
+  limit = INGEST_VERIFICATION_MAX_QUERIES,
+): string[] {
+  const queries: string[] = []
+
+  for (const match of analysis.matchAll(/^\s*(?:SEARCH|Search queries?|검색)\s*:\s*(.+)$/gim)) {
+    const parts = match[1].split("|")
+    for (const part of parts) {
+      const query = normalizeVerificationQuery(part)
+      if (query.length >= 4) queries.push(query)
+    }
+  }
+
+  const section = analysis.match(/##\s*Verification & Freshness Plan\s*([\s\S]*?)(?=\n##\s+|$)/i)?.[1] ?? ""
+  for (const line of section.split("\n")) {
+    if (/^\s*(?:SEARCH|Search queries?|검색)\s*:/i.test(line)) continue
+    if (!/(search|검색|verify|latest|current|최신|검증)/i.test(line)) continue
+    const query = normalizeVerificationQuery(
+      line
+        .replace(/^\s*[-*]\s*/, "")
+        .replace(/^(?:query|search|검색)\s*\d*\s*[:：-]\s*/i, ""),
+    )
+    if (query.length >= 12 && query.length <= 160) queries.push(query)
+  }
+
+  return Array.from(new Set(queries)).slice(0, limit)
+}
+
+function formatVerificationResults(
+  query: string,
+  results: WebSearchResult[],
+): string {
+  if (results.length === 0) return `### Query: ${query}\nNo results returned.`
+  return [
+    `### Query: ${query}`,
+    ...results.map((result, index) => [
+      `[${index + 1}] ${result.title} (${result.source || "unknown source"})`,
+      result.url,
+      result.snippet,
+    ].filter(Boolean).join("\n")),
+  ].join("\n\n")
+}
+
+async function buildIngestVerificationContext(params: {
+  analysis: string
+  sourceFileName: string
+  onWarning?: (message: string) => void
+}): Promise<string> {
+  const queries = extractVerificationSearchQueries(params.analysis)
+  if (queries.length === 0) {
+    return [
+      "## Ingest Verification Status",
+      "Stage 1 did not request external verification search.",
+      "Use the raw source as the primary evidence and avoid latest/current claims unless the source supports them.",
+    ].join("\n")
+  }
+
+  const searchConfig = resolveSearchConfig(useWikiStore.getState().searchApiConfig)
+  if (searchConfig.provider === "none" || !searchConfig.apiKey) {
+    return [
+      "## Ingest Verification Status",
+      "Stage 1 requested external verification, but web search is not configured.",
+      "Do not write unverified latest/current claims as canonical facts.",
+      "Convert them into REVIEW blocks, 열린 질문, or `needs_upgrade: true` notes.",
+      "",
+      "## Requested Verification Queries",
+      ...queries.map((query) => `- ${query}`),
+    ].join("\n")
+  }
+
+  const sections: string[] = []
+  for (const query of queries) {
+    try {
+      const results = await webSearch(query, searchConfig, INGEST_VERIFICATION_RESULTS_PER_QUERY)
+      sections.push(formatVerificationResults(query, results))
+    } catch (err) {
+      const message = `Ingest verification search failed for "${query}": ${err instanceof Error ? err.message : String(err)}`
+      params.onWarning?.(message)
+      sections.push(`### Query: ${query}\nSearch failed. Treat this claim as unverified during ingest.`)
+    }
+  }
+
+  return [
+    "## Ingest Verification Search Results",
+    `Source being ingested: ${params.sourceFileName}`,
+    "Use these results only as currentness/cross-check context. Keep them separate from raw-source evidence.",
+    "",
+    ...sections,
+  ].join("\n")
+}
+
+async function repairGeneratedQualityIssues(params: {
+  generation: string
+  llmConfig: LlmConfig
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext?: string
+  signal?: AbortSignal
+  onWarning?: (message: string) => void
+}): Promise<string> {
+  const { blocks, warnings } = parseFileBlocks(params.generation)
+  if (blocks.length === 0) return params.generation
+
+  const out: ParsedFileBlock[] = []
+  let repairsAttempted = 0
+
+  for (const block of blocks) {
+    let current = block
+    let assessment = assessWikiPageQuality(current.path, current.content)
+
+    for (
+      let round = 0;
+      assessment.shouldRepair &&
+        repairsAttempted < QUALITY_REPAIR_MAX_BLOCKS &&
+        round < QUALITY_REPAIR_MAX_ROUNDS;
+      round++
+    ) {
+      repairsAttempted += 1
+      const prompt = buildQualityRepairPrompt({
+        relativePath: current.path,
+        content: current.content,
+        sourceFileName: params.sourceFileName,
+        sourceContent: params.sourceContent,
+        analysis: params.analysis,
+        verificationContext: params.verificationContext,
+        issues: assessment.issues,
+      })
+
+      try {
+        const repaired = await generateOneFileBlock(
+          params.llmConfig,
+          prompt.system,
+          prompt.user,
+          params.signal,
+          6144,
+        )
+        const parsed = parseFileBlocks(repaired).blocks.find((b) => b.path === current.path)
+        if (parsed) {
+          current = parsed
+          assessment = assessWikiPageQuality(current.path, current.content)
+          continue
+        }
+        params.onWarning?.(`Quality repair for "${current.path}" did not return the expected FILE block; keeping current version.`)
+        break
+      } catch (err) {
+        params.onWarning?.(
+          `Quality repair failed for "${current.path}": ${err instanceof Error ? err.message : String(err)}`,
+        )
+        break
+      }
+    }
+
+    out.push(current)
+  }
+
+  const reviewBlocks = extractReviewBlocks(params.generation)
+  const repairedGeneration = [
+    ...out.map(serializeFileBlock),
+    ...reviewBlocks,
+  ].join("\n\n")
+
+  if (warnings.length > 0) {
+    params.onWarning?.(`Generation parse warnings before repair: ${warnings.join(" · ")}`)
+  }
+
+  return repairedGeneration
+}
+
 async function generateOllamaSplitFileBlocks(params: {
   llmConfig: LlmConfig
   schema: string
@@ -618,8 +936,10 @@ async function generateOllamaSplitFileBlocks(params: {
   index: string
   fileName: string
   overview: string
+  sourceSummaryPlan: SourceSummaryPlan
   sourceContent: string
   analysis: string
+  verificationContext: string
   signal?: AbortSignal
   onProgress?: (detail: string) => void
   options?: AutoIngestOptions
@@ -631,13 +951,14 @@ async function generateOllamaSplitFileBlocks(params: {
     index,
     fileName,
     overview,
+    sourceSummaryPlan,
     sourceContent,
     analysis,
+    verificationContext,
     signal,
     onProgress,
     options,
   } = params
-  const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent, options?.sourceSummaryTitle)
   const sourcePageSlug = sourceSummaryPlan.slug
   const sourceSubjectSlug = sourceSummaryPlan.titleSlug
   const conceptSlug = makeSourceConceptSlug(sourceSubjectSlug)
@@ -654,9 +975,13 @@ async function generateOllamaSplitFileBlocks(params: {
     "The last line must be exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
     `Use created/updated/last_reviewed date ${date}.`,
     `The sources array MUST include "${fileName}" for source-derived content.`,
     "Use compact Korean prose. Prefer fewer, stronger sections over many thin pages.",
+    "Treat raw source content as evidence, not guaranteed truth. Mark outdated, disputed, or insufficiently verified claims as verification needs.",
+    "If Ingest Verification Search Results are supplied, use them in this ingest pass and keep them separate from raw-source evidence.",
+    "If latest/current data is needed but not supplied, add explicit follow-up search questions instead of pretending certainty.",
     "",
     language,
     "",
@@ -671,6 +996,9 @@ async function generateOllamaSplitFileBlocks(params: {
     "",
     "## Stage 1 analysis",
     analysis,
+    "",
+    "## Ingest verification / currentness context",
+    verificationContext,
     "",
     "## Original source content",
     sourceContent,
@@ -688,6 +1016,7 @@ async function generateOllamaSplitFileBlocks(params: {
         `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`,
         "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
+        "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
     }] : []),
@@ -836,7 +1165,34 @@ async function collectPostIngestReviewItems(
     pages,
     writtenPaths.map((p) => p.replace(/^wiki\//, "")),
   )
-  return missingReferencesToReviewItems(missing, sourcePath)
+  const missingItems = missingReferencesToReviewItems(missing, sourcePath)
+  const writtenSet = new Set(writtenPaths.map((p) => p.replace(/^wiki\//, "")))
+  const qualityItems = pages
+    .filter((page) => writtenSet.has(page.relativePath))
+    .map((page) => assessWikiPageQuality(`wiki/${page.relativePath}`, page.content))
+    .filter((assessment) => assessment.issues.length > 0)
+    .map((assessment) => ({
+      type: "suggestion" as const,
+      title: `Quality upgrade needed: ${assessment.path}`,
+      description: [
+        "Generated wiki page did not fully satisfy the post-ingest quality gate.",
+        "",
+        ...assessment.issues.map((issue) => `- ${issue.type}: ${issue.message}`),
+        "",
+        "Repair the page, downgrade it with `quality: seed|draft` and `needs_upgrade: true`, or convert weak claims into review/search questions.",
+      ].join("\n"),
+      sourcePath,
+      affectedPages: [assessment.path],
+      searchQueries: assessment.issues.some((issue) => issue.type === "missing-verification")
+        ? ["source claim verification", "latest documentation official source", "cross check technical claim"]
+        : undefined,
+      options: [
+        { label: "Create Page", action: "Create Page" },
+        { label: "Skip", action: "Skip" },
+      ],
+    }))
+
+  return [...missingItems, ...qualityItems]
 }
 
 /**
@@ -893,7 +1249,7 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
 
-  const sourceSummaryPlan = buildSourceSummaryPlan(fileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSummaryPlan = await resolveSourceSummaryPlan(pp, fileName, sourceContent, options.sourceSummaryTitle)
   const sourceSummaryPath = sourceSummaryPlan.path
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
@@ -906,7 +1262,7 @@ async function autoIngestImpl(
   // re-running them costs only the extraction time and converges the
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
-  let cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
+  let cachedFiles = await checkIngestCache(pp, fileName, sourceContent, INGEST_PIPELINE_VERSION)
   if (options.skipSourceSummary && cachedFiles?.includes(sourceSummaryPath)) {
     console.log(
       `[ingest-cache] cache miss for ${fileName}: source-summary output is disabled for this ingest`,
@@ -1163,6 +1519,24 @@ async function autoIngestImpl(
     throw new Error(analysisActivity.detail || "Analysis stream failed")
   }
 
+  // ── Step 1.5: Ingest verification/currentness context ────────
+  //
+  // Deep Research remains a user-facing follow-up tool, but ingest now
+  // has its own quality loop. If Stage 1 identifies claims that need
+  // truth checking or latest/current data and web search is configured,
+  // we gather a small evidence packet before generation. If search is
+  // unavailable, the packet explicitly tells generation/repair to mark
+  // those claims as unverified instead of canonizing them.
+  activity.updateItem(activityId, { detail: "Checking verification and freshness needs..." })
+  const verificationContext = await buildIngestVerificationContext({
+    analysis,
+    sourceFileName: fileName,
+    onWarning: (msg) => {
+      console.warn(`[ingest:verification] ${msg}`)
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+
   // ── Step 2: Generation ────────────────────────────────────────
   // LLM takes the analysis as context and produces wiki files + review items
   activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
@@ -1178,8 +1552,10 @@ async function autoIngestImpl(
         index,
         fileName,
         overview,
+        sourceSummaryPlan,
         sourceContent: truncatedContent,
         analysis,
+        verificationContext,
         signal,
         onProgress: (detail) => activity.updateItem(activityId, { detail }),
         options,
@@ -1194,7 +1570,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent, options) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent, options, sourceSummaryPlan) },
         {
           role: "user",
           content: [
@@ -1207,6 +1583,10 @@ async function autoIngestImpl(
             "## Stage 1 Analysis (context only — do not repeat)",
             "",
             analysis,
+            "",
+            "## Ingest Verification / Currentness Context",
+            "",
+            verificationContext,
             "",
             "## Original Source Content",
             "",
@@ -1236,6 +1616,23 @@ async function autoIngestImpl(
   if (generationActivity?.status === "error") {
     throw new Error(generationActivity.detail || "Generation stream failed")
   }
+
+  generation = await repairGeneratedQualityIssues({
+    generation,
+    llmConfig,
+    sourceFileName: fileName,
+    sourceContent: truncatedContent,
+    analysis,
+    verificationContext,
+    signal,
+    onWarning: (msg) => {
+      console.warn(`[ingest:quality] ${msg}`)
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+  generation = holdLowQualityGeneratedPages(generation, (msg) => {
+    activity.updateItem(activityId, { detail: msg })
+  })
 
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
@@ -1282,12 +1679,36 @@ async function autoIngestImpl(
       `sources: ["${fileName}"]`,
       `tags: []`,
       `related: []`,
+      "confidence: low",
+      `last_reviewed: ${date}`,
+      "quality: draft",
+      "coverage: low",
+      "needs_upgrade: true",
+      "source_count: 1",
       "---",
       "",
       `# ${fallbackTitle}`,
       "",
+      "## 요약",
       analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
       "",
+      "## Source Coverage Matrix",
+      "- Fallback summary generated because the model did not emit a valid source summary page.",
+      "",
+      "## Atomic Claims",
+      "- Claim extraction requires manual or automated repair.",
+      "",
+      "## Evidence Map",
+      "- Primary evidence: original raw source file.",
+      "",
+      "## Kevin 운영체계 적용",
+      "- 적용 판단은 원본 source 재검토 후 확정합니다.",
+      "",
+      "## 운영 노트",
+      "- This page is intentionally marked `needs_upgrade: true`.",
+      "",
+      "## 열린 질문",
+      "- Which claims require external verification or latest/current checks?",
     ].join("\n")
     try {
       await writeFile(sourceSummaryFullPath, fallbackContent)
@@ -1303,6 +1724,7 @@ async function autoIngestImpl(
       sourceFileName: fileName,
       sourceContent: truncatedContent,
       analysis,
+      verificationContext,
       llmConfig,
       writtenPaths,
       signal,
@@ -1373,7 +1795,7 @@ async function autoIngestImpl(
   // — they represent deterministic decisions and caching them is
   // safe.
   if (writtenPaths.length > 0 && hardFailures.length === 0) {
-    await saveIngestCache(pp, fileName, sourceContent, writtenPaths)
+    await saveIngestCache(pp, fileName, sourceContent, writtenPaths, INGEST_PIPELINE_VERSION)
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${fileName}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
@@ -1449,6 +1871,109 @@ function contentMatchesTargetLanguage(content: string, target: string): boolean 
   return !detectedIsCjk
 }
 
+interface IngestWritePolicy {
+  plannedPaths: Set<string>
+  sourceSummaryPaths: Set<string>
+  extraContentLimit: number
+  extraContentWritten: number
+  sourceSummaryWritten: boolean
+}
+
+function buildIngestWritePolicy(
+  sourceFileName: string,
+  sourceSummaryPlan: SourceSummaryPlan,
+  options: AutoIngestOptions,
+): IngestWritePolicy {
+  const sourceSummaryPaths = new Set<string>()
+  if (!options.skipSourceSummary) {
+    sourceSummaryPaths.add(sourceSummaryPlan.path)
+    sourceSummaryPaths.add(legacySourceSummaryPath(sourceFileName))
+  }
+
+  const plannedPaths = new Set<string>([
+    "wiki/index.md",
+    "wiki/overview.md",
+    `wiki/concepts/${makeSourceConceptSlug(sourceSummaryPlan.titleSlug)}.md`,
+  ])
+  for (const sourcePath of sourceSummaryPaths) plannedPaths.add(sourcePath)
+
+  return {
+    plannedPaths,
+    sourceSummaryPaths,
+    extraContentLimit: INGEST_EXTRA_CONTENT_PAGE_LIMIT,
+    extraContentWritten: 0,
+    sourceSummaryWritten: false,
+  }
+}
+
+function isExtraContentPagePath(relativePath: string): boolean {
+  return /^(wiki\/(?:entities|concepts|comparisons|queries|synthesis)\/)[^/]+\.md$/u.test(relativePath)
+}
+
+function hasCanonicalWikiFileName(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/")
+  const fileName = normalized.split("/").pop() ?? ""
+  const stem = fileName.replace(/\.md$/iu, "")
+  return Boolean(stem) && fileName === `${slugifyWikiStem(stem)}.md`
+}
+
+function shouldWriteIngestPath(
+  relativePath: string,
+  _content: string,
+  _sourceFileName: string,
+  policy: IngestWritePolicy,
+): { allowed: boolean; reason?: string } {
+  if (relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")) {
+    return { allowed: true }
+  }
+
+  if (policy.sourceSummaryPaths.has(relativePath)) {
+    if (policy.sourceSummaryWritten) {
+      return {
+        allowed: false,
+        reason: "source summary for this source was already written",
+      }
+    }
+    policy.sourceSummaryWritten = true
+    return { allowed: true }
+  }
+
+  if (policy.plannedPaths.has(relativePath)) {
+    return { allowed: true }
+  }
+
+  if (relativePath.startsWith("wiki/sources/")) {
+    return {
+      allowed: false,
+      reason: "only the planned source-summary path is allowed for this ingest",
+    }
+  }
+
+  if (!isExtraContentPagePath(relativePath)) {
+    return {
+      allowed: false,
+      reason: "path is outside allowed content directories",
+    }
+  }
+
+  if (!hasCanonicalWikiFileName(relativePath)) {
+    return {
+      allowed: false,
+      reason: "filename must be canonical kebab-case",
+    }
+  }
+
+  if (policy.extraContentWritten >= policy.extraContentLimit) {
+    return {
+      allowed: false,
+      reason: `extra content page limit reached (${policy.extraContentLimit})`,
+    }
+  }
+
+  policy.extraContentWritten += 1
+  return { allowed: true }
+}
+
 function applyCanonicalPageTitle(content: string, title: string): string {
   const canonicalTitle = title.trim()
   if (!canonicalTitle) return content
@@ -1492,7 +2017,7 @@ async function writeFileBlocks(
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
-  const sourceSummaryPath = sourceSummaryPlan.path
+  const writePolicy = buildIngestWritePolicy(sourceFileName, sourceSummaryPlan, options)
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
   // (disk full, permission, OS-level errors). Distinct from soft drops
   // (language mismatch, parse warnings, path-traversal rejections):
@@ -1522,8 +2047,16 @@ async function writeFileBlocks(
     // unparseable frontmatter and the read-time fallback had to
     // paper over it forever.
     let content = sanitizeIngestedFileContent(rawContent)
-    if (relativePath === sourceSummaryPath) {
+    if (writePolicy.sourceSummaryPaths.has(relativePath)) {
       content = applyCanonicalPageTitle(content, sourceSummaryPlan.title)
+    }
+
+    const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
+    if (!decision.allowed) {
+      const msg = `Dropped "${relativePath}" — ${decision.reason}.`
+      console.warn(`[ingest] ${msg}`)
+      warnings.push(msg)
+      continue
     }
 
     // Language guard: reject individual FILE blocks whose body contradicts
@@ -1728,6 +2261,13 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- Does anything in this source conflict with existing wiki content?",
     "- Are there internal tensions or caveats?",
     "",
+    "## Verification & Freshness Plan",
+    "- Identify claims that require truth checking, source cross-checking, or latest/current data.",
+    "- Separate source-grounded claims from claims that need external verification.",
+    "- If the source is time-sensitive, list what should be checked with web search before making canonical claims.",
+    "- Suggest 2-3 focused search queries only when verification or missing context is genuinely needed.",
+    "- When search is needed, include exactly one machine-readable line: `SEARCH: query 1 | query 2 | query 3`.",
+    "",
     "## Kevin / OS Implications",
     "- What does this source change for Kevin's AI Native Solo Business OS?",
     "- Map implications to Agent Engineering, Memory Systems, Content Factory, Infra, Business, Growth, Product, or Personal OS when relevant.",
@@ -1760,8 +2300,10 @@ export function buildGenerationPrompt(
   overview?: string,
   sourceContent: string = "",
   options: AutoIngestOptions = {},
+  sourceSummaryPlanOverride?: SourceSummaryPlan,
 ): string {
-  const sourceSummaryPlan = buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
+  const sourceSummaryPlan = sourceSummaryPlanOverride ??
+    buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
   const sourceSubjectSlug = sourceSummaryPlan.titleSlug
   const sourceSummaryInstruction = options.skipSourceSummary
     ? [
@@ -1817,6 +2359,14 @@ export function buildGenerationPrompt(
     "For entity pages, include what it is, its role in the user's operating system, relevant constraints, and how it connects to other tools or concepts.",
     "For synthesis pages, extract cross-source operating principles and state what changed in the user's model.",
     "",
+    "Verification and freshness:",
+    "- Treat the raw source as primary evidence, not guaranteed truth.",
+    "- If a claim could be outdated, disputed, or hallucinated, mark it as requiring verification instead of writing it as fact.",
+    "- If web evidence is supplied in the analysis, cross-check claims against it and cite the evidence.",
+    "- If `Ingest Verification Search Results` are supplied, use them during this ingest pass; do not postpone those checks to Deep Research.",
+    "- If web evidence is NOT supplied, create a REVIEW block or 열린 질문 for external verification/search.",
+    "- Never claim latest/current status unless the source or supplied web evidence supports it.",
+    "",
     "Thin page guard:",
     "- Prefer updating an existing page over creating a new page that only defines a term.",
     "- If a new page would be thin, create a REVIEW block or query page instead.",
@@ -1853,7 +2403,7 @@ export function buildGenerationPrompt(
     "  • confidence — low | medium | high",
     "  • last_reviewed — date in YYYY-MM-DD form",
     "",
-    "Optional quality fields:",
+    "Required quality fields for content pages:",
     "  • quality — seed | draft | reviewed | canonical",
     "  • coverage — low | medium | high",
     "  • needs_upgrade — true | false",
@@ -2123,9 +2673,36 @@ async function injectImagesIntoSourceSummary(
         `sources: ["${fileName}"]`,
         "tags: []",
         "related: []",
+        "confidence: low",
+        `last_reviewed: ${date}`,
+        "quality: seed",
+        "coverage: low",
+        "needs_upgrade: true",
+        "source_count: 1",
         "---",
         "",
         `# ${sourceSummaryPlan.title}`,
+        "",
+        "## 요약",
+        "이미지 참조를 보존하기 위해 생성된 최소 source summary입니다.",
+        "",
+        "## Source Coverage Matrix",
+        "- 원본 source 요약은 아직 충분히 반영되지 않았습니다.",
+        "",
+        "## Atomic Claims",
+        "- 원본 claim 추출이 필요합니다.",
+        "",
+        "## Evidence Map",
+        "- Primary evidence: original raw source file and extracted image references.",
+        "",
+        "## Kevin 운영체계 적용",
+        "- 적용 판단은 원본 재검토 후 확정합니다.",
+        "",
+        "## 운영 노트",
+        "- This page is intentionally marked `needs_upgrade: true`.",
+        "",
+        "## 열린 질문",
+        "- 어떤 이미지와 claim이 장기 지식으로 승격되어야 하는가?",
         "",
       ].join("\n")
       await writeFile(sourceSummaryFullPath, stubFrontmatter + wrapped)

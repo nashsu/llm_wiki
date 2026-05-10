@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import {
   buildAnalysisPrompt,
+  extractVerificationSearchQueries,
   buildGenerationPrompt,
   makeComparisonPagePath,
   shouldForceComparisonPage,
@@ -44,6 +45,8 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Main Arguments & Findings")
     expect(prompt).toContain("## Source Coverage Matrix")
     expect(prompt).toContain("## Atomic Claims & Evidence")
+    expect(prompt).toContain("## Verification & Freshness Plan")
+    expect(prompt).toContain("SEARCH: query 1 | query 2 | query 3")
     expect(prompt).toContain("## Kevin / OS Implications")
     expect(prompt).toContain("## Recommendations")
     expect(prompt).not.toContain("Codexian Memory")
@@ -133,8 +136,28 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("## Evidence Map")
     expect(prompt).toContain("## Kevin 운영체계 적용")
     expect(prompt).toContain("Thin page guard")
+    expect(prompt).toContain("Verification and freshness")
+    expect(prompt).toContain("Treat the raw source as primary evidence")
+    expect(prompt).toContain("Ingest Verification Search Results")
+    expect(prompt).toContain("do not postpone those checks to Deep Research")
+    expect(prompt).toContain("Never claim latest/current status")
     expect(prompt).toContain("needs_upgrade: true")
     expect(prompt).toContain("quality — seed | draft | reviewed | canonical")
+  })
+})
+
+describe("ingest verification query extraction", () => {
+  it("extracts machine-readable verification search queries from analysis", () => {
+    const analysis = [
+      "## Verification & Freshness Plan",
+      "- 확인 필요",
+      "SEARCH: Codex CLI latest release official docs | Claude Code MCP skills current docs | Hermes memory architecture source verification",
+    ].join("\n")
+
+    expect(extractVerificationSearchQueries(analysis)).toEqual([
+      "Codex CLI latest release official docs",
+      "Claude Code MCP skills current docs",
+    ])
   })
 })
 
