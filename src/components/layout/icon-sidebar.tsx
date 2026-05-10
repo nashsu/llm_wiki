@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next"
 import logoImg from "@/assets/logo.jpg"
 import type { WikiState } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
+import { bucketReviewItems } from "@/lib/review-utils"
 
 type NavView = WikiState["activeView"]
 
@@ -33,7 +34,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const currentProjectPath = useWikiStore((s) => s.project?.path ? normalizePath(s.project.path) : "")
   const pendingCount = useReviewStore((s) =>
-    s.items.filter((i) => !i.resolved && normalizePath(i.projectPath) === currentProjectPath).length,
+    bucketReviewItems(s.items, currentProjectPath).currentPending.length,
   )
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
   const researchActiveCount = useResearchStore((s) =>

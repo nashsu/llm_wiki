@@ -6,13 +6,13 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import {
   Search, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, X,
-  FileText, Send,
+  FileText, Send, RotateCcw, Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useResearchStore, type ResearchTask } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
-import { queueResearch } from "@/lib/deep-research"
+import { queueResearch, retryResearchTask } from "@/lib/deep-research"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
@@ -22,6 +22,7 @@ import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 export function ResearchPanel() {
   const tasks = useResearchStore((s) => s.tasks)
   const removeTask = useResearchStore((s) => s.removeTask)
+  const clearFinished = useResearchStore((s) => s.clearFinished)
   const setPanelOpen = useResearchStore((s) => s.setPanelOpen)
   const project = useWikiStore((s) => s.project)
   const llmConfig = useWikiStore((s) => s.llmConfig)
@@ -55,12 +56,25 @@ export function ResearchPanel() {
             </span>
           )}
         </div>
-        <button
-          onClick={() => setPanelOpen(false)}
-          className="rounded p-1 text-muted-foreground hover:bg-accent"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          {done.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px] text-muted-foreground"
+              onClick={() => clearFinished()}
+            >
+              <Trash2 className="mr-1 h-3 w-3" />
+              Clear finished
+            </Button>
+          )}
+          <button
+            onClick={() => setPanelOpen(false)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Research input */}
@@ -220,6 +234,8 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   )
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
+  const llmConfig = useWikiStore((s) => s.llmConfig)
+  const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const currentProjectPath = useWikiStore((s) => s.project?.path ? normalizePath(s.project.path) : "")
   const isCurrentProject = normalizePath(task.projectPath) === currentProjectPath
   const projectLabel = getFileName(task.projectPath.replace(/[\\/]+$/, "")) || task.projectPath
@@ -322,6 +338,17 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
               <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={handleOpenSaved}>
                 <FileText className="h-3 w-3" />
                 Open
+              </Button>
+            )}
+            {task.status === "error" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[11px] gap-1"
+                onClick={() => retryResearchTask(task.id, llmConfig, searchApiConfig)}
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry
               </Button>
             )}
             {(task.status === "done" || task.status === "error") && (

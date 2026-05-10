@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { normalizePath } from "@/lib/path-utils"
-import { normalizeReviewTitle } from "@/lib/review-utils"
+import { canonicalizeReviewItems, normalizeReviewTitle } from "@/lib/review-utils"
 
 export interface ReviewOption {
   label: string
@@ -98,10 +98,10 @@ export const useReviewStore = create<ReviewState>((set) => ({
         }
       }
 
-      return { items: result }
+      return { items: canonicalizeReviewItems(result) }
     }),
 
-  setItems: (items) => set({ items }),
+  setItems: (items) => set({ items: canonicalizeReviewItems(items) }),
 
   resolveItem: (id, action) =>
     set((state) => ({

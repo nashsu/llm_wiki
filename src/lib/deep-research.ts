@@ -38,6 +38,29 @@ export function queueResearch(
   return taskId
 }
 
+export function retryResearchTask(
+  taskId: string,
+  llmConfig: LlmConfig,
+  searchConfig: SearchApiConfig,
+): boolean {
+  const store = useResearchStore.getState()
+  const task = store.tasks.find((t) => t.id === taskId)
+  if (!task || task.status !== "error") return false
+
+  store.updateTask(taskId, {
+    status: "queued",
+    error: null,
+    webResults: [],
+    synthesis: "",
+    savedPath: null,
+  })
+  store.setPanelOpen(true)
+  setTimeout(() => {
+    processQueue(llmConfig, searchConfig)
+  }, 50)
+  return true
+}
+
 /**
  * Process queued tasks up to maxConcurrent limit.
  */

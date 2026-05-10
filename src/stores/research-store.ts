@@ -23,6 +23,7 @@ interface ResearchState {
   addTask: (topic: string, projectId: string, projectPath: string) => string
   updateTask: (id: string, updates: Partial<ResearchTask>) => void
   removeTask: (id: string) => void
+  clearFinished: () => void
   setPanelOpen: (open: boolean) => void
   getRunningCount: () => number
   getNextQueued: () => ResearchTask | undefined
@@ -66,6 +67,11 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
   removeTask: (id) =>
     set((state) => ({
       tasks: state.tasks.filter((t) => t.id !== id),
+    })),
+
+  clearFinished: () =>
+    set((state) => ({
+      tasks: state.tasks.filter((t) => t.status !== "done" && t.status !== "error"),
     })),
 
   setPanelOpen: (panelOpen) => set({ panelOpen }),

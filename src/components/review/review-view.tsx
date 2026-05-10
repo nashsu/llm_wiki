@@ -18,6 +18,7 @@ import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { getRecentProjects } from "@/lib/project-store"
 import type { WikiProject } from "@/types/wiki"
+import { bucketReviewItems, needsProjectAssignment } from "@/lib/review-utils"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -241,10 +242,8 @@ export function ReviewView() {
     }
   }, [currentProjectPath, items, project, resolveItem, setFileTree])
 
-  const scopedItems = items.filter((i) => normalizePath(i.projectPath) === currentProjectPath)
-  const orphanItems = items.filter((i) => !i.projectId || !i.projectPath)
-  const pending = scopedItems.filter((i) => !i.resolved)
-  const resolved = scopedItems.filter((i) => i.resolved)
+  const { currentPending: pending, currentResolved: resolved, unassigned: orphanItems } =
+    bucketReviewItems(items, currentProjectPath)
 
   const assignOrphanToProject = useCallback((itemId: string, target: WikiProject) => {
     useReviewStore.setState((state) => ({
@@ -323,7 +322,7 @@ export function ReviewView() {
               ))}
             </div>
           )
-        ) : scopedItems.length === 0 ? (
+        ) : pending.length === 0 && resolved.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
             <p>All clear — nothing to review</p>
@@ -336,6 +335,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                currentProject={project}
+                onAssignToProject={assignOrphanToProject}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -349,6 +350,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                currentProject={project}
+                onAssignToProject={assignOrphanToProject}
               />
             ))}
           </div>
@@ -362,13 +365,18 @@ function ReviewCard({
   item,
   onResolve,
   onDismiss,
+  currentProject,
+  onAssignToProject,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
+  currentProject: WikiProject | null
+  onAssignToProject: (itemId: string, target: WikiProject) => void
 }) {
   const config = typeConfig[item.type]
   const Icon = config.icon
+  const showAssignCurrent = currentProject && needsProjectAssignment(item, currentProject.path)
 
   return (
     <div
@@ -399,6 +407,16 @@ function ReviewCard({
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">
+          {showAssignCurrent && currentProject && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1 text-muted-foreground"
+              onClick={() => onAssignToProject(item.id, currentProject)}
+            >
+              Assign to current project
+            </Button>
+          )}
           {(item.type === "suggestion" || item.type === "missing-page") && (
             <Button
               variant="default"

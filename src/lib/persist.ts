@@ -2,6 +2,7 @@ import { writeFile, readFile, createDirectory } from "@/commands/fs"
 import type { ReviewItem } from "@/stores/review-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import { normalizePath } from "@/lib/path-utils"
+import { canonicalizeReviewItems } from "@/lib/review-utils"
 
 async function ensureDir(projectPath: string): Promise<void> {
   await createDirectory(`${projectPath}/.llm-wiki`).catch(() => {})
@@ -11,7 +12,9 @@ async function ensureDir(projectPath: string): Promise<void> {
 export async function saveReviewItems(projectPath: string, items: ReviewItem[]): Promise<void> {
   const pp = normalizePath(projectPath)
   await ensureDir(pp)
-  const scoped = items.filter((item) => normalizePath(item.projectPath) === pp)
+  const scoped = canonicalizeReviewItems(
+    items.filter((item) => normalizePath(item.projectPath) === pp),
+  )
   await writeFile(`${pp}/.llm-wiki/review.json`, JSON.stringify(scoped, null, 2))
 }
 

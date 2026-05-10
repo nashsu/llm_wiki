@@ -103,6 +103,29 @@ describe("review persistence — round-trip", () => {
     const loaded = await loadReviewItems(windowsy)
     expect(loaded).toHaveLength(1)
   })
+
+  it("deduplicates same-key review items before writing review.json", async () => {
+    await saveReviewItems(tmp.path, [
+      makeReview({ id: "older", projectId: "", createdAt: 1 }),
+      makeReview({ id: "newer", projectId: "proj-1", createdAt: 2 }),
+    ])
+
+    const raw = await readFileRaw(`${tmp.path}/.llm-wiki/review.json`)
+    const parsed = JSON.parse(raw) as ReviewItem[]
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].id).toBe("newer")
+  })
+
+  it("does not auto-fill a missing projectId during save/load", async () => {
+    await saveReviewItems(tmp.path, [
+      makeReview({ id: "orphanish", projectId: "", projectPath: tmp.path }),
+    ])
+
+    const loaded = await loadReviewItems(tmp.path)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].projectId).toBe("")
+    expect(loaded[0].projectPath).toBe(tmp.path)
+  })
 })
 
 describe("chat persistence — round-trip (new format)", () => {
