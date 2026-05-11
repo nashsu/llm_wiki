@@ -1161,7 +1161,7 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "",
     "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
     "2. DO NOT output any preamble such as \"Here are the files:\", \"Based on the analysis...\", or any introductory prose.",
-    "3. DO NOT echo or restate the analysis — that was stage 1's job. Your job is to emit FILE blocks.",
+    "3. DO NOT echo or restate the analysis — that was stage 1's job. Your job is to emit FILE blocks and any genuinely needed REVIEW blocks.",
     "4. DO NOT output markdown tables, bullet lists, or headings outside of FILE/REVIEW blocks.",
     "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
     "6. Between blocks, use only blank lines — no prose.",

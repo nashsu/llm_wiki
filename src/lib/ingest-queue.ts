@@ -449,6 +449,14 @@ async function processNext(projectId: string): Promise<void> {
     return
   }
 
+  // Claim the worker before the first await below. Several enqueue/retry
+  // calls can schedule processNext in the same tick; leaving this until after
+  // getProjectPathById allowed multiple tasks to enter "processing".
+  processing = true
+  next.status = "processing"
+  await saveQueue(currentProjectPath)
+  if (currentProjectId !== projectId) return
+
   // Look up the project's current filesystem path from the registry —
   // it may have moved since the task was enqueued. If the project isn't
   // in the registry (was deleted or never registered), mark as failed.
@@ -465,11 +473,6 @@ async function processNext(projectId: string): Promise<void> {
     processNext(projectId)
     return
   }
-
-  processing = true
-  next.status = "processing"
-  await saveQueue(pp)
-  if (currentProjectId !== projectId) return
 
   const store = useWikiStore.getState()
   const llmConfig = store.llmConfig

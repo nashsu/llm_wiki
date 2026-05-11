@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { flushMicrotasks } from "@/test-helpers/deferred"
+import { createDeferred, flushMicrotasks } from "@/test-helpers/deferred"
 
 // Mock autoIngest so tests control success/failure timing.
 vi.mock("./ingest", () => ({
@@ -65,12 +65,14 @@ import {
 } from "./ingest-queue"
 import { autoIngest } from "./ingest"
 import { readFile, writeFile } from "@/commands/fs"
+import { getProjectPathById } from "@/lib/project-identity"
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
+const mockGetProjectPathById = vi.mocked(getProjectPathById)
 const mockSweep = vi.mocked(sweepResolvedReviews)
 
 /** Simulate the app having opened `TEST_ID` at `TEST_PATH` so the queue
@@ -86,6 +88,7 @@ beforeEach(async () => {
   mockAutoIngest.mockReset()
   mockReadFile.mockReset()
   mockWriteFile.mockReset()
+  mockGetProjectPathById.mockReset()
   mockSweep.mockReset()
   mockSweep.mockResolvedValue(0)
   removePageEmbeddingMock.mockReset()
@@ -93,6 +96,7 @@ beforeEach(async () => {
   // Default: persisted queue file doesn't exist
   mockReadFile.mockRejectedValue(new Error("ENOENT"))
   mockWriteFile.mockResolvedValue(undefined as unknown as void)
+  mockGetProjectPathById.mockImplementation(async (id: string) => idToPath[id] ?? null)
 
   // Default: a valid LLM config so processNext doesn't reject.
   useWikiStore.getState().setLlmConfig({
@@ -147,6 +151,28 @@ describe("ingest-queue — enqueue & basic processing", () => {
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     expect(getQueue()).toHaveLength(0)
+  })
+
+  it("claims the worker before async project lookup so parallel enqueues stay serial", async () => {
+    const pathLookup = createDeferred<string | null>()
+    mockGetProjectPathById.mockReturnValueOnce(pathLookup.promise)
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+
+    await enqueueIngest(TEST_ID, "a.md")
+    await flushMicrotasks(2)
+    await enqueueIngest(TEST_ID, "b.md")
+    await flushMicrotasks(5)
+
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(getQueue().filter((t) => t.status === "processing")).toHaveLength(1)
+    expect(getQueue().filter((t) => t.status === "pending")).toHaveLength(1)
+
+    pathLookup.resolve(TEST_PATH)
+    await flushMicrotasks(5)
+
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    expect(getQueue().filter((t) => t.status === "processing")).toHaveLength(1)
+    expect(getQueue().filter((t) => t.status === "pending")).toHaveLength(1)
   })
 })
 
