@@ -148,6 +148,33 @@ describe("buildWikiGraph", () => {
     })
   })
 
+  it("creates weighted related edges from relationship metadata", async () => {
+    installWiki({
+      [`${WIKI}/concepts/concept-a.md`]: page(
+        [
+          "type: concept",
+          "title: Concept A",
+          "relationships:",
+          '  - target: entity-b',
+          "    kind: supports",
+          "    strength: foundational",
+        ].join("\n"),
+      ),
+      [`${WIKI}/entities/entity-b.md`]: page("type: entity\ntitle: Entity B"),
+    })
+
+    const graph = await buildWikiGraph(PROJECT)
+
+    expect(graph.edges).toHaveLength(1)
+    expect(graph.edges[0]).toMatchObject({
+      source: "concept-a",
+      target: "entity-b",
+      types: ["related"],
+      relationshipStrength: "foundational",
+    })
+    expect(graph.edges[0].weight).toBeGreaterThan(2)
+  })
+
   it("does not resolve title-only references", async () => {
     installWiki({
       [`${WIKI}/concepts/concept-a.md`]: page("type: concept\ntitle: Concept A\nrelated: [Entity B Title]"),

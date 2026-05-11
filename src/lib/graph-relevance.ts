@@ -121,6 +121,7 @@ export async function buildRetrievalGraph(
     path: string
     sources: string[]
     related: string[]
+    relationshipTargets: string[]
     rawLinks: string[]
   }> = []
 
@@ -145,6 +146,7 @@ export async function buildRetrievalGraph(
       path: file.path,
       sources: page.sources,
       related: page.related,
+      relationshipTargets: page.relationships.map((rel) => rel.target),
       rawLinks: page.wikilinks,
     })
   }
@@ -172,6 +174,10 @@ export async function buildRetrievalGraph(
       addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, wikiLinksMap)
     }
     for (const linkTarget of raw.related) {
+      const resolvedId = resolveWikiReference(linkTarget, resolver)
+      addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, relatedLinksMap)
+    }
+    for (const linkTarget of raw.relationshipTargets) {
       const resolvedId = resolveWikiReference(linkTarget, resolver)
       addResolvedLink(raw.id, resolvedId, outLinksMap, inLinksMap, relatedLinksMap)
     }

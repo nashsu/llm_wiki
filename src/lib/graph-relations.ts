@@ -1,5 +1,19 @@
 import { parseFrontmatter, type FrontmatterValue } from "@/lib/frontmatter"
 import { getGraphNodeTypeFromPath } from "@/lib/graph-node-types"
+import {
+  normalizeEvidenceStrength,
+  normalizeKnowledgeType,
+  normalizeQueryRetention,
+  normalizeRelationshipStrength,
+  normalizeReviewStatus,
+  normalizeWikiState,
+  type EvidenceStrength,
+  type KnowledgeType,
+  type QueryRetention,
+  type RelationshipStrength,
+  type ReviewStatus,
+  type WikiLifecycleState,
+} from "@/lib/wiki-metadata"
 
 export type GraphEdgeType = "wikilink" | "related" | "source"
 
@@ -15,10 +29,22 @@ export interface ParsedGraphPage {
   wikilinks: string[]
   related: string[]
   sources: string[]
+  relationships: GraphRelationship[]
+  state?: WikiLifecycleState
   quality?: string
   coverage?: string
+  evidenceStrength?: EvidenceStrength
+  reviewStatus?: ReviewStatus
+  knowledgeType?: KnowledgeType
+  retention?: QueryRetention
   needsUpgrade?: boolean
   sourceCount?: number
+}
+
+export interface GraphRelationship {
+  target: string
+  kind?: string
+  strength: RelationshipStrength
 }
 
 export interface GraphResolvableNode {
@@ -58,8 +84,14 @@ export function parseGraphPage(
     wikilinks: extractWikilinks(body),
     related: arrayValue(frontmatter?.related),
     sources: arrayValue(frontmatter?.sources),
+    relationships: relationshipArrayValue(frontmatter?.relationships),
+    state: normalizeWikiState(frontmatter?.state),
     quality: normalizedScalar(frontmatter?.quality),
     coverage: normalizedScalar(frontmatter?.coverage),
+    evidenceStrength: normalizeEvidenceStrength(frontmatter?.evidence_strength),
+    reviewStatus: normalizeReviewStatus(frontmatter?.review_status),
+    knowledgeType: normalizeKnowledgeType(frontmatter?.knowledge_type),
+    retention: normalizeQueryRetention(frontmatter?.retention),
     needsUpgrade: booleanValue(frontmatter?.needs_upgrade),
     sourceCount: positiveIntegerValue(frontmatter?.source_count),
   }
@@ -184,6 +216,42 @@ function arrayValue(value: FrontmatterValue | undefined): string[] {
   }
   const scalar = scalarValue(value)
   return scalar ? [scalar] : []
+}
+
+function relationshipArrayValue(value: FrontmatterValue | undefined): GraphRelationship[] {
+  const values = Array.isArray(value) ? value : value ? [value] : []
+  return values.map(parseRelationshipValue).filter((rel): rel is GraphRelationship => rel !== null)
+}
+
+function parseRelationshipValue(value: string): GraphRelationship | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        target?: unknown
+        page?: unknown
+        kind?: unknown
+        strength?: unknown
+      }
+      const target = typeof parsed.target === "string"
+        ? parsed.target.trim()
+        : typeof parsed.page === "string"
+          ? parsed.page.trim()
+          : ""
+      if (!target) return null
+      const kind = typeof parsed.kind === "string" ? parsed.kind.trim().toLowerCase() : undefined
+      const strength = normalizeRelationshipStrength(
+        typeof parsed.strength === "string" ? parsed.strength : undefined,
+      ) ?? "related"
+      return { target, kind: kind || undefined, strength }
+    } catch {
+      return null
+    }
+  }
+
+  return { target: trimmed, strength: "related" }
 }
 
 function extractHeading(content: string): string | null {

@@ -1,4 +1,8 @@
 import { parseFrontmatter, type FrontmatterValue } from "@/lib/frontmatter"
+import {
+  scalarFrontmatterValue,
+  shouldExcludeFromDefaultKnowledgeSurface,
+} from "@/lib/wiki-metadata"
 
 type GraphExclusionNode = {
   id: string
@@ -63,6 +67,15 @@ export function isGraphInputExcludedPage(filePath: string, fileName: string, con
 
   const frontmatter = parseFrontmatter(content).frontmatter
   if (!frontmatter) return false
+
+  if (shouldExcludeFromDefaultKnowledgeSurface({
+    path: filePath,
+    type: scalarFrontmatterValue(frontmatter.type),
+    state: scalarFrontmatterValue(frontmatter.state),
+    retention: scalarFrontmatterValue(frontmatter.retention),
+  })) {
+    return true
+  }
 
   return EXCLUDED_FIELD_NAMES.some((field) => frontmatterValueHasExcludedKind(frontmatter[field]))
 }

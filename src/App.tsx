@@ -21,6 +21,7 @@ function App() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setActiveView = useWikiStore((s) => s.setActiveView)
+  const dataVersion = useWikiStore((s) => s.dataVersion)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -246,6 +247,28 @@ function App() {
     }
     init()
   }, [])
+
+  // Keep the derived maintenance queue current even when the user does not
+  // open Graph view. Graph view still refreshes it after an explicit graph load.
+  useEffect(() => {
+    if (!project) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      import("@/lib/maintenance-refresh")
+        .then(({ refreshProjectMaintenanceQueue }) => {
+          if (cancelled) return undefined
+          return refreshProjectMaintenanceQueue(project.path)
+        })
+        .catch((err) => {
+          if (!cancelled) console.warn("[maintenance] Failed to refresh queue:", err)
+        })
+    }, 750)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [project, dataVersion])
 
   async function handleProjectOpened(proj: WikiProject) {
     // Clear all per-project state BEFORE loading new project data

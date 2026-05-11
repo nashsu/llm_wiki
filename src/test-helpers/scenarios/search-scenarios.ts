@@ -4,6 +4,10 @@ function page(title: string, body: string): string {
   return `---\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
 }
 
+function typedPage(frontmatter: string, title: string, body: string): string {
+  return `---\n${frontmatter.trim()}\ntitle: ${title}\n---\n\n# ${title}\n\n${body}\n`
+}
+
 export const searchScenarios: SearchScenario[] = [
   // 1. title-exact-match — a page whose title exactly contains the query
   //    should rank first and have titleMatch=true.
@@ -204,6 +208,41 @@ export const searchScenarios: SearchScenario[] = [
       topResultPaths: ["wiki/zong-zi-chan.md"],
       titleMatchPaths: ["wiki/zong-zi-chan.md"],
       excludedPaths: ["wiki/unrelated.md"],
+    },
+  },
+
+  // 9. lifecycle-exclusions — archived and ephemeral query pages are not
+  //    default search targets; reusable query records remain findable.
+  {
+    name: "lifecycle-exclusions",
+    description:
+      "Archived pages and ephemeral query records should not pollute default search, while reusable query records may still appear.",
+    initialWiki: {
+      "wiki/concepts/active.md": typedPage(
+        "type: concept\nstate: active",
+        "Active Agent Pattern",
+        "The retrieval pattern should stay searchable.",
+      ),
+      "wiki/concepts/archived.md": typedPage(
+        "type: concept\nstate: archived",
+        "Archived Agent Pattern",
+        "The retrieval pattern is retired.",
+      ),
+      "wiki/queries/temp.md": typedPage(
+        "type: query\nretention: ephemeral",
+        "Temporary Agent Pattern",
+        "The retrieval pattern is only a scratch query.",
+      ),
+      "wiki/queries/reusable.md": typedPage(
+        "type: query\nretention: reusable",
+        "Reusable Agent Pattern",
+        "The retrieval pattern can be reused.",
+      ),
+    },
+    query: "retrieval pattern",
+    expected: {
+      topResultPaths: ["wiki/concepts/active.md"],
+      excludedPaths: ["wiki/concepts/archived.md", "wiki/queries/temp.md"],
     },
   },
 ]

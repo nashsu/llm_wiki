@@ -23,6 +23,7 @@ function makeNode(overrides: Partial<GraphNode> & Pick<GraphNode, "id" | "label"
   return {
     related: [],
     sources: [],
+    relationships: [],
     unresolvedRelated: [],
     unresolvedSources: [],
     ...overrides,

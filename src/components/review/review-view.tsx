@@ -80,7 +80,7 @@ export function ReviewView() {
         const linkTarget = fileName.replace(/\.md$/iu, "")
         const filePath = `${pp}/wiki/queries/${fileName}`
 
-        const frontmatter = `---\ntype: query\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nconfidence: medium\nlast_reviewed: ${date}\n---\n\n`
+        const frontmatter = `---\ntype: query\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nstate: draft\nconfidence: medium\nevidence_strength: moderate\nreview_status: ai_generated\nknowledge_type: experimental\nretention: ephemeral\nlast_reviewed: ${date}\nquality: draft\ncoverage: medium\nneeds_upgrade: true\nsource_count: 1\n---\n\n`
         await writeFile(filePath, frontmatter + cleanContent)
 
         // Update index
@@ -188,7 +188,7 @@ export function ReviewView() {
           const linkTarget = fileName.replace(/\.md$/iu, "")
           const filePath = `${pp}/wiki/${dir}/${fileName}`
 
-          const frontmatter = `---\ntype: ${pageType}\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nconfidence: medium\nlast_reviewed: ${date}\nquality: draft\ncoverage: low\nneeds_upgrade: true\nsource_count: 1\n---\n\n`
+          const frontmatter = `---\ntype: ${pageType}\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nstate: draft\nconfidence: medium\nevidence_strength: moderate\nreview_status: ai_generated\nknowledge_type: ${knowledgeTypeForPageType(pageType)}${pageType === "query" ? "\nretention: reusable" : ""}\nlast_reviewed: ${date}\nquality: draft\ncoverage: low\nneeds_upgrade: true\nsource_count: 1\n---\n\n`
           const body = `# ${title}\n\n${item.description}\n`
           await writeFile(filePath, frontmatter + body)
 
@@ -435,6 +435,12 @@ function directoryForPageType(pageType: string): string {
     default:
       return "queries"
   }
+}
+
+function knowledgeTypeForPageType(pageType: string): string {
+  if (pageType === "query") return "experimental"
+  if (pageType === "comparison" || pageType === "synthesis") return "strategic"
+  return "conceptual"
 }
 
 async function makeUniqueReviewPageFileName(

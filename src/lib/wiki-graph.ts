@@ -10,8 +10,18 @@ import {
   resolveSourceReference,
   resolveWikiReference,
   type GraphEdgeType,
+  type GraphRelationship,
 } from "@/lib/graph-relations"
 import { isGraphViewExcludedPage } from "@/lib/graph-exclusions"
+import {
+  RELATIONSHIP_STRENGTH_WEIGHT,
+  type EvidenceStrength,
+  type KnowledgeType,
+  type QueryRetention,
+  type RelationshipStrength,
+  type ReviewStatus,
+  type WikiLifecycleState,
+} from "@/lib/wiki-metadata"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -22,8 +32,14 @@ export interface GraphNode {
   path: string
   related: string[]
   sources: string[]
+  relationships: GraphRelationship[]
+  state?: WikiLifecycleState
   quality?: string
   coverage?: string
+  evidenceStrength?: EvidenceStrength
+  reviewStatus?: ReviewStatus
+  knowledgeType?: KnowledgeType
+  retention?: QueryRetention
   needsUpgrade?: boolean
   sourceCount?: number
   unresolvedRelated: string[]
@@ -36,6 +52,7 @@ export interface GraphEdge {
   source: string
   target: string
   types: GraphEdgeType[]
+  relationshipStrength?: RelationshipStrength
   weight: number // relevance score between source and target
 }
 
@@ -170,8 +187,14 @@ export async function buildWikiGraph(
       links: string[]
       related: string[]
       sources: string[]
+      relationships: GraphRelationship[]
+      state?: WikiLifecycleState
       quality?: string
       coverage?: string
+      evidenceStrength?: EvidenceStrength
+      reviewStatus?: ReviewStatus
+      knowledgeType?: KnowledgeType
+      retention?: QueryRetention
       needsUpgrade?: boolean
       sourceCount?: number
       unresolvedRelated: string[]
@@ -202,8 +225,14 @@ export async function buildWikiGraph(
       links: page.wikilinks,
       related: page.related,
       sources: page.sources,
+      relationships: page.relationships,
+      state: page.state,
       quality: page.quality,
       coverage: page.coverage,
+      evidenceStrength: page.evidenceStrength,
+      reviewStatus: page.reviewStatus,
+      knowledgeType: page.knowledgeType,
+      retention: page.retention,
       needsUpgrade: page.needsUpgrade,
       sourceCount: page.sourceCount,
       unresolvedRelated: [],
@@ -213,7 +242,12 @@ export async function buildWikiGraph(
 
   const resolver = buildGraphReferenceResolver([...nodeMap.values()], wikiRoot)
 
-  const edgeMap = new Map<string, { source: string; target: string; types: Set<GraphEdgeType> }>()
+  const edgeMap = new Map<string, {
+    source: string
+    target: string
+    types: Set<GraphEdgeType>
+    relationshipStrength?: RelationshipStrength
+  }>()
 
   for (const [sourceId, nodeData] of nodeMap.entries()) {
     for (const targetRaw of nodeData.links) {
@@ -239,6 +273,15 @@ export async function buildWikiGraph(
       }
       addGraphEdge(edgeMap, sourceId, targetId, "source")
     }
+
+    for (const relationship of nodeData.relationships) {
+      const targetId = resolveWikiReference(relationship.target, resolver)
+      if (targetId === null) {
+        nodeData.unresolvedRelated.push(relationship.target)
+        continue
+      }
+      addGraphEdge(edgeMap, sourceId, targetId, "related", relationship.strength)
+    }
   }
 
   // Calculate relevance weights using the retrieval graph
@@ -254,6 +297,9 @@ export async function buildWikiGraph(
   const edges: GraphEdge[] = [...edgeMap.values()].map((e) => {
     const types = [...e.types].sort(sortEdgeTypes)
     let weight = types.reduce((sum, type) => sum + GRAPH_EDGE_TYPE_WEIGHT[type], 0)
+    if (e.relationshipStrength) {
+      weight += RELATIONSHIP_STRENGTH_WEIGHT[e.relationshipStrength]
+    }
     if (retrievalGraph) {
       const nodeA = retrievalGraph.nodes.get(e.source)
       const nodeB = retrievalGraph.nodes.get(e.target)
@@ -261,7 +307,9 @@ export async function buildWikiGraph(
         weight += calculateRelevance(nodeA, nodeB, retrievalGraph)
       }
     }
-    return { source: e.source, target: e.target, types, weight }
+    return e.relationshipStrength
+      ? { source: e.source, target: e.target, types, relationshipStrength: e.relationshipStrength, weight }
+      : { source: e.source, target: e.target, types, weight }
   })
 
   const linkCounts = new Map<string, number>()
@@ -289,8 +337,14 @@ export async function buildWikiGraph(
     path: n.path,
     related: n.related,
     sources: n.sources,
+    relationships: n.relationships,
+    state: n.state,
     quality: n.quality,
     coverage: n.coverage,
+    evidenceStrength: n.evidenceStrength,
+    reviewStatus: n.reviewStatus,
+    knowledgeType: n.knowledgeType,
+    retention: n.retention,
     needsUpgrade: n.needsUpgrade,
     sourceCount: n.sourceCount,
     unresolvedRelated: n.unresolvedRelated,
@@ -303,21 +357,42 @@ export async function buildWikiGraph(
 }
 
 function addGraphEdge(
-  edgeMap: Map<string, { source: string; target: string; types: Set<GraphEdgeType> }>,
+  edgeMap: Map<string, {
+    source: string
+    target: string
+    types: Set<GraphEdgeType>
+    relationshipStrength?: RelationshipStrength
+  }>,
   source: string,
   target: string,
   type: GraphEdgeType,
+  relationshipStrength?: RelationshipStrength,
 ): void {
   if (source === target) return
   const key = [source, target].sort().join(":::")
   const existing = edgeMap.get(key)
   if (existing) {
     existing.types.add(type)
+    existing.relationshipStrength = strongerRelationshipStrength(
+      existing.relationshipStrength,
+      relationshipStrength,
+    )
     return
   }
-  edgeMap.set(key, { source, target, types: new Set([type]) })
+  edgeMap.set(key, { source, target, types: new Set([type]), relationshipStrength })
 }
 
 function sortEdgeTypes(a: GraphEdgeType, b: GraphEdgeType): number {
   return GRAPH_EDGE_TYPE_WEIGHT[a] - GRAPH_EDGE_TYPE_WEIGHT[b]
+}
+
+function strongerRelationshipStrength(
+  current: RelationshipStrength | undefined,
+  next: RelationshipStrength | undefined,
+): RelationshipStrength | undefined {
+  if (!next) return current
+  if (!current) return next
+  return RELATIONSHIP_STRENGTH_WEIGHT[next] > RELATIONSHIP_STRENGTH_WEIGHT[current]
+    ? next
+    : current
 }

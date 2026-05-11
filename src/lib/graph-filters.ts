@@ -131,8 +131,10 @@ export function isMaintenanceGraphNode(node: GraphNode): boolean {
 
 function isLowQualityGraphNode(node: GraphNode): boolean {
   if (node.needsUpgrade === true) return true
+  if (node.state === "seed" || node.state === "draft") return true
   if (node.quality === "seed" || node.quality === "draft") return true
   if (node.coverage === "low") return true
+  if (node.evidenceStrength === "weak") return true
   if (node.type === "source" && node.sourceCount === undefined) return true
   if (isKnowledgeNodeType(node.type) && (
     node.quality === undefined ||

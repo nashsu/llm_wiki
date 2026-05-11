@@ -27,6 +27,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
+import { isGraphInputExcludedPage } from "@/lib/graph-exclusions"
 
 // ── Error surfacing ──────────────────────────────────────────────────────
 
@@ -353,6 +354,9 @@ export async function embedAllPages(
   for (const file of mdFiles) {
     try {
       const content = await readFile(file.path)
+      if (isGraphInputExcludedPage(file.path, `${file.id}.md`, content)) {
+        continue
+      }
       const titleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
       const title = titleMatch ? titleMatch[1].trim() : file.id
       await embedPage(pp, file.id, title, content, cfg)

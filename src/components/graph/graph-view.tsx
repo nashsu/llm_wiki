@@ -14,6 +14,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
 import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
 import { findSurprisingConnections, detectKnowledgeGaps, type SurprisingConnection, type KnowledgeGap } from "@/lib/graph-insights"
+import { saveMaintenanceQueueForGraph } from "@/lib/maintenance-refresh"
 import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { normalizePath } from "@/lib/path-utils"
@@ -468,6 +469,10 @@ export function GraphView() {
       setCommunities(result.communities)
       setSurprisingConns(findSurprisingConnections(result.nodes, result.edges, result.communities))
       setKnowledgeGaps(detectKnowledgeGaps(result.nodes, result.edges, result.communities))
+      saveMaintenanceQueueForGraph(normalizePath(project.path), result.nodes, result.edges)
+        .catch((err) => {
+          console.warn("[Graph] Failed to save maintenance queue:", err)
+        })
       lastLoadedVersion.current = useWikiStore.getState().dataVersion
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to build graph"

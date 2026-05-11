@@ -53,10 +53,28 @@ related: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources: []
+state: seed | draft | active | canonical | deprecated | archived
 confidence: low | medium | high
+evidence_strength: weak | moderate | strong
+review_status: ai_generated | ai_reviewed | human_reviewed | validated
+knowledge_type: conceptual | operational | experimental | strategic
 last_reviewed: YYYY-MM-DD
+quality: seed | draft | reviewed | canonical
+coverage: low | medium | high
+needs_upgrade: true | false
+source_count: 1
 ---
 \`\`\`
+
+query 페이지는 추가로 다음 필드를 포함한다:
+\`\`\`yaml
+retention: ephemeral | reusable | promote | archive
+\`\`\`
+
+\`retention: canonical\`은 사용하지 않는다. query는 필요하면 concept, comparison, synthesis 같은 지식 노드로 승격한다.
+\`retention: promote\`는 자동 승격 명령이 아니라 maintenance 후보 신호다. 실제 승격은 Codex/Hermes/사용자 검토 후 수행한다.
+\`state: canonical\` 또는 \`quality: canonical\`은 evidence_strength: moderate|strong, review_status: ai_reviewed 이상, 명확한 source trace, needs_upgrade: false를 만족할 때만 사용한다.
+\`relationships\`는 선택 필드이며 canonical/operational 문서에서 edge 의미와 강도를 높일 때 우선 사용한다.
 
 source 페이지는 추가로 다음 필드를 포함한다:
 \`\`\`yaml
@@ -69,12 +87,15 @@ venue: ""
 기존 Vault의 \`type: decision\` 또는 \`wiki/decisions/\` 페이지는 legacy 문서로 읽을 수 있다.
 새로운 판단 기록은 기본적으로 query, project, 또는 synthesis 페이지에 남긴다.`
 
-const BASE_INDEX_FORMAT = `\`wiki/index.md\`는 모든 페이지를 유형별로 묶어 나열한다. 각 항목은 다음 형식을 따른다:
+const BASE_INDEX_FORMAT = `\`wiki/index.md\`는 사람이 읽는 compact index다. 모든 파일을 무한 누적하지 않고 canonical, reviewed, active, reusable/promote query 중심으로 유지한다.
+ephemeral/archive query, archived/deprecated page, 임시 source dump는 index에서 제외한다. 전체 page 수와 점검 지표는 App이 생성하는 \`.llm-wiki/health.json\`을 사용한다.
+각 항목은 다음 형식을 따른다:
 \`\`\`
 - [[page-slug]] — 한 줄 설명
 \`\`\``
 
-const BASE_LOG_FORMAT = `\`wiki/log.md\`는 작업 이력을 최신순으로 기록한다:
+const BASE_LOG_FORMAT = `\`wiki/log.md\`는 사람이 읽는 최근 운영 요약이다. 최신순으로 기록하되 무한 누적 파일로 만들지 않는다.
+기준은 최근 30일 또는 최근 50개 항목이며, 초과분은 \`.llm-wiki/log-archive/YYYY-MM.md\` 같은 machine archive 후보로 본다.
 \`\`\`
 ## YYYY-MM-DD
 
@@ -82,7 +103,8 @@ const BASE_LOG_FORMAT = `\`wiki/log.md\`는 작업 이력을 최신순으로 기
 \`\`\``
 
 const BASE_CROSSREF = `- Wiki 페이지끼리는 \`[[page-slug]]\` 문법으로 연결한다.
-- 모든 entity와 concept은 \`wiki/index.md\`에 나타나야 한다.
+- \`wiki/index.md\`에는 오래 유지할 canonical/reviewed/active page만 싣는다.
+- query 페이지는 \`retention: reusable\` 또는 \`retention: promote\`일 때만 index에 표시한다.
 - query 페이지는 근거로 삼은 source와 concept을 연결한다.
 - comparison 페이지는 비교 대상과 근거 source를 \`related:\`로 인용한다.
 - synthesis 페이지는 기여한 모든 source를 \`related:\`로 인용한다.`

@@ -39,7 +39,11 @@ describe("wiki quality gate", () => {
         "type: source",
         "title: Codexian",
         'sources: ["codexian.md"]',
+        "state: active",
         "confidence: high",
+        "evidence_strength: strong",
+        "review_status: ai_reviewed",
+        "knowledge_type: operational",
         "quality: reviewed",
         "coverage: high",
         "needs_upgrade: false",
@@ -87,7 +91,11 @@ describe("wiki quality gate", () => {
         "type: source",
         "title: Dify",
         'sources: ["dify.md"]',
+        "state: canonical",
         "confidence: high",
+        "evidence_strength: weak",
+        "review_status: ai_reviewed",
+        "knowledge_type: operational",
         "created: 2024-05-10",
         "updated: 2024-05-10",
         "last_reviewed: 2024-05-10",
@@ -120,6 +128,45 @@ describe("wiki quality gate", () => {
     expect(assessment.issues.map((i) => i.type)).toContain("invalid-quality-metadata")
     expect(assessment.issues.map((i) => i.type)).toContain("stale-or-invalid-metadata-date")
     expect(assessment.issues.map((i) => i.type)).toContain("missing-verification")
+  })
+
+  it("requires reviewed evidence before a page can be canonical", () => {
+    const assessment = assessWikiPageQuality(
+      "wiki/concepts/ops.md",
+      [
+        "---",
+        "type: concept",
+        "title: Ops",
+        'sources: ["ops.md"]',
+        "state: canonical",
+        "confidence: high",
+        "evidence_strength: moderate",
+        "review_status: ai_generated",
+        "knowledge_type: operational",
+        "quality: canonical",
+        "coverage: high",
+        "needs_upgrade: true",
+        "source_count: 1",
+        "---",
+        "",
+        "# Ops",
+        "",
+        "## 정의",
+        "충분한 정의입니다. ".repeat(90),
+        "## 판단 기준",
+        "판단 기준.",
+        "## 적용 조건",
+        "적용 조건.",
+        "## 실패 모드",
+        "실패 모드.",
+        "## 검증 및 최신성",
+        "검증 필요.",
+      ].join("\n"),
+    )
+
+    const invalidIssue = assessment.issues.find((i) => i.type === "invalid-quality-metadata")
+    expect(invalidIssue?.message).toContain("review_status: ai_reviewed|human_reviewed|validated")
+    expect(invalidIssue?.message).toContain("needs_upgrade: false")
   })
 
   it("builds a repair prompt that keeps verification inside ingest", () => {

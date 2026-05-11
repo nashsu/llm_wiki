@@ -1,6 +1,11 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath, getFileStem } from "@/lib/path-utils"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import {
+  scalarFrontmatterValue,
+  shouldExcludeFromDefaultKnowledgeSurface,
+} from "@/lib/wiki-metadata"
 
 /**
  * One image reference extracted from a matched page's markdown.
@@ -310,6 +315,9 @@ export async function searchWiki(
           const tryPath = `${pp}/wiki/${dir}/${vr.id}.md`
           try {
             const content = await readFile(tryPath)
+            if (isSearchExcludedFile({ path: tryPath }, content)) {
+              continue
+            }
             const title = extractTitle(content, `${vr.id}.md`)
             results.push({
               path: tryPath,
@@ -440,6 +448,8 @@ function scoreFile(
   queryPhrase: string,
   query: string,
 ): SearchResult | null {
+  if (isSearchExcludedFile(file, content)) return null
+
   const title = extractTitle(content, file.name)
   const titleText = `${title} ${file.name}`
   const titleLower = titleText.toLowerCase()
@@ -491,4 +501,15 @@ function scoreFile(
     score,
     images: extractImageRefs(content),
   }
+}
+
+function isSearchExcludedFile(file: Pick<FileNode, "path">, content: string): boolean {
+  const frontmatter = parseFrontmatter(content).frontmatter
+  if (!frontmatter) return false
+  return shouldExcludeFromDefaultKnowledgeSurface({
+    path: file.path,
+    type: scalarFrontmatterValue(frontmatter.type),
+    state: scalarFrontmatterValue(frontmatter.state),
+    retention: scalarFrontmatterValue(frontmatter.retention),
+  })
 }

@@ -68,6 +68,16 @@ import {
   buildQualityRepairPrompt,
 } from "@/lib/wiki-quality-gate"
 import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
+import {
+  CONFIDENCE_VALUES,
+  EVIDENCE_STRENGTH_VALUES,
+  KNOWLEDGE_TYPE_VALUES,
+  QUERY_RETENTION_VALUES,
+  REVIEW_STATUS_VALUES,
+  WIKI_STATE_VALUES,
+  inferKnowledgeTypeFromPageType,
+  inferStateFromQuality,
+} from "@/lib/wiki-metadata"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -163,6 +173,12 @@ const INGEST_VERIFICATION_RESULTS_PER_QUERY = 3
 const INGEST_EXTRA_CONTENT_PAGE_LIMIT = 2
 const INGEST_QUALITY_VALUES = new Set(["seed", "draft", "reviewed", "canonical"])
 const INGEST_COVERAGE_VALUES = new Set(["low", "medium", "high"])
+const INGEST_STATE_VALUES = new Set<string>(WIKI_STATE_VALUES)
+const INGEST_CONFIDENCE_VALUES = new Set<string>(CONFIDENCE_VALUES)
+const INGEST_EVIDENCE_STRENGTH_VALUES = new Set<string>(EVIDENCE_STRENGTH_VALUES)
+const INGEST_REVIEW_STATUS_VALUES = new Set<string>(REVIEW_STATUS_VALUES)
+const INGEST_KNOWLEDGE_TYPE_VALUES = new Set<string>(KNOWLEDGE_TYPE_VALUES)
+const INGEST_QUERY_RETENTION_VALUES = new Set<string>(QUERY_RETENTION_VALUES)
 
 /**
  * Parse an LLM stage-2 generation into FILE blocks.
@@ -525,7 +541,11 @@ function buildFallbackComparisonPage(
     "tags: [comparison]",
     "related: []",
     `sources: [${yamlString(sourceFileName)}]`,
+    "state: draft",
     "confidence: medium",
+    "evidence_strength: moderate",
+    "review_status: ai_generated",
+    "knowledge_type: strategic",
     `last_reviewed: ${date}`,
     "quality: draft",
     "coverage: medium",
@@ -589,7 +609,7 @@ async function ensureComparisonPageForComparisonSource(params: {
     `The first line must be exactly: ---FILE: ${comparisonPath}---`,
     "The last line must be exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
-    "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "The frontmatter type must be exactly `comparison`.",
     `Use created/updated/last_reviewed date ${date}.`,
     `The sources array MUST include "${sourceFileName}".`,
@@ -603,7 +623,7 @@ async function ensureComparisonPageForComparisonSource(params: {
     "",
     "Page requirements:",
     "- type must be `comparison`.",
-    "- Include quality, coverage, needs_upgrade, and source_count frontmatter.",
+    "- Include state, confidence, evidence_strength, review_status, knowledge_type, quality, coverage, needs_upgrade, and source_count frontmatter.",
     "- Compare the main alternatives side by side.",
     "- Include a compact comparison table when the source supports it.",
     "- Include decision criteria, recommended use, risks, source-grounded conclusion, and verification/currentness notes.",
@@ -1156,16 +1176,23 @@ async function generateOllamaSplitFileBlocks(params: {
     "The first line must be the requested `---FILE: path---` line.",
     "The last line must be exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
-    "Required frontmatter keys: type, title, created, updated, tags, related, sources, confidence, last_reviewed.",
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
+    "Query pages must include retention: ephemeral | reusable | promote | archive.",
     `Use created/updated/last_reviewed date ${date}.`,
     "Allowed quality values are only seed, draft, reviewed, canonical. Never use gold.",
+    "Allowed state values are only seed, draft, active, canonical, deprecated, archived.",
+    "Allowed evidence_strength values are only weak, moderate, strong.",
+    "Allowed review_status values are only ai_generated, ai_reviewed, human_reviewed, validated.",
+    "Allowed knowledge_type values are only conceptual, operational, experimental, strategic.",
     `The sources array MUST include "${fileName}" for source-derived content.`,
     "Use compact Korean prose. Prefer fewer, stronger sections over many thin pages.",
     "Treat raw source content as evidence, not guaranteed truth. Mark outdated, disputed, or insufficiently verified claims as verification needs.",
     "If Ingest Verification Search Results are supplied, use them in this ingest pass and keep them separate from raw-source evidence.",
     "If latest/current data is needed but not supplied, add explicit follow-up search questions instead of pretending certainty.",
     "Do not set coverage: high with needs_upgrade: false unless a substantial verification/currentness section explains what was checked.",
+    "Do not mark state: canonical or quality: canonical when evidence_strength is weak.",
+    "Only mark state: canonical or quality: canonical when evidence_strength is moderate|strong, review_status is ai_reviewed|human_reviewed|validated, source trace is clear, and needs_upgrade is false.",
     "Do not add wikilinks to pages that do not already exist or are not emitted in this response; use plain text or review items for candidates.",
     "",
     language,
@@ -1245,6 +1272,9 @@ async function generateOllamaSplitFileBlocks(params: {
         "",
         "Generate exactly one updated index page at wiki/index.md.",
         "type must be `index`.",
+        "Keep it as a compact human index, not an exhaustive machine list.",
+        "Do not list query pages unless retention is reusable or promote.",
+        "Do not list archived/deprecated pages or ephemeral/archive queries.",
         `Preserve existing entries from the current index and add links for ${[
           `[[${sourcePageSlug}]]`,
           comparisonIntent && comparisonSlug ? `[[${comparisonSlug}]]` : "",
@@ -1371,7 +1401,7 @@ async function collectPostIngestReviewItems(
         "",
         ...assessment.issues.map((issue) => `- ${issue.type}: ${issue.message}`),
         "",
-        "Repair the page, downgrade it with `quality: seed|draft` and `needs_upgrade: true`, or convert weak claims into review/search questions.",
+        "Repair the page, downgrade it with `state: seed|draft`, `quality: seed|draft`, `evidence_strength: weak`, and `needs_upgrade: true`, or convert weak claims into review/search questions.",
       ].join("\n"),
       sourcePath,
       affectedPages: [assessment.path],
@@ -1875,7 +1905,11 @@ async function autoIngestImpl(
       `sources: ["${fileName}"]`,
       `tags: []`,
       `related: []`,
+      "state: draft",
       "confidence: low",
+      "evidence_strength: weak",
+      "review_status: ai_generated",
+      "knowledge_type: conceptual",
       `last_reviewed: ${date}`,
       "quality: draft",
       "coverage: low",
@@ -2239,6 +2273,19 @@ function isIngestContentPage(relativePath: string): boolean {
   )
 }
 
+function pageTypeFromIngestPath(relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/")
+  const match = normalized.match(/^wiki\/([^/]+)\//u)
+  const folder = match?.[1] ?? ""
+  if (folder === "sources") return "source"
+  if (folder === "entities") return "entity"
+  if (folder === "concepts") return "concept"
+  if (folder === "comparisons") return "comparison"
+  if (folder === "queries") return "query"
+  if (folder === "synthesis") return "synthesis"
+  return ""
+}
+
 function extractFrontmatterPayload(content: string): { payload: string; body: string } | null {
   const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
   if (!match) return null
@@ -2277,30 +2324,77 @@ function normalizeIngestFrontmatter(relativePath: string, content: string, date:
   const parsed = extractFrontmatterPayload(content)
   if (!parsed) return content
 
+  const pageType = pageTypeFromIngestPath(relativePath)
   let payload = parsed.payload
   payload = upsertYamlScalar(payload, "created", date)
   payload = upsertYamlScalar(payload, "updated", date)
   payload = upsertYamlScalar(payload, "last_reviewed", date)
 
+  const state = readYamlScalar(payload, "state").toLowerCase()
+  const confidence = readYamlScalar(payload, "confidence").toLowerCase()
+  const evidenceStrength = readYamlScalar(payload, "evidence_strength").toLowerCase()
+  const reviewStatus = readYamlScalar(payload, "review_status").toLowerCase()
+  const knowledgeType = readYamlScalar(payload, "knowledge_type").toLowerCase()
+  const retention = readYamlScalar(payload, "retention").toLowerCase()
   const quality = readYamlScalar(payload, "quality").toLowerCase()
   const coverage = readYamlScalar(payload, "coverage").toLowerCase()
   const needsUpgrade = readYamlScalar(payload, "needs_upgrade").toLowerCase()
   const sourceCount = readYamlScalar(payload, "source_count")
 
   let forceNeedsUpgrade = false
-  if (quality && !INGEST_QUALITY_VALUES.has(quality)) {
+  if (!state || !INGEST_STATE_VALUES.has(state)) {
+    payload = upsertYamlScalar(payload, "state", inferStateFromQuality(quality))
+  }
+  if (!confidence || !INGEST_CONFIDENCE_VALUES.has(confidence)) {
+    payload = upsertYamlScalar(payload, "confidence", "medium")
+  }
+  if (!evidenceStrength || !INGEST_EVIDENCE_STRENGTH_VALUES.has(evidenceStrength)) {
+    payload = upsertYamlScalar(payload, "evidence_strength", "moderate")
+  }
+  if (!reviewStatus || !INGEST_REVIEW_STATUS_VALUES.has(reviewStatus)) {
+    payload = upsertYamlScalar(payload, "review_status", "ai_generated")
+  }
+  if (!knowledgeType || !INGEST_KNOWLEDGE_TYPE_VALUES.has(knowledgeType)) {
+    payload = upsertYamlScalar(payload, "knowledge_type", inferKnowledgeTypeFromPageType(pageType))
+  }
+  if (pageType === "query" && (!retention || !INGEST_QUERY_RETENTION_VALUES.has(retention))) {
+    payload = upsertYamlScalar(payload, "retention", "ephemeral")
+  }
+  if (!quality) {
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    forceNeedsUpgrade = true
+  } else if (!INGEST_QUALITY_VALUES.has(quality)) {
     payload = upsertYamlScalar(payload, "quality", "draft")
     forceNeedsUpgrade = true
   }
-  if (coverage && !INGEST_COVERAGE_VALUES.has(coverage)) {
+  if (!coverage) {
+    payload = upsertYamlScalar(payload, "coverage", "medium")
+    forceNeedsUpgrade = true
+  } else if (!INGEST_COVERAGE_VALUES.has(coverage)) {
     payload = upsertYamlScalar(payload, "coverage", "medium")
     forceNeedsUpgrade = true
   }
-  if (needsUpgrade && needsUpgrade !== "true" && needsUpgrade !== "false") {
+  if (!needsUpgrade) {
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
+  } else if (needsUpgrade !== "true" && needsUpgrade !== "false") {
     payload = upsertYamlScalar(payload, "needs_upgrade", "true")
   }
-  if (sourceCount && !/^[1-9]\d*$/.test(sourceCount)) {
+  if (!sourceCount) {
     payload = upsertYamlScalar(payload, "source_count", "1")
+  } else if (!/^[1-9]\d*$/.test(sourceCount)) {
+    payload = upsertYamlScalar(payload, "source_count", "1")
+  }
+  if (
+    readYamlScalar(payload, "evidence_strength").toLowerCase() === "weak" &&
+    (
+      readYamlScalar(payload, "state").toLowerCase() === "canonical" ||
+      readYamlScalar(payload, "quality").toLowerCase() === "canonical" ||
+      readYamlScalar(payload, "needs_upgrade").toLowerCase() === "false"
+    )
+  ) {
+    payload = upsertYamlScalar(payload, "state", "draft")
+    payload = upsertYamlScalar(payload, "quality", "draft")
+    payload = upsertYamlScalar(payload, "needs_upgrade", "true")
   }
 
   const claimsFullyVerified =
@@ -2674,8 +2768,8 @@ export function buildGenerationPrompt(
       ? `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to any entity/concept pages.`
       : `   For such sources, create **wiki/comparisons/${readableWikiStem(sourceSubjectSlug)}.md** with frontmatter \`type: comparison\`. Do this in addition to the source summary and any entity/concept pages.`,
     "5. Synthesis, query, or decision pages only when the analysis clearly recommends reusable cross-source content",
-    "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "7. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "6. An updated wiki/index.md — keep it as a compact human index, not an exhaustive machine list. Preserve existing durable entries, add only active/reviewed/canonical pages and query pages with retention: reusable or retention: promote.",
+    "7. An updated wiki/overview.md — a concise current map of what the wiki covers, updated to reflect the newly ingested source. Keep long-term strategy and detailed policies in canonical pages instead of expanding overview indefinitely.",
     "",
     "## Quality Contract",
     "",
@@ -2706,15 +2800,20 @@ export function buildGenerationPrompt(
     "- If web evidence is NOT supplied, create a REVIEW block or 열린 질문 for external verification/search.",
     "- Never claim latest/current status unless the source or supplied web evidence supports it.",
     "- Do not set `coverage: high` with `needs_upgrade: false` unless a substantial verification/currentness section explains what was checked.",
+    "- Do not mark `state: canonical` or `quality: canonical` when `evidence_strength: weak`.",
+    "- Only mark `state: canonical` or `quality: canonical` when `evidence_strength` is moderate or strong, `review_status` is ai_reviewed or better, source trace is clear, and `needs_upgrade: false`.",
     "",
     "Thin page guard:",
     "- Prefer updating an existing page over creating a new page that only defines a term.",
     "- If a new page would be thin, create a REVIEW block or query page instead.",
     "- Do not promote one-off terms into concept/entity pages unless the analysis shows reusable value.",
     "- If a page is useful but still incomplete, mark it with `quality: seed` or `quality: draft` and `needs_upgrade: true`.",
+    "- If evidence is weak, use `state: draft`, `evidence_strength: weak`, and keep `needs_upgrade: true`.",
     "- Add `freshness_required: true` when a page depends on current product status, APIs, pricing, laws, benchmarks, or other fast-changing facts.",
     "- If you mention an important candidate page but do not actually emit that FILE block, write it as plain text or a REVIEW item; do not add a wikilink to a missing page.",
     "- `wiki/index.md` must link only to existing pages from the Current Wiki Index or FILE blocks emitted in this response.",
+    "- `wiki/index.md` must not list `retention: ephemeral`, `retention: archive`, `state: archived`, or `state: deprecated` pages.",
+    "- `wiki/log.md` is not generated by the model and should stay a recent human operating summary; the app writes derived health metrics to `.llm-wiki/health.json`.",
     "",
     "Do NOT generate wiki/log.md. The app appends the ingest log deterministically after it knows which files were actually written.",
     "",
@@ -2744,7 +2843,12 @@ export function buildGenerationPrompt(
     "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
     "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
     `  • sources  — array of source filenames; MUST include "${sourceFileName}".`,
+    "  • state — seed | draft | active | canonical | deprecated | archived",
     "  • confidence — low | medium | high",
+    "  • evidence_strength — weak | moderate | strong",
+    "  • review_status — ai_generated | ai_reviewed | human_reviewed | validated",
+    "  • knowledge_type — conceptual | operational | experimental | strategic",
+    "  • retention — ephemeral | reusable | promote | archive (query pages only; do not use canonical here)",
     `  • last_reviewed — ${date}`,
     "",
     "Required quality fields for content pages:",
@@ -2764,6 +2868,15 @@ export function buildGenerationPrompt(
     "    tags: [example, demo]",
     "    related: [related-slug-1, related-slug-2]",
     `    sources: ["${sourceFileName}"]`,
+    "    state: draft",
+    "    confidence: medium",
+    "    evidence_strength: moderate",
+    "    review_status: ai_generated",
+    "    knowledge_type: conceptual",
+    "    quality: draft",
+    "    coverage: medium",
+    "    needs_upgrade: true",
+    "    source_count: 1",
     "    ---",
     "",
     "    # Example Entity",
@@ -3024,7 +3137,11 @@ async function injectImagesIntoSourceSummary(
         `sources: ["${fileName}"]`,
         "tags: []",
         "related: []",
+        "state: seed",
         "confidence: low",
+        "evidence_strength: weak",
+        "review_status: ai_generated",
+        "knowledge_type: conceptual",
         `last_reviewed: ${date}`,
         "quality: seed",
         "coverage: low",

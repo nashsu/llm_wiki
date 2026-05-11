@@ -36,7 +36,10 @@ export const useUpdateStore = create<UpdateStoreState>((set) => ({
   lastResult: null,
   lastCheckedAt: null,
   dismissedVersion: null,
-  enabled: true,
+  // Kevin's app is maintained as a local fork, so startup should not
+  // nag with upstream release banners. Manual checks remain available
+  // from Settings -> About when an update review is intentional.
+  enabled: false,
 
   setChecking: (checking) => set({ checking }),
   setResult: (lastResult, lastCheckedAt) =>

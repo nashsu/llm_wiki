@@ -10,13 +10,26 @@ function page(frontmatter: string): string {
 }
 
 describe("graph exclusions", () => {
-  it("keeps query records available for maintenance readers but excludes them from graph view", () => {
+  it("excludes query records from graph inputs by default", () => {
     const content = page("type: query\ntitle: Research Question")
     const path = "/project/wiki/queries/research-question.md"
 
-    expect(isGraphInputExcludedPage(path, "research-question.md", content)).toBe(false)
+    expect(isGraphInputExcludedPage(path, "research-question.md", content)).toBe(true)
     expect(isGraphViewExcludedPage(path, "research-question.md", content)).toBe(true)
     expect(isGraphExcludedNode({ id: "research-question", path, type: "query" })).toBe(true)
+  })
+
+  it("excludes archived or ephemeral pages from graph inputs", () => {
+    expect(isGraphInputExcludedPage(
+      "/project/wiki/concepts/old.md",
+      "old.md",
+      page("type: concept\ntitle: Old\nstate: archived"),
+    )).toBe(true)
+    expect(isGraphInputExcludedPage(
+      "/project/wiki/queries/temp.md",
+      "temp.md",
+      page("type: query\ntitle: Temp\nretention: ephemeral"),
+    )).toBe(true)
   })
 
   it("excludes overview and index-like pages from all graph inputs", () => {

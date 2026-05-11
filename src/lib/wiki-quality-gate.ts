@@ -1,4 +1,12 @@
 import { parseFrontmatter } from "@/lib/frontmatter"
+import {
+  CONFIDENCE_VALUES,
+  EVIDENCE_STRENGTH_VALUES,
+  KNOWLEDGE_TYPE_VALUES,
+  QUERY_RETENTION_VALUES,
+  REVIEW_STATUS_VALUES,
+  WIKI_STATE_VALUES,
+} from "@/lib/wiki-metadata"
 
 export type WikiQualityIssueType =
   | "thin-page"
@@ -27,9 +35,26 @@ export interface WikiQualityOptions {
   enforceIngestDates?: boolean
 }
 
-const QUALITY_FIELDS = ["quality", "coverage", "needs_upgrade", "source_count"]
+const CONTENT_QUALITY_FIELDS = [
+  "state",
+  "confidence",
+  "evidence_strength",
+  "review_status",
+  "knowledge_type",
+  "quality",
+  "coverage",
+  "needs_upgrade",
+  "source_count",
+]
+const QUERY_QUALITY_FIELDS = ["retention"]
 const QUALITY_VALUES = new Set(["seed", "draft", "reviewed", "canonical"])
 const COVERAGE_VALUES = new Set(["low", "medium", "high"])
+const STATE_VALUES = new Set<string>(WIKI_STATE_VALUES)
+const CONFIDENCE_VALUE_SET = new Set<string>(CONFIDENCE_VALUES)
+const EVIDENCE_STRENGTH_VALUE_SET = new Set<string>(EVIDENCE_STRENGTH_VALUES)
+const REVIEW_STATUS_VALUE_SET = new Set<string>(REVIEW_STATUS_VALUES)
+const KNOWLEDGE_TYPE_VALUE_SET = new Set<string>(KNOWLEDGE_TYPE_VALUES)
+const QUERY_RETENTION_VALUE_SET = new Set<string>(QUERY_RETENTION_VALUES)
 
 const STRUCTURAL_TYPES = new Set(["index", "overview", "log", "schema", "purpose"])
 
@@ -78,9 +103,12 @@ function hasAnySubstantialHeading(content: string, headings: string[], minBodyLe
   return headings.some((h) => hasSubstantialHeading(content, h, minBodyLength))
 }
 
-function missingFrontmatterQualityFields(content: string): string[] {
+function missingFrontmatterQualityFields(content: string, pageType: string): string[] {
   const fm = parseFrontmatter(content).frontmatter ?? {}
-  return QUALITY_FIELDS.filter((field) => !(field in fm))
+  const required = pageType === "query"
+    ? [...CONTENT_QUALITY_FIELDS, ...QUERY_QUALITY_FIELDS]
+    : CONTENT_QUALITY_FIELDS
+  return required.filter((field) => !(field in fm))
 }
 
 function frontmatterScalar(content: string, field: string): string {
@@ -141,7 +169,7 @@ export function assessWikiPageQuality(
     return { path: relativePath, pageType, issues, shouldRepair: false }
   }
 
-  const missingQualityFields = missingFrontmatterQualityFields(content)
+  const missingQualityFields = missingFrontmatterQualityFields(content, pageType)
   if (missingQualityFields.length > 0) {
     issues.push({
       type: "missing-quality-metadata",
@@ -150,10 +178,34 @@ export function assessWikiPageQuality(
   }
 
   const quality = frontmatterScalar(content, "quality").trim().toLowerCase()
+  const state = frontmatterScalar(content, "state").trim().toLowerCase()
+  const confidence = frontmatterScalar(content, "confidence").trim().toLowerCase()
+  const evidenceStrength = frontmatterScalar(content, "evidence_strength").trim().toLowerCase()
+  const reviewStatus = frontmatterScalar(content, "review_status").trim().toLowerCase()
+  const knowledgeType = frontmatterScalar(content, "knowledge_type").trim().toLowerCase()
+  const retention = frontmatterScalar(content, "retention").trim().toLowerCase()
   const coverage = frontmatterScalar(content, "coverage").trim().toLowerCase()
   const needsUpgrade = frontmatterScalar(content, "needs_upgrade").trim().toLowerCase()
   const sourceCount = frontmatterScalar(content, "source_count").trim()
   const invalidMetadata: string[] = []
+  if (state && !STATE_VALUES.has(state)) {
+    invalidMetadata.push(`state must be seed|draft|active|canonical|deprecated|archived, got "${state}"`)
+  }
+  if (confidence && !CONFIDENCE_VALUE_SET.has(confidence)) {
+    invalidMetadata.push(`confidence must be low|medium|high, got "${confidence}"`)
+  }
+  if (evidenceStrength && !EVIDENCE_STRENGTH_VALUE_SET.has(evidenceStrength)) {
+    invalidMetadata.push(`evidence_strength must be weak|moderate|strong, got "${evidenceStrength}"`)
+  }
+  if (reviewStatus && !REVIEW_STATUS_VALUE_SET.has(reviewStatus)) {
+    invalidMetadata.push(`review_status must be ai_generated|ai_reviewed|human_reviewed|validated, got "${reviewStatus}"`)
+  }
+  if (knowledgeType && !KNOWLEDGE_TYPE_VALUE_SET.has(knowledgeType)) {
+    invalidMetadata.push(`knowledge_type must be conceptual|operational|experimental|strategic, got "${knowledgeType}"`)
+  }
+  if (retention && !QUERY_RETENTION_VALUE_SET.has(retention)) {
+    invalidMetadata.push(`retention must be ephemeral|reusable|promote|archive, got "${retention}"`)
+  }
   if (quality && !QUALITY_VALUES.has(quality)) {
     invalidMetadata.push(`quality must be seed|draft|reviewed|canonical, got "${quality}"`)
   }
@@ -165,6 +217,26 @@ export function assessWikiPageQuality(
   }
   if (sourceCount && !/^[1-9]\d*$/.test(sourceCount)) {
     invalidMetadata.push(`source_count must be a positive integer, got "${sourceCount}"`)
+  }
+  if (
+    evidenceStrength === "weak" &&
+    (state === "canonical" || quality === "canonical" || isFalse(needsUpgrade))
+  ) {
+    invalidMetadata.push("weak evidence cannot be marked canonical or closed with needs_upgrade: false")
+  }
+  if (state === "canonical" || quality === "canonical") {
+    if (evidenceStrength !== "moderate" && evidenceStrength !== "strong") {
+      invalidMetadata.push("canonical pages require evidence_strength: moderate|strong")
+    }
+    if (!["ai_reviewed", "human_reviewed", "validated"].includes(reviewStatus)) {
+      invalidMetadata.push("canonical pages require review_status: ai_reviewed|human_reviewed|validated")
+    }
+    if (!isFalse(needsUpgrade)) {
+      invalidMetadata.push("canonical pages require needs_upgrade: false")
+    }
+    if (!sourceCount && !hasSourceTrace(content)) {
+      invalidMetadata.push("canonical pages require source_count or explicit source trace")
+    }
   }
   if (invalidMetadata.length > 0) {
     issues.push({
@@ -294,8 +366,13 @@ export function buildQualityRepairPrompt(args: {
       "Your last line must be exactly: ---END FILE---",
       "",
       "Quality requirements:",
-      "- Add frontmatter fields: quality, coverage, needs_upgrade, source_count.",
+      "- Add frontmatter fields: state, confidence, evidence_strength, review_status, knowledge_type, quality, coverage, needs_upgrade, source_count.",
+      "- Query pages must also include retention: ephemeral | reusable | promote | archive.",
+      "- Allowed state values are only seed, draft, active, canonical, deprecated, archived.",
       "- Allowed quality values are only seed, draft, reviewed, canonical. Never use gold.",
+      "- Allowed evidence_strength values are only weak, moderate, strong.",
+      "- Allowed review_status values are only ai_generated, ai_reviewed, human_reviewed, validated.",
+      "- Allowed knowledge_type values are only conceptual, operational, experimental, strategic.",
       args.expectedDate
         ? `- Use created/updated/last_reviewed date exactly ${args.expectedDate}.`
         : "- Use the current ingest date for created/updated/last_reviewed.",
@@ -306,9 +383,10 @@ export function buildQualityRepairPrompt(args: {
       "- For entity pages, include what it is, OS role, constraints/risks, connections, and source trace.",
       "- For query/synthesis/comparison pages, include source cross-check, freshness/currentness note, evidence limits, and follow-up search needs.",
       "- Use supplied ingest verification search results when they exist, but keep raw-source evidence separate from external evidence.",
-      "- Do not invent facts. If raw evidence is insufficient, mark quality: draft, needs_upgrade: true, and state what must be verified.",
+      "- Do not invent facts. If raw evidence is insufficient, mark state: draft, quality: draft, evidence_strength: weak, needs_upgrade: true, and state what must be verified.",
       "- If latest data or truth verification is needed but no web evidence is supplied, add explicit follow-up search questions instead of pretending certainty.",
       "- Do not set coverage: high together with needs_upgrade: false unless the page states what was checked for freshness/currentness.",
+      "- Do not mark state: canonical or quality: canonical when evidence_strength is weak.",
     ].join("\n"),
     user: [
       `## Page path\n${args.relativePath}`,
