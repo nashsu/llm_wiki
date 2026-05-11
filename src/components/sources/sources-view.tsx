@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,9 @@ import {
   importSourceFiles,
   importSourceFolder,
 } from "@/lib/source-lifecycle"
+
+const SOURCE_TREE_INITIAL_ROWS = 160
+const SOURCE_TREE_LOAD_BATCH = 160
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -277,7 +280,6 @@ export function SourcesView() {
               pendingDeletePath={pendingDeletePath}
               setPendingDeletePath={setPendingDeletePath}
               ingestingPath={ingestingPath}
-              depth={0}
             />
           </div>
         )}
@@ -288,6 +290,11 @@ export function SourcesView() {
       </div>
     </div>
   )
+}
+
+interface SourceTreeRow {
+  node: FileNode
+  depth: number
 }
 
 function filterTree(nodes: FileNode[]): FileNode[] {
@@ -314,6 +321,28 @@ function countFiles(nodes: FileNode[]): number {
   return count
 }
 
+function sortSourceNodes(nodes: readonly FileNode[]): FileNode[] {
+  return [...nodes].sort((a, b) => {
+    if (a.is_dir && !b.is_dir) return -1
+    if (!a.is_dir && b.is_dir) return 1
+    return a.name.localeCompare(b.name)
+  })
+}
+
+function flattenVisibleRows(
+  nodes: readonly FileNode[],
+  collapsed: Record<string, boolean>,
+  depth = 0,
+): SourceTreeRow[] {
+  const rows: SourceTreeRow[] = []
+  for (const node of sortSourceNodes(nodes)) {
+    rows.push({ node, depth })
+    if (node.is_dir && node.children && !(collapsed[node.path] ?? false)) {
+      rows.push(...flattenVisibleRows(node.children, collapsed, depth + 1))
+    }
+  }
+  return rows
+}
 
 function SourceTree({
   nodes,
@@ -324,7 +353,6 @@ function SourceTree({
   pendingDeletePath,
   setPendingDeletePath,
   ingestingPath,
-  depth,
 }: {
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
@@ -338,9 +366,31 @@ function SourceTree({
   pendingDeletePath: string | null
   setPendingDeletePath: (path: string | null) => void
   ingestingPath: string | null
-  depth: number
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [visibleLimit, setVisibleLimit] = useState(SOURCE_TREE_INITIAL_ROWS)
+  const loadMoreRef = useRef<HTMLDivElement | null>(null)
+  const rows = useMemo(() => flattenVisibleRows(nodes, collapsed), [nodes, collapsed])
+  const visibleRows = rows.slice(0, visibleLimit)
+  const hasMore = visibleLimit < rows.length
+
+  useEffect(() => {
+    setVisibleLimit(SOURCE_TREE_INITIAL_ROWS)
+  }, [nodes])
+
+  useEffect(() => {
+    if (!hasMore) return
+    const target = loadMoreRef.current
+    if (!target) return
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      setVisibleLimit((current) => Math.min(current + SOURCE_TREE_LOAD_BATCH, rows.length))
+    }, { rootMargin: "240px 0px" })
+
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [hasMore, rows.length])
 
   const toggle = (path: string) => {
     setCollapsed((prev) => ({ ...prev, [path]: !prev[path] }))
@@ -369,16 +419,9 @@ function SourceTree({
     }
   }
 
-  // Sort: folders first, then files, alphabetical within each group
-  const sorted = [...nodes].sort((a, b) => {
-    if (a.is_dir && !b.is_dir) return -1
-    if (!a.is_dir && b.is_dir) return 1
-    return a.name.localeCompare(b.name)
-  })
-
   return (
     <>
-      {sorted.map((node) => {
+      {visibleRows.map(({ node, depth }) => {
         const isPendingDelete = pendingDeletePath === node.path
         if (node.is_dir && node.children) {
           const isCollapsed = collapsed[node.path] ?? false
@@ -413,19 +456,6 @@ function SourceTree({
                   }
                 />
               </div>
-              {!isCollapsed && (
-                <SourceTree
-                  nodes={node.children}
-                  onOpen={onOpen}
-                  onIngest={onIngest}
-                  onDelete={onDelete}
-                  onDeleteFolder={onDeleteFolder}
-                  pendingDeletePath={pendingDeletePath}
-                  setPendingDeletePath={setPendingDeletePath}
-                  ingestingPath={ingestingPath}
-                  depth={depth + 1}
-                />
-              )}
             </div>
           )
         }
@@ -465,6 +495,14 @@ function SourceTree({
           </div>
         )
       })}
+      {hasMore && (
+        <div
+          ref={loadMoreRef}
+          className="px-3 py-2 text-center text-[11px] text-muted-foreground"
+        >
+          Loading more sources...
+        </div>
+      )}
     </>
   )
 }
