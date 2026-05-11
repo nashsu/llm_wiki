@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -16,6 +16,9 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { getRecentProjects } from "@/lib/project-store"
+import type { WikiProject } from "@/types/wiki"
+import { bucketReviewItems, needsProjectAssignment } from "@/lib/review-utils"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -32,17 +35,37 @@ export function ReviewView() {
   const clearResolved = useReviewStore((s) => s.clearResolved)
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
+  const currentProjectPath = project ? normalizePath(project.path) : ""
+  const [activeTab, setActiveTab] = useState<"current" | "orphan">("current")
+  const [recentProjects, setRecentProjects] = useState<WikiProject[]>([])
+
+  useEffect(() => {
+    getRecentProjects().then(setRecentProjects).catch(() => {})
+  }, [])
+
+  function resolveTargetProject(item: ReviewItem): { id: string; path: string } | null {
+    if (!project) return null
+    const itemPath = normalizePath(item.projectPath)
+    if (itemPath !== currentProjectPath) return null
+    return { id: item.projectId, path: itemPath }
+  }
 
   const handleResolve = useCallback(async (id: string, action: string) => {
-    const pp = project ? normalizePath(project.path) : ""
+    const item = items.find((i) => i.id === id)
+    const targetProject = item ? resolveTargetProject(item) : null
+    const pp = targetProject?.path ?? ""
+
+    if (item && !targetProject) {
+      window.alert("This review item belongs to a different project. Open that project first.")
+      return
+    }
     // Deep Research — must be checked FIRST before any fuzzy matching
-    if (action === "__deep_research__" && project) {
+    if (action === "__deep_research__" && targetProject) {
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (searchConfig.provider === "none" || !searchConfig.apiKey) {
         window.alert("Web Search not configured. Go to Settings → Web Search to add a Tavily or SerpApi API key first.")
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
@@ -55,7 +78,7 @@ export function ReviewView() {
       return
     }
 
-    if (action.startsWith("save:") && project) {
+    if (action.startsWith("save:") && targetProject) {
       // Decode and save the content to wiki
       try {
         const encoded = action.slice(5)
@@ -105,7 +128,7 @@ export function ReviewView() {
         console.error("Failed to save to wiki from review:", err)
         resolveItem(id, "Save failed")
       }
-    } else if (action.startsWith("open:") && project) {
+    } else if (action.startsWith("open:") && targetProject) {
       // Open a page for editing
       const page = action.slice(5)
       const candidates = [
@@ -124,7 +147,7 @@ export function ReviewView() {
         }
       }
       resolveItem(id, action)
-    } else if (action.startsWith("delete:") && project) {
+    } else if (action.startsWith("delete:") && targetProject) {
       // Delete a file
       const filePath = action.slice(7)
       try {
@@ -136,7 +159,7 @@ export function ReviewView() {
         console.error("Failed to delete:", err)
         resolveItem(id, "Delete failed")
       }
-    } else if (actionLooksLikeResearch(action) && project) {
+    } else if (actionLooksLikeResearch(action) && targetProject) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (searchConfig.provider === "none" || !searchConfig.apiKey) {
@@ -147,7 +170,6 @@ export function ReviewView() {
         }
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
@@ -158,7 +180,7 @@ export function ReviewView() {
       }
     } else if (
       (action.startsWith("__create_page__:") || actionLooksLikeCreate(action))
-      && project
+      && targetProject
     ) {
       // Create a wiki page from the review item's content. Accepts both
       // the `__create_page__:` sentinel (forced via the "no search API"
@@ -167,7 +189,6 @@ export function ReviewView() {
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
         : action
-      const item = items.find((i) => i.id === id)
       if (item) {
         try {
           const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
@@ -219,24 +240,52 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [project, items, resolveItem, setFileTree])
+  }, [currentProjectPath, items, project, resolveItem, setFileTree])
 
-  const pending = items.filter((i) => !i.resolved)
-  const resolved = items.filter((i) => i.resolved)
+  const { currentPending: pending, currentResolved: resolved, unassigned: orphanItems } =
+    bucketReviewItems(items, currentProjectPath)
+
+  const assignOrphanToProject = useCallback((itemId: string, target: WikiProject) => {
+    useReviewStore.setState((state) => ({
+      items: state.items.map((item) =>
+        item.id === itemId
+          ? { ...item, projectId: target.id, projectPath: normalizePath(target.path) }
+          : item,
+      ),
+    }))
+  }, [])
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">
-          Review
-          {pending.length > 0 && (
-            <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-              {pending.length}
-            </span>
-          )}
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">
+            Review
+            {pending.length > 0 && (
+              <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                {pending.length}
+              </span>
+            )}
+          </h2>
+          <div className="flex rounded-md border p-0.5">
+            <button
+              type="button"
+              onClick={() => setActiveTab("current")}
+              className={`rounded px-2 py-1 text-xs ${activeTab === "current" ? "bg-accent text-accent-foreground" : "text-muted-foreground"}`}
+            >
+              Current
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("orphan")}
+              className={`rounded px-2 py-1 text-xs ${activeTab === "orphan" ? "bg-accent text-accent-foreground" : "text-muted-foreground"}`}
+            >
+              Unassigned
+            </button>
+          </div>
+        </div>
         {resolved.length > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
+          <Button variant="ghost" size="sm" onClick={() => clearResolved(currentProjectPath)} className="text-xs">
             <Trash2 className="mr-1 h-3 w-3" />
             Clear resolved
           </Button>
@@ -244,7 +293,36 @@ export function ReviewView() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {items.length === 0 ? (
+        {activeTab === "orphan" ? (
+          orphanItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
+              <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
+              <p>No unassigned review items</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 p-3">
+              {orphanItems.map((item) => (
+                <div key={item.id} className="rounded-lg border p-3 text-sm">
+                  <div className="mb-2 font-medium">{item.title}</div>
+                  <p className="mb-3 text-xs text-muted-foreground">{item.description}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {recentProjects.map((proj) => (
+                      <Button
+                        key={proj.id}
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => assignOrphanToProject(item.id, proj)}
+                      >
+                        Assign to {proj.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : pending.length === 0 && resolved.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
             <p>All clear — nothing to review</p>
@@ -257,6 +335,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                currentProject={project}
+                onAssignToProject={assignOrphanToProject}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -270,6 +350,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                currentProject={project}
+                onAssignToProject={assignOrphanToProject}
               />
             ))}
           </div>
@@ -283,13 +365,18 @@ function ReviewCard({
   item,
   onResolve,
   onDismiss,
+  currentProject,
+  onAssignToProject,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
+  currentProject: WikiProject | null
+  onAssignToProject: (itemId: string, target: WikiProject) => void
 }) {
   const config = typeConfig[item.type]
   const Icon = config.icon
+  const showAssignCurrent = currentProject && needsProjectAssignment(item, currentProject.path)
 
   return (
     <div
@@ -320,6 +407,16 @@ function ReviewCard({
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">
+          {showAssignCurrent && currentProject && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs gap-1 text-muted-foreground"
+              onClick={() => onAssignToProject(item.id, currentProject)}
+            >
+              Assign to current project
+            </Button>
+          )}
           {(item.type === "suggestion" || item.type === "missing-page") && (
             <Button
               variant="default"

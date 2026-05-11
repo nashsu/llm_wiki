@@ -38,6 +38,12 @@ const LANGUAGE_METADATA: Record<string, LanguageMetadata> = {
     direction: "ltr",
     scriptFamily: "cjk",
   },
+  "Chinese (preserve English terms)": {
+    promptName: "Chinese-first with preserved English technical terms",
+    htmlLang: "zh-Hans",
+    direction: "ltr",
+    scriptFamily: "cjk",
+  },
   "Traditional Chinese": {
     promptName: "Traditional Chinese",
     htmlLang: "zh-Hant",

@@ -1,7 +1,7 @@
 import { useWikiStore } from "@/stores/wiki-store"
 import { enqueueIngest } from "./ingest-queue"
 import { listDirectory } from "@/commands/fs"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm } from "@/lib/has-usable-llm"
 
 const POLL_INTERVAL = 3000 // Check every 3 seconds
 let intervalId: ReturnType<typeof setInterval> | null = null
@@ -41,7 +41,7 @@ export function startClipWatcher() {
           // a UI refresh. Same path used by file imports from sources-view.
           // Pass the project's stable UUID — the queue looks up the
           // current filesystem path from the registry at run time.
-          if (hasUsableLlm(store.llmConfig)) {
+          if (hasUsableDocumentLlm(store.llmConfig, store.documentLlmConfig)) {
             enqueueIngest(project.id, clipFilePath).catch((err) => {
               console.error("Failed to enqueue web clip:", err)
             })

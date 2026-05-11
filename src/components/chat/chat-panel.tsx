@@ -7,13 +7,10 @@ import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { executeIngestWrites } from "@/lib/ingest"
-import { listDirectory, readFile, deleteFile } from "@/commands/fs"
-import { searchWiki } from "@/lib/search"
-import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
-import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
-import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
-import { isGreeting } from "@/lib/greeting-detector"
-import { computeContextBudget } from "@/lib/context-budget"
+import { listDirectory, deleteFile } from "@/commands/fs"
+import { normalizePath } from "@/lib/path-utils"
+import { buildChatRetrievalContext } from "@/lib/chat-retrieval"
+import { resolveDocumentLlmConfig } from "@/lib/document-llm"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -165,188 +162,18 @@ export function ChatPanel() {
       addMessage("user", text)
       setStreaming(true)
 
-      // Build system prompt with wiki context using graph-enhanced retrieval
-      const systemMessages: LLMMessage[] = []
-      let queryRefs: { title: string; path: string }[] = []
-      let langReminder: string | undefined
-      // Pure greetings ("hi", "你好", "嗨") don't warrant running the whole
-      // retrieval pipeline — it's slow, costs context, and drags in random
-      // wiki pages the user clearly didn't ask about. Short-circuit with a
-      // minimal system prompt and let the model reply conversationally.
-      const greetingOnly = isGreeting(text)
-      if (project && greetingOnly) {
-        const outLang = getOutputLanguage(text)
-        systemMessages.push({
-          role: "system",
-          content: [
-            `You are a wiki assistant for the project "${project.name}".`,
-            "The user sent a casual greeting — reply briefly and naturally, in one or two sentences.",
-            "Do NOT invent wiki content or pretend to have retrieved pages. Invite the user to ask a concrete question if they want information from the wiki.",
-            "",
-            `Respond in ${outLang}.`,
-          ].join("\n"),
-        })
-        // Skip retrieval; queryRefs stays empty so no "Sources" chip is shown.
-      } else if (project) {
-        const pp = normalizePath(project.path)
-        const dataVersion = useWikiStore.getState().dataVersion
-
-        // ── Budget allocation (see context-budget.ts) ─────────
-        // Page budget scales with the LLM's context window; we now
-        // also reserve ~15% as headroom for the response so the
-        // model isn't truncated mid-sentence on a packed prompt.
-        const {
-          indexBudget: INDEX_BUDGET,
-          pageBudget: PAGE_BUDGET,
-          maxPageSize: MAX_PAGE_SIZE,
-        } = computeContextBudget(llmConfig.maxContextSize)
-
-        const [rawIndex, purpose] = await Promise.all([
-          readFile(`${pp}/wiki/index.md`).catch(() => ""),
-          readFile(`${pp}/purpose.md`).catch(() => ""),
-        ])
-
-        // ── Phase 1: Tokenized search → top 10 ────────────────
-        const searchResults = await searchWiki(pp, text)
-        const topSearchResults = searchResults.slice(0, 10)
-
-        // ── Trim index by relevance if over budget ─────────────
-        let index = rawIndex
-        if (rawIndex.length > INDEX_BUDGET) {
-          const { tokenizeQuery } = await import("@/lib/search")
-          const tokens = tokenizeQuery(text)
-          const lines = rawIndex.split("\n")
-          const keptLines: string[] = []
-          let keptSize = 0
-
-          for (const line of lines) {
-            const isHeader = line.startsWith("##")
-            const lower = line.toLowerCase()
-            const isRelevant = tokens.some((t) => lower.includes(t))
-
-            if (isHeader || isRelevant) {
-              if (keptSize + line.length + 1 <= INDEX_BUDGET) {
-                keptLines.push(line)
-                keptSize += line.length + 1
-              }
-            }
-          }
-          index = keptLines.join("\n")
-          if (index.length < rawIndex.length) {
-            index += "\n\n[...index trimmed to relevant entries...]"
-          }
-        }
-
-        // ── Phase 2: Graph 1-level expansion ───────────────────
-        // Note: Vector search (if enabled) is already merged into searchResults
-        // by searchWiki() in search.ts — no duplicate code needed here.
-        const graph = await buildRetrievalGraph(pp, dataVersion)
-        const expandedIds = new Set<string>()
-        const searchHitPaths = new Set(topSearchResults.map((r) => r.path))
-        const graphExpansions: { title: string; path: string; relevance: number }[] = []
-
-        for (const result of topSearchResults) {
-          const fileName = getFileName(result.path)
-          const nodeId = fileName.replace(/\.md$/, "")
-          const related = getRelatedNodes(nodeId, graph, 3)
-          for (const { node, relevance } of related) {
-            if (relevance < 2.0) continue
-            if (searchHitPaths.has(node.path)) continue
-            if (expandedIds.has(node.id)) continue
-            expandedIds.add(node.id)
-            graphExpansions.push({ title: node.title, path: node.path, relevance })
-          }
-        }
-        graphExpansions.sort((a, b) => b.relevance - a.relevance)
-
-        // ── Phase 3 & 4: Page budget control ───────────────────
-        let usedChars = 0
-        type PageEntry = { title: string; path: string; content: string; priority: number }
-        const relevantPages: PageEntry[] = []
-
-        const tryAddPage = async (title: string, filePath: string, priority: number): Promise<boolean> => {
-          if (usedChars >= PAGE_BUDGET) return false
-          try {
-            const raw = await readFile(filePath)
-            const relativePath = getRelativePath(filePath, pp)
-            const truncated = raw.length > MAX_PAGE_SIZE
-              ? raw.slice(0, MAX_PAGE_SIZE) + "\n\n[...truncated...]"
-              : raw
-            if (usedChars + truncated.length > PAGE_BUDGET) return false
-            usedChars += truncated.length
-            relevantPages.push({ title, path: relativePath, content: truncated, priority })
-            return true
-          } catch { return false }
-        }
-
-        // P0: Title matches
-        for (const r of topSearchResults.filter((r) => r.titleMatch)) {
-          await tryAddPage(r.title, r.path, 0)
-        }
-        // P1: Content matches
-        for (const r of topSearchResults.filter((r) => !r.titleMatch)) {
-          await tryAddPage(r.title, r.path, 1)
-        }
-        // P2: Graph expansions
-        for (const exp of graphExpansions) {
-          await tryAddPage(exp.title, exp.path, 2)
-        }
-        // P3: Overview fallback
-        if (relevantPages.length === 0) {
-          await tryAddPage("Overview", `${pp}/wiki/overview.md`, 3)
-        }
-
-        const pagesContext = relevantPages.length > 0
-          ? relevantPages.map((p, i) =>
-              `### [${i + 1}] ${p.title}\nPath: ${p.path}\n\n${p.content}`
-            ).join("\n\n---\n\n")
-          : "(No wiki pages found)"
-
-        const pageList = relevantPages.map((p, i) =>
-          `[${i + 1}] ${p.title} (${p.path})`
-        ).join("\n")
-
-        const outLang = getOutputLanguage(text)
-
-        systemMessages.push({
-          role: "system",
-          content: [
-            "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
-            "",
-            "## Rules",
-            "- Answer based ONLY on the numbered wiki pages provided below.",
-            "- If the provided pages don't contain enough information, say so honestly.",
-            "- Use [[wikilink]] syntax to reference wiki pages.",
-            "- When citing information, use the page number in brackets, e.g. [1], [2].",
-            "- At the VERY END of your response, add a hidden comment listing which page numbers you used:",
-            "  <!-- cited: 1, 3, 5 -->",
-            "",
-            "Use markdown formatting for clarity.",
-            "",
-            purpose ? `## Wiki Purpose\n${purpose}` : "",
-            index ? `## Wiki Index\n${index}` : "",
-            relevantPages.length > 0 ? `## Page List\n${pageList}` : "",
-            `## Wiki Pages\n\n${pagesContext}`,
-            "",
-            "---",
-            "",
-            `## ⚠️ MANDATORY OUTPUT LANGUAGE: ${outLang}`,
-            "",
-            `You MUST write your entire response in **${outLang}**.`,
-            `The wiki content above may be in a different language, but this is IRRELEVANT to your output language.`,
-            `Ignore the language of the wiki content. Write in ${outLang} only.`,
-            `Even proper nouns should use standard ${outLang} transliteration when appropriate.`,
-            `DO NOT use any other language. This overrides all other instructions.`,
-          ].filter(Boolean).join("\n"),
-        })
-
-        // Reminder injected later, right before the user's current message
-        // (after history so it's the last system instruction the LLM sees).
-        langReminder = buildLanguageReminder(text)
-
-        lastQueryPages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
-        queryRefs = [...lastQueryPages]
-      }
+      const retrieval = project
+        ? await buildChatRetrievalContext({
+            project,
+            query: text,
+            llmConfig,
+            dataVersion: useWikiStore.getState().dataVersion,
+          })
+        : null
+      const systemMessages = retrieval?.systemMessages ?? []
+      const queryRefs = retrieval?.references ?? []
+      const langReminder = retrieval?.langReminder
+      lastQueryPages = [...queryRefs]
 
       // ── Conversation history with count limit ────────────────
       // Only include messages from the active conversation, last N messages
@@ -460,7 +287,11 @@ export function ChatPanel() {
     if (!project) return
     const pp = normalizePath(project.path)
     try {
-      await executeIngestWrites(pp, llmConfig, undefined, undefined)
+      const ingestLlm = resolveDocumentLlmConfig(
+        llmConfig,
+        useWikiStore.getState().documentLlmConfig,
+      )
+      await executeIngestWrites(pp, ingestLlm, undefined, undefined)
       try {
         const tree = await listDirectory(pp)
         setFileTree(tree)

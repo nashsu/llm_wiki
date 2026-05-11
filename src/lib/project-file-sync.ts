@@ -149,7 +149,8 @@ async function enqueueRawSourceChanges(project: WikiProject, tasks: FileChangeTa
   if (paths.length === 0) return
 
   try {
-    await enqueueSourceIngest(project, paths, useWikiStore.getState().llmConfig)
+    const store = useWikiStore.getState()
+    await enqueueSourceIngest(project, paths, store.llmConfig, store.documentLlmConfig)
   } catch (err) {
     console.error("[file-sync] failed to enqueue raw source ingest:", err)
   }

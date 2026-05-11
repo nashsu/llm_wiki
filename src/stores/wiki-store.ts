@@ -147,6 +147,12 @@ interface MultimodalConfig {
   concurrency: number
 }
 
+interface DocumentLlmConfig extends LlmConfig {
+  /** Reuse `llmConfig` for document ingest / merge calls. When true,
+   *  the fields below are ignored. */
+  useMainLlm: boolean
+}
+
 /**
  * Output language for LLM-generated content (wiki pages, chat responses, research).
  * "auto" = detect from user input / source document language.
@@ -154,6 +160,7 @@ interface MultimodalConfig {
  */
 type OutputLanguage =
   | "auto"
+  | "Chinese (preserve English terms)"
   | "English"
   | "Chinese"
   | "Traditional Chinese"
@@ -222,9 +229,11 @@ interface WikiState {
   activePresetId: string | null
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
+  documentLlmConfig: DocumentLlmConfig
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
   proxyConfig: ProxyConfig
+  mcpAccessEnabled: boolean
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -239,9 +248,11 @@ interface WikiState {
   setActivePresetId: (id: string | null) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
+  setDocumentLlmConfig: (config: DocumentLlmConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
   setProxyConfig: (config: ProxyConfig) => void
+  setMcpAccessEnabled: (enabled: boolean) => void
   bumpDataVersion: () => void
 }
 
@@ -290,6 +301,18 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
   },
 
+  documentLlmConfig: {
+    useMainLlm: true,
+    provider: "custom",
+    apiKey: "",
+    model: "",
+    ollamaUrl: "http://localhost:11434",
+    customEndpoint: "",
+    maxContextSize: 204800,
+    apiMode: "chat_completions",
+    reasoning: { mode: "auto" },
+  },
+
   multimodalConfig: {
     // Off by default — captioning is a non-trivial token spend
     // (one VLM call per extracted image), and silently turning it
@@ -315,15 +338,19 @@ export const useWikiStore = create<WikiState>((set) => ({
     bypassLocal: true,
   },
 
+  mcpAccessEnabled: false,
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
+  setDocumentLlmConfig: (documentLlmConfig) => set({ documentLlmConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
+  setMcpAccessEnabled: (mcpAccessEnabled) => set({ mcpAccessEnabled }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, DocumentLlmConfig, MultimodalConfig, OutputLanguage, ProxyConfig }

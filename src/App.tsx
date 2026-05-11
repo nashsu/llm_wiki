@@ -5,10 +5,11 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadProjectFileSyncEnabled } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadDocumentLlmConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadMcpAccessEnabled, loadProjectFileSyncEnabled } from "@/lib/project-store"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { startLocalApiBridge } from "@/lib/local-api-bridge"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
@@ -27,6 +28,7 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+    startLocalApiBridge()
   }, [])
 
   // Dev-only helper for visually testing the update-banner UX.
@@ -214,6 +216,10 @@ function App() {
         if (savedEmbeddingConfig) {
           useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)
         }
+        const savedDocumentLlmConfig = await loadDocumentLlmConfig()
+        if (savedDocumentLlmConfig) {
+          useWikiStore.getState().setDocumentLlmConfig(savedDocumentLlmConfig)
+        }
         const savedMultimodalConfig = await loadMultimodalConfig()
         if (savedMultimodalConfig) {
           useWikiStore.getState().setMultimodalConfig(savedMultimodalConfig)
@@ -222,6 +228,8 @@ function App() {
         if (savedProxy) {
           useWikiStore.getState().setProxyConfig(savedProxy)
         }
+        const savedMcpAccessEnabled = await loadMcpAccessEnabled()
+        useWikiStore.getState().setMcpAccessEnabled(savedMcpAccessEnabled)
         const savedLang = await loadLanguage()
         if (savedLang) {
           await i18n.changeLanguage(savedLang)
@@ -313,11 +321,10 @@ function App() {
     // Load persisted review items
     try {
       const savedReview = await loadReviewItems(proj.path)
-      if (savedReview.length > 0) {
-        useReviewStore.getState().setItems(savedReview)
-      }
+      useReviewStore.getState().setItems(savedReview)
     } catch {
       // ignore, start fresh
+      useReviewStore.getState().setItems([])
     }
     // Load persisted chat history
     try {

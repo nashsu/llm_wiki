@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { getOutputLanguage, buildLanguageDirective, buildLanguageReminder } from "./output-language"
+import {
+  CHINESE_PRESERVE_ENGLISH_MODE,
+  getOutputLanguage,
+  buildLanguageDirective,
+  buildLanguageReminder,
+} from "./output-language"
 import { useWikiStore } from "@/stores/wiki-store"
 
 // Reset the outputLanguage back to "auto" before each test so tests can't
@@ -17,6 +22,11 @@ describe("getOutputLanguage", () => {
   it("explicit user setting beats fallback detection (source is English, setting is Japanese)", () => {
     useWikiStore.getState().setOutputLanguage("Japanese")
     expect(getOutputLanguage("This is clearly English text")).toBe("Japanese")
+  })
+
+  it("uses the explicit Chinese-first mixed mode verbatim", () => {
+    useWikiStore.getState().setOutputLanguage(CHINESE_PRESERVE_ENGLISH_MODE)
+    expect(getOutputLanguage("This is clearly English text")).toBe(CHINESE_PRESERVE_ENGLISH_MODE)
   })
 
   it("auto mode falls back to detectLanguage on the fallback text", () => {
@@ -74,6 +84,15 @@ describe("buildLanguageDirective", () => {
     expect(directive).toContain("MANDATORY OUTPUT LANGUAGE: Persian (Farsi / فارسی)")
   })
 
+  it("builds a Chinese-first mixed directive that preserves English terms", () => {
+    useWikiStore.getState().setOutputLanguage(CHINESE_PRESERVE_ENGLISH_MODE)
+    const directive = buildLanguageDirective("Transformer attention")
+    expect(directive).toContain("MANDATORY OUTPUT MODE: Chinese-first with preserved English technical terms")
+    expect(directive).toContain("Write the main narrative in **Simplified Chinese**.")
+    expect(directive).toContain("Preserve necessary English terms instead of translating them away")
+    expect(directive).toContain("Do NOT drift into a third language such as Korean, French, Arabic, or others")
+  })
+
   it("explicitly overrides source content language", () => {
     useWikiStore.getState().setOutputLanguage("English")
     const directive = buildLanguageDirective()
@@ -98,6 +117,14 @@ describe("buildLanguageReminder", () => {
   it("uses detected language in auto mode", () => {
     useWikiStore.getState().setOutputLanguage("auto")
     expect(buildLanguageReminder("これは日本語です")).toContain("Japanese")
+  })
+
+  it("uses a Chinese-first mixed reminder without third-language drift", () => {
+    useWikiStore.getState().setOutputLanguage(CHINESE_PRESERVE_ENGLISH_MODE)
+    const reminder = buildLanguageReminder("ignored fallback")
+    expect(reminder).toContain("Use Simplified Chinese as the main language")
+    expect(reminder).toContain("preserve necessary English technical terms")
+    expect(reminder).toContain("do not drift into a third language")
   })
 
   it("reminds Persian as Persian/Farsi", () => {

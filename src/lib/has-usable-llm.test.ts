@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   hasUsableLlm,
+  hasUsableDocumentLlm,
   PROVIDERS_WITHOUT_KEY,
   type LlmProvider,
 } from "./has-usable-llm"
@@ -105,5 +106,34 @@ describe("hasUsableLlm", () => {
         `provider "${p}" is in ${inNoKey && inKey ? "BOTH" : "NEITHER"} bucket — pick one`,
       ).toBe(true)
     }
+  })
+})
+
+describe("hasUsableDocumentLlm", () => {
+  it("reuses the main model readiness when document processing uses the main LLM", () => {
+    expect(
+      hasUsableDocumentLlm(
+        { provider: "openai", apiKey: "sk-main" },
+        { useMainLlm: true, provider: "custom", apiKey: "" },
+      ),
+    ).toBe(true)
+  })
+
+  it("checks the dedicated document model when useMainLlm is false", () => {
+    expect(
+      hasUsableDocumentLlm(
+        { provider: "openai", apiKey: "sk-main" },
+        { useMainLlm: false, provider: "anthropic", apiKey: "" },
+      ),
+    ).toBe(false)
+  })
+
+  it("accepts no-key local providers for the dedicated document model", () => {
+    expect(
+      hasUsableDocumentLlm(
+        { provider: "openai", apiKey: "" },
+        { useMainLlm: false, provider: "ollama", apiKey: "" },
+      ),
+    ).toBe(true)
   })
 })

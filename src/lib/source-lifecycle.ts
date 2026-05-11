@@ -9,9 +9,9 @@ import {
   writeFile,
 } from "@/commands/fs"
 import type { WikiProject, FileNode } from "@/types/wiki"
-import type { LlmConfig } from "@/stores/wiki-store"
+import type { DocumentLlmConfig, LlmConfig } from "@/stores/wiki-store"
 import { enqueueBatch } from "@/lib/ingest-queue"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm, hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, normalizePath } from "@/lib/path-utils"
 import {
   parseFrontmatterArray,
@@ -90,9 +90,13 @@ export async function enqueueSourceIngest(
   project: WikiProject,
   sourcePaths: string[],
   llmConfig: LlmConfig,
+  documentLlmConfig?: DocumentLlmConfig,
   options: { sourceRoot?: string; rootContext?: string } = {},
 ): Promise<string[]> {
-  if (!hasUsableLlm(llmConfig)) return []
+  const llmReady = documentLlmConfig
+    ? hasUsableDocumentLlm(llmConfig, documentLlmConfig)
+    : hasUsableLlm(llmConfig)
+  if (!llmReady) return []
   const files = sourcePaths
     .filter(isIngestableSourcePath)
     .map((sourcePath) => ({
@@ -110,6 +114,7 @@ export async function importSourceFiles(
   project: WikiProject,
   sourcePaths: string[],
   llmConfig: LlmConfig,
+  documentLlmConfig?: DocumentLlmConfig,
 ): Promise<string[]> {
   const pp = normalizePath(project.path)
   const importedPaths: string[] = []
@@ -126,7 +131,7 @@ export async function importSourceFiles(
     }
   }
 
-  await enqueueSourceIngest(project, importedPaths, llmConfig)
+  await enqueueSourceIngest(project, importedPaths, llmConfig, documentLlmConfig)
 
   return importedPaths
 }
@@ -135,6 +140,7 @@ export async function importSourceFolder(
   project: WikiProject,
   selectedFolder: string,
   llmConfig: LlmConfig,
+  documentLlmConfig?: DocumentLlmConfig,
 ): Promise<string[]> {
   const pp = normalizePath(project.path)
   const folderName = getFileName(selectedFolder) || "imported"
@@ -145,8 +151,8 @@ export async function importSourceFolder(
     preprocessFile(filePath).catch(() => {})
   }
 
-  if (hasUsableLlm(llmConfig)) {
-    await enqueueSourceIngest(project, copiedFiles, llmConfig, {
+  if (documentLlmConfig ? hasUsableDocumentLlm(llmConfig, documentLlmConfig) : hasUsableLlm(llmConfig)) {
+    await enqueueSourceIngest(project, copiedFiles, llmConfig, documentLlmConfig, {
       sourceRoot: destDir,
       rootContext: folderName,
     })

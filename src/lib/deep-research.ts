@@ -6,6 +6,7 @@ import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wik
 import { useResearchStore } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { resolveDocumentLlmConfig } from "@/lib/document-llm"
 
 /**
  * Queue a deep research task. Automatically starts processing if under concurrency limit.
@@ -18,7 +19,12 @@ export function queueResearch(
   searchQueries?: string[],
 ): string {
   const store = useResearchStore.getState()
-  const taskId = store.addTask(topic)
+  const project = useWikiStore.getState().project
+  const taskId = store.addTask(
+    topic,
+    project?.id ?? normalizePath(projectPath),
+    normalizePath(projectPath),
+  )
   // Store search queries on the task
   if (searchQueries && searchQueries.length > 0) {
     store.updateTask(taskId, { searchQueries })
@@ -27,16 +33,38 @@ export function queueResearch(
   store.setPanelOpen(true)
   // Start processing on next tick to ensure React has rendered the panel
   setTimeout(() => {
-    processQueue(projectPath, llmConfig, searchConfig)
+    processQueue(llmConfig, searchConfig)
   }, 50)
   return taskId
+}
+
+export function retryResearchTask(
+  taskId: string,
+  llmConfig: LlmConfig,
+  searchConfig: SearchApiConfig,
+): boolean {
+  const store = useResearchStore.getState()
+  const task = store.tasks.find((t) => t.id === taskId)
+  if (!task || task.status !== "error") return false
+
+  store.updateTask(taskId, {
+    status: "queued",
+    error: null,
+    webResults: [],
+    synthesis: "",
+    savedPath: null,
+  })
+  store.setPanelOpen(true)
+  setTimeout(() => {
+    processQueue(llmConfig, searchConfig)
+  }, 50)
+  return true
 }
 
 /**
  * Process queued tasks up to maxConcurrent limit.
  */
 function processQueue(
-  projectPath: string,
   llmConfig: LlmConfig,
   searchConfig: SearchApiConfig,
 ) {
@@ -47,7 +75,7 @@ function processQueue(
   for (let i = 0; i < available; i++) {
     const next = useResearchStore.getState().getNextQueued()
     if (!next) break
-    executeResearch(projectPath, next.id, next.topic, llmConfig, searchConfig)
+    executeResearch(next.projectPath, next.id, next.topic, llmConfig, searchConfig)
   }
 }
 
@@ -217,7 +245,11 @@ async function executeResearch(
     }
 
     // Auto-ingest the research result to generate entities, concepts, cross-references
-    autoIngest(pp, `${pp}/${savedPath}`, llmConfig).catch((err) => {
+    const ingestLlm = resolveDocumentLlmConfig(
+      llmConfig,
+      useWikiStore.getState().documentLlmConfig,
+    )
+    autoIngest(pp, `${pp}/${savedPath}`, ingestLlm).catch((err) => {
       console.error("Failed to auto-ingest research result:", err)
     })
   } catch (err) {
@@ -237,5 +269,6 @@ function onTaskFinished(
   searchConfig: SearchApiConfig,
 ) {
   // Process next queued task
-  setTimeout(() => processQueue(projectPath, llmConfig, searchConfig), 100)
+  void projectPath
+  setTimeout(() => processQueue(llmConfig, searchConfig), 100)
 }

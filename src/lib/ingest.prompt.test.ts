@@ -65,6 +65,12 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("my-paper.pdf")
   })
 
+  it("does not contradict optional review output in the strict instructions", () => {
+    const prompt = buildGenerationPrompt("", "", "", "my-paper.pdf")
+    expect(prompt).toContain("FILE blocks followed by optional REVIEW blocks")
+    expect(prompt).toContain("FILE blocks and any genuinely needed REVIEW blocks")
+  })
+
   it("respects user setting regardless of source content language", () => {
     useWikiStore.getState().setOutputLanguage("English")
     const prompt = buildGenerationPrompt("", "", "", "x.pdf", undefined, "私は日本語の文章を書きます")

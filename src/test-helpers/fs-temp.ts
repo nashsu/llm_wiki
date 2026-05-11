@@ -54,7 +54,12 @@ export const realFs = {
   },
   writeFile: async (p: string, contents: string): Promise<void> => {
     await fs.mkdir(path.dirname(p), { recursive: true })
-    await fs.writeFile(p, contents, "utf-8")
+    const tmp = path.join(
+      path.dirname(p),
+      `.${path.basename(p)}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`,
+    )
+    await fs.writeFile(tmp, contents, "utf-8")
+    await fs.rename(tmp, p)
   },
   listDirectory: async (p: string): Promise<FileNode[]> => {
     return buildTree(p)
@@ -82,6 +87,18 @@ export const realFs = {
     throw new Error("openProject not supported in tests")
   },
   clipServerStatus: async (): Promise<string> => "ok",
+  mcpServerConfig: async () => ({
+    scriptPath: "/repo/mcp-server/llmwiki-mcp.js",
+    codexCommand: 'codex mcp add llmwiki -- node "/repo/mcp-server/llmwiki-mcp.js"',
+    jsonConfig: JSON.stringify({
+      mcpServers: {
+        llmwiki: {
+          command: "node",
+          args: ["/repo/mcp-server/llmwiki-mcp.js"],
+        },
+      },
+    }),
+  }),
 }
 
 /**

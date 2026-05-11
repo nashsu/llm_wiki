@@ -1,4 +1,4 @@
-import type { LlmConfig } from "@/stores/wiki-store"
+import type { DocumentLlmConfig, LlmConfig } from "@/stores/wiki-store"
 
 export type LlmProvider = LlmConfig["provider"]
 
@@ -41,4 +41,12 @@ export function hasUsableLlm(
 ): boolean {
   if (PROVIDERS_WITHOUT_KEY.has(cfg.provider)) return true
   return cfg.apiKey.trim().length > 0
+}
+
+export function hasUsableDocumentLlm(
+  mainCfg: Pick<LlmConfig, "provider" | "apiKey">,
+  documentCfg: Pick<DocumentLlmConfig, "useMainLlm" | "provider" | "apiKey">,
+): boolean {
+  if (documentCfg.useMainLlm) return hasUsableLlm(mainCfg)
+  return hasUsableLlm(documentCfg)
 }

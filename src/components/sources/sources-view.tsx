@@ -28,6 +28,7 @@ export function SourcesView() {
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const documentLlmConfig = useWikiStore((s) => s.documentLlmConfig)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
@@ -115,7 +116,7 @@ export function SourcesView() {
     setImporting(true)
     const paths = Array.isArray(selected) ? selected : [selected]
     try {
-      await importSourceFiles(project, paths, llmConfig)
+      await importSourceFiles(project, paths, llmConfig, documentLlmConfig)
       await loadSources()
     } finally {
       setImporting(false)
@@ -134,7 +135,7 @@ export function SourcesView() {
 
     setImporting(true)
     try {
-      await importSourceFolder(project, selected, llmConfig)
+      await importSourceFolder(project, selected, llmConfig, documentLlmConfig)
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)
@@ -226,7 +227,7 @@ export function SourcesView() {
     // who expected a fresh-import re-run. One button, one path now.
     setIngestingPath(node.path)
     try {
-      await enqueueSourceIngest(project, [node.path], llmConfig)
+      await enqueueSourceIngest(project, [node.path], llmConfig, documentLlmConfig)
     } catch (err) {
       console.error("Failed to enqueue ingest:", err)
     } finally {
@@ -235,7 +236,7 @@ export function SourcesView() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
@@ -253,7 +254,7 @@ export function SourcesView() {
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         {sources.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <p>{t("sources.noSources")}</p>

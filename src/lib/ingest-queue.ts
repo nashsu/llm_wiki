@@ -3,7 +3,7 @@ import { autoIngest } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { hasUsableDocumentLlm } from "@/lib/has-usable-llm"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -491,6 +491,14 @@ async function processNext(projectId: string): Promise<void> {
     return
   }
 
+  // Claim the worker before the first await below. Several enqueue/retry
+  // calls can schedule processNext in the same tick; leaving this until after
+  // getProjectPathById allowed multiple tasks to enter "processing".
+  processing = true
+  next.status = "processing"
+  await saveQueue(currentProjectPath)
+  if (currentProjectId !== projectId) return
+
   // Look up the project's current filesystem path from the registry —
   // it may have moved since the task was enqueued. If the project isn't
   // in the registry (was deleted or never registered), mark as failed.
@@ -508,17 +516,16 @@ async function processNext(projectId: string): Promise<void> {
     return
   }
 
-  processing = true
-  next.status = "processing"
-  await saveQueue(pp)
-  if (currentProjectId !== projectId) return
-
-  const llmConfig = useWikiStore.getState().llmConfig
+  const store = useWikiStore.getState()
+  const llmConfig = store.llmConfig
+  const documentLlmConfig = store.documentLlmConfig
 
   // Check if LLM is configured
-  if (!hasUsableLlm(llmConfig)) {
+  if (!hasUsableDocumentLlm(llmConfig, documentLlmConfig)) {
     next.status = "failed"
-    next.error = "LLM not configured — set API key in Settings"
+    next.error = documentLlmConfig.useMainLlm
+      ? "LLM not configured — set API key in Settings"
+      : "Document-processing model not configured — check Settings → Document Processing"
     processing = false
     await saveQueue(pp)
     processNext(projectId)

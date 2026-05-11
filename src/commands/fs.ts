@@ -97,3 +97,13 @@ export async function openProjectFolder(path: string): Promise<void> {
 export async function clipServerStatus(): Promise<string> {
   return invoke<string>("clip_server_status")
 }
+
+export interface McpServerConfig {
+  scriptPath: string
+  codexCommand: string
+  jsonConfig: string
+}
+
+export async function mcpServerConfig(): Promise<McpServerConfig> {
+  return invoke<McpServerConfig>("mcp_server_config")
+}

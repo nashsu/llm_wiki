@@ -1,8 +1,8 @@
 use std::fs;
 use std::io::Read as IoRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use calamine::{Reader, open_workbook_auto, Data};
 
@@ -899,12 +899,8 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
             let p = Path::new(&path);
-            if let Some(parent) = p.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
-            }
             file_sync::mark_app_write_path(p);
-            fs::write(&path, contents)
+            write_file_atomic(p, &contents)
                 .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
             file_sync::mark_app_write_path(p);
             Ok(())
@@ -912,6 +908,67 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("write_file blocking task join error: {e}"))?
+}
+
+fn write_file_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path.display(), e))?;
+    }
+
+    let tmp_path = atomic_temp_path(path);
+    fs::write(&tmp_path, contents)
+        .map_err(|e| format!("Failed to write temporary file '{}': {}", tmp_path.display(), e))?;
+
+    match fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            #[cfg(windows)]
+            {
+                if path.exists() {
+                    fs::remove_file(path)
+                        .map_err(|remove_err| {
+                            let _ = fs::remove_file(&tmp_path);
+                            format!(
+                                "Failed to replace existing file '{}': {}; original rename error: {}",
+                                path.display(),
+                                remove_err,
+                                err
+                            )
+                        })?;
+                    return fs::rename(&tmp_path, path).map_err(|rename_err| {
+                        let _ = fs::remove_file(&tmp_path);
+                        format!(
+                            "Failed to move temporary file '{}' to '{}': {}",
+                            tmp_path.display(),
+                            path.display(),
+                            rename_err
+                        )
+                    });
+                }
+            }
+
+            let _ = fs::remove_file(&tmp_path);
+            Err(format!(
+                "Failed to move temporary file '{}' to '{}': {}",
+                tmp_path.display(),
+                path.display(),
+                err
+            ))
+        }
+    }
+}
+
+fn atomic_temp_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "write-file".to_string());
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    path.with_file_name(format!(".{file_name}.{stamp}.tmp"))
 }
 
 #[tauri::command]

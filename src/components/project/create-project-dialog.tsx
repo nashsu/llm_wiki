@@ -23,6 +23,7 @@ interface CreateProjectDialogProps {
 }
 
 export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: CreateProjectDialogProps) {
+  const defaultOutputMode: OutputLanguage = "Chinese (preserve English terms)"
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [selectedTemplate, setSelectedTemplate] = useState("general")
@@ -31,7 +32,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
   // mode. Once chosen, the value is one of OUTPUT_LANGUAGE_OPTIONS
   // (`auto` is a valid explicit choice — the user is then opting
   // INTO auto-detect rather than getting it by accident).
-  const [language, setLanguage] = useState<string>("")
+  const [language, setLanguage] = useState<string>(defaultOutputMode)
   const [error, setError] = useState("")
   const [creating, setCreating] = useState(false)
   const setOutputLanguage = useWikiStore((s) => s.setOutputLanguage)
@@ -53,7 +54,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       return
     }
     if (!language) {
-      setError("Please pick an AI output language")
+      setError("Please pick an AI output mode")
       return
     }
     setCreating(true)
@@ -82,7 +83,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       setName("")
       setPath("")
       setSelectedTemplate("general")
-      setLanguage("")
+      setLanguage(defaultOutputMode)
     } catch (err) {
       setError(String(err))
     } finally {
@@ -107,7 +108,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="language">
-              AI Output Language <span className="text-destructive">*</span>
+              AI Output Mode <span className="text-destructive">*</span>
             </Label>
             <select
               id="language"
@@ -115,9 +116,6 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               onChange={(e) => setLanguage(e.target.value)}
               className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
-              <option value="" disabled>
-                Pick a language…
-              </option>
               {/*
                 * "auto" is intentionally filtered out at project
                 * creation time. Auto-detect is a fine post-hoc
@@ -135,9 +133,10 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              All AI-generated content (wiki pages, chat replies, research
-              output) will use this language. You can change it later in
-              Settings → Output.
+              This controls how AI writes across chat, wiki generation, and
+              research. The default mode is Chinese-first while preserving
+              necessary English terms. You can change it later in Settings →
+              Output.
             </p>
           </div>
           <div className="flex flex-col gap-2">

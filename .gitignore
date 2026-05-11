@@ -49,3 +49,8 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+# Local Windows dev helpers
+LLM Wiki Dev.lnk
+launch-llm-wiki-dev.cmd
+tools/

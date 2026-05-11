@@ -2,6 +2,8 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { detectLanguage } from "./detect-language"
 import { getLanguagePromptName } from "./language-metadata"
 
+export const CHINESE_PRESERVE_ENGLISH_MODE = "Chinese (preserve English terms)" as const
+
 /**
  * Get the effective output language for LLM content generation.
  *
@@ -16,12 +18,21 @@ export function getOutputLanguage(fallbackText: string = ""): string {
   return detectLanguage(fallbackText || "English")
 }
 
-/**
- * Build a strong language directive to inject into system prompts.
- */
-export function buildLanguageDirective(fallbackText: string = ""): string {
-  const lang = getOutputLanguage(fallbackText)
-  const promptLang = getLanguagePromptName(lang)
+export function buildLanguageDirectiveFromLanguage(language: string): string {
+  if (language === CHINESE_PRESERVE_ENGLISH_MODE) {
+    return [
+      "## ⚠️ MANDATORY OUTPUT MODE: Chinese-first with preserved English technical terms",
+      "",
+      "Write the main narrative in **Simplified Chinese**.",
+      "Preserve necessary English terms instead of translating them away: technical terms, paper titles, model names, tool/API names, commands, code, paths, abbreviations, and cited source titles.",
+      "For concepts commonly used in both Chinese and English, prefer the first mention as `中文（English）` when it reads naturally.",
+      "Do NOT drift into a third language such as Korean, French, Arabic, or others unless the user explicitly asks for that language.",
+      "Do not turn the whole response into English. Keep the overall response Chinese-first while preserving necessary English.",
+      "This output mode overrides conflicting style preferences from source material.",
+    ].join("\n")
+  }
+
+  const promptLang = getLanguagePromptName(language)
   return [
     `## ⚠️ MANDATORY OUTPUT LANGUAGE: ${promptLang}`,
     "",
@@ -34,9 +45,22 @@ export function buildLanguageDirective(fallbackText: string = ""): string {
 }
 
 /**
+ * Build a strong language directive to inject into system prompts.
+ */
+export function buildLanguageDirective(fallbackText: string = ""): string {
+  return buildLanguageDirectiveFromLanguage(getOutputLanguage(fallbackText))
+}
+
+/**
  * Short reminder version — for placing right before user's current message.
  */
+export function buildLanguageReminderFromLanguage(language: string): string {
+  if (language === CHINESE_PRESERVE_ENGLISH_MODE) {
+    return "REMINDER: Use Simplified Chinese as the main language, preserve necessary English technical terms/titles/code/commands, and do not drift into a third language."
+  }
+  return `REMINDER: All output must be in ${getLanguagePromptName(language)}. Do not use any other language.`
+}
+
 export function buildLanguageReminder(fallbackText: string = ""): string {
-  const lang = getOutputLanguage(fallbackText)
-  return `REMINDER: All output must be in ${getLanguagePromptName(lang)}. Do not use any other language.`
+  return buildLanguageReminderFromLanguage(getOutputLanguage(fallbackText))
 }

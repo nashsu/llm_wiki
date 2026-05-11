@@ -5,6 +5,8 @@ mod proxy;
 mod types;
 
 use panic_guard::run_guarded;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 #[tauri::command]
 fn clip_server_status() -> String {
@@ -28,6 +30,77 @@ fn set_proxy_env(config: proxy::ProxyConfig) -> String {
     let summary = proxy::apply_proxy_env(&config);
     eprintln!("[proxy] live update: {summary}");
     summary
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpServerConfig {
+    script_path: String,
+    codex_command: String,
+    json_config: String,
+}
+
+fn normalize_display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+fn build_mcp_config(script_path: &Path) -> Result<McpServerConfig, String> {
+    let script_path = normalize_display_path(script_path);
+    let codex_command = format!(
+        "codex mcp add llmwiki -- node {}",
+        shell_quote(&script_path)
+    );
+    let json_config = serde_json::to_string_pretty(&serde_json::json!({
+        "mcpServers": {
+            "llmwiki": {
+                "command": "node",
+                "args": [script_path.clone()],
+            },
+        },
+    }))
+    .map_err(|e| format!("Failed to build MCP JSON config: {e}"))?;
+
+    Ok(McpServerConfig {
+        script_path,
+        codex_command,
+        json_config,
+    })
+}
+
+fn find_mcp_server_script() -> Result<PathBuf, String> {
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf);
+    let cwd = std::env::current_dir().ok();
+
+    let mut candidates = Vec::new();
+    if let Some(root) = manifest_root {
+        candidates.push(root.join("mcp-server").join("llmwiki-mcp.js"));
+    }
+    if let Some(dir) = cwd {
+        candidates.push(dir.join("mcp-server").join("llmwiki-mcp.js"));
+        candidates.push(dir.join("..").join("mcp-server").join("llmwiki-mcp.js"));
+    }
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err("Could not find mcp-server/llmwiki-mcp.js. Run from the LLM Wiki source tree or install the MCP server file next to this app.".to_string())
+}
+
+#[tauri::command]
+fn mcp_server_config() -> Result<McpServerConfig, String> {
+    run_guarded("mcp_server_config", || {
+        let script = find_mcp_server_script()?;
+        build_mcp_config(&script)
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -109,6 +182,7 @@ pub fn run() {
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,
             commands::extract_images::extract_and_save_office_images_cmd,
+            mcp_server_config,
             commands::file_sync::start_project_file_watcher,
             commands::file_sync::stop_project_file_watcher,
             commands::file_sync::rescan_project_files,
@@ -162,4 +236,20 @@ pub fn run() {
             }
             let _ = (app, event); // suppress unused warnings on non-macOS
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_config_contains_node_and_script_path() {
+        let cfg = build_mcp_config(Path::new("D:/Dev/llm_wiki/mcp-server/llmwiki-mcp.js"))
+            .expect("config should build");
+
+        assert!(cfg.codex_command.contains("node"));
+        assert!(cfg.codex_command.contains("mcp-server/llmwiki-mcp.js"));
+        assert!(cfg.json_config.contains("\"command\": \"node\""));
+        assert!(cfg.json_config.contains("mcp-server/llmwiki-mcp.js"));
+    }
 }

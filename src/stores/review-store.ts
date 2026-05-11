@@ -1,5 +1,6 @@
 import { create } from "zustand"
-import { normalizeReviewTitle } from "@/lib/review-utils"
+import { normalizePath } from "@/lib/path-utils"
+import { canonicalizeReviewItems, normalizeReviewTitle } from "@/lib/review-utils"
 
 export interface ReviewOption {
   label: string
@@ -8,6 +9,8 @@ export interface ReviewOption {
 
 export interface ReviewItem {
   id: string
+  projectId: string
+  projectPath: string
   type: "contradiction" | "duplicate" | "missing-page" | "confirm" | "suggestion"
   title: string
   description: string
@@ -27,7 +30,7 @@ interface ReviewState {
   setItems: (items: ReviewItem[]) => void
   resolveItem: (id: string, action: string) => void
   dismissItem: (id: string) => void
-  clearResolved: () => void
+  clearResolved: (projectPath?: string) => void
 }
 
 let counter = 0
@@ -55,18 +58,19 @@ export const useReviewStore = create<ReviewState>((set) => ({
       // from multiple files).
       // Merge affectedPages / searchQueries / sourcePath instead of duplicating.
       const result = [...state.items]
-      const keyFor = (t: string, title: string) => `${t}::${normalizeReviewTitle(title)}`
+      const keyFor = (projectId: string, t: string, title: string) =>
+        `${projectId}::${t}::${normalizeReviewTitle(title)}`
 
       // Build index of existing pending items for fast lookup
       const pendingIndex = new Map<string, number>()
       result.forEach((it, idx) => {
         if (!it.resolved) {
-          pendingIndex.set(keyFor(it.type, it.title), idx)
+          pendingIndex.set(keyFor(it.projectId, it.type, it.title), idx)
         }
       })
 
       for (const incoming of items) {
-        const k = keyFor(incoming.type, incoming.title)
+        const k = keyFor(incoming.projectId, incoming.type, incoming.title)
         const existingIdx = pendingIndex.get(k)
 
         if (existingIdx !== undefined) {
@@ -78,6 +82,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
             ...old,
             description: incoming.description || old.description, // prefer newer description
             sourcePath: incoming.sourcePath ?? old.sourcePath,
+            projectPath: incoming.projectPath || old.projectPath,
             affectedPages: mergedPages.length > 0 ? mergedPages : undefined,
             searchQueries: mergedQueries.length > 0 ? mergedQueries : undefined,
           }
@@ -93,10 +98,10 @@ export const useReviewStore = create<ReviewState>((set) => ({
         }
       }
 
-      return { items: result }
+      return { items: canonicalizeReviewItems(result) }
     }),
 
-  setItems: (items) => set({ items }),
+  setItems: (items) => set({ items: canonicalizeReviewItems(items) }),
 
   resolveItem: (id, action) =>
     set((state) => ({
@@ -110,8 +115,12 @@ export const useReviewStore = create<ReviewState>((set) => ({
       items: state.items.filter((item) => item.id !== id),
     })),
 
-  clearResolved: () =>
+  clearResolved: (projectPath) =>
     set((state) => ({
-      items: state.items.filter((item) => !item.resolved),
+      items: state.items.filter((item) => {
+        if (!item.resolved) return true
+        if (!projectPath) return false
+        return normalizePath(item.projectPath) !== normalizePath(projectPath)
+      }),
     })),
 }))

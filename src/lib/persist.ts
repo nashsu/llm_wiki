@@ -2,6 +2,7 @@ import { writeFile, readFile, createDirectory } from "@/commands/fs"
 import type { ReviewItem } from "@/stores/review-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import { normalizePath } from "@/lib/path-utils"
+import { canonicalizeReviewItems } from "@/lib/review-utils"
 
 async function ensureDir(projectPath: string): Promise<void> {
   await createDirectory(`${projectPath}/.llm-wiki`).catch(() => {})
@@ -11,14 +12,32 @@ async function ensureDir(projectPath: string): Promise<void> {
 export async function saveReviewItems(projectPath: string, items: ReviewItem[]): Promise<void> {
   const pp = normalizePath(projectPath)
   await ensureDir(pp)
-  await writeFile(`${pp}/.llm-wiki/review.json`, JSON.stringify(items, null, 2))
+  const scoped = canonicalizeReviewItems(
+    items.filter((item) => normalizePath(item.projectPath) === pp),
+  )
+  await writeFile(`${pp}/.llm-wiki/review.json`, JSON.stringify(scoped, null, 2))
 }
 
 export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]> {
   const pp = normalizePath(projectPath)
   try {
     const content = await readFile(`${pp}/.llm-wiki/review.json`)
-    return JSON.parse(content) as ReviewItem[]
+    const parsed = JSON.parse(content) as Array<Partial<ReviewItem>>
+    return parsed.map((item) => ({
+      id: item.id ?? `review-legacy-${Math.random().toString(36).slice(2, 10)}`,
+      projectId: item.projectId ?? pp,
+      projectPath: normalizePath(item.projectPath ?? pp),
+      type: item.type ?? "confirm",
+      title: item.title ?? "",
+      description: item.description ?? "",
+      sourcePath: item.sourcePath,
+      affectedPages: item.affectedPages,
+      searchQueries: item.searchQueries,
+      options: item.options ?? [],
+      resolved: item.resolved ?? false,
+      resolvedAction: item.resolvedAction,
+      createdAt: item.createdAt ?? 0,
+    }))
   } catch {
     return []
   }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Wrench,
@@ -64,6 +64,8 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
   // that completed while the user was on a different settings tab).
   // Same pattern activity-panel uses for ingest-queue.
   const [tasks, setTasks] = useState<readonly DedupTask[]>([])
+  const lastSeenTaskKeysRef = useRef<Set<string>>(new Set())
+  const cancelledTaskKeysRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     setTasks([...getQueue()])
     const id = setInterval(() => setTasks([...getQueue()]), 1000)
@@ -109,6 +111,7 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
     async (entry: GroupUiEntry) => {
       if (!project) return
       try {
+        cancelledTaskKeysRef.current.delete(groupKey(entry.group.slugs))
         await enqueueMerge(project.id, entry.group, entry.canonicalSlug)
         // Refresh immediately so the card flips to "queued" without
         // waiting for the next 1s poll tick.
@@ -121,6 +124,10 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
   )
 
   const handleCancel = useCallback(async (taskId: string) => {
+    const task = getQueue().find((t) => t.id === taskId)
+    if (task) {
+      cancelledTaskKeysRef.current.add(groupKey(task.group.slugs))
+    }
     await cancelTask(taskId)
     setTasks([...getQueue()])
   }, [])
@@ -147,43 +154,31 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
     [project, groups],
   )
 
-  // Drive each card's status from the queue.
-  // - Card not in queue + not skipped → idle, can merge / dismiss
-  // - Task pending → "Queued (N ahead)"
-  // - Task processing → "Merging…"
-  // - Task gone (after success) → "Merged" (queue removes done tasks
-  //     immediately, so we only know it succeeded if we observed it
-  //     in-flight before. Track that with a session-local set.)
-  // - Task failed → show error + retry / delete.
-  const [recentlyMergedKeys, setRecentlyMergedKeys] = useState<Set<string>>(
-    () => new Set(),
-  )
-
+  // Queue state drives each card:
+  // - pending / processing / failed stay visible with their task status.
+  // - explicitly cancelled tasks stay in the current scan result.
+  // - tasks that vanish without a cancel were completed successfully,
+  //   so remove their candidate group from the current scan result.
   useEffect(() => {
-    // Detect transitions out of the queue: a slug-set we saw last
-    // tick is now gone → it completed (cancelled paths also remove,
-    // but only with explicit user action that re-renders separately).
-    setRecentlyMergedKeys((prev) => {
-      const currentKeys = new Set(tasks.map((t) => groupKey(t.group.slugs)))
-      let changed = false
-      const next = new Set(prev)
-      for (const g of groups) {
-        const k = groupKey(g.group.slugs)
-        const wasInFlight = lastSeenTaskKeysRef.current.has(k)
-        if (wasInFlight && !currentKeys.has(k) && !next.has(k)) {
-          next.add(k)
-          changed = true
-        }
+    const currentKeys = new Set(tasks.map((t) => groupKey(t.group.slugs)))
+    const completedKeys = new Set<string>()
+
+    for (const key of lastSeenTaskKeysRef.current) {
+      if (currentKeys.has(key)) continue
+      if (cancelledTaskKeysRef.current.has(key)) {
+        cancelledTaskKeysRef.current.delete(key)
+      } else {
+        completedKeys.add(key)
       }
-      lastSeenTaskKeysRef.current = currentKeys
-      return changed ? next : prev
-    })
-    // We intentionally only re-run when tasks change — the closure
-    // over `groups` is fine because newly-scanned groups can't be
-    // "recently merged" until they've been observed in-flight first.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }
+
+    lastSeenTaskKeysRef.current = currentKeys
+    if (completedKeys.size > 0) {
+      setGroups((prev) =>
+        prev.filter((g) => !completedKeys.has(groupKey(g.group.slugs))),
+      )
+    }
   }, [tasks])
-  const lastSeenTaskKeysRef = useRefInit<Set<string>>(() => new Set())
 
   // Pending position helper: "queued (N ahead)" — count pending tasks
   // before this one in arrival order.
@@ -324,13 +319,11 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
 
       {groups.map((entry, idx) => {
         const task = findTaskForGroup(tasks, entry.group.slugs)
-        const merged = recentlyMergedKeys.has(groupKey(entry.group.slugs))
         return (
           <DuplicateGroupCard
             key={entry.group.slugs.join(",")}
             entry={entry}
             task={task}
-            merged={merged}
             pendingPosition={
               task && task.status === "pending"
                 ? pendingPositionByTaskId.get(task.id) ?? 0
@@ -349,17 +342,6 @@ export function MaintenanceSection({ draft, setDraft }: Props) {
 }
 
 // --- helpers ---------------------------------------------------------------
-
-/** A useRef variant that initializes lazily — avoids constructing a new
- *  Set on every render. Kept inline since it's only used here. */
-function useRefInit<T>(init: () => T): { current: T } {
-  // `useState` returning a ref-shaped object lets us mutate `.current`
-  // without triggering re-renders, which is exactly the ref semantics
-  // we want for the "last seen task keys" tracking above.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [ref] = useState<{ current: T }>(() => ({ current: init() }))
-  return ref
-}
 
 interface QueueOrphanListProps {
   tasks: readonly DedupTask[]
@@ -503,7 +485,6 @@ function TaskStatusChip({ task, pendingPosition }: ChipProps) {
 interface CardProps {
   entry: GroupUiEntry
   task: DedupTask | undefined
-  merged: boolean
   pendingPosition: number
   onCanonicalChange: (slug: string) => void
   onEnqueue: () => void
@@ -515,7 +496,6 @@ interface CardProps {
 function DuplicateGroupCard({
   entry,
   task,
-  merged,
   pendingPosition,
   onCanonicalChange,
   onEnqueue,
@@ -528,7 +508,7 @@ function DuplicateGroupCard({
 
   const inFlight = !!task && (task.status === "pending" || task.status === "processing")
   const failed = !!task && task.status === "failed"
-  const finished = merged || skipped
+  const finished = skipped
 
   const confidenceClass =
     group.confidence === "high"
@@ -553,12 +533,6 @@ function DuplicateGroupCard({
             n: group.slugs.length,
           })}
         </span>
-        {merged && (
-          <span className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            {t("settings.sections.maintenance.dedup.merged", { defaultValue: "Merged" })}
-          </span>
-        )}
         {skipped && (
           <span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
             {t("settings.sections.maintenance.dedup.skipped", { defaultValue: "Marked not duplicates" })}

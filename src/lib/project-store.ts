@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig, EmbeddingConfig, DocumentLlmConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -96,6 +96,18 @@ export async function loadEmbeddingConfig(): Promise<EmbeddingConfig | null> {
   return (await store.get<EmbeddingConfig>(EMBEDDING_KEY)) ?? null
 }
 
+const DOCUMENT_LLM_KEY = "documentLlmConfig"
+
+export async function saveDocumentLlmConfig(config: DocumentLlmConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(DOCUMENT_LLM_KEY, config)
+}
+
+export async function loadDocumentLlmConfig(): Promise<DocumentLlmConfig | null> {
+  const store = await getStore()
+  return (await store.get<DocumentLlmConfig>(DOCUMENT_LLM_KEY)) ?? null
+}
+
 const MULTIMODAL_KEY = "multimodalConfig"
 
 export async function saveMultimodalConfig(config: MultimodalConfig): Promise<void> {
@@ -131,6 +143,18 @@ export async function saveProxyConfig(config: ProxyConfig): Promise<void> {
 export async function loadProxyConfig(): Promise<ProxyConfig | null> {
   const store = await getStore()
   return (await store.get<ProxyConfig>(PROXY_CONFIG_KEY)) ?? null
+}
+
+const MCP_ACCESS_ENABLED_KEY = "mcpAccessEnabled"
+
+export async function saveMcpAccessEnabled(enabled: boolean): Promise<void> {
+  const store = await getStore()
+  await store.set(MCP_ACCESS_ENABLED_KEY, enabled)
+}
+
+export async function loadMcpAccessEnabled(): Promise<boolean> {
+  const store = await getStore()
+  return (await store.get<boolean>(MCP_ACCESS_ENABLED_KEY)) ?? false
 }
 
 export async function removeFromRecentProjects(

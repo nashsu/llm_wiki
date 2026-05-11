@@ -17,6 +17,14 @@ describe("language metadata", () => {
     expect(sameScriptFamily("Persian", "Arabic")).toBe(true)
   })
 
+  it("gives the mixed Chinese mode a stable prompt name and Chinese locale", () => {
+    expect(getLanguagePromptName("Chinese (preserve English terms)")).toBe(
+      "Chinese-first with preserved English technical terms",
+    )
+    expect(getHtmlLang("Chinese (preserve English terms)")).toBe("zh-Hans")
+    expect(getTextDirection("Chinese (preserve English terms)")).toBe("ltr")
+  })
+
   it("defaults unknown languages to LTR with the original prompt name", () => {
     expect(getLanguagePromptName("Vietnamese")).toBe("Vietnamese")
     expect(getTextDirection("Vietnamese")).toBe("ltr")
