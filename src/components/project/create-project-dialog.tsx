@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { open } from "@tauri-apps/plugin-dialog"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -23,6 +24,7 @@ interface CreateProjectDialogProps {
 }
 
 export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: CreateProjectDialogProps) {
+  const { t } = useTranslation()
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [selectedTemplate, setSelectedTemplate] = useState("general")
@@ -40,7 +42,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Select Parent Directory",
+      title: t("project.browse"),
     })
     if (selected) {
       setPath(selected)
@@ -49,11 +51,11 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
 
   async function handleCreate() {
     if (!name.trim() || !path.trim()) {
-      setError("Name and path are required")
+      setError(t("project.errorNameRequired"))
       return
     }
     if (!language) {
-      setError("Please pick an AI output language")
+      setError(t("project.errorLanguageRequired"))
       return
     }
     setCreating(true)
@@ -94,20 +96,20 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create New Wiki Project</DialogTitle>
+          <DialogTitle>{t("project.createTitle")}</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="name">Project Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-research-wiki" />
+            <Label htmlFor="name">{t("project.name")}</Label>
+            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("project.namePlaceholder")} />
           </div>
           <div className="flex flex-col gap-2">
-            <Label>Template</Label>
+            <Label>{t("project.template")}</Label>
             <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="language">
-              AI Output Language <span className="text-destructive">*</span>
+              {t("project.aiOutputLanguage")} <span className="text-destructive">{t("project.aiOutputLanguageRequired")}</span>
             </Label>
             <select
               id="language"
@@ -116,7 +118,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="" disabled>
-                Pick a language…
+                {t("project.pickLanguage")}
               </option>
               {/*
                 * "auto" is intentionally filtered out at project
@@ -135,15 +137,13 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              All AI-generated content (wiki pages, chat replies, research
-              output) will use this language. You can change it later in
-              Settings → Output.
+              {t("project.aiOutputLanguageHint")}
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="path">Parent Directory</Label>
+            <Label htmlFor="path">{t("project.parentDir")}</Label>
             <div className="flex gap-2">
-              <Input id="path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/you/projects" className="flex-1" />
+              <Input id="path" value={path} onChange={(e) => setPath(e.target.value)} placeholder={t("project.parentDirPlaceholder")} className="flex-1" />
               <Button variant="outline" size="icon" onClick={handleBrowse} type="button">
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -152,8 +152,8 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={creating}>{creating ? "Creating..." : "Create"}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("project.cancel")}</Button>
+          <Button onClick={handleCreate} disabled={creating}>{creating ? t("project.creating") : t("project.create")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

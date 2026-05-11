@@ -25,15 +25,49 @@
     "openProject": "Open Project",
     "recentProjects": "Recent Projects"
   },
+  "sidebar": {
+    "knowledge": "Knowledge",
+    "files": "Files"
+  },
   "project": {
     "createTitle": "Create New Wiki Project",
     "name": "Project Name",
     "namePlaceholder": "my-research-wiki",
     "parentDir": "Parent Directory",
+    "parentDirPlaceholder": "/Users/you/projects",
     "template": "Template",
     "cancel": "Cancel",
     "create": "Create",
-    "creating": "Creating..."
+    "creating": "Creating...",
+    "errorNameRequired": "Name and path are required",
+    "errorLanguageRequired": "Please pick an AI output language",
+    "browse": "Select Parent Directory",
+    "aiOutputLanguage": "AI Output Language",
+    "aiOutputLanguageRequired": "*",
+    "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Settings → Output.",
+    "pickLanguage": "Pick a language…"
+  },
+  "templates": {
+    "research": {
+      "name": "Research",
+      "description": "Deep-dive research with hypothesis tracking and methodology notes"
+    },
+    "reading": {
+      "name": "Reading",
+      "description": "Track a book's characters, themes, plot threads, and chapter notes"
+    },
+    "personal": {
+      "name": "Personal Growth",
+      "description": "Track goals, habits, reflections, and journal entries for self-improvement"
+    },
+    "business": {
+      "name": "Business",
+      "description": "Manage meetings, decisions, projects, and stakeholder context for a team"
+    },
+    "general": {
+      "name": "General",
+      "description": "Minimal setup — a blank slate for any purpose"
+    }
   },
   "sources": {
     "title": "Raw Sources",
@@ -42,9 +76,19 @@
     "noSources": "No sources yet",
     "importHint": "Import documents to start building your wiki",
     "importFiles": "Import Files",
+    "importFolder": "Folder",
+    "importSourceFiles": "Import Source Files",
+    "importSourceFolder": "Import Source Folder",
+    "refresh": "Refresh",
     "ingest": "Ingest",
     "delete": "Delete source and related wiki pages",
     "deleteConfirm": "Delete \"{{name}}\" and its related wiki pages?\n\nThis will:\n- Delete the source file\n- Delete wiki pages generated from this source\n- Update index.md",
+    "deleteFolder": "Delete folder {{name}} (recursive)",
+    "deleteFolderConfirm": "Click again to delete folder {{name}} and ALL its contents",
+    "deleteFile": "Delete {{name}}",
+    "deleteFileConfirm": "Click again to delete {{name}}",
+    "confirm": "Confirm",
+    "loadingMore": "Loading more sources...",
     "sourceCount": "{{count}} source",
     "sourceCount_plural": "{{count}} sources"
   },
@@ -56,7 +100,14 @@
     "saved": "Saved!",
     "writeToWiki": "Write to Wiki",
     "emptyHint": "Ask a question or start an ingest to begin.",
-    "sources": "Sources"
+    "sources": "Sources",
+    "newChat": "New Chat",
+    "newConversation": "New Conversation",
+    "noConversationsYet": "No conversations yet",
+    "msgCount": "msgs",
+    "startNewConversation": "Start a new conversation",
+    "clickNewChatToBegin": "Click \"New Chat\" to begin",
+    "typeAMessage": "Type a message..."
   },
   "search": {
     "title": "Search",
@@ -77,6 +128,38 @@
     "stale": "Stale Content",
     "missingPage": "Missing Page",
     "suggestion": "Suggestion"
+  },
+  "lint": {
+    "title": "Wiki Lint",
+    "semantic": "Semantic (LLM)",
+    "running": "Running...",
+    "runLint": "Run Lint",
+    "runLintHint": "Run lint to check wiki health",
+    "runLintDescription": "Checks for orphan pages, broken links, and more",
+    "allClear": "All clear!",
+    "noIssues": "No issues found.",
+    "warnings": "Warnings",
+    "info": "Info",
+    "sectionCount": "{{label}} ({{count}})",
+    "open": "Open",
+    "fixing": "Fixing...",
+    "fix": "Fix",
+    "delete": "Delete",
+    "openEdit": "Open & Edit",
+    "skip": "Skip",
+    "deletePage": "Delete Page",
+    "fixBrokenLink": "Fix broken link in {{page}}",
+    "addCrossRefs": "Add cross-references to {{page}}",
+    "addCrossRefsDescription": "This page has no outbound [[wikilinks]]. Consider adding cross-references to related entities and concepts.",
+    "deleteOrphanConfirm": "Delete orphan page \"{{page}}\"?",
+    "typeLabels": {
+      "orphan": "Orphan Page",
+      "broken-link": "Broken Link",
+      "no-outlinks": "No Outbound Links",
+      "semantic": "Semantic Issue"
+    },
+    "issues": "{{count}} issue",
+    "issues_plural": "{{count}} issues"
   },
   "review": {
     "title": "Review",
@@ -274,6 +357,56 @@
   },
   "fileTree": {
     "noProject": "No project open"
+  },
+  "graph": {
+    "openProject": "Open a project to view the graph",
+    "buildingGraph": "Building graph...",
+    "retry": "Retry",
+    "noPages": "No pages yet",
+    "importSourcesHint": "Import sources to start building the knowledge graph",
+    "knowledgeGraph": "Knowledge Graph",
+    "hidden": "hidden",
+    "pages": "pages",
+    "links": "links",
+    "filter": "Filter",
+    "reset": "Reset",
+    "type": "Type",
+    "community": "Community",
+    "insights": "Insights",
+    "resizing": "Resizing...",
+    "graphFilters": "Graph Filters",
+    "quickFilters": "Quick filters",
+    "hideIndexOverview": "Hide index / overview / log",
+    "hideIsolated": "Hide isolated nodes",
+    "maxLinks": "Max links",
+    "maxLinksHint": "Hide nodes above this link count",
+    "nodeTypes": "Node types",
+    "hiddenNodes": "Hidden nodes",
+    "show": "Show",
+    "showingStats": "Showing {{pages}} of {{total}} pages and {{links}} of {{totalLinks}} links.",
+    "hideThisNode": "Hide this node",
+    "nodeTypesLabel": "Node Types",
+    "communitiesLabel": "Communities",
+    "showAll": "Show all",
+    "cluster": "Cluster {{id}}",
+    "surprisingConnections": "Surprising Connections",
+    "knowledgeGaps": "Knowledge Gaps",
+    "deepResearch": "Deep Research",
+    "generatingTopic": "Generating research topic...",
+    "researchTopic": "Research Topic",
+    "searchQueries": "Search Queries",
+    "cancel": "Cancel",
+    "startResearch": "Start Research",
+    "nodeTypeLabels": {
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "overview": "Overview",
+      "comparison": "Comparison",
+      "other": "Other"
+    }
   },
   "time": {
     "justNow": "just now",
