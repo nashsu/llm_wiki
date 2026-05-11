@@ -41,13 +41,13 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
     case "audio":
       return <AudioPreview filePath={filePath} fileName={fileName} />
     case "pdf":
-      return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
+      return <TextPreview filePath={filePath} content={textContent} label="PDF（已提取文本）" />
     case "code":
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
       return <CodePreview filePath={filePath} content={textContent} />
     case "text":
-      return <TextPreview filePath={filePath} content={textContent} label="Text" />
+      return <TextPreview filePath={filePath} content={textContent} label="文本" />
     case "document":
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
     default:
@@ -279,7 +279,7 @@ function BinaryPlaceholder({
         <p className="mt-1 text-xs text-muted-foreground">{filePath}</p>
       </div>
       <p className="text-sm text-muted-foreground">
-        Preview not available for this file type
+        暂不支持预览此文件类型
       </p>
     </div>
   )

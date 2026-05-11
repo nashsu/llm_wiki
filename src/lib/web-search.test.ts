@@ -89,11 +89,11 @@ describe("webSearch", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "Invalid API key" }))
 
     await expect(webSearch("x", { provider: "serpapi", apiKey: "bad" }, 5))
-      .rejects.toThrow("SerpApi search failed: Invalid API key")
+      .rejects.toThrow("SerpApi 搜索失败：Invalid API key")
   })
 
   it("requires a configured search provider and key", async () => {
     await expect(webSearch("x", { provider: "none", apiKey: "" }, 5))
-      .rejects.toThrow("Tavily or SerpApi API key")
+      .rejects.toThrow("Tavily 或 SerpApi API Key")
   })
 })

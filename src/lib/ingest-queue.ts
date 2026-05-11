@@ -506,7 +506,7 @@ async function processNext(projectId: string): Promise<void> {
     // historical `return []` error path masqueraded as success). Treat
     // as failure so the task stays in the queue and retries.
     if (writtenFiles.length === 0) {
-      throw new Error("Ingest produced no output files")
+      throw new Error("提取未产生任何输出文件")
     }
 
     // Success: remove from queue

@@ -55,7 +55,7 @@ export const LLM_PRESETS: LlmPreset[] = [
   {
     id: "anthropic",
     label: "Anthropic (Claude)",
-    hint: "Official Claude API",
+    hint: "官方 Claude API",
     provider: "anthropic",
     defaultModel: "claude-sonnet-4-5-20250929",
     // Cross-referenced with hermes-agent/hermes_cli/models.py:233-242.
@@ -75,8 +75,8 @@ export const LLM_PRESETS: LlmPreset[] = [
   },
   {
     id: "claude-code-cli",
-    label: "Claude Code CLI (local)",
-    hint: "Uses the local `claude` binary — no API key needed",
+    label: "Claude Code CLI（本地）",
+    hint: "使用本地 `claude` 可执行文件，无需 API Key",
     provider: "claude-code",
     defaultModel: "claude-sonnet-4-6",
     // Mirrors anthropic preset; the CLI forwards to the same Anthropic
@@ -94,7 +94,7 @@ export const LLM_PRESETS: LlmPreset[] = [
   {
     id: "openai",
     label: "OpenAI (GPT)",
-    hint: "Official OpenAI API",
+    hint: "官方 OpenAI API",
     provider: "openai",
     defaultModel: "gpt-4o",
     // Current public GPT models on api.openai.com. Reasoning models and
@@ -116,7 +116,7 @@ export const LLM_PRESETS: LlmPreset[] = [
   {
     id: "google",
     label: "Google (Gemini)",
-    hint: "Generative Language API",
+    hint: "生成式语言 API",
     provider: "google",
     defaultModel: "gemini-2.5-flash",
     // 2.5 generation is the current stable; 2.0 kept as fallback.
@@ -388,8 +388,8 @@ export const LLM_PRESETS: LlmPreset[] = [
   },
   {
     id: "ollama-local",
-    label: "Ollama (Local)",
-    hint: "Self-hosted llama.cpp / Ollama",
+    label: "Ollama（本地）",
+    hint: "自托管 llama.cpp / Ollama",
     provider: "ollama",
     baseUrl: "http://localhost:11434",
     // Intentionally no suggestedModels: local set depends on what the
@@ -415,8 +415,8 @@ export const LLM_PRESETS: LlmPreset[] = [
   },
   {
     id: "custom",
-    label: "Custom",
-    hint: "Any OpenAI- or Anthropic-compatible endpoint",
+    label: "自定义",
+    hint: "任意 OpenAI 或 Anthropic 兼容端点",
     provider: "custom",
     // Wire protocol is chosen via the "API 模式" toggle in the expanded
     // panel — no need for separate presets per mode. User supplies the

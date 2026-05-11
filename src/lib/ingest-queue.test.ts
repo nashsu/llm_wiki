@@ -194,7 +194,7 @@ describe("ingest-queue — retry & failure", () => {
     const queue = getQueue()
     expect(queue).toHaveLength(1)
     expect(queue[0].status).toBe("failed")
-    expect(queue[0].error).toContain("no output files")
+    expect(queue[0].error).toContain("未产生任何输出文件")
     expect(queue[0].retryCount).toBe(3)
   })
 

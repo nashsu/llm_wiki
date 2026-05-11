@@ -133,7 +133,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
 
       {origin && (
         <div className="mx-4 mt-3 rounded border-l-2 border-primary/40 bg-primary/5 px-3 py-1.5 text-xs text-foreground/80">
-          <span className="font-medium text-muted-foreground">Origin: </span>
+          <span className="font-medium text-muted-foreground">来源： </span>
           {origin}
         </div>
       )}
@@ -143,7 +143,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
         <div className="px-4 pt-4">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <Layers className="h-3.5 w-3.5" />
-            Sources
+            资料来源
             <span className="text-muted-foreground/60">({sources.length})</span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -170,7 +170,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
         <div className="px-4 pt-4">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <ArrowUpRight className="h-3.5 w-3.5" />
-            Related
+            相关页面
             <span className="text-muted-foreground/60">({related.length})</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -195,7 +195,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
       {/* Extras (any other key/values we didn't surface above) ──── */}
       {extras.length > 0 && (
         <div className="mx-4 mt-4 rounded border border-border/40 bg-background/50 px-3 py-2 text-xs">
-          <div className="mb-1 font-medium text-muted-foreground/80">More</div>
+          <div className="mb-1 font-medium text-muted-foreground/80">更多</div>
           <div className="space-y-0.5">
             {extras.map(([k, v]) => (
               <div key={k} className="flex gap-2">
@@ -233,7 +233,7 @@ function SourceCard({
     <button
       type="button"
       onClick={resolved ? onClick : undefined}
-      title={resolved ? `Open ${name}` : `Source not found in raw/sources/: ${name}`}
+      title={resolved ? `打开 ${name}` : `raw/sources/ 中未找到来源：${name}`}
       className={`group flex min-w-0 max-w-[200px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${
         resolved
           ? "border-border/60 bg-background hover:border-primary/40 hover:bg-primary/5 cursor-pointer"
@@ -260,7 +260,7 @@ function RelatedChip({
     <button
       type="button"
       onClick={resolved ? onClick : undefined}
-      title={resolved ? `Open ${slug}` : `Related page not found: ${slug}`}
+      title={resolved ? `打开 ${slug}` : `未找到相关页面：${slug}`}
       className={`group inline-flex max-w-[260px] items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
         resolved
           ? "border-border/60 bg-background hover:border-primary/50 hover:bg-primary/10 cursor-pointer"

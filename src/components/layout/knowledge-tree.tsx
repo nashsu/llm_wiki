@@ -19,16 +19,16 @@ interface WikiPageInfo {
 }
 
 const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color: string; order: number }> = {
-  overview:    { icon: Layout,      label: "Overview",     color: "text-yellow-500", order: 0 },
-  entity:      { icon: Users,       label: "Entities",     color: "text-blue-500",   order: 1 },
-  concept:     { icon: Lightbulb,   label: "Concepts",     color: "text-purple-500", order: 2 },
-  source:      { icon: BookOpen,    label: "Sources",      color: "text-orange-500", order: 3 },
-  synthesis:   { icon: GitMerge,    label: "Synthesis",    color: "text-red-500",    order: 4 },
-  comparison:  { icon: BarChart3,   label: "Comparisons",  color: "text-emerald-500",order: 5 },
-  query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 6 },
+  overview:    { icon: Layout,      label: "概览",       color: "text-yellow-500", order: 0 },
+  entity:      { icon: Users,       label: "实体",       color: "text-blue-500",   order: 1 },
+  concept:     { icon: Lightbulb,   label: "概念",       color: "text-purple-500", order: 2 },
+  source:      { icon: BookOpen,    label: "来源",       color: "text-orange-500", order: 3 },
+  synthesis:   { icon: GitMerge,    label: "综合",       color: "text-red-500",    order: 4 },
+  comparison:  { icon: BarChart3,   label: "对比",       color: "text-emerald-500",order: 5 },
+  query:       { icon: HelpCircle,  label: "查询",       color: "text-green-500",  order: 6 },
 }
 
-const DEFAULT_CONFIG = { icon: FileText, label: "Other", color: "text-muted-foreground", order: 99 }
+const DEFAULT_CONFIG = { icon: FileText, label: "其他", color: "text-muted-foreground", order: 99 }
 
 export function KnowledgeTree() {
   const project = useWikiStore((s) => s.project)
@@ -105,7 +105,7 @@ export function KnowledgeTree() {
         if (selectedFile === pagePath) setSelectedFile(null)
       } catch (err) {
         console.error("[KnowledgeTree] delete failed:", err)
-        window.alert(`Failed to delete: ${err}`)
+        window.alert(`删除失败：${err}`)
       } finally {
         setDeletingPath(null)
       }
@@ -116,7 +116,7 @@ export function KnowledgeTree() {
   if (!project) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-        No project open
+        未打开项目
       </div>
     )
   }
@@ -154,7 +154,7 @@ export function KnowledgeTree() {
 
         {sortedGroups.length === 0 && (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-            No wiki pages yet. Import sources to get started.
+            暂无 Wiki 页面。导入资料后开始构建。
           </div>
         )}
 
@@ -263,7 +263,7 @@ function RawSourcesSection() {
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-        <span className="flex-1 text-left font-medium text-muted-foreground">Raw Sources</span>
+        <span className="flex-1 text-left font-medium text-muted-foreground">原始资料</span>
         <span className="text-xs text-muted-foreground">{sources.length}</span>
       </button>
       {expanded && (
@@ -364,7 +364,7 @@ function DeleteButton({
         size="icon"
         className={`h-6 w-6 shrink-0 cursor-default ${className}`}
         disabled
-        title={`Deleting ${name}…`}
+        title={`正在删除 ${name}...`}
       >
         <Trash2 className="h-3 w-3 animate-pulse text-destructive" />
       </Button>
@@ -380,10 +380,10 @@ function DeleteButton({
           e.stopPropagation()
           onClick()
         }}
-        title={`Click again to delete ${name} and clean up references`}
+        title={`再次点击删除 ${name} 并清理引用`}
       >
         <Trash2 className="mr-0.5 h-3 w-3" />
-        Confirm
+        确认
       </Button>
     )
   }
@@ -396,7 +396,7 @@ function DeleteButton({
         e.stopPropagation()
         onClick()
       }}
-      title={`Delete ${name} (and clean up references)`}
+      title={`删除 ${name}（并清理引用）`}
     >
       <Trash2 className="h-3 w-3" />
     </Button>

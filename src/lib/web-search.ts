@@ -9,15 +9,15 @@ export interface WebSearchResult {
 }
 
 export const SERPAPI_ENGINE_OPTIONS: { value: SerpApiEngine; label: string; hint: string }[] = [
-  { value: "google", label: "Google Web", hint: "SerpApi Google Search API organic results" },
-  { value: "google_news", label: "Google News", hint: "News-focused results" },
-  { value: "google_scholar", label: "Google Scholar", hint: "Academic papers and citations" },
-  { value: "google_patents", label: "Google Patents", hint: "Patent search results" },
-  { value: "bing", label: "Bing", hint: "Bing organic results" },
-  { value: "duckduckgo", label: "DuckDuckGo", hint: "DuckDuckGo organic results" },
-  { value: "google_images", label: "Google Images", hint: "Image search results" },
-  { value: "google_videos", label: "Google Videos", hint: "Video search results" },
-  { value: "youtube", label: "YouTube", hint: "YouTube video results" },
+  { value: "google", label: "Google 网页", hint: "SerpApi Google Search API 自然搜索结果" },
+  { value: "google_news", label: "Google 新闻", hint: "新闻搜索结果" },
+  { value: "google_scholar", label: "Google 学术", hint: "学术论文和引用" },
+  { value: "google_patents", label: "Google 专利", hint: "专利搜索结果" },
+  { value: "bing", label: "Bing", hint: "Bing 自然搜索结果" },
+  { value: "duckduckgo", label: "DuckDuckGo", hint: "DuckDuckGo 自然搜索结果" },
+  { value: "google_images", label: "Google 图片", hint: "图片搜索结果" },
+  { value: "google_videos", label: "Google 视频", hint: "视频搜索结果" },
+  { value: "youtube", label: "YouTube", hint: "YouTube 视频结果" },
 ]
 
 export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
@@ -55,7 +55,7 @@ export async function webSearch(
 ): Promise<WebSearchResult[]> {
   const resolved = resolveSearchConfig(config)
   if (resolved.provider === "none" || !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings.")
+    throw new Error("尚未配置网页搜索。请在设置中添加 Tavily 或 SerpApi API Key。")
   }
 
   switch (resolved.provider) {
@@ -101,21 +101,21 @@ async function tavilySearch(
   } catch (err) {
     if (isFetchNetworkError(err)) {
       throw new Error(
-        "Network error reaching api.tavily.com. Check your connectivity and whether the Tavily API key is still valid.",
+        "连接 api.tavily.com 时发生网络错误。请检查网络连接以及 Tavily API Key 是否仍然有效。",
       )
     }
     throw err
   }
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error")
-    throw new Error(`Tavily search failed (${response.status}): ${errorText}`)
+    const errorText = await response.text().catch(() => "未知错误")
+    throw new Error(`Tavily 搜索失败（${response.status}）：${errorText}`)
   }
 
   const data = await response.json()
 
   return (data.results ?? []).map((r: { title: string; url: string; content: string }) => ({
-    title: r.title ?? "Untitled",
+    title: r.title ?? "无标题",
     url: r.url ?? "",
     snippet: r.content ?? "",
     source: hostnameFromUrl(r.url ?? ""),
@@ -145,20 +145,20 @@ async function serpApiSearch(
   } catch (err) {
     if (isFetchNetworkError(err)) {
       throw new Error(
-        "Network error reaching serpapi.com. Check your connectivity and whether the SerpApi API key is still valid.",
+        "连接 serpapi.com 时发生网络错误。请检查网络连接以及 SerpApi API Key 是否仍然有效。",
       )
     }
     throw err
   }
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error")
-    throw new Error(`SerpApi search failed (${response.status}): ${errorText}`)
+    const errorText = await response.text().catch(() => "未知错误")
+    throw new Error(`SerpApi 搜索失败（${response.status}）：${errorText}`)
   }
 
   const data = await response.json()
   if (typeof data.error === "string" && data.error.trim()) {
-    throw new Error(`SerpApi search failed: ${data.error}`)
+    throw new Error(`SerpApi 搜索失败：${data.error}`)
   }
 
   return normalizeSerpApiResults(data, maxResults)
@@ -201,7 +201,7 @@ function normalizeSerpApiResult(item: unknown): WebSearchResult {
   }
   const url = r.link ?? r.url ?? r.original ?? r.thumbnail ?? ""
   return {
-    title: r.title ?? "Untitled",
+    title: r.title ?? "无标题",
     url,
     snippet: r.snippet ?? r.summary ?? r.description ?? "",
     source: hostnameFromUrl(url) || r.source || r.displayed_link || "",

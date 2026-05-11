@@ -54,14 +54,14 @@ function ConversationSidebar() {
           onClick={() => createConversation()}
         >
           <Plus className="h-3.5 w-3.5" />
-          New Chat
+          新对话
         </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
         {sorted.length === 0 ? (
           <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-            No conversations yet
+            暂无对话
           </p>
         ) : (
           sorted.map((conv) => {
@@ -105,7 +105,7 @@ function ConversationSidebar() {
                   {msgCount > 0 && (
                     <>
                       <span>·</span>
-                      <span>{msgCount} msgs</span>
+                      <span>{msgCount} 条消息</span>
                     </>
                   )}
                 </div>
@@ -416,7 +416,7 @@ export function ChatPanel() {
             // save-worthy detection removed — user has direct "Save to Wiki" button on each message
           },
           onError: (err) => {
-            finalizeStream(`Error: ${err.message}`, undefined)
+            finalizeStream(`错误：${err.message}`, undefined)
             abortRef.current = null
           },
         },
@@ -484,8 +484,8 @@ export function ChatPanel() {
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
               <MessageSquare className="mx-auto mb-3 h-8 w-8 opacity-30" />
-              <p className="text-sm">Start a new conversation</p>
-              <p className="mt-1 text-xs opacity-60">Click "New Chat" to begin</p>
+              <p className="text-sm">开始新对话</p>
+              <p className="mt-1 text-xs opacity-60">点击“新对话”开始</p>
             </div>
           </div>
         ) : (
@@ -522,7 +522,7 @@ export function ChatPanel() {
                   className="w-full gap-2"
                 >
                   <BookOpen className="h-4 w-4" />
-                  Write to Wiki
+                  写入 Wiki
                 </Button>
               </div>
             )}
@@ -535,8 +535,8 @@ export function ChatPanel() {
           isStreaming={isStreaming}
           placeholder={
             mode === "ingest"
-              ? "Discuss the source or ask follow-up questions..."
-              : "Type a message..."
+              ? "讨论资料内容或继续追问..."
+              : "输入消息..."
           }
         />
       </div>

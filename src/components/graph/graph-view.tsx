@@ -29,14 +29,14 @@ const NODE_TYPE_COLORS: Record<string, string> = {
 }
 
 const NODE_TYPE_LABELS: Record<string, string> = {
-  entity: "Entity",
-  concept: "Concept",
-  source: "Source",
-  query: "Query",
-  synthesis: "Synthesis",
-  overview: "Overview",
-  comparison: "Comparison",
-  other: "Other",
+  entity: "实体",
+  concept: "概念",
+  source: "来源",
+  query: "查询",
+  synthesis: "综合",
+  overview: "概览",
+  comparison: "对比",
+  other: "其他",
 }
 
 const COMMUNITY_COLORS = [
@@ -370,7 +370,7 @@ export function GraphView() {
       setKnowledgeGaps(detectKnowledgeGaps(result.nodes, result.edges, result.communities))
       lastLoadedVersion.current = useWikiStore.getState().dataVersion
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to build graph"
+      const message = err instanceof Error ? err.message : "构建关系图失败"
       setError(message)
     } finally {
       setLoading(false)
@@ -523,7 +523,7 @@ export function GraphView() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
         <Network className="h-10 w-10 opacity-30" />
-        <p className="text-sm">Open a project to view the graph</p>
+        <p className="text-sm">打开项目后查看关系图</p>
       </div>
     )
   }
@@ -532,7 +532,7 @@ export function GraphView() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
         <RefreshCw className="h-8 w-8 animate-spin opacity-50" />
-        <p className="text-sm">Building graph...</p>
+        <p className="text-sm">正在构建关系图...</p>
       </div>
     )
   }
@@ -542,7 +542,7 @@ export function GraphView() {
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
         <Network className="h-10 w-10 opacity-30" />
         <p className="text-sm text-destructive">{error}</p>
-        <Button variant="outline" size="sm" onClick={loadGraph}>Retry</Button>
+        <Button variant="outline" size="sm" onClick={loadGraph}>重试</Button>
       </div>
     )
   }
@@ -551,8 +551,8 @@ export function GraphView() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
         <Network className="h-10 w-10 opacity-30" />
-        <p className="text-sm">No pages yet</p>
-        <p className="text-xs">Import sources to start building the knowledge graph</p>
+        <p className="text-sm">暂无页面</p>
+        <p className="text-xs">导入资料后开始构建知识图谱</p>
       </div>
     )
   }
@@ -564,14 +564,14 @@ export function GraphView() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Network className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Knowledge Graph</span>
+            <span className="text-sm font-medium">知识图谱</span>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.nodes.length}/{nodes.length} pages</span>
-            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.edges.length}/{edges.length} links</span>
+            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.nodes.length}/{nodes.length} 个页面</span>
+            <span className="rounded bg-muted px-1.5 py-0.5">{filteredGraph.edges.length}/{edges.length} 条链接</span>
             {hiddenCount > 0 && (
               <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
-                {hiddenCount} hidden
+                已隐藏 {hiddenCount}
               </span>
             )}
           </div>
@@ -584,7 +584,7 @@ export function GraphView() {
             className="text-xs gap-1 h-7"
           >
             <Filter className="h-3 w-3" />
-            Filter
+            筛选
           </Button>
           {filtersActive && (
             <Button
@@ -592,10 +592,10 @@ export function GraphView() {
               size="sm"
               onClick={resetFilters}
               className="text-xs gap-1 h-7"
-              title="Reset graph filters"
+              title="重置图谱筛选"
             >
               <RotateCcw className="h-3 w-3" />
-              Reset
+              重置
             </Button>
           )}
           <Button
@@ -605,7 +605,7 @@ export function GraphView() {
             className="text-xs gap-1 h-7"
           >
             <Tag className="h-3 w-3" />
-            Type
+            类型
           </Button>
           <Button
             variant={colorMode === "community" ? "secondary" : "ghost"}
@@ -614,7 +614,7 @@ export function GraphView() {
             className="text-xs gap-1 h-7"
           >
             <Layers className="h-3 w-3" />
-            Community
+            社区
           </Button>
           {(surprisingConns.filter((c) => !dismissedInsights.has(c.key)).length > 0 || knowledgeGaps.length > 0) && (
             <Button
@@ -629,7 +629,7 @@ export function GraphView() {
               className="text-xs gap-1 h-7"
             >
               <Lightbulb className="h-3 w-3" />
-              Insights
+              洞察
               <span className="rounded bg-muted px-1 text-[10px]">
                 {surprisingConns.filter((c) => !dismissedInsights.has(c.key)).length + knowledgeGaps.length}
               </span>
@@ -652,7 +652,7 @@ export function GraphView() {
         >
           {isResizing ? (
             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-              Resizing...
+              正在调整大小...
             </div>
           ) : (
           <ErrorBoundary>
@@ -698,7 +698,7 @@ export function GraphView() {
                   const w = attrs.weight ?? 1
                   result.color = "#1e293b"
                   result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
-                  result.label = `relevance: ${w.toFixed(1)}`
+                  result.label = `相关度：${w.toFixed(1)}`
                   result.forceLabel = true
                 }
                 return result
@@ -718,7 +718,7 @@ export function GraphView() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 font-semibold text-foreground">
                   <Filter className="h-3.5 w-3.5" />
-                  Graph Filters
+                  图谱筛选
                 </div>
                 <Button
                   variant="ghost"
@@ -726,20 +726,20 @@ export function GraphView() {
                   className="h-6 px-1.5 text-[10px]"
                   onClick={resetFilters}
                 >
-                  Reset
+                  重置
                 </Button>
               </div>
 
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <div className="font-medium text-muted-foreground">Quick filters</div>
+                  <div className="font-medium text-muted-foreground">快速筛选</div>
                   <label className="flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={filters.hideStructural}
                       onChange={(e) => setFilters((prev) => ({ ...prev, hideStructural: e.target.checked }))}
                     />
-                    <span>Hide index / overview / log</span>
+                    <span>隐藏 index / overview / log</span>
                   </label>
                   <label className="flex items-center gap-2">
                     <input
@@ -747,12 +747,12 @@ export function GraphView() {
                       checked={filters.hideIsolated}
                       onChange={(e) => setFilters((prev) => ({ ...prev, hideIsolated: e.target.checked }))}
                     />
-                    <span>Hide isolated nodes</span>
+                    <span>隐藏孤立节点</span>
                   </label>
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="font-medium text-muted-foreground">Max links</div>
+                  <div className="font-medium text-muted-foreground">最大链接数</div>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -767,14 +767,14 @@ export function GraphView() {
                           maxLinks: raw === "" || !Number.isFinite(value) ? undefined : Math.max(0, value),
                         }))
                       }}
-                      placeholder="Any"
+                      placeholder="不限"
                     />
-                    <span className="text-muted-foreground">Hide nodes above this link count</span>
+                    <span className="text-muted-foreground">隐藏超过该链接数的节点</span>
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="font-medium text-muted-foreground">Node types</div>
+                  <div className="font-medium text-muted-foreground">节点类型</div>
                   <div className="grid grid-cols-2 gap-1">
                     {Object.entries(NODE_TYPE_LABELS)
                       .filter(([type]) => (typeCounts[type] ?? 0) > 0)
@@ -801,7 +801,7 @@ export function GraphView() {
 
                 {filters.hiddenNodeIds.size > 0 && (
                   <div className="space-y-1.5">
-                    <div className="font-medium text-muted-foreground">Hidden nodes</div>
+                    <div className="font-medium text-muted-foreground">已隐藏节点</div>
                     <div className="max-h-24 space-y-1 overflow-y-auto">
                       {[...filters.hiddenNodeIds].map((nodeId) => {
                         const node = nodes.find((n) => n.id === nodeId)
@@ -817,7 +817,7 @@ export function GraphView() {
                                 return { ...prev, hiddenNodeIds: next }
                               })}
                             >
-                              Show
+                              显示
                             </button>
                           </div>
                         )
@@ -827,7 +827,7 @@ export function GraphView() {
                 )}
 
                 <div className="rounded bg-muted/50 px-2 py-1.5 text-muted-foreground">
-                  Showing {filteredGraph.nodes.length} of {nodes.length} pages and {filteredGraph.edges.length} of {edges.length} links.
+                  显示 {filteredGraph.nodes.length}/{nodes.length} 个页面，{filteredGraph.edges.length}/{edges.length} 条链接。
                 </div>
               </div>
             </div>
@@ -841,7 +841,7 @@ export function GraphView() {
             >
               <div className="border-b px-3 py-2">
                 <div className="truncate font-medium text-foreground">{contextNode.label}</div>
-                <div className="text-muted-foreground">{contextNode.linkCount} links</div>
+                <div className="text-muted-foreground">{contextNode.linkCount} 条链接</div>
               </div>
               <button
                 type="button"
@@ -855,7 +855,7 @@ export function GraphView() {
                 }}
               >
                 <EyeOff className="h-3.5 w-3.5" />
-                Hide this node
+                隐藏此节点
               </button>
             </div>
           )}
@@ -864,7 +864,7 @@ export function GraphView() {
           <div className="absolute bottom-3 left-3 rounded-lg border bg-background/90 backdrop-blur-sm px-3 py-2 text-xs shadow-sm max-w-[260px]">
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-semibold text-foreground">
-                {colorMode === "type" ? "Node Types" : "Communities"}
+                {colorMode === "type" ? "节点类型" : "社区"}
               </span>
               <div className="flex items-center gap-1">
                 {colorMode === "type" && filters.hiddenTypes.size > 0 && (
@@ -873,9 +873,9 @@ export function GraphView() {
                     size="sm"
                     className="h-6 text-[10px] px-1"
                     onClick={() => setFilters((prev) => ({ ...prev, hiddenTypes: new Set() }))}
-                    title="Show all types"
+                    title="显示所有类型"
                   >
-                    Show all
+                    全部显示
                   </Button>
                 )}
                 <Button
@@ -883,7 +883,7 @@ export function GraphView() {
                   size="sm"
                   className="h-6 w-6 p-0"
                   onClick={() => setLegendCollapsed(!legendCollapsed)}
-                  title={legendCollapsed ? "Expand legend" : "Collapse legend"}
+                  title={legendCollapsed ? "展开图例" : "收起图例"}
                 >
                   {legendCollapsed ? "▶" : "▼"}
                 </Button>
@@ -914,7 +914,7 @@ export function GraphView() {
                                 return { ...prev, hiddenTypes: next }
                               })
                             }}
-                            title="Double-click to toggle visibility"
+                            title="双击切换可见性"
                           >
                             <span
                               className="inline-block h-3 w-3 rounded-full shrink-0 shadow-sm"
@@ -927,7 +927,7 @@ export function GraphView() {
                               {label}
                             </span>
                             <span className="text-muted-foreground/60 ml-auto">{typeCounts[type]}</span>
-                            {isHidden && <span className="text-muted-foreground/60 text-[10px]">hidden</span>}
+                            {isHidden && <span className="text-muted-foreground/60 text-[10px]">已隐藏</span>}
                           </div>
                         )
                       })}
@@ -949,11 +949,11 @@ export function GraphView() {
                         }}
                       />
                       <span className="text-muted-foreground truncate" title={c.topNodes.join(", ")}>
-                        {c.topNodes[0] ?? `Cluster ${c.id}`}
+                        {c.topNodes[0] ?? `聚类 ${c.id}`}
                       </span>
                       <span className="text-muted-foreground/60 ml-auto shrink-0">{c.nodeCount}</span>
                       {c.cohesion < 0.15 && c.nodeCount >= 3 && (
-                        <span className="text-amber-500 shrink-0" title={`Low cohesion: ${c.cohesion.toFixed(2)}`}>!</span>
+                        <span className="text-amber-500 shrink-0" title={`低内聚度：${c.cohesion.toFixed(2)}`}>!</span>
                       )}
                     </div>
                   ))}
@@ -971,7 +971,7 @@ export function GraphView() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Lightbulb className="h-4 w-4 text-amber-500" />
-                  <span className="text-sm font-medium">Insights</span>
+                  <span className="text-sm font-medium">洞察</span>
                 </div>
                 <button
                   className="p-1 rounded hover:bg-muted text-muted-foreground"
@@ -991,7 +991,7 @@ export function GraphView() {
                 <div>
                   <div className="flex items-center gap-1.5 mb-2 text-xs font-semibold text-foreground">
                     <Link2 className="h-3.5 w-3.5 text-blue-500" />
-                    Surprising Connections
+                    意外连接
                   </div>
                   <div className="flex flex-col gap-2">
                     {surprisingConns
@@ -1036,7 +1036,7 @@ export function GraphView() {
                 <div>
                   <div className="flex items-center gap-1.5 mb-2 text-xs font-semibold text-foreground">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                    Knowledge Gaps
+                    知识缺口
                   </div>
                   <div className="flex flex-col gap-2">
                     {knowledgeGaps.map((gap, i) => {
@@ -1063,7 +1063,7 @@ export function GraphView() {
                             }}
                           >
                             <Search className="h-3.5 w-3.5" />
-                            Deep Research
+                            深度研究
                           </Button>
                         </div>
                       )
@@ -1083,7 +1083,7 @@ export function GraphView() {
             <div className="flex items-center justify-between border-b px-4 py-3">
               <div className="flex items-center gap-2">
                 <Search className="h-4 w-4 text-primary" />
-                <span className="font-medium text-sm">Deep Research</span>
+                <span className="font-medium text-sm">深度研究</span>
               </div>
               {!researchDialog.loading && (
                 <button
@@ -1098,12 +1098,12 @@ export function GraphView() {
             {researchDialog.loading ? (
               <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Generating research topic...
+                正在生成研究主题...
               </div>
             ) : (
               <div className="p-4">
                 <div className="mb-3">
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Research Topic</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">研究主题</label>
                   <input
                     type="text"
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -1116,7 +1116,7 @@ export function GraphView() {
                   />
                 </div>
                 <div className="mb-4">
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Search Queries</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">搜索查询</label>
                   <div className="flex flex-col gap-1.5">
                     {researchDialog.queries.map((q, idx) => (
                       <input
@@ -1138,7 +1138,7 @@ export function GraphView() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" size="sm" onClick={() => setResearchDialog(null)}>
-                    Cancel
+                    取消
                   </Button>
                   <Button
                     variant="default"
@@ -1147,7 +1147,7 @@ export function GraphView() {
                     onClick={handleResearchConfirm}
                   >
                     <Search className="h-3.5 w-3.5" />
-                    Start Research
+                    开始研究
                   </Button>
                 </div>
               </div>

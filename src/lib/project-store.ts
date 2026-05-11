@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig, WebAccessConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -73,6 +73,7 @@ export async function loadActivePresetId(): Promise<string | null> {
 }
 
 const SEARCH_API_KEY = "searchApiConfig"
+const WEB_ACCESS_CONFIG_KEY = "webAccessConfig"
 
 export async function saveSearchApiConfig(config: SearchApiConfig): Promise<void> {
   const store = await getStore()
@@ -82,6 +83,16 @@ export async function saveSearchApiConfig(config: SearchApiConfig): Promise<void
 export async function loadSearchApiConfig(): Promise<SearchApiConfig | null> {
   const store = await getStore()
   return (await store.get<SearchApiConfig>(SEARCH_API_KEY)) ?? null
+}
+
+export async function saveWebAccessConfig(config: WebAccessConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(WEB_ACCESS_CONFIG_KEY, config)
+}
+
+export async function loadWebAccessConfig(): Promise<WebAccessConfig | null> {
+  const store = await getStore()
+  return (await store.get<WebAccessConfig>(WEB_ACCESS_CONFIG_KEY)) ?? null
 }
 
 const EMBEDDING_KEY = "embeddingConfig"
@@ -154,14 +165,18 @@ export async function removeFromRecentProjects(
 
 const LANGUAGE_KEY = "language"
 
-export async function saveLanguage(lang: string): Promise<void> {
+export async function saveLanguage(_lang: string): Promise<void> {
   const store = await getStore()
-  await store.set(LANGUAGE_KEY, lang)
+  await store.set(LANGUAGE_KEY, "zh")
 }
 
 export async function loadLanguage(): Promise<string | null> {
   const store = await getStore()
-  return (await store.get<string>(LANGUAGE_KEY)) ?? null
+  const lang = await store.get<string>(LANGUAGE_KEY)
+  if (lang !== "zh") {
+    await store.set(LANGUAGE_KEY, "zh")
+  }
+  return "zh"
 }
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"

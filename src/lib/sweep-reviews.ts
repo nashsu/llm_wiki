@@ -405,9 +405,9 @@ export async function sweepResolvedReviews(
     // feel like the app froze.
     activityId = activity.addItem({
       type: "query",
-      title: "Review cleanup",
+      title: "审阅项清理",
       status: "running",
-      detail: `Judging ${stillPending.length} pending review${stillPending.length > 1 ? "s" : ""}…`,
+      detail: `正在判断 ${stillPending.length} 个待审阅项...`,
       filesWritten: [],
     })
 
@@ -424,7 +424,7 @@ export async function sweepResolvedReviews(
     } catch (err) {
       activity.updateItem(activityId, {
         status: "error",
-        detail: `Review cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+        detail: `审阅项清理失败：${err instanceof Error ? err.message : String(err)}`,
       })
       activityId = null
     }
@@ -432,22 +432,22 @@ export async function sweepResolvedReviews(
 
   const total = ruleResolved + llmResolved
   const parts: string[] = []
-  if (ruleResolved > 0) parts.push(`${ruleResolved} by rules`)
-  if (llmResolved > 0) parts.push(`${llmResolved} by LLM`)
+  if (ruleResolved > 0) parts.push(`${ruleResolved} 个由规则处理`)
+  if (llmResolved > 0) parts.push(`${llmResolved} 个由 LLM 判断`)
   const detail = total > 0
-    ? `Auto-resolved ${total} stale review item${total > 1 ? "s" : ""} (${parts.join(", ")})`
-    : "No stale review items to clean up"
+    ? `已自动处理 ${total} 个过期待审阅项（${parts.join("，")}）`
+    : "没有需要清理的过期待审阅项"
 
   if (activityId !== null) {
     activity.updateItem(activityId, {
       status: signal?.aborted ? "error" : "done",
-      detail: signal?.aborted ? "Review cleanup cancelled" : detail,
+      detail: signal?.aborted ? "审阅项清理已取消" : detail,
     })
   } else if (total > 0) {
     // Rule-only path: no in-progress indicator was shown, add a done item.
     activity.addItem({
       type: "query",
-      title: "Review cleanup",
+      title: "审阅项清理",
       status: "done",
       detail,
       filesWritten: [],

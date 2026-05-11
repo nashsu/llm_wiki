@@ -1,41 +1,32 @@
 /**
  * Shared list of selectable output-language values for any UI that
- * needs to ask the user "what language should the AI generate in?".
+ * needs to ask the user what language the AI should generate in.
  *
- * Currently consumed by:
- *   - Settings → Output: post-create change of the preference
- *   - Create-Project dialog: required choice at project creation
- *     time so a fresh project never starts in the implicit
- *     "auto-detect from whatever text we see first" mode
- *
- * `value` strings are the exact tokens the rest of the codebase
- * compares against (`OutputLanguage` type in stores/wiki-store.ts);
- * keep them in sync. Labels mix the native script + the English
- * name so a user who can't read the native form still recognizes
- * the language.
+ * `value` strings are stable internal tokens used by the output-language
+ * pipeline. Labels are user-facing and intentionally localized to Chinese.
  */
 export const OUTPUT_LANGUAGE_OPTIONS = [
-  { value: "auto", label: "Auto (detect from input/source)" },
-  { value: "English", label: "English" },
-  { value: "Chinese", label: "简体中文 (Simplified Chinese)" },
-  { value: "Traditional Chinese", label: "繁體中文 (Traditional Chinese)" },
-  { value: "Japanese", label: "日本語 (Japanese)" },
-  { value: "Korean", label: "한국어 (Korean)" },
-  { value: "Vietnamese", label: "Tiếng Việt (Vietnamese)" },
-  { value: "French", label: "Français (French)" },
-  { value: "German", label: "Deutsch (German)" },
-  { value: "Spanish", label: "Español (Spanish)" },
-  { value: "Portuguese", label: "Português (Portuguese)" },
-  { value: "Italian", label: "Italiano (Italian)" },
-  { value: "Russian", label: "Русский (Russian)" },
-  { value: "Arabic", label: "العربية (Arabic)" },
-  { value: "Persian", label: "فارسی (Persian / Farsi)" },
-  { value: "Hindi", label: "हिन्दी (Hindi)" },
-  { value: "Turkish", label: "Türkçe (Turkish)" },
-  { value: "Dutch", label: "Nederlands (Dutch)" },
-  { value: "Polish", label: "Polski (Polish)" },
-  { value: "Swedish", label: "Svenska (Swedish)" },
-  { value: "Indonesian", label: "Bahasa Indonesia (Indonesian)" },
-  { value: "Thai", label: "ไทย (Thai)" },
-  { value: "Ukrainian", label: "Українська (Ukrainian)" },
+  { value: "auto", label: "自动（根据输入或资料源检测）" },
+  { value: "English", label: "英语" },
+  { value: "Chinese", label: "简体中文" },
+  { value: "Traditional Chinese", label: "繁体中文" },
+  { value: "Japanese", label: "日语" },
+  { value: "Korean", label: "韩语" },
+  { value: "Vietnamese", label: "越南语" },
+  { value: "French", label: "法语" },
+  { value: "German", label: "德语" },
+  { value: "Spanish", label: "西班牙语" },
+  { value: "Portuguese", label: "葡萄牙语" },
+  { value: "Italian", label: "意大利语" },
+  { value: "Russian", label: "俄语" },
+  { value: "Arabic", label: "阿拉伯语" },
+  { value: "Persian", label: "波斯语" },
+  { value: "Hindi", label: "印地语" },
+  { value: "Turkish", label: "土耳其语" },
+  { value: "Dutch", label: "荷兰语" },
+  { value: "Polish", label: "波兰语" },
+  { value: "Swedish", label: "瑞典语" },
+  { value: "Indonesian", label: "印尼语" },
+  { value: "Thai", label: "泰语" },
+  { value: "Ukrainian", label: "乌克兰语" },
 ] as const

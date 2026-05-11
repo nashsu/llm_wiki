@@ -14,6 +14,7 @@ import { normalizePath, getFileName } from "@/lib/path-utils"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { decidePageFate } from "@/lib/source-delete-decision"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
+import { deleteConvertedSourceCache } from "@/lib/source-conversion"
 import {
   collectAllFilesIncludingDot,
   decideDeleteClick,
@@ -75,7 +76,7 @@ export function SourcesView() {
 
     const selected = await open({
       multiple: true,
-      title: "Import Source Files",
+      title: "导入资料文件",
       filters: [
         {
           name: "Documents",
@@ -147,7 +148,7 @@ export function SourcesView() {
 
     const selected = await open({
       directory: true,
-      title: "Import Source Folder",
+      title: "导入资料文件夹",
     })
 
     if (!selected || typeof selected !== "string") return
@@ -243,7 +244,7 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete source:", err)
-      window.alert(`Failed to delete: ${err}`)
+      window.alert(`删除失败：${err}`)
     }
   }
 
@@ -295,7 +296,7 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete folder:", err)
-      window.alert(`Failed to delete folder: ${err}`)
+      window.alert(`删除文件夹失败：${err}`)
     }
   }
 
@@ -323,6 +324,11 @@ export function SourcesView() {
       await deleteFile(`${pp}/raw/sources/.cache/${fileName}.txt`)
     } catch {
       // cache file may not exist
+    }
+    try {
+      await deleteConvertedSourceCache(pp, node.path)
+    } catch {
+      // converted markdown cache may not exist
     }
 
       // Step 4: For each page that findRelatedWikiPages surfaced,
@@ -441,7 +447,7 @@ export function SourcesView() {
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" onClick={loadSources} title="Refresh">
+          <Button variant="ghost" size="icon" onClick={loadSources} title="刷新">
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button size="sm" onClick={handleImport} disabled={importing}>
@@ -450,7 +456,7 @@ export function SourcesView() {
           </Button>
           <Button size="sm" onClick={handleImportFolder} disabled={importing}>
             <Plus className="mr-1 h-4 w-4" />
-            {t("sources.importFolder", "Folder")}
+            {t("sources.importFolder", "文件夹")}
           </Button>
         </div>
       </div>
@@ -467,7 +473,7 @@ export function SourcesView() {
               </Button>
               <Button variant="outline" size="sm" onClick={handleImportFolder}>
                 <Plus className="mr-1 h-4 w-4" />
-                Folder
+                文件夹
               </Button>
             </div>
           </div>
@@ -656,8 +662,8 @@ function SourceTree({
                   onClick={() => handleDeleteClick(node)}
                   hint={
                     isPendingDelete
-                      ? `Click again to delete folder ${node.name} and ALL its contents`
-                      : `Delete folder ${node.name} (recursive)`
+                      ? `再次点击将删除文件夹 ${node.name} 及其所有内容`
+                      : `删除文件夹 ${node.name}（递归）`
                   }
                 />
               </div>
@@ -695,7 +701,7 @@ function SourceTree({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title="Ingest"
+              title="提取到 Wiki"
               disabled={ingestingPath === node.path}
               onClick={() => onIngest(node)}
             >
@@ -706,8 +712,8 @@ function SourceTree({
               onClick={() => handleDeleteClick(node)}
               hint={
                 isPendingDelete
-                  ? `Click again to delete ${node.name}`
-                  : `Delete ${node.name}`
+                  ? `再次点击删除 ${node.name}`
+                  : `删除 ${node.name}`
               }
             />
           </div>
@@ -746,7 +752,7 @@ function DeleteButton({
         onClick={onClick}
       >
         <Trash2 className="mr-1 h-3.5 w-3.5" />
-        Confirm
+        确认
       </Button>
     )
   }

@@ -142,7 +142,7 @@ describe("runSemanticLint — activity & early returns", () => {
     expect(mockStreamChat).not.toHaveBeenCalled()
 
     const items = useActivityStore.getState().items
-    expect(items[0].detail).toMatch(/no wiki pages/i)
+    expect(items[0].detail).toContain("没有可检查的 Wiki 页面")
   })
 
   it("marks error status when wiki directory read fails", async () => {

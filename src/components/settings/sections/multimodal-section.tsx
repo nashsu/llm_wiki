@@ -9,7 +9,7 @@ interface Props {
 }
 
 const PROVIDER_OPTIONS: Array<{ value: SettingsDraft["multimodalProvider"]; label: string }> = [
-  { value: "custom", label: "Custom (OpenAI-compat)" },
+  { value: "custom", label: "自定义（OpenAI 兼容）" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google (Gemini)" },

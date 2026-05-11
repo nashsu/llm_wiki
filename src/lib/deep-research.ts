@@ -1,6 +1,7 @@
 import { webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
 import { autoIngest } from "./ingest"
+import { collectWebAccessSources } from "./web-access"
 import { writeFile, readFile, listDirectory } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
@@ -91,9 +92,33 @@ async function executeResearch(
     store.updateTask(taskId, { webResults })
 
     if (webResults.length === 0) {
-      store.updateTask(taskId, { status: "done", synthesis: "No web results found." })
+      store.updateTask(taskId, { status: "done", synthesis: "未找到网页结果。" })
       onTaskFinished(pp, llmConfig, searchConfig)
       return
+    }
+
+    // Optional Step 1.5: use WebAccess as a read-only browser extraction layer.
+    // Search providers still do URL discovery; WebAccess only opens already-discovered
+    // pages, saves Markdown source artifacts, and returns local citation anchors.
+    const webAccessConfig = useWikiStore.getState().webAccessConfig
+    const webAccessCollection =
+      webAccessConfig.enabled && webAccessConfig.allowReadOnlyBrowser && !webAccessConfig.requirePerTaskConsent && webAccessConfig.saveSourceMarkdown
+        ? await collectWebAccessSources(pp, taskId, topic, webResults, webAccessConfig)
+        : null
+
+    if (webAccessCollection?.evidence.length) {
+      for (const evidence of webAccessCollection.evidence) {
+        autoIngest(pp, `${pp}/${evidence.artifactPath}`, llmConfig).catch((err) => {
+          console.error("Failed to auto-ingest WebAccess source:", err)
+        })
+      }
+      try {
+        const tree = await listDirectory(pp)
+        useWikiStore.getState().setFileTree(tree)
+        useWikiStore.getState().bumpDataVersion()
+      } catch {
+        // ignore
+      }
     }
 
     // Step 2: LLM synthesis
@@ -102,6 +127,12 @@ async function executeResearch(
     const searchContext = webResults
       .map((r, i) => `[${i + 1}] **${r.title}** (${r.source})\n${r.snippet}`)
       .join("\n\n")
+
+    const browserContext = webAccessCollection?.evidence.length
+      ? webAccessCollection.evidence
+        .map((e) => `[${e.id}] **${e.title}** (WebAccess)\nURL: ${e.finalUrl}\n本地来源: ${e.artifactPath}\n摘录:\n${e.quote}`)
+        .join("\n\n")
+      : ""
 
     // Read existing wiki index to enable cross-referencing
     let wikiIndex = ""
@@ -124,7 +155,9 @@ async function executeResearch(
       "",
       "## Writing Rules",
       "- Organize into clear sections with headings",
-      "- Cite web sources using [N] notation",
+      "- Cite search snippets using [N] notation",
+      "- Cite browser-extracted WebAccess sources using [B1], [B2] notation when available",
+      "- Do not cite a WebAccess source unless it appears in the WebAccess Extracted Sources section",
       "- Note contradictions or gaps",
       "- Suggest additional sources worth finding",
       "- Neutral, encyclopedic tone",
@@ -138,7 +171,20 @@ async function executeResearch(
       llmConfig,
       [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Research topic: **${topic}**\n\n## Web Search Results\n\n${searchContext}\n\nSynthesize into a wiki page.` },
+        {
+          role: "user",
+          content: [
+            `Research topic: **${topic}**`,
+            "",
+            "## Web Search Results",
+            "",
+            searchContext,
+            browserContext ? "\n## WebAccess Extracted Sources\n" : "",
+            browserContext,
+            "",
+            "Synthesize into a wiki page.",
+          ].filter(Boolean).join("\n"),
+        },
       ],
       {
         onToken: (token) => {
@@ -170,9 +216,15 @@ async function executeResearch(
     const fileName = `research-${slug}-${date}.md`
     const filePath = `${pp}/wiki/queries/${fileName}`
 
-    const references = webResults
+    const searchReferences = webResults
       .map((r, i) => `${i + 1}. [${r.title}](${r.url}) — ${r.source}`)
       .join("\n")
+    const webAccessReferences = webAccessCollection?.evidence.length
+      ? webAccessCollection.evidence
+        .map((e) => `${e.id}. [${e.title}](${e.finalUrl}) — WebAccess，本地来源：\`${e.artifactPath}\``)
+        .join("\n")
+      : ""
+    const references = [searchReferences, webAccessReferences].filter(Boolean).join("\n")
 
     // Strip <think>/<thinking> blocks before saving
     const cleanedSynthesis = accumulated
@@ -183,17 +235,17 @@ async function executeResearch(
     const pageContent = [
       "---",
       `type: query`,
-      `title: "Research: ${topic.replace(/"/g, '\\"')}"`,
+      `title: "研究：${topic.replace(/"/g, '\\"')}"`,
       `created: ${date}`,
       `origin: deep-research`,
       `tags: [research]`,
       "---",
       "",
-      `# Research: ${topic}`,
+      `# 研究：${topic}`,
       "",
       cleanedSynthesis,
       "",
-      "## References",
+      "## 引用",
       "",
       references,
       "",

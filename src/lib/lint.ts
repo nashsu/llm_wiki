@@ -123,7 +123,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
         type: "orphan",
         severity: "info",
         page: shortName,
-        detail: "No other pages link to this page.",
+          detail: "没有其他页面链接到此页面。",
       })
     }
 
@@ -133,7 +133,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
         type: "no-outlinks",
         severity: "info",
         page: shortName,
-        detail: "This page has no [[wikilink]] references to other pages.",
+        detail: "此页面没有指向其他页面的 [[wikilink]] 引用。",
       })
     }
 
@@ -147,7 +147,7 @@ export async function runStructuralLint(projectPath: string): Promise<LintResult
           type: "broken-link",
           severity: "warning",
           page: shortName,
-          detail: `Broken link: [[${link}]] — target page not found.`,
+            detail: `失效链接：[[${link}]] — 未找到目标页面。`,
         })
       }
     }
@@ -169,9 +169,9 @@ export async function runSemanticLint(
   const activity = useActivityStore.getState()
   const activityId = activity.addItem({
     type: "lint",
-    title: "Semantic wiki lint",
+    title: "语义 Wiki 检查",
     status: "running",
-    detail: "Reading wiki pages...",
+    detail: "正在读取 Wiki 页面...",
     filesWritten: [],
   })
 
@@ -180,7 +180,7 @@ export async function runSemanticLint(
   try {
     tree = await listDirectory(wikiRoot)
   } catch {
-    activity.updateItem(activityId, { status: "error", detail: "Failed to read wiki directory." })
+    activity.updateItem(activityId, { status: "error", detail: "读取 Wiki 目录失败。" })
     return []
   }
 
@@ -202,11 +202,11 @@ export async function runSemanticLint(
   }
 
   if (summaries.length === 0) {
-    activity.updateItem(activityId, { status: "done", detail: "No wiki pages to lint." })
+    activity.updateItem(activityId, { status: "done", detail: "没有可检查的 Wiki 页面。" })
     return []
   }
 
-  activity.updateItem(activityId, { detail: "Running LLM semantic analysis..." })
+    activity.updateItem(activityId, { detail: "正在运行 LLM 语义分析..." })
 
   // For auto-mode language detection, sample the concatenated summaries
   // so non-English wikis get a matching language directive.
@@ -254,7 +254,7 @@ export async function runSemanticLint(
         hadError = true
         activity.updateItem(activityId, {
           status: "error",
-          detail: `LLM error: ${err.message}`,
+        detail: `LLM 错误：${err.message}`,
         })
       },
     },
@@ -292,7 +292,7 @@ export async function runSemanticLint(
 
   activity.updateItem(activityId, {
     status: "done",
-    detail: `Found ${results.length} semantic issue(s).`,
+      detail: `发现 ${results.length} 个语义问题。`,
   })
 
   return results

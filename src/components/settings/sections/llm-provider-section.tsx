@@ -184,7 +184,7 @@ function PresetRow({
               : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
           }`}
           title={isActive ? t("settings.sections.llm.toggleOff") : t("settings.sections.llm.toggleOn")}
-          aria-label={isActive ? "Deactivate" : "Activate"}
+          aria-label={isActive ? "停用" : "启用"}
         >
           <span
             className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
@@ -199,7 +199,7 @@ function PresetRow({
         <div className="space-y-4 border-t bg-background/50 px-4 py-3">
           {preset.provider === "custom" && (
             <div className="space-y-2">
-              <Label>API Mode</Label>
+              <Label>API 模式</Label>
               <div className="flex flex-wrap gap-2">
                 {(
                   [
@@ -265,7 +265,7 @@ function PresetRow({
           )}
 
           <div className="space-y-2">
-            <Label>Model</Label>
+            <Label>模型</Label>
             <ModelPicker
               value={model}
               suggestions={preset.suggestedModels ?? []}
@@ -275,7 +275,7 @@ function PresetRow({
           </div>
 
           <div className="space-y-2">
-            <Label>Context window</Label>
+            <Label>上下文窗口</Label>
             <ContextSizeSelector
               value={context}
               onChange={(v) => onChange({ maxContextSize: v })}
@@ -300,18 +300,18 @@ function ReasoningControls({
   onChange: (value: ReasoningConfig) => void
 }) {
   const modes: { value: ReasoningMode; label: string }[] = [
-    { value: "auto", label: "Auto" },
-    { value: "off", label: "Off" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-    { value: "custom", label: "Custom" },
+    { value: "auto", label: "自动" },
+    { value: "off", label: "关闭" },
+    { value: "low", label: "低" },
+    { value: "medium", label: "中" },
+    { value: "high", label: "高" },
+    { value: "max", label: "最高" },
+    { value: "custom", label: "自定义" },
   ]
 
   return (
     <div className="space-y-2">
-      <Label>Reasoning / thinking</Label>
+      <Label>推理 / 思考</Label>
       <div className="flex flex-wrap gap-1.5">
         {modes.map((m) => {
           const active = value.mode === m.value
@@ -348,11 +348,11 @@ function ReasoningControls({
             }}
             placeholder="1024"
           />
-          <span className="text-xs text-muted-foreground">thinking budget tokens</span>
+          <span className="text-xs text-muted-foreground">thinking 预算 token 数</span>
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        Structured tasks such as ingest may override this to Off to avoid reasoning-only responses.
+        提取等结构化任务可能会自动关闭推理，避免模型只返回思考内容。
       </p>
     </div>
   )
@@ -410,7 +410,7 @@ function EndpointField({ value, mode, placeholder, onChange }: EndpointFieldProp
               <div>
                 {t("settings.sections.llm.endpointPreviewWillUse")}{" "}
                 <code className="break-all rounded bg-background/60 px-1 py-0.5 font-mono">
-                  {preview.normalized || "(empty)"}
+                  {preview.normalized || "（空）"}
                 </code>
                 <span className="ml-1 text-muted-foreground">
                   {t("settings.sections.llm.endpointPreviewAutoApply")}
@@ -462,7 +462,7 @@ function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerP
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-background hover:bg-accent hover:text-accent-foreground"
                 }`}
-                title={`Use ${m}`}
+                title={`使用 ${m}`}
               >
                 {m}
               </button>
@@ -476,9 +476,9 @@ function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerP
                 ? "border-primary/60 bg-primary/10 text-primary"
                 : "border-dashed border-muted-foreground/40 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             }`}
-            title="Type a custom model id"
+            title="输入自定义模型 ID"
           >
-            {isCustom ? `Custom: ${value}` : "Custom…"}
+            {isCustom ? `自定义：${value}` : "自定义..."}
           </button>
         </div>
       )}
@@ -533,14 +533,14 @@ function ClaudeCliStatusPill() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Label className="m-0">CLI status</Label>
+        <Label className="m-0">CLI 状态</Label>
         <button
           type="button"
           onClick={() => void detect()}
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? "检查中..." : "重新检查"}
         </button>
       </div>
       <div
@@ -556,12 +556,11 @@ function ClaudeCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local claude binary…</div>}
+          {state === "loading" && <div>正在检测本地 claude 可执行文件...</div>}
           {state === "ok" && (
             <>
               <div>
-                Detected{result?.version ? ` ${result.version}` : ""}. Ready to use your local
-                subscription — no API key needed.
+                已检测到{result?.version ? ` ${result.version}` : ""}。可使用本地订阅，无需 API Key。
               </div>
               {result?.path && (
                 <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -574,23 +573,23 @@ function ClaudeCliStatusPill() {
                   the resulting "Unauthenticated" exit-1 as a LLM
                   Wiki bug. */}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
+                如果聊天因认证错误失败，请在终端运行{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   claude
                 </code>{" "}
-                in a terminal to refresh the OAuth login.
+                以刷新 OAuth 登录。
               </div>
             </>
           )}
           {state === "err" && (
             <>
-              <div>{result?.error ?? "claude CLI not available."}</div>
+              <div>{result?.error ?? "claude CLI 不可用。"}</div>
               <div className="text-muted-foreground">
-                Install from{" "}
+                请先安装：{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   npm i -g @anthropic-ai/claude-code
                 </code>{" "}
-                then re-check.
+                然后重新检查。
               </div>
             </>
           )}

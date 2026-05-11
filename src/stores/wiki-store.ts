@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
+import { DEFAULT_WEB_ACCESS_CONFIG, type WebAccessConfig } from "@/lib/web-access/contracts"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -205,6 +206,7 @@ interface WikiState {
   /** Which preset is currently active. `null` = no LLM configured. */
   activePresetId: string | null
   searchApiConfig: SearchApiConfig
+  webAccessConfig: WebAccessConfig
   embeddingConfig: EmbeddingConfig
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
@@ -222,6 +224,7 @@ interface WikiState {
   setProviderConfigs: (configs: ProviderConfigs) => void
   setActivePresetId: (id: string | null) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
+  setWebAccessConfig: (config: WebAccessConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
@@ -264,6 +267,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     serpApiEngine: "google",
     providerConfigs: {},
   },
+  webAccessConfig: DEFAULT_WEB_ACCESS_CONFIG,
 
   embeddingConfig: {
     enabled: false,
@@ -301,6 +305,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
+  setWebAccessConfig: (webAccessConfig) => set({ webAccessConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
@@ -308,4 +313,4 @@ export const useWikiStore = create<WikiState>((set) => ({
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, WebAccessConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig }

@@ -198,7 +198,7 @@ export function SearchView() {
               if (isImeComposing(e)) return
               if (e.key === "Enter") doSearch(query)
             }}
-            placeholder={t("search.placeholder") + " (Enter to search)"}
+            placeholder={t("search.placeholder") + "（Enter 搜索）"}
             autoFocus
             className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
@@ -214,12 +214,12 @@ export function SearchView() {
        */}
       {searching ? (
         <div className="flex-1 p-4 text-center text-sm text-muted-foreground">
-          Searching...
+          正在搜索...
         </div>
       ) : !hasSearched ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
           <Search className="h-8 w-8 text-muted-foreground/30" />
-          <p>Press Enter to search</p>
+          <p>按 Enter 开始搜索</p>
         </div>
       ) : results.length === 0 ? (
         <div className="flex-1 p-4 text-center text-sm text-muted-foreground">
@@ -372,7 +372,7 @@ function Lightbox({
             {hit.alt ? (
               <div className="line-clamp-3 text-sm leading-snug">{hit.alt}</div>
             ) : (
-              <div className="text-sm italic text-muted-foreground">No caption</div>
+              <div className="text-sm italic text-muted-foreground">无说明</div>
             )}
             <div className="mt-1 truncate text-[11px] text-muted-foreground">
               From: {hit.sourceTitle}
@@ -381,7 +381,7 @@ function Lightbox({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+          aria-label="关闭"
             className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -494,7 +494,7 @@ function ImageHitCard({
             <HighlightedText text={hit.alt} query={query} />
           </div>
         ) : (
-          <div className="text-[11px] italic text-muted-foreground">No caption</div>
+          <div className="text-[11px] italic text-muted-foreground">无说明</div>
         )}
         <div className="mt-auto truncate text-[10px] text-muted-foreground">
           {hit.sourceTitle}

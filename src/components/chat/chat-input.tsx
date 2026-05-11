@@ -54,7 +54,7 @@ export function ChatInput({ onSend, onStop, isStreaming, placeholder }: ChatInpu
         dir="auto"
         onChange={handleInput}
         onKeyDown={handleKeyDown}
-        placeholder={placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline)"}
+        placeholder={placeholder ?? "输入消息...（Enter 发送，Shift+Enter 换行）"}
         disabled={isStreaming}
         rows={1}
         className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -66,7 +66,7 @@ export function ChatInput({ onSend, onStop, isStreaming, placeholder }: ChatInpu
           size="icon"
           onClick={onStop}
           className="shrink-0"
-          title="Stop generation"
+          title="停止生成"
         >
           <Square className="h-4 w-4" />
         </Button>
@@ -76,7 +76,7 @@ export function ChatInput({ onSend, onStop, isStreaming, placeholder }: ChatInpu
           onClick={handleSend}
           disabled={!value.trim()}
           className="shrink-0"
-          title="Send message"
+          title="发送消息"
         >
           <Send className="h-4 w-4" />
         </Button>

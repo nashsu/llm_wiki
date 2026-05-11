@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.tools/
 
 # Build outputs
 dist/
@@ -49,3 +50,8 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+# OMX runtime state (keep durable plans, ignore session-local cache/log/state)
+.omx/*
+!.omx/plans/
+!.omx/plans/*.md

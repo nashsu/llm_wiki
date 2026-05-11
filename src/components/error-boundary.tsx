@@ -29,13 +29,13 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) return this.props.fallback
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-          <p className="text-destructive font-medium">Something went wrong</p>
+          <p className="text-destructive font-medium">出错了</p>
           <p className="text-xs max-w-md text-center">{this.state.error?.message}</p>
           <button
             className="rounded border px-3 py-1 text-xs hover:bg-muted"
             onClick={() => this.setState({ hasError: false, error: null })}
           >
-            Retry
+            重试
           </button>
         </div>
       )

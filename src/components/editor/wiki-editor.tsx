@@ -103,11 +103,11 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
       <button
         type="button"
         onClick={() => setMode((m) => (m === "read" ? "edit" : "read"))}
-        title={mode === "read" ? "Edit (raw markdown)" : "Done editing"}
+        title={mode === "read" ? "编辑（原始 Markdown）" : "完成编辑"}
         className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
       >
         {mode === "read" ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-        {mode === "read" ? "Edit" : "Done"}
+        {mode === "read" ? "编辑" : "完成"}
       </button>
 
       {mode === "read" ? (

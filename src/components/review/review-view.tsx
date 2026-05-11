@@ -18,11 +18,11 @@ import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
-  contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
-  duplicate: { icon: Copy, label: "Possible Duplicate", color: "text-blue-500" },
-  "missing-page": { icon: FileQuestion, label: "Missing Page", color: "text-purple-500" },
-  confirm: { icon: MessageSquare, label: "Needs Confirmation", color: "text-foreground" },
-  suggestion: { icon: Lightbulb, label: "Suggestion", color: "text-emerald-500" },
+  contradiction: { icon: AlertTriangle, label: "矛盾", color: "text-amber-500" },
+  duplicate: { icon: Copy, label: "可能重复", color: "text-blue-500" },
+  "missing-page": { icon: FileQuestion, label: "缺失页面", color: "text-purple-500" },
+  confirm: { icon: MessageSquare, label: "需要确认", color: "text-foreground" },
+  suggestion: { icon: Lightbulb, label: "建议", color: "text-emerald-500" },
 }
 
 export function ReviewView() {
@@ -39,7 +39,7 @@ export function ReviewView() {
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
       if (searchConfig.provider === "none" || !searchConfig.apiKey) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to add a Tavily or SerpApi API key first.")
+        window.alert("尚未配置网页搜索。请先到「设置 > 网页搜索」添加 Tavily 或 SerpApi API Key。")
         return
       }
       const item = items.find((i) => i.id === id)
@@ -48,7 +48,7 @@ export function ReviewView() {
         // Use pre-generated search queries if available, otherwise fall back to title
         const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
         queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries)
-        resolveItem(id, "Queued for research")
+        resolveItem(id, "已加入研究队列")
       } else {
         resolveItem(id, action)
       }
@@ -68,7 +68,7 @@ export function ReviewView() {
           .trimEnd()
 
         // Generate filename
-        const firstLine = cleanContent.split("\n").find((l) => l.trim() && !l.startsWith("<!--"))?.replace(/^#+\s*/, "").trim() ?? "Saved Query"
+        const firstLine = cleanContent.split("\n").find((l) => l.trim() && !l.startsWith("<!--"))?.replace(/^#+\s*/, "").trim() ?? "已保存查询"
         const title = firstLine.slice(0, 60)
         const slug = title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
         const date = new Date().toISOString().slice(0, 10)
@@ -100,10 +100,10 @@ export function ReviewView() {
         const tree = await listDirectory(pp)
         setFileTree(tree)
 
-        resolveItem(id, "Saved to Wiki")
+        resolveItem(id, "已保存到 Wiki")
       } catch (err) {
         console.error("Failed to save to wiki from review:", err)
-        resolveItem(id, "Save failed")
+        resolveItem(id, "保存失败")
       }
     } else if (action.startsWith("open:") && project) {
       // Open a page for editing
@@ -131,10 +131,10 @@ export function ReviewView() {
         await deleteFile(filePath)
         const tree = await listDirectory(pp)
         setFileTree(tree)
-        resolveItem(id, "Deleted")
+        resolveItem(id, "已删除")
       } catch (err) {
         console.error("Failed to delete:", err)
-        resolveItem(id, "Delete failed")
+        resolveItem(id, "删除失败")
       }
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
@@ -152,7 +152,7 @@ export function ReviewView() {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
         queueResearch(pp, topic, llmConfig, searchConfig)
-        resolveItem(id, "Queued for deep research")
+        resolveItem(id, "已加入深度研究队列")
       } else {
         resolveItem(id, action)
       }
@@ -170,7 +170,7 @@ export function ReviewView() {
       const item = items.find((i) => i.id === id)
       if (item) {
         try {
-          const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
+          const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "未命名"
           const slug = title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
           const date = new Date().toISOString().slice(0, 10)
 
@@ -208,10 +208,10 @@ export function ReviewView() {
           setFileTree(tree)
           useWikiStore.getState().bumpDataVersion()
 
-          resolveItem(id, `Created: wiki/${dir}/${fileName}`)
+          resolveItem(id, `已创建：wiki/${dir}/${fileName}`)
         } catch (err) {
           console.error("Failed to create page from review:", err)
-          resolveItem(id, "Create failed")
+          resolveItem(id, "创建失败")
         }
       } else {
         resolveItem(id, action)
@@ -228,7 +228,7 @@ export function ReviewView() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
-          Review
+          待审阅
           {pending.length > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
               {pending.length}
@@ -238,7 +238,7 @@ export function ReviewView() {
         {resolved.length > 0 && (
           <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
             <Trash2 className="mr-1 h-3 w-3" />
-            Clear resolved
+            清除已处理
           </Button>
         )}
       </div>
@@ -247,7 +247,7 @@ export function ReviewView() {
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
-            <p>All clear — nothing to review</p>
+            <p>一切正常，无需审阅</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
@@ -261,7 +261,7 @@ export function ReviewView() {
             ))}
             {resolved.length > 0 && pending.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
-                — Resolved —
+                已处理
               </div>
             )}
             {resolved.map((item) => (
@@ -314,7 +314,7 @@ function ReviewCard({
 
       {item.affectedPages && item.affectedPages.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
-          Pages: {item.affectedPages.join(", ")}
+          页面：{item.affectedPages.join(", ")}
         </div>
       )}
 
@@ -327,7 +327,7 @@ function ReviewCard({
               className="h-7 text-xs gap-1"
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
-              🔍 Deep Research
+              深度研究
             </Button>
           )}
           {item.options.map((opt) => (

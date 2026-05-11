@@ -72,9 +72,9 @@ export function ActivityPanel() {
     const activeCount = queueSummary.pending + queueSummary.processing
     if (activeCount === 0) return
     if (!window.confirm(
-      `Cancel all ${activeCount} queued/processing task${activeCount > 1 ? "s" : ""}? ` +
-      `Partial files from the in-progress task will be removed. ` +
-      `Failed tasks will be kept so you can retry them.`,
+      `取消全部 ${activeCount} 个排队/处理中的任务？` +
+      `正在处理任务的临时文件会被移除。` +
+      `失败任务会保留，之后仍可重试。`,
     )) return
     cancelAllTasks()
   }, [project, queueSummary.pending, queueSummary.processing])
@@ -98,14 +98,14 @@ export function ActivityPanel() {
   let statusText = ""
   if (queueSummary.processing > 0 || queueSummary.pending > 0) {
     const done = queueSummary.total - queueSummary.pending - queueSummary.processing
-    statusText = `Queue: ${done}/${queueSummary.total}`
-    if (queueSummary.failed > 0) statusText += ` (${queueSummary.failed} failed)`
+    statusText = `队列：${done}/${queueSummary.total}`
+    if (queueSummary.failed > 0) statusText += `（${queueSummary.failed} 个失败）`
   } else if (runningCount > 0) {
-    statusText = `Processing: ${latestItem?.title ?? "..."}`
+    statusText = `处理中：${latestItem?.title ?? "..."}`
   } else if (queueSummary.failed > 0) {
-    statusText = `${queueSummary.failed} failed task${queueSummary.failed > 1 ? "s" : ""}`
+    statusText = `${queueSummary.failed} 个失败任务`
   } else {
-    statusText = `Done: ${latestItem?.title ?? "All tasks complete"}`
+    statusText = `完成：${latestItem?.title ?? "所有任务已完成"}`
   }
 
   const isActive = runningCount > 0 || queueSummary.processing > 0 || queueSummary.pending > 0
@@ -137,17 +137,17 @@ export function ActivityPanel() {
           {hasQueue && (queueSummary.processing > 0 || queueSummary.pending > 0) && (
             <div className="px-3 py-1.5 border-b border-border/50">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1 gap-2">
-                <span>Ingest Queue</span>
+                <span>提取队列</span>
                 <span className="flex-1 text-right">
-                  {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total} complete
+                  已完成 {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total}
                 </span>
                 {queueSummary.pending + queueSummary.processing >= 2 && (
                   <button
                     onClick={handleCancelAll}
                     className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
-                    title="Cancel all queued and in-progress tasks"
+                    title="取消全部排队和处理中的任务"
                   >
-                    Cancel all
+                    全部取消
                   </button>
                 )}
               </div>
@@ -190,7 +190,7 @@ export function ActivityPanel() {
               onClick={clearDone}
               className="w-full px-3 py-1 text-center text-[10px] text-muted-foreground hover:underline"
             >
-              Clear completed
+              清除已完成
             </button>
           )}
         </div>
@@ -224,7 +224,7 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
             <button
               onClick={() => onRetry(task.id)}
               className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              title="Retry"
+              title="重试"
             >
               <RotateCcw className="h-3 w-3" />
             </button>
@@ -233,7 +233,7 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
             <button
               onClick={() => onCancel(task.id)}
               className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-              title="Cancel"
+              title="取消"
             >
               <X className="h-3 w-3" />
             </button>
@@ -273,7 +273,7 @@ function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => 
           <button
             onClick={onCancel}
             className="shrink-0 p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-            title="Cancel"
+            title="取消"
           >
             <X className="h-3 w-3" />
           </button>

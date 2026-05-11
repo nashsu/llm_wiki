@@ -111,9 +111,9 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
                 type="button"
                 onClick={onRegenerate}
                 className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                title="Regenerate this response"
+                title="重新生成此回复"
               >
-                <RefreshCw className="h-3 w-3" /> Regenerate
+                <RefreshCw className="h-3 w-3" /> 重新生成
               </button>
             )}
           </div>
@@ -144,10 +144,10 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={handleCopy}
       className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-      title="Copy to clipboard"
+      title="复制到剪贴板"
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Copied!" : "Copy"}
+      {copied ? "已复制！" : "复制"}
     </button>
   )
 }
@@ -168,7 +168,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       // (so CJK titles don't collapse to empty) and the HHMMSS
       // timestamp suffix guarantees same-day saves stay distinct.
       const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
+      const title = firstLine.slice(0, 60) || "已保存查询"
       const { date, fileName } = makeQueryFileName(title)
       const filePath = `${pp}/wiki/queries/${fileName}`
 
@@ -256,10 +256,10 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       onClick={handleSave}
       disabled={saving}
       className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-      title="Save to wiki"
+      title="保存到 Wiki"
     >
       <BookmarkPlus className="h-3 w-3" />
-      {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
+      {saved ? "已保存！" : saving ? "保存中..." : "保存到 Wiki"}
     </button>
   )
 }
@@ -442,7 +442,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
         className="flex w-full items-center gap-1.5 px-2 py-1 text-muted-foreground hover:text-foreground transition-colors"
       >
         <FileText className="h-3 w-3 shrink-0" />
-        <span className="font-medium">References ({citedPages.length})</span>
+        <span className="font-medium">引用（{citedPages.length}）</span>
         {hasMore && (
           expanded
             ? <ChevronDown className="h-3 w-3 ml-auto" />
@@ -511,7 +511,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
                   type="button"
                   onClick={() => handleJumpToImageSource(info.firstUrl!, page.path)}
                   className="flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-blue-600 hover:bg-blue-100/40 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
-                  title={`Open original document at first image (${info.count} image${info.count === 1 ? "" : "s"} on this page)`}
+                  title={`打开第一张图片所在的原始文档（此页面共 ${info.count} 张图片）`}
                 >
                   <ImageIcon className="h-3 w-3" />
                   {info.count}
@@ -534,7 +534,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
             onClick={() => setExpanded(true)}
             className="w-full text-center text-[10px] text-muted-foreground hover:text-primary pt-0.5"
           >
-            +{citedPages.length - MAX_COLLAPSED} more...
+            还有 {citedPages.length - MAX_COLLAPSED} 项...
           </button>
         )}
       </div>
@@ -774,8 +774,8 @@ function StreamingThinkingBlock({ content }: { content: string }) {
     <div className="rounded-md border border-dashed border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-2">
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-sm animate-pulse">💭</span>
-        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Thinking...</span>
-        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{lines.length} lines</span>
+        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">思考中...</span>
+        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{lines.length} 行</span>
       </div>
       <div className="h-[5lh] overflow-hidden text-xs text-amber-800/70 dark:text-amber-300/60 font-mono leading-relaxed">
         {visibleLines.map((line, i) => (
@@ -806,7 +806,7 @@ function ThinkingBlock({ content }: { content: string }) {
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100/50 dark:hover:bg-amber-900/20 transition-colors"
       >
         <span className="text-sm">💭</span>
-        <span className="font-medium">Thought for {lines.length} lines</span>
+        <span className="font-medium">已思考 {lines.length} 行</span>
         <span className="text-amber-600/60 dark:text-amber-500/60">
           {expanded ? "▼" : "▶"}
         </span>

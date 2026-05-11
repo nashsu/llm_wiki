@@ -40,7 +40,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Select Parent Directory",
+      title: "选择父目录",
     })
     if (selected) {
       setPath(selected)
@@ -49,11 +49,11 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
 
   async function handleCreate() {
     if (!name.trim() || !path.trim()) {
-      setError("Name and path are required")
+      setError("请填写项目名称和路径")
       return
     }
     if (!language) {
-      setError("Please pick an AI output language")
+      setError("请选择 AI 输出语言")
       return
     }
     setCreating(true)
@@ -94,20 +94,20 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create New Wiki Project</DialogTitle>
+          <DialogTitle>新建 Wiki 项目</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-4">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="name">Project Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-research-wiki" />
+            <Label htmlFor="name">项目名称</Label>
+            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="我的研究 Wiki" />
           </div>
           <div className="flex flex-col gap-2">
-            <Label>Template</Label>
+            <Label>模板</Label>
             <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="language">
-              AI Output Language <span className="text-destructive">*</span>
+              AI 输出语言 <span className="text-destructive">*</span>
             </Label>
             <select
               id="language"
@@ -116,7 +116,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="" disabled>
-                Pick a language…
+                选择语言...
               </option>
               {/*
                 * "auto" is intentionally filtered out at project
@@ -135,15 +135,14 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
               ))}
             </select>
             <p className="text-xs text-muted-foreground">
-              All AI-generated content (wiki pages, chat replies, research
-              output) will use this language. You can change it later in
-              Settings → Output.
+              所有 AI 生成内容（Wiki 页面、聊天回复、研究结果）都会使用此语言。
+              之后可在「设置 &gt; 输出偏好」中修改。
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="path">Parent Directory</Label>
+            <Label htmlFor="path">父目录</Label>
             <div className="flex gap-2">
-              <Input id="path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/you/projects" className="flex-1" />
+              <Input id="path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="请选择父目录" className="flex-1" />
               <Button variant="outline" size="icon" onClick={handleBrowse} type="button">
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -152,8 +151,8 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={creating}>{creating ? "Creating..." : "Create"}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button onClick={handleCreate} disabled={creating}>{creating ? "创建中..." : "创建"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

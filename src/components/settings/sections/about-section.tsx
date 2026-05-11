@@ -237,10 +237,10 @@ function UpdateAvailableBanner({
       try {
         await navigator.clipboard.writeText(targetUrl)
         // eslint-disable-next-line no-alert
-        alert(`Could not open browser. URL copied to clipboard:\n${targetUrl}`)
+    alert(`无法打开浏览器。已将 URL 复制到剪贴板：\n${targetUrl}`)
       } catch {
         // eslint-disable-next-line no-alert
-        alert(`Could not open browser. Visit:\n${targetUrl}`)
+    alert(`无法打开浏览器。请访问：\n${targetUrl}`)
       }
     }
   }

@@ -7,6 +7,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import { loadSourceForIngest } from "@/lib/source-conversion"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -289,17 +290,26 @@ async function autoIngestImpl(
     type: "ingest",
     title: fileName,
     status: "running",
-    detail: "Reading source...",
+    detail: "正在读取资料...",
     filesWritten: [],
   })
 
-  const [sourceContent, schema, purpose, index, overview] = await Promise.all([
-    tryReadFile(sp),
+  const [loadedSource, schema, purpose, index, overview] = await Promise.all([
+    loadSourceForIngest(pp, sp),
     tryReadFile(`${pp}/schema.md`),
     tryReadFile(`${pp}/purpose.md`),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+  const sourceContent = loadedSource.content
+  if (loadedSource.method === "markitdown") {
+    activity.updateItem(activityId, { detail: "已通过 MarkItDown 转写，正在分析..." })
+    console.log(`[ingest:convert] MarkItDown converted "${fileName}" → ${loadedSource.convertedPath}`)
+  } else if (loadedSource.method === "converted-cache") {
+    console.log(`[ingest:convert] reused converted markdown for "${fileName}" from ${loadedSource.convertedPath}`)
+  } else if (loadedSource.error) {
+    console.warn(`[ingest:convert] MarkItDown unavailable for "${fileName}", using native extraction: ${loadedSource.error}`)
+  }
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -352,7 +362,7 @@ async function autoIngestImpl(
                 concurrency: mmCfg.concurrency,
                 onProgress: (done, total) =>
                   activity.updateItem(activityId, {
-                    detail: `Captioning images... ${done}/${total}`,
+                    detail: `正在生成图片说明... ${done}/${total}`,
                   }),
               })
             } catch (err) {
@@ -382,7 +392,7 @@ async function autoIngestImpl(
     }
     activity.updateItem(activityId, {
       status: "done",
-      detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
+      detail: `已跳过（内容未变化）— 沿用上次提取的 ${cachedFiles.length} 个文件`,
       filesWritten: cachedFiles,
     })
     return cachedFiles
@@ -405,7 +415,7 @@ async function autoIngestImpl(
   //
   // Failure here is never fatal — extractAndSaveSourceImages logs
   // and returns [] on any error.
-  activity.updateItem(activityId, { detail: "Extracting embedded images..." })
+  activity.updateItem(activityId, { detail: "正在提取嵌入图片..." })
   console.log(`[ingest:diag] full-pipeline branch: starting image extraction for ${sp}`)
   const savedImages = await extractAndSaveSourceImages(pp, sp)
   console.log(`[ingest:diag] full-pipeline branch: got ${savedImages.length} image(s)`)
@@ -473,7 +483,7 @@ async function autoIngestImpl(
     savedImages.length > 0 &&
     /!\[\]\(/.test(sourceContent)
   ) {
-    activity.updateItem(activityId, { detail: "Captioning images..." })
+    activity.updateItem(activityId, { detail: "正在生成图片说明..." })
     const sourceSlug = fileName.replace(/\.[^.]+$/, "")
     const ourMediaPrefix = `${pp}/wiki/media/${sourceSlug}/`
     try {
@@ -489,7 +499,7 @@ async function autoIngestImpl(
         concurrency: mmCfg.concurrency,
         onProgress: (done, total) =>
           activity.updateItem(activityId, {
-            detail: `Captioning images... ${done}/${total}`,
+            detail: `正在生成图片说明... ${done}/${total}`,
           }),
       })
       enrichedSourceContent = result.enrichedMarkdown
@@ -513,7 +523,7 @@ async function autoIngestImpl(
   // ── Step 1: Analysis ──────────────────────────────────────────
   // LLM reads the source and produces a structured analysis:
   // key entities, concepts, main arguments, connections to existing wiki, contradictions
-  activity.updateItem(activityId, { detail: "Step 1/2: Analyzing source..." })
+  activity.updateItem(activityId, { detail: "步骤 1/2：正在分析资料..." })
 
   let analysis = ""
 
@@ -527,7 +537,7 @@ async function autoIngestImpl(
       onToken: (token) => { analysis += token },
       onDone: () => {},
       onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
+        activity.updateItem(activityId, { status: "error", detail: `分析失败：${err.message}` })
       },
     },
     signal,
@@ -539,12 +549,12 @@ async function autoIngestImpl(
   // processNext's catch-block path (retry / mark failed) engages.
   const analysisActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (analysisActivity?.status === "error") {
-    throw new Error(analysisActivity.detail || "Analysis stream failed")
+    throw new Error(analysisActivity.detail || "分析流失败")
   }
 
   // ── Step 2: Generation ────────────────────────────────────────
   // LLM takes the analysis as context and produces wiki files + review items
-  activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
+  activity.updateItem(activityId, { detail: "步骤 2/2：正在生成 Wiki 页面..." })
 
   let generation = ""
 
@@ -581,7 +591,7 @@ async function autoIngestImpl(
       onToken: (token) => { generation += token },
       onDone: () => {},
       onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${err.message}` })
+        activity.updateItem(activityId, { status: "error", detail: `生成失败：${err.message}` })
       },
     },
     signal,
@@ -590,11 +600,11 @@ async function autoIngestImpl(
 
   const generationActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (generationActivity?.status === "error") {
-    throw new Error(generationActivity.detail || "Generation stream failed")
+    throw new Error(generationActivity.detail || "生成流失败")
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
-  activity.updateItem(activityId, { detail: "Writing files..." })
+  activity.updateItem(activityId, { detail: "正在写入文件..." })
   const { writtenPaths, warnings: writeWarnings, hardFailures } = await writeFileBlocks(
     pp,
     generation,
@@ -610,7 +620,7 @@ async function autoIngestImpl(
   if (writeWarnings.length > 0) {
     const summary = writeWarnings.length === 1
       ? writeWarnings[0]
-      : `${writeWarnings.length} ingest warnings: ${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` … (+${writeWarnings.length - 2} more in console)` : ""}`
+      : `${writeWarnings.length} 个提取警告：${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` …（另有 ${writeWarnings.length - 2} 个详见控制台）` : ""}`
     activity.updateItem(activityId, { detail: summary })
   }
 
@@ -717,8 +727,8 @@ async function autoIngestImpl(
   }
 
   const detail = writtenPaths.length > 0
-    ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
-    : "No files generated"
+    ? `已写入 ${writtenPaths.length} 个文件${reviewItems.length > 0 ? `，${reviewItems.length} 个待审阅项` : ""}`
+    : "未生成文件"
 
   activity.updateItem(activityId, {
     status: writtenPaths.length > 0 ? "done" : "error",
@@ -873,7 +883,7 @@ async function writeFileBlocks(
       }
       writtenPaths.push(relativePath)
     } catch (err) {
-      const msg = `Failed to write "${relativePath}": ${err instanceof Error ? err.message : String(err)}`
+      const msg = `写入“${relativePath}”失败：${err instanceof Error ? err.message : String(err)}`
       console.error(`[ingest] ${msg}`)
       warnings.push(msg)
       hardFailures.push(relativePath)
@@ -907,12 +917,12 @@ function parseReviewBlocks(
     const optionsMatch = body.match(/^OPTIONS:\s*(.+)$/m)
     const options = optionsMatch
       ? optionsMatch[1].split("|").map((o) => {
-          const label = o.trim()
-          return { label, action: label }
+          const action = o.trim()
+          return { label: localizeReviewOptionLabel(action), action }
         })
       : [
-          { label: "Approve", action: "Approve" },
-          { label: "Skip", action: "Skip" },
+          { label: "通过", action: "Approve" },
+          { label: "跳过", action: "Skip" },
         ]
 
     // Parse PAGES line
@@ -946,6 +956,23 @@ function parseReviewBlocks(
   }
 
   return items
+}
+
+function localizeReviewOptionLabel(label: string): string {
+  const normalized = label.trim().toLowerCase()
+  const known: Record<string, string> = {
+    approve: "通过",
+    skip: "跳过",
+    dismiss: "忽略",
+    ignore: "忽略",
+    "open & edit": "打开并编辑",
+    "delete page": "删除页面",
+    "create page": "创建页面",
+    "save to wiki": "保存到 Wiki",
+    research: "研究",
+    investigate: "调研",
+  }
+  return known[normalized] ?? label
 }
 
 /**

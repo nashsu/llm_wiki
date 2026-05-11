@@ -55,7 +55,7 @@ export function findSurprisingConnections(
     // Signal 1: Cross-community edge (+3)
     if (source.community !== target.community) {
       score += 3
-      reasons.push("crosses community boundary")
+      reasons.push("跨社区连接")
     }
 
     // Signal 2: Cross-type edge (+2 for distant types)
@@ -68,10 +68,10 @@ export function findSurprisingConnections(
       const pair = `${source.type}-${target.type}`
       if (distantPairs.has(pair)) {
         score += 2
-        reasons.push(`connects ${source.type} to ${target.type}`)
+        reasons.push(`连接 ${source.type} 与 ${target.type}`)
       } else {
         score += 1
-        reasons.push("different types")
+        reasons.push("不同类型")
       }
     }
 
@@ -82,13 +82,13 @@ export function findSurprisingConnections(
     const maxDeg = Math.max(sourceDeg, targetDeg)
     if (minDeg <= 2 && maxDeg >= maxDegree * 0.5) {
       score += 2
-      reasons.push("peripheral node links to hub")
+      reasons.push("边缘节点连接到枢纽")
     }
 
     // Signal 4: Low-weight edge between connected nodes (+1)
     if (edge.weight < 2 && edge.weight > 0) {
       score += 1
-      reasons.push("weak but present connection")
+      reasons.push("弱连接但已存在")
     }
 
     if (score >= 3 && reasons.length > 0) {
@@ -128,11 +128,11 @@ export function detectKnowledgeGaps(
     const topIsolated = isolatedNodes.slice(0, 5)
     gaps.push({
       type: "isolated-node",
-      title: `${isolatedNodes.length} isolated page${isolatedNodes.length > 1 ? "s" : ""}`,
+      title: `${isolatedNodes.length} 个孤立页面`,
       description: topIsolated.map((n) => n.label).join(", ") +
-        (isolatedNodes.length > 5 ? ` and ${isolatedNodes.length - 5} more` : ""),
+        (isolatedNodes.length > 5 ? `，另有 ${isolatedNodes.length - 5} 个` : ""),
       nodeIds: isolatedNodes.map((n) => n.id),
-      suggestion: "These pages have few or no connections. Consider adding [[wikilinks]] to related pages, or research to expand their content.",
+      suggestion: "这些页面几乎没有连接。建议添加指向相关页面的 [[wikilinks]]，或通过研究扩展内容。",
     })
   }
 
@@ -141,10 +141,10 @@ export function detectKnowledgeGaps(
     if (comm.cohesion < 0.15 && comm.nodeCount >= 3) {
       gaps.push({
         type: "sparse-community",
-        title: `Sparse cluster: ${comm.topNodes[0] ?? `Community ${comm.id}`}`,
-        description: `${comm.nodeCount} pages with cohesion ${comm.cohesion.toFixed(2)} — internal connections are weak.`,
+        title: `稀疏聚类：${comm.topNodes[0] ?? `社区 ${comm.id}`}`,
+        description: `${comm.nodeCount} 个页面，内聚度 ${comm.cohesion.toFixed(2)}，内部连接较弱。`,
         nodeIds: nodes.filter((n) => n.community === comm.id).map((n) => n.id),
-        suggestion: `This knowledge area lacks internal cross-references. Consider adding links between these pages or researching to fill gaps.`,
+        suggestion: "这个知识区域缺少内部交叉引用。建议在这些页面之间添加链接，或继续研究以补齐缺口。",
       })
     }
   }
@@ -182,10 +182,10 @@ export function detectKnowledgeGaps(
     const commCount = communityNeighbors.get(bridge.id)?.size ?? 0
     gaps.push({
       type: "bridge-node",
-      title: `Key bridge: ${bridge.label}`,
-      description: `Connects ${commCount} different knowledge clusters. This is a critical junction in your wiki.`,
+      title: `关键桥接：${bridge.label}`,
+      description: `连接了 ${commCount} 个不同知识聚类，是此 Wiki 中的重要节点。`,
       nodeIds: [bridge.id],
-      suggestion: `This page bridges multiple knowledge areas. Ensure it's well-maintained — if it's thin, expanding it will strengthen your entire wiki.`,
+      suggestion: "此页面连接多个知识区域。建议保持内容完整；如果内容较薄，扩展它会增强整个 Wiki 的结构。",
     })
   }
 

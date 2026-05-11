@@ -66,14 +66,36 @@ export const realFs = {
   preprocessFile: async (p: string): Promise<string> => {
     return fs.readFile(p, "utf-8")
   },
+  convertWithMarkitdown: async (): Promise<{
+    ok: boolean
+    markdown?: string | null
+    error?: string | null
+    timedOut: boolean
+  }> => ({
+    ok: false,
+    markdown: null,
+    error: "MarkItDown not available in realFs test adapter",
+    timedOut: false,
+  }),
   deleteFile: async (p: string): Promise<void> => {
-    await fs.unlink(p).catch(() => {})
+    await fs.rm(p, { recursive: true, force: true }).catch(() => {})
   },
   findRelatedWikiPages: async (): Promise<string[]> => {
     return []
   },
   createDirectory: async (p: string): Promise<void> => {
     await fs.mkdir(p, { recursive: true })
+  },
+  fileExists: async (p: string): Promise<boolean> => {
+    return fileExists(p)
+  },
+  fileModifiedMs: async (p: string): Promise<number | null> => {
+    try {
+      const stat = await fs.stat(p)
+      return stat.mtimeMs
+    } catch {
+      return null
+    }
   },
   createProject: async () => {
     throw new Error("createProject not supported in tests")

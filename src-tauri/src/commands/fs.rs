@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::Read as IoRead;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use calamine::{Reader, open_workbook_auto, Data};
 
@@ -17,6 +19,151 @@ const MEDIA_EXTS: &[&str] = &[
     "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma",
 ];
 const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key", "epub"];
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkitdownConversion {
+    pub ok: bool,
+    pub markdown: Option<String>,
+    pub error: Option<String>,
+    pub timed_out: bool,
+}
+
+fn failed_markitdown(error: impl Into<String>) -> MarkitdownConversion {
+    MarkitdownConversion {
+        ok: false,
+        markdown: None,
+        error: Some(error.into()),
+        timed_out: false,
+    }
+}
+
+fn timeout_markitdown(program: &str) -> MarkitdownConversion {
+    MarkitdownConversion {
+        ok: false,
+        markdown: None,
+        error: Some(format!("MarkItDown conversion timed out via {program}")),
+        timed_out: true,
+    }
+}
+
+fn run_markitdown_candidate(
+    program: &str,
+    prefix_args: &[&str],
+    path: &str,
+    timeout: Duration,
+) -> Result<MarkitdownConversion, String> {
+    let script = r#"
+import sys
+
+try:
+    from markitdown import MarkItDown
+except Exception as exc:
+    sys.stderr.write(f"MARKITDOWN_IMPORT_FAILED: {type(exc).__name__}: {exc}")
+    sys.exit(3)
+
+try:
+    result = MarkItDown().convert(sys.argv[1])
+    markdown = getattr(result, "markdown", None)
+    if markdown is None:
+        markdown = getattr(result, "text_content", None)
+    if markdown is None:
+        markdown = str(result)
+    sys.stdout.write(str(markdown))
+except Exception as exc:
+    sys.stderr.write(f"MARKITDOWN_CONVERT_FAILED: {type(exc).__name__}: {exc}")
+    sys.exit(4)
+"#;
+
+    let mut command = Command::new(program);
+    command
+        .args(prefix_args)
+        .arg("-c")
+        .arg(script)
+        .arg(path)
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                let output = child.wait_with_output().map_err(|e| e.to_string())?;
+                if output.status.success() {
+                    let markdown = String::from_utf8_lossy(&output.stdout).to_string();
+                    if markdown.trim().is_empty() {
+                        return Ok(failed_markitdown(format!(
+                            "MarkItDown returned empty markdown via {program}"
+                        )));
+                    }
+                    return Ok(MarkitdownConversion {
+                        ok: true,
+                        markdown: Some(markdown),
+                        error: None,
+                        timed_out: false,
+                    });
+                }
+
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Ok(failed_markitdown(if stderr.is_empty() {
+                    format!("MarkItDown failed via {program} with status {}", output.status)
+                } else {
+                    stderr
+                }));
+            }
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(timeout_markitdown(program));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+fn run_markitdown(path: &str) -> MarkitdownConversion {
+    let mut candidates: Vec<(String, Vec<&str>)> = Vec::new();
+    if let Ok(program) = std::env::var("LLM_WIKI_PYTHON") {
+        if !program.trim().is_empty() {
+            candidates.push((program, vec![]));
+        }
+    }
+    candidates.push(("python".to_string(), vec![]));
+    candidates.push(("python3".to_string(), vec![]));
+    #[cfg(target_os = "windows")]
+    candidates.push(("py".to_string(), vec!["-3"]));
+
+    let mut errors: Vec<String> = Vec::new();
+    for (program, prefix_args) in candidates {
+        match run_markitdown_candidate(&program, &prefix_args, path, Duration::from_secs(60)) {
+            Ok(result) if result.ok => return result,
+            Ok(result) => {
+                if result.timed_out {
+                    return result;
+                }
+                if let Some(error) = result.error {
+                    errors.push(format!("{program}: {error}"));
+                }
+            }
+            Err(error) => {
+                errors.push(format!("{program}: {error}"));
+            }
+        }
+    }
+
+    failed_markitdown(if errors.is_empty() {
+        "No Python executable found for MarkItDown".to_string()
+    } else {
+        errors.join(" | ")
+    })
+}
 
 #[tauri::command]
 pub async fn read_file(path: String) -> Result<String, String> {
@@ -105,6 +252,21 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("preprocess_file blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn convert_with_markitdown(path: String) -> Result<MarkitdownConversion, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("convert_with_markitdown", || {
+            let p = Path::new(&path);
+            if !p.is_file() {
+                return Ok(failed_markitdown(format!("Source file does not exist: {path}")));
+            }
+            Ok(run_markitdown(&path))
+        })
+    })
+    .await
+    .map_err(|e| format!("convert_with_markitdown blocking task join error: {e}"))?
 }
 
 fn cache_path_for(original: &Path) -> std::path::PathBuf {
@@ -1299,6 +1461,28 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     })
     .await
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn file_modified_ms(path: String) -> Result<Option<u64>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("file_modified_ms", || {
+            let modified = match fs::metadata(&path) {
+                Ok(metadata) => metadata.modified().ok(),
+                Err(_) => None,
+            };
+            let Some(modified) = modified else {
+                return Ok(None);
+            };
+            let millis = modified
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            Ok(Some(millis))
+        })
+    })
+    .await
+    .map_err(|e| format!("file_modified_ms blocking task join error: {e}"))?
 }
 
 #[cfg(test)]

@@ -31,6 +31,19 @@ export async function preprocessFile(path: string): Promise<string> {
   return invoke<string>("preprocess_file", { path })
 }
 
+export interface MarkitdownConversion {
+  ok: boolean
+  markdown?: string | null
+  error?: string | null
+  timedOut: boolean
+}
+
+export async function convertWithMarkitdown(
+  path: string,
+): Promise<MarkitdownConversion> {
+  return invoke<MarkitdownConversion>("convert_with_markitdown", { path })
+}
+
 export async function deleteFile(path: string): Promise<void> {
   return invoke("delete_file", { path })
 }
@@ -48,6 +61,10 @@ export async function createDirectory(path: string): Promise<void> {
 
 export async function fileExists(path: string): Promise<boolean> {
   return invoke<boolean>("file_exists", { path })
+}
+
+export async function fileModifiedMs(path: string): Promise<number | null> {
+  return invoke<number | null>("file_modified_ms", { path })
 }
 
 /** Mirror of `commands::fs::FileBase64` (Rust side). */
