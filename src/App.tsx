@@ -99,7 +99,7 @@ function App() {
           "@/lib/project-store"
         )
         const { useUpdateStore } = await import("@/stores/update-store")
-        const { checkForUpdates, UPDATE_CHECK_CACHE_MS } = await import(
+        const { checkForUpdates, LLM_WIKI_UPDATE_REPO, UPDATE_CHECK_CACHE_MS } = await import(
           "@/lib/update-check"
         )
 
@@ -143,7 +143,7 @@ function App() {
         )
         const result = await checkForUpdates({
           currentVersion: __APP_VERSION__,
-          repo: "nashsu/llm_wiki",
+          repo: LLM_WIKI_UPDATE_REPO,
         })
         if (cancelled) return
         useUpdateStore.getState().setResult(result, Date.now())

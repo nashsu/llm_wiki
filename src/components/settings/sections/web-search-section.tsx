@@ -9,7 +9,7 @@ import {
   type SearchProvider,
   type SearchProviderOverride,
 } from "@/stores/wiki-store"
-import { SERPAPI_ENGINE_OPTIONS, resolveSearchConfig } from "@/lib/web-search"
+import { SEARXNG_CATEGORY_OPTIONS, SERPAPI_ENGINE_OPTIONS, resolveSearchConfig } from "@/lib/web-search"
 
 const SEARCH_PROVIDERS = [
   {
@@ -17,12 +17,21 @@ const SEARCH_PROVIDERS = [
     label: "Tavily",
     hint: "General web search for Deep Research and ingest verification",
     keyPlaceholder: "Enter your Tavily API key (tavily.com)",
+    needsApiKey: true,
   },
   {
     id: "serpapi",
     label: "SerpApi",
     hint: "Google, Bing, DuckDuckGo, Scholar, News, Images, Videos, YouTube",
     keyPlaceholder: "Enter your SerpApi API key (serpapi.com)",
+    needsApiKey: true,
+  },
+  {
+    id: "searxng",
+    label: "SearXNG",
+    hint: "Self-hosted metasearch via the SearXNG JSON API",
+    urlPlaceholder: "https://search.example.com",
+    needsApiKey: false,
   },
 ] as const
 
@@ -71,7 +80,9 @@ export function WebSearchSection() {
         {SEARCH_PROVIDERS.map((provider) => {
           const override = resolvedConfig.providerConfigs?.[provider.id]
           const isActive = resolvedConfig.provider === provider.id
-          const hasConfig = !!override?.apiKey
+          const hasConfig = provider.id === "searxng"
+            ? !!override?.searXngUrl
+            : !!override?.apiKey
           const isExpanded = !!expanded[provider.id]
           return (
             <div
@@ -136,20 +147,41 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  <div className="space-y-2">
-                    <Label>API Key</Label>
-                    <Input
-                      type="password"
-                      value={override?.apiKey ?? ""}
-                      onChange={(e) => updateProvider(provider.id, { apiKey: e.target.value })}
-                      placeholder={provider.keyPlaceholder}
-                    />
-                  </div>
+                  {provider.needsApiKey ? (
+                    <div className="space-y-2">
+                      <Label>API Key</Label>
+                      <Input
+                        type="password"
+                        value={override?.apiKey ?? ""}
+                        onChange={(e) => updateProvider(provider.id, { apiKey: e.target.value })}
+                        placeholder={provider.keyPlaceholder}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label>Instance URL</Label>
+                      <Input
+                        value={override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""}
+                        onChange={(e) => updateProvider("searxng", { searXngUrl: e.target.value })}
+                        placeholder={provider.urlPlaceholder}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        The instance must allow JSON search responses (`format=json`).
+                      </p>
+                    </div>
+                  )}
 
                   {provider.id === "serpapi" && (
                     <SerpApiEnginePicker
                       value={override?.serpApiEngine ?? resolvedConfig.serpApiEngine ?? "google"}
                       onChange={(serpApiEngine) => updateProvider("serpapi", { serpApiEngine })}
+                    />
+                  )}
+
+                  {provider.id === "searxng" && (
+                    <SearXngCategoryPicker
+                      value={override?.searXngCategories ?? resolvedConfig.searXngCategories ?? ["general"]}
+                      onChange={(searXngCategories) => updateProvider("searxng", { searXngCategories })}
                     />
                   )}
                 </div>
@@ -158,6 +190,49 @@ export function WebSearchSection() {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function SearXngCategoryPicker({
+  value,
+  onChange,
+}: {
+  value: string[]
+  onChange: (value: string[]) => void
+}) {
+  const selected = value.length > 0 ? value : ["general"]
+
+  function toggle(category: string) {
+    const next = selected.includes(category)
+      ? selected.filter((item) => item !== category)
+      : [...selected, category]
+    onChange(next.length > 0 ? next : ["general"])
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Search categories</Label>
+      <div className="flex flex-wrap gap-1.5">
+        {SEARXNG_CATEGORY_OPTIONS.map((category) => (
+          <button
+            key={category.value}
+            type="button"
+            onClick={() => toggle(category.value)}
+            className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              selected.includes(category.value)
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border hover:bg-accent"
+            }`}
+            title={category.hint}
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Categories are sent as the SearXNG `categories` parameter.
+      </p>
     </div>
   )
 }

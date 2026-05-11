@@ -291,6 +291,28 @@ function isQwenThinkingModel(model: string): boolean {
   return /qwen[-_]?3/i.test(model)
 }
 
+function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
+  if (config.provider !== "openai") return false
+  const model = config.model.trim().toLowerCase()
+  return /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+}
+
+function adaptOpenAiStrictCompletionBody(config: LlmConfig, body: Record<string, unknown>): void {
+  if (!isOpenAiStrictCompletionModel(config)) return
+
+  if (typeof body.max_tokens === "number") {
+    body.max_completion_tokens = body.max_tokens
+    delete body.max_tokens
+  }
+
+  // GPT-5 / o-series Chat Completions deployments reject non-default
+  // sampling knobs. Keep this on the strict OpenAI path only so
+  // OpenRouter/custom-compatible routes preserve their existing wire.
+  delete body.temperature
+  delete body.top_p
+  delete body.top_k
+}
+
 function buildOpenAiCompatibleBody(
   config: LlmConfig,
   messages: ChatMessage[],
@@ -298,6 +320,7 @@ function buildOpenAiCompatibleBody(
 ): Record<string, unknown> {
   const reasoning = effectiveReasoning(config, overrides)
   const body: Record<string, unknown> = buildOpenAiBody(messages, stripWireAgnosticOverrides(overrides))
+  adaptOpenAiStrictCompletionBody(config, body)
 
   if (isDeepSeekEndpoint(config)) {
     // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most

@@ -26,6 +26,7 @@ import {
   buildDeletedKeys,
   cleanIndexListing,
   extractFrontmatterTitle,
+  normalizeWikiRefKey,
   stripDeletedWikilinks,
   type DeletedPageInfo,
 } from "@/lib/wiki-cleanup"
@@ -120,14 +121,6 @@ function flattenMd(nodes: readonly FileNode[]): FileNode[] {
   return out
 }
 
-/** Lower-case + strip whitespace/hyphens/underscores. Same shape that
- *  wiki-cleanup uses internally so a deleted slug `alice-chen` matches
- *  a `related: [aliceChen]` reference (and vice versa). Defined here
- *  because the helper isn't exported from wiki-cleanup. */
-function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[\s\-_]+/g, "")
-}
-
 export interface CascadeDeleteResult {
   /** Wiki-page paths that were actually removed from disk. */
   deletedPaths: string[]
@@ -205,7 +198,6 @@ export async function cascadeDeleteWikiPagesWithRefs(
 
   // 3. Sweep surviving wiki/*.md.
   const deletedKeys = buildDeletedKeys(infos)
-  const deletedSlugSet = new Set(infos.map((i) => normalizeKey(i.slug)))
   const wikiTree = await listDirectory(`${pp}/wiki`)
   const allMd = flattenMd(wikiTree)
   const indexAbs = `${pp}/wiki/index.md`
@@ -232,7 +224,7 @@ export async function cascadeDeleteWikiPagesWithRefs(
     const related = parseFrontmatterArray(updated, "related")
     if (related.length > 0) {
       const filtered = related.filter(
-        (s) => !deletedSlugSet.has(normalizeKey(s)),
+        (s) => !deletedKeys.has(normalizeWikiRefKey(s)),
       )
       if (filtered.length !== related.length) {
         updated = writeFrontmatterArray(updated, "related", filtered)
