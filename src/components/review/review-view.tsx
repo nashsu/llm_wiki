@@ -17,7 +17,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { appendLogContent } from "@/lib/log-append"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
 import { canonicalizeWikiTitle } from "@/lib/wiki-title"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
@@ -179,15 +179,16 @@ export function ReviewView() {
             item.title.replace(/^(Create|Save|Add|Missing page)[:\s]*/i, "").trim(),
             "새 위키 문서",
           )
-          const { date, fileName } = makeQueryFileName(title)
-          const linkTarget = fileName.replace(/\.md$/iu, "")
+          const { date } = makeQueryFileName(title)
 
           // Determine page type from review type or action text
           const pageType = detectPageType(realAction, item.type)
           const dir = directoryForPageType(pageType)
+          const fileName = await makeUniqueReviewPageFileName(pp, dir, title)
+          const linkTarget = fileName.replace(/\.md$/iu, "")
           const filePath = `${pp}/wiki/${dir}/${fileName}`
 
-          const frontmatter = `---\ntype: ${pageType}\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nconfidence: medium\nlast_reviewed: ${date}\n---\n\n`
+          const frontmatter = `---\ntype: ${pageType}\ntitle: "${escapeYaml(title)}"\ncreated: ${date}\nupdated: ${date}\ntags: []\nrelated: []\nsources: ["review"]\nconfidence: medium\nlast_reviewed: ${date}\nquality: draft\ncoverage: low\nneeds_upgrade: true\nsource_count: 1\n---\n\n`
           const body = `# ${title}\n\n${item.description}\n`
           await writeFile(filePath, frontmatter + body)
 
@@ -434,6 +435,31 @@ function directoryForPageType(pageType: string): string {
     default:
       return "queries"
   }
+}
+
+async function makeUniqueReviewPageFileName(
+  projectPath: string,
+  dir: string,
+  title: string,
+): Promise<string> {
+  const stem = makeQuerySlug(title)
+  const existing = new Set<string>()
+  try {
+    const nodes = await listDirectory(`${projectPath}/wiki/${dir}`)
+    for (const node of nodes) {
+      if (!node.is_dir) existing.add(node.name)
+    }
+  } catch {
+    // Fall back to the canonical title when the directory cannot be read.
+  }
+
+  let fileName = `${stem}.md`
+  let suffix = 2
+  while (existing.has(fileName)) {
+    fileName = `${stem} (${suffix}).md`
+    suffix += 1
+  }
+  return fileName
 }
 
 function escapeYaml(value: string): string {

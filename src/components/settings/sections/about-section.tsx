@@ -5,7 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener"
 import { clipServerStatus } from "@/commands/fs"
 import { Button } from "@/components/ui/button"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
-import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
+import { checkForUpdates, LLM_WIKI_UPDATE_REPO, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
 
 export function AboutSection() {
@@ -31,7 +31,7 @@ export function AboutSection() {
     useUpdateStore.getState().setChecking(true)
     const result = await checkForUpdates({
       currentVersion: __APP_VERSION__,
-      repo: "nashsu/llm_wiki",
+      repo: LLM_WIKI_UPDATE_REPO,
     })
     const now = Date.now()
     useUpdateStore.getState().setResult(result, now)
@@ -182,15 +182,15 @@ export function AboutSection() {
            */}
           <a
             className="cursor-pointer underline underline-offset-2 hover:text-primary"
-            href="https://github.com/nashsu/llm_wiki"
+            href={`https://github.com/${LLM_WIKI_UPDATE_REPO}`}
             onClick={(e) => {
               e.preventDefault()
-              void openUrl("https://github.com/nashsu/llm_wiki").catch((err) => {
+              void openUrl(`https://github.com/${LLM_WIKI_UPDATE_REPO}`).catch((err) => {
                 console.error("[about] openUrl failed:", err)
               })
             }}
           >
-            github.com/nashsu/llm_wiki
+            github.com/{LLM_WIKI_UPDATE_REPO}
           </a>
         </p>
       </div>

@@ -2,8 +2,8 @@ import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent } f
 import Graph from "graphology"
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core"
 import "@react-sigma/core/lib/style.css"
-import type { MouseCoords, SigmaNodeEventPayload } from "sigma/types"
-import type { EdgeLabelDrawingFunction, NodeHoverDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering"
+import type { SigmaNodeEventPayload } from "sigma/types"
+import type { EdgeLabelDrawingFunction, NodeLabelDrawingFunction } from "sigma/rendering"
 import type { Settings } from "sigma/settings"
 import forceAtlas2 from "graphology-layout-forceatlas2"
 import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
@@ -37,61 +37,28 @@ const COMMUNITY_COLORS = [
 ]
 
 type ColorMode = "type" | "community"
-type GraphSigmaSettings = Partial<Settings> & {
-  labelHaloColor: string
-  nodeHoverBackgroundColor: string
-  nodeHoverLabelColor: string
-  nodeHoverBorderColor: string
-  nodeHoverShadowColor: string
-}
-type NodeDragState = {
-  node: string
-  draggedNodes: Set<string>
-  startGraph: { x: number; y: number }
-  startViewport: { x: number; y: number }
-  positions: Map<string, { x: number; y: number; pull: number; settle: number }>
-  moved: boolean
-  previousCameraPanning: boolean
-}
 
-const BASE_NODE_SIZE = 4.5
-const MAX_NODE_SIZE = 16
-const MIN_NODE_SIZE = 2.2
-const GRAPH_SCALE_REFERENCE_NODES = 80
-const DRAG_NEIGHBOR_PULL = 0.32
-const DRAG_SELECTED_SETTLE = 0.22
-const DRAG_NEIGHBOR_SETTLE = 0.06
-const DRAG_SPRING_STIFFNESS = 0.18
-const DRAG_SPRING_DAMPING = 0.72
-const DRAG_SPRING_MAX_FRAMES = 90
-const DRAG_SPRING_EPSILON = 0.018
+// Kevin-approved local graph baseline. Keep this visual contract pinned unless
+// the graph-view visual contract test is deliberately updated with approval.
+const BASE_NODE_SIZE = 8
+const MAX_NODE_SIZE = 28
 const LIGHT_GRAPH_THEME = {
   label: "#1e293b",
   labelHalo: "rgba(248,250,252,0.92)",
   edgeLabel: "#334155",
   defaultEdge: "#cbd5e1",
-  edgeRgb: "104,108,112",
   dimmedNodeMix: "#e2e8f0",
-  dimmedEdge: "rgba(104,108,112,0.12)",
-  highlightedEdge: "rgba(88,92,96,0.58)",
-  hoverLabel: "#0f172a",
-  hoverLabelBackground: "rgba(248,250,252,0.96)",
-  hoverLabelBorder: "rgba(15,23,42,0.24)",
-  hoverShadow: "rgba(15,23,42,0.18)",
+  dimmedEdge: "#f1f5f9",
+  highlightedEdge: "#1e293b",
 }
 const DARK_GRAPH_THEME = {
   label: "#dcddde",
   labelHalo: "rgba(30,30,30,0.92)",
   edgeLabel: "#c7c7c7",
   defaultEdge: "#4a4a4a",
-  edgeRgb: "96,101,106",
   dimmedNodeMix: "#2b2b2b",
-  dimmedEdge: "rgba(96,101,106,0.10)",
-  highlightedEdge: "rgba(184,188,192,0.62)",
-  hoverLabel: "#f8fafc",
-  hoverLabelBackground: "rgba(15,23,42,0.94)",
-  hoverLabelBorder: "rgba(226,232,240,0.28)",
-  hoverShadow: "rgba(0,0,0,0.45)",
+  dimmedEdge: "#3a3a3a",
+  highlightedEdge: "#b3b3b3",
 }
 
 function nodeColor(type: string): string {
@@ -106,22 +73,18 @@ function edgeTypeLabel(types: readonly GraphEdgeType[]): string {
   }).join(" + ")
 }
 
-function edgeVisual(
-  types: readonly GraphEdgeType[],
-  normalizedWeight: number,
-  mode: GraphMode,
-  visualScale: number,
-  edgeRgb: string,
-): { color: string; size: number } {
+function edgeVisual(types: readonly GraphEdgeType[], normalizedWeight: number): { color: string; size: number } {
   const hasSource = types.includes("source")
   const hasRelated = types.includes("related")
-  const evidenceBoost = mode === "evidence" && hasSource ? 0.08 : 0
-  const semanticBoost = hasRelated ? 0.03 : 0
-  const alpha = Math.min(0.36, 0.16 + normalizedWeight * 0.12 + semanticBoost + evidenceBoost)
-  const weightBoost = mode === "evidence" && hasSource ? 0.08 : hasRelated ? 0.04 : 0
+  const color = hasSource
+    ? `rgba(249,115,22,${0.45 + normalizedWeight * 0.45})`
+    : hasRelated
+      ? `rgba(37,99,235,${0.4 + normalizedWeight * 0.45})`
+      : `rgba(100,116,139,${0.25 + normalizedWeight * 0.55})`
+  const relationBonus = hasSource ? 1.2 : hasRelated ? 0.7 : 0
   return {
-    color: `rgba(${edgeRgb},${alpha})`,
-    size: Math.max(0.1, (0.12 + normalizedWeight * 0.34 + weightBoost) * visualScale),
+    color,
+    size: 0.5 + normalizedWeight * 2.4 + relationBonus,
   }
 }
 
@@ -142,30 +105,10 @@ function mixColor(color1: string, color2: string, ratio: number): string {
   return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`
 }
 
-function graphVisualScale(nodeCount: number): number {
-  const scale = Math.sqrt(GRAPH_SCALE_REFERENCE_NODES / Math.max(nodeCount, GRAPH_SCALE_REFERENCE_NODES))
-  return Math.max(0.38, Math.min(0.72, scale))
-}
-
-function nodeSize(linkCount: number, maxLinks: number, nodeCount: number): number {
-  if (maxLinks === 0) return BASE_NODE_SIZE * graphVisualScale(nodeCount)
+function nodeSize(linkCount: number, maxLinks: number): number {
+  if (maxLinks === 0) return BASE_NODE_SIZE
   const ratio = linkCount / maxLinks
-  const scaledSize = (BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)) * graphVisualScale(nodeCount)
-  return Math.max(MIN_NODE_SIZE, scaledSize)
-}
-
-function graphLabelSettings(nodeCount: number): { labelSize: number; labelDensity: number; labelRenderedSizeThreshold: number } {
-  if (nodeCount >= 700) return { labelSize: 9, labelDensity: 0.05, labelRenderedSizeThreshold: 11 }
-  if (nodeCount >= 300) return { labelSize: 10, labelDensity: 0.08, labelRenderedSizeThreshold: 10 }
-  if (nodeCount >= 120) return { labelSize: 10, labelDensity: 0.12, labelRenderedSizeThreshold: 9 }
-  return { labelSize: 11, labelDensity: 0.16, labelRenderedSizeThreshold: 8 }
-}
-
-function graphLayoutSettings(nodeCount: number): { iterations: number; gravity: number; scalingRatio: number } {
-  if (nodeCount >= 700) return { iterations: 260, gravity: 0.65, scalingRatio: 6 }
-  if (nodeCount >= 300) return { iterations: 230, gravity: 0.75, scalingRatio: 5 }
-  if (nodeCount >= 120) return { iterations: 200, gravity: 0.85, scalingRatio: 4 }
-  return { iterations: 170, gravity: 0.9, scalingRatio: 3 }
+  return BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
 }
 
 function getDocumentDarkMode(): boolean {
@@ -192,93 +135,18 @@ const drawReadableNodeLabel: NodeLabelDrawingFunction = (context, data, settings
   const color = settings.labelColor.attribute
     ? data[settings.labelColor.attribute] ?? settings.labelColor.color ?? "#000"
     : settings.labelColor.color
-  const x = data.x + data.size + 4
+  const x = data.x + data.size + 3
   const y = data.y + settings.labelSize / 3
 
   context.save()
   context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`
   context.lineJoin = "round"
   context.miterLimit = 2
-  context.lineWidth = Math.max(2.4, settings.labelSize * 0.24)
+  context.lineWidth = Math.max(3, settings.labelSize * 0.32)
   context.strokeStyle = String((settings as typeof settings & { labelHaloColor?: string }).labelHaloColor ?? "rgba(255,255,255,0.9)")
   context.strokeText(data.label, x, y)
   context.fillStyle = String(color)
   context.fillText(data.label, x, y)
-  context.restore()
-}
-
-function drawRoundedRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) {
-  const r = Math.min(radius, width / 2, height / 2)
-  context.beginPath()
-  context.moveTo(x + r, y)
-  context.lineTo(x + width - r, y)
-  context.quadraticCurveTo(x + width, y, x + width, y + r)
-  context.lineTo(x + width, y + height - r)
-  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
-  context.lineTo(x + r, y + height)
-  context.quadraticCurveTo(x, y + height, x, y + height - r)
-  context.lineTo(x, y + r)
-  context.quadraticCurveTo(x, y, x + r, y)
-  context.closePath()
-}
-
-const drawReadableNodeHover: NodeHoverDrawingFunction = (context, data, settings) => {
-  const label = typeof data.label === "string" ? data.label : ""
-  const hoverSettings = settings as typeof settings & {
-    nodeHoverBackgroundColor?: string
-    nodeHoverLabelColor?: string
-    nodeHoverBorderColor?: string
-    nodeHoverShadowColor?: string
-  }
-  const background = hoverSettings.nodeHoverBackgroundColor ?? "rgba(15,23,42,0.94)"
-  const labelColor = hoverSettings.nodeHoverLabelColor ?? "#f8fafc"
-  const border = hoverSettings.nodeHoverBorderColor ?? "rgba(226,232,240,0.28)"
-  const shadow = hoverSettings.nodeHoverShadowColor ?? "rgba(0,0,0,0.35)"
-
-  context.save()
-  context.shadowOffsetX = 0
-  context.shadowOffsetY = 2
-  context.shadowBlur = 10
-  context.shadowColor = shadow
-
-  context.beginPath()
-  context.arc(data.x, data.y, data.size + 3.5, 0, Math.PI * 2)
-  context.fillStyle = background
-  context.fill()
-  context.lineWidth = 1.5
-  context.strokeStyle = border
-  context.stroke()
-
-  if (label) {
-    const size = Math.max(settings.labelSize, 11)
-    context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`
-    const paddingX = 7
-    const paddingY = 4
-    const textWidth = context.measureText(label).width
-    const labelX = data.x + data.size + 7
-    const labelY = data.y - size / 2 - paddingY
-    const boxWidth = textWidth + paddingX * 2
-    const boxHeight = size + paddingY * 2
-
-    drawRoundedRect(context, labelX, labelY, boxWidth, boxHeight, 4)
-    context.fillStyle = background
-    context.fill()
-    context.lineWidth = 1
-    context.strokeStyle = border
-    context.stroke()
-
-    context.shadowBlur = 0
-    context.fillStyle = labelColor
-    context.fillText(label, labelX + paddingX, data.y + size / 3)
-  }
-
   context.restore()
 }
 
@@ -324,19 +192,7 @@ const drawReadableEdgeLabel: EdgeLabelDrawingFunction = (context, edgeData, sour
 const positionCache = new Map<string, { x: number; y: number }>()
 let lastLayoutDataKey = ""
 
-function GraphLoader({
-  nodes,
-  edges,
-  colorMode,
-  mode,
-  edgeRgb,
-}: {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-  colorMode: ColorMode
-  mode: GraphMode
-  edgeRgb: string
-}) {
+function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: GraphEdge[]; colorMode: ColorMode }) {
   const loadGraph = useLoadGraph()
 
   useEffect(() => {
@@ -349,9 +205,6 @@ function GraphLoader({
 
     const graph = new Graph()
     const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1)
-    const nodeCount = nodes.length
-    const visualScale = graphVisualScale(nodeCount)
-    const layoutSettings = graphLayoutSettings(nodeCount)
 
     for (const node of nodes) {
       const cached = positionCache.get(node.id)
@@ -361,7 +214,7 @@ function GraphLoader({
       graph.addNode(node.id, {
         x: cached?.x ?? Math.random() * 100,
         y: cached?.y ?? Math.random() * 100,
-        size: nodeSize(node.linkCount, maxLinks, nodeCount),
+        size: nodeSize(node.linkCount, maxLinks),
         color,
         label: node.label,
         nodeType: node.type,
@@ -378,7 +231,7 @@ function GraphLoader({
         const edgeKey = `${edge.source}->${edge.target}`
         if (!graph.hasEdge(edgeKey) && !graph.hasEdge(`${edge.target}->${edge.source}`)) {
           const normalizedWeight = edge.weight / maxWeight // 0..1
-          const visual = edgeVisual(edge.types, normalizedWeight, mode, visualScale, edgeRgb)
+          const visual = edgeVisual(edge.types, normalizedWeight)
           graph.addEdgeWithKey(edgeKey, edge.source, edge.target, {
             color: visual.color,
             size: visual.size,
@@ -393,11 +246,11 @@ function GraphLoader({
     if (needsLayout && nodes.length > 1) {
       const settings = forceAtlas2.inferSettings(graph)
       forceAtlas2.assign(graph, {
-        iterations: layoutSettings.iterations,
+        iterations: 150,
         settings: {
           ...settings,
-          gravity: layoutSettings.gravity,
-          scalingRatio: layoutSettings.scalingRatio,
+          gravity: 1,
+          scalingRatio: 2,
           strongGravityMode: true,
           barnesHutOptimize: nodes.length > 50,
         },
@@ -411,7 +264,7 @@ function GraphLoader({
     }
 
     loadGraph(graph)
-  }, [loadGraph, nodes, edges, colorMode, mode, edgeRgb])
+  }, [loadGraph, nodes, edges, colorMode])
 
   return null
 }
@@ -465,189 +318,10 @@ function EventHandler({
 }) {
   const registerEvents = useRegisterEvents()
   const sigma = useSigma()
-  const dragStateRef = useRef<NodeDragState | null>(null)
-  const suppressClickRef = useRef(false)
-  const settleAnimationRef = useRef<number | null>(null)
 
   useEffect(() => {
-    const graph = sigma.getGraph()
-    const container = sigma.getContainer()
-
-    const cancelSettleAnimation = () => {
-      if (settleAnimationRef.current === null) return
-      window.cancelAnimationFrame(settleAnimationRef.current)
-      settleAnimationRef.current = null
-    }
-
-    const cacheNodePositions = (nodeIds: Iterable<string>) => {
-      Array.from(nodeIds).forEach((nodeId) => {
-        if (!graph.hasNode(nodeId)) return
-        const x = graph.getNodeAttribute(nodeId, "x")
-        const y = graph.getNodeAttribute(nodeId, "y")
-        if (typeof x === "number" && typeof y === "number") {
-          positionCache.set(nodeId, { x, y })
-        }
-      })
-    }
-
-    const focusNode = (node: string) => {
-      container.style.cursor = "pointer"
-      graph.setNodeAttribute(node, "hovering", true)
-      const neighbors = new Set(graph.neighbors(node))
-      neighbors.add(node)
-      graph.forEachNode((n) => {
-        if (!neighbors.has(n)) graph.setNodeAttribute(n, "dimmed", true)
-        else graph.removeNodeAttribute(n, "dimmed")
-      })
-      graph.forEachEdge((e, _attrs, source, target) => {
-        if (source !== node && target !== node) {
-          graph.setEdgeAttribute(e, "dimmed", true)
-          graph.removeEdgeAttribute(e, "highlighted")
-        } else {
-          graph.setEdgeAttribute(e, "highlighted", true)
-          graph.removeEdgeAttribute(e, "dimmed")
-        }
-      })
-      sigma.refresh()
-    }
-
-    const clearNodeFocus = () => {
-      container.style.cursor = "default"
-      graph.forEachNode((n) => {
-        graph.removeNodeAttribute(n, "hovering")
-        graph.removeNodeAttribute(n, "dimmed")
-      })
-      graph.forEachEdge((e) => {
-        graph.removeEdgeAttribute(e, "dimmed")
-        graph.removeEdgeAttribute(e, "highlighted")
-      })
-      sigma.refresh()
-    }
-
-    const settleDraggedNodes = (drag: NodeDragState) => {
-      const nodeIds = [...drag.draggedNodes].filter((nodeId) => graph.hasNode(nodeId))
-      if (nodeIds.length === 0) return
-
-      const velocities = new Map<string, { x: number; y: number }>()
-      const targets = new Map<string, { x: number; y: number }>()
-
-      nodeIds.forEach((nodeId) => {
-        const origin = drag.positions.get(nodeId)
-        if (!origin) return
-        const x = graph.getNodeAttribute(nodeId, "x")
-        const y = graph.getNodeAttribute(nodeId, "y")
-        if (typeof x !== "number" || typeof y !== "number") return
-        targets.set(nodeId, {
-          x: origin.x + (x - origin.x) * origin.settle,
-          y: origin.y + (y - origin.y) * origin.settle,
-        })
-        velocities.set(nodeId, { x: 0, y: 0 })
-      })
-
-      if (targets.size === 0) return
-
-      let frameCount = 0
-      const settleStep = () => {
-        let active = false
-        frameCount += 1
-
-        targets.forEach((target, nodeId) => {
-          if (!graph.hasNode(nodeId)) return
-          const x = graph.getNodeAttribute(nodeId, "x")
-          const y = graph.getNodeAttribute(nodeId, "y")
-          if (typeof x !== "number" || typeof y !== "number") return
-
-          const previousVelocity = velocities.get(nodeId) ?? { x: 0, y: 0 }
-          const vx = (previousVelocity.x + (target.x - x) * DRAG_SPRING_STIFFNESS) * DRAG_SPRING_DAMPING
-          const vy = (previousVelocity.y + (target.y - y) * DRAG_SPRING_STIFFNESS) * DRAG_SPRING_DAMPING
-          const nextX = x + vx
-          const nextY = y + vy
-
-          graph.setNodeAttribute(nodeId, "x", nextX)
-          graph.setNodeAttribute(nodeId, "y", nextY)
-          velocities.set(nodeId, { x: vx, y: vy })
-
-          const distance = Math.hypot(target.x - nextX, target.y - nextY)
-          const speed = Math.hypot(vx, vy)
-          if (distance > DRAG_SPRING_EPSILON || speed > DRAG_SPRING_EPSILON) active = true
-        })
-
-        sigma.refresh({ partialGraph: { nodes: nodeIds }, skipIndexation: true })
-
-        if (active && frameCount < DRAG_SPRING_MAX_FRAMES) {
-          settleAnimationRef.current = window.requestAnimationFrame(settleStep)
-          return
-        }
-
-        targets.forEach((target, nodeId) => {
-          if (!graph.hasNode(nodeId)) return
-          graph.setNodeAttribute(nodeId, "x", target.x)
-          graph.setNodeAttribute(nodeId, "y", target.y)
-          positionCache.set(nodeId, target)
-        })
-        settleAnimationRef.current = null
-        sigma.refresh({ partialGraph: { nodes: nodeIds }, skipIndexation: true })
-      }
-
-      settleAnimationRef.current = window.requestAnimationFrame(settleStep)
-    }
-
-    const stopDragging = () => {
-      const drag = dragStateRef.current
-      if (!drag) return
-      suppressClickRef.current = drag.moved
-      dragStateRef.current = null
-      sigma.setSetting("enableCameraPanning", drag.previousCameraPanning)
-      clearNodeFocus()
-      if (drag.moved) {
-        cancelSettleAnimation()
-        settleDraggedNodes(drag)
-      } else {
-        cacheNodePositions(drag.draggedNodes)
-      }
-    }
-
     registerEvents({
-      clickNode: ({ node }) => {
-        if (suppressClickRef.current) {
-          suppressClickRef.current = false
-          return
-        }
-        onNodeClick(node)
-      },
-      downNode: (payload: SigmaNodeEventPayload) => {
-        cancelSettleAnimation()
-        payload.preventSigmaDefault()
-        payload.event.preventSigmaDefault()
-        payload.event.original.preventDefault()
-        const node = payload.node
-        const neighbors = new Set(graph.neighbors(node))
-        const draggedNodes = new Set([node, ...neighbors])
-        const startGraph = sigma.viewportToGraph({ x: payload.event.x, y: payload.event.y })
-        const positions = new Map<string, { x: number; y: number; pull: number; settle: number }>()
-
-        draggedNodes.forEach((nodeId) => {
-          positions.set(nodeId, {
-            x: graph.getNodeAttribute(nodeId, "x"),
-            y: graph.getNodeAttribute(nodeId, "y"),
-            pull: nodeId === node ? 1 : DRAG_NEIGHBOR_PULL,
-            settle: nodeId === node ? DRAG_SELECTED_SETTLE : DRAG_NEIGHBOR_SETTLE,
-          })
-        })
-
-        dragStateRef.current = {
-          node,
-          draggedNodes,
-          startGraph,
-          startViewport: { x: payload.event.x, y: payload.event.y },
-          positions,
-          moved: false,
-          previousCameraPanning: sigma.getSetting("enableCameraPanning"),
-        }
-        container.style.cursor = "grabbing"
-        sigma.setSetting("enableCameraPanning", false)
-        focusNode(node)
-      },
+      clickNode: ({ node }) => onNodeClick(node),
       rightClickNode: (payload: SigmaNodeEventPayload) => {
         payload.preventSigmaDefault()
         payload.event.original.preventDefault()
@@ -655,42 +329,40 @@ function EventHandler({
         onNodeContextMenu(nodeIdFromPayload(payload), point.x, point.y)
       },
       rightClickStage: () => onNodeContextMenu("", 0, 0),
-      mousemovebody: (event: MouseCoords) => {
-        const drag = dragStateRef.current
-        if (!drag) return
-        event.preventSigmaDefault()
-        event.original.preventDefault()
-        const currentGraph = sigma.viewportToGraph({ x: event.x, y: event.y })
-        const dx = currentGraph.x - drag.startGraph.x
-        const dy = currentGraph.y - drag.startGraph.y
-        const viewportDistance = Math.hypot(event.x - drag.startViewport.x, event.y - drag.startViewport.y)
-        if (viewportDistance > 3) drag.moved = true
-
-        drag.positions.forEach((position, nodeId) => {
-          graph.setNodeAttribute(nodeId, "x", position.x + dx * position.pull)
-          graph.setNodeAttribute(nodeId, "y", position.y + dy * position.pull)
-        })
-        sigma.refresh({ partialGraph: { nodes: [...drag.draggedNodes] }, skipIndexation: true })
-      },
-      mouseup: stopDragging,
-      mouseleave: stopDragging,
       enterNode: ({ node }) => {
-        if (dragStateRef.current) return
-        focusNode(node)
+        const container = sigma.getContainer()
+        container.style.cursor = "pointer"
+        const graph = sigma.getGraph()
+        graph.setNodeAttribute(node, "hovering", true)
+        const neighbors = new Set(graph.neighbors(node))
+        neighbors.add(node)
+        graph.forEachNode((n) => {
+          if (!neighbors.has(n)) graph.setNodeAttribute(n, "dimmed", true)
+        })
+        graph.forEachEdge((e, _attrs, source, target) => {
+          if (source !== node && target !== node) {
+            graph.setEdgeAttribute(e, "dimmed", true)
+          } else {
+            graph.setEdgeAttribute(e, "highlighted", true)
+          }
+        })
+        sigma.refresh()
       },
       leaveNode: () => {
-        if (dragStateRef.current) return
-        clearNodeFocus()
+        const container = sigma.getContainer()
+        container.style.cursor = "default"
+        const graph = sigma.getGraph()
+        graph.forEachNode((n) => {
+          graph.removeNodeAttribute(n, "hovering")
+          graph.removeNodeAttribute(n, "dimmed")
+        })
+        graph.forEachEdge((e) => {
+          graph.removeEdgeAttribute(e, "dimmed")
+          graph.removeEdgeAttribute(e, "highlighted")
+        })
+        sigma.refresh()
       },
     })
-
-    return () => {
-      cancelSettleAnimation()
-      const drag = dragStateRef.current
-      if (!drag) return
-      sigma.setSetting("enableCameraPanning", drag.previousCameraPanning)
-      dragStateRef.current = null
-    }
   }, [registerEvents, sigma, onNodeClick, onNodeContextMenu])
 
   return null
@@ -954,40 +626,31 @@ export function GraphView() {
   const hiddenCount = nodes.length - filteredGraph.nodes.length
   const filtersActive = hasActiveGraphFilters(filters)
   const contextNode = nodeMenu ? nodes.find((node) => node.id === nodeMenu.nodeId) : null
-  const labelSettings = useMemo(
-    () => graphLabelSettings(filteredGraph.nodes.length),
-    [filteredGraph.nodes.length],
-  )
-  const sigmaSettings = useMemo<GraphSigmaSettings>(() => ({
-    renderEdgeLabels: false,
+  const sigmaSettings = useMemo<Partial<Settings> & { labelHaloColor: string }>(() => ({
+    renderEdgeLabels: true,
     defaultEdgeColor: graphTheme.defaultEdge,
     defaultNodeColor: "#94a3b8",
-    labelSize: labelSettings.labelSize,
+    labelSize: 13,
     labelWeight: "bold",
     labelColor: { color: graphTheme.label },
-    edgeLabelSize: 10,
+    edgeLabelSize: 12,
     edgeLabelWeight: "600",
     edgeLabelColor: { color: graphTheme.edgeLabel },
-    labelDensity: labelSettings.labelDensity,
-    labelRenderedSizeThreshold: labelSettings.labelRenderedSizeThreshold,
+    labelDensity: 0.4,
+    labelRenderedSizeThreshold: 6,
     stagePadding: 30,
     defaultDrawNodeLabel: drawReadableNodeLabel,
-    defaultDrawNodeHover: drawReadableNodeHover,
     defaultDrawEdgeLabel: drawReadableEdgeLabel,
     labelHaloColor: graphTheme.labelHalo,
-    nodeHoverBackgroundColor: graphTheme.hoverLabelBackground,
-    nodeHoverLabelColor: graphTheme.hoverLabel,
-    nodeHoverBorderColor: graphTheme.hoverLabelBorder,
-    nodeHoverShadowColor: graphTheme.hoverShadow,
     nodeReducer: (_node, attrs) => {
       const result = { ...attrs }
       if (attrs.insightHighlight) {
-        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.25
+        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.5
         result.zIndex = 10
         result.forceLabel = true
       }
       if (attrs.hovering) {
-        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.18
+        result.size = (attrs.size ?? BASE_NODE_SIZE) * 1.4
         result.zIndex = 10
         result.forceLabel = true
       }
@@ -1005,14 +668,16 @@ export function GraphView() {
         result.size = 0.3
       }
       if (attrs.highlighted) {
+        const w = attrs.weight ?? 1
         result.color = graphTheme.highlightedEdge
-        result.size = Math.max(0.45, (attrs.size ?? 1) * 1.05)
-        result.label = ""
-        result.forceLabel = false
+        result.size = Math.max(2, (attrs.size ?? 1) * 1.5)
+        const relationLabel = attrs.relationLabel ? `${attrs.relationLabel} · ` : ""
+        result.label = `${relationLabel}relevance: ${w.toFixed(1)}`
+        result.forceLabel = true
       }
       return result
     },
-  }), [graphTheme, labelSettings])
+  }), [graphTheme])
 
   if (!project) {
     return (
@@ -1163,24 +828,18 @@ export function GraphView() {
               Resizing...
             </div>
           ) : (
-            <ErrorBoundary>
-              <SigmaContainer
-                key={sigmaKey}
-                style={{ width: "100%", height: "100%", background: "transparent" }}
-                settings={sigmaSettings}
-              >
-                <GraphLoader
-                  nodes={filteredGraph.nodes}
-                  edges={filteredGraph.edges}
-                  colorMode={colorMode}
-                  mode={filters.mode}
-                  edgeRgb={graphTheme.edgeRgb}
-                />
-                <EventHandler onNodeClick={handleNodeClick} onNodeContextMenu={handleNodeContextMenu} />
-                <HighlightManager highlightedNodes={highlightedNodes} />
-                <ZoomControls />
-              </SigmaContainer>
-            </ErrorBoundary>
+          <ErrorBoundary>
+          <SigmaContainer
+            key={sigmaKey}
+            style={{ width: "100%", height: "100%", background: "transparent" }}
+            settings={sigmaSettings}
+          >
+            <GraphLoader nodes={filteredGraph.nodes} edges={filteredGraph.edges} colorMode={colorMode} />
+            <EventHandler onNodeClick={handleNodeClick} onNodeContextMenu={handleNodeContextMenu} />
+            <HighlightManager highlightedNodes={highlightedNodes} />
+            <ZoomControls />
+          </SigmaContainer>
+          </ErrorBoundary>
           )}
 
           {showFilters && (

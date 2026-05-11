@@ -384,6 +384,40 @@ describe("cascadeDeleteWikiPagesWithRefs", () => {
     expect(written).toContain("carol")
   })
 
+  it("drops path-style `.md` related refs to deleted pages", async () => {
+    const target = `${PROJECT}/wiki/entities/alice-chen.md`
+    mockReadFile.mockImplementation(async (p: string) => {
+      if (p === target) return `---\ntitle: "Alice Chen"\n---\nbody`
+      if (p === `${PROJECT}/wiki/concepts/ops.md`) {
+        return [
+          "---",
+          "type: concept",
+          "title: Ops",
+          "related: [wiki/entities/alice-chen.md, wiki/entities/bob.md]",
+          "---",
+          "",
+          "Ops body.",
+        ].join("\n")
+      }
+      throw new Error(`unexpected read ${p}`)
+    })
+    mockListDirectory.mockResolvedValueOnce([
+      dirNode("wiki", [
+        dirNode("wiki/entities", [fileNode("wiki/entities/alice-chen.md")]),
+        dirNode("wiki/concepts", [fileNode("wiki/concepts/ops.md")]),
+      ]),
+    ])
+
+    await cascadeDeleteWikiPagesWithRefs(PROJECT, [target])
+
+    const conceptWrite = mockWriteFile.mock.calls.find(
+      (c) => c[0] === `${PROJECT}/wiki/concepts/ops.md`,
+    )!
+    const written = conceptWrite[1]
+    expect(written).not.toContain("wiki/entities/alice-chen.md")
+    expect(written).toContain("wiki/entities/bob.md")
+  })
+
   it("does NOT touch a sibling whose slug merely contains the deleted slug as a substring", async () => {
     // Deleting "ai" must not corrupt [[OpenAI]] / [[AI Safety]] —
     // the bug class wiki-cleanup was originally written to prevent.
