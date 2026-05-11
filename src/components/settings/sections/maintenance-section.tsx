@@ -25,6 +25,12 @@ import {
   type DedupTask,
 } from "@/lib/dedup-queue"
 import type { DuplicateGroup } from "@/lib/dedup"
+import type { SettingsDraft, DraftSetter } from "../settings-types"
+
+interface Props {
+  draft: SettingsDraft
+  setDraft: DraftSetter
+}
 
 interface GroupUiEntry {
   group: DuplicateGroup
@@ -43,7 +49,7 @@ function findTaskForGroup(
   return tasks.find((t) => groupKey(t.group.slugs) === key)
 }
 
-export function MaintenanceSection() {
+export function MaintenanceSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const project = useWikiStore((s) => s.project)
@@ -200,6 +206,39 @@ export function MaintenanceSection() {
               "Tools for cleaning up the wiki — detect and merge duplicate entities/concepts that the LLM created under different names across re-ingests.",
           })}
         </p>
+      </div>
+
+      <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+        <label className="flex items-start gap-3">
+          <input
+            id="project-file-sync"
+            type="checkbox"
+            checked={draft.projectFileSyncEnabled}
+            onChange={(e) => setDraft("projectFileSyncEnabled", e.target.checked)}
+            disabled={!projectReady}
+            className="mt-1 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <span className="text-sm font-semibold">
+              {t("settings.sections.maintenance.fileSync.title", {
+                defaultValue: "Monitor project folder for external changes",
+              })}
+            </span>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.maintenance.fileSync.description", {
+                defaultValue:
+                  "Automatically refresh the file tree when files change outside the app. New or modified ingestable files under raw/sources are added to the ingest queue.",
+              })}
+            </p>
+            {!projectReady && (
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.maintenance.fileSync.noProject", {
+                  defaultValue: "Open a project to change this project-level setting.",
+                })}
+              </p>
+            )}
+          </div>
+        </label>
       </div>
 
       <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">

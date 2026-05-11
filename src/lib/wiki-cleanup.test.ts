@@ -69,6 +69,16 @@ describe("buildDeletedKeys", () => {
     expect(keys.size).toBe(1)
   })
 
+  it("treats path and .md variants as the same deleted wiki target", () => {
+    const keys = buildDeletedKeys([{ slug: "life_is_a_mind_game", title: "" }])
+    expect(keys.has("lifeisamindgame")).toBe(true)
+
+    const pathKeys = buildDeletedKeys([
+      { slug: "wiki/sources/life_is_a_mind_game.md", title: "" },
+    ])
+    expect(pathKeys.has("lifeisamindgame")).toBe(true)
+  })
+
   it("is empty when given no pages", () => {
     expect(buildDeletedKeys([]).size).toBe(0)
   })
@@ -113,6 +123,17 @@ describe("cleanIndexListing — title/slug matching (Bug A)", () => {
     const text = "- [[kv-cache|KV 缓存]] — 推理加速"
     const keys = buildDeletedKeys([{ slug: "kv-cache", title: "KV Cache" }])
     expect(cleanIndexListing(text, keys).trim()).toBe("")
+  })
+
+  it("drops bullets whose wikilink target includes a path or .md suffix", () => {
+    const text = [
+      "- [[wiki/sources/life_is_a_mind_game.md]] — source summary",
+      "- [[wiki/entities/kept.md]] — kept",
+    ].join("\n")
+    const keys = buildDeletedKeys([{ slug: "life_is_a_mind_game", title: "" }])
+    const result = cleanIndexListing(text, keys)
+    expect(result).not.toContain("life_is_a_mind_game")
+    expect(result).toContain("wiki/entities/kept.md")
   })
 })
 
@@ -299,6 +320,14 @@ describe("stripDeletedWikilinks", () => {
     const keys = buildDeletedKeys([{ slug: "kv-cache", title: "KV Cache" }])
     expect(stripDeletedWikilinks(text, keys)).toBe(
       "Prefer KV Cache over legacy kv-cache.",
+    )
+  })
+
+  it("strips wikilinks whose target includes a path or .md suffix", () => {
+    const text = "See [[life_is_a_mind_game.md]] and [[wiki/sources/life_is_a_mind_game|Life]]."
+    const keys = buildDeletedKeys([{ slug: "life_is_a_mind_game", title: "" }])
+    expect(stripDeletedWikilinks(text, keys)).toBe(
+      "See life_is_a_mind_game.md and Life.",
     )
   })
 

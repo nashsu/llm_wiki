@@ -378,6 +378,31 @@ describe("isSafeIngestPath — what the validator accepts and rejects", () => {
     expect(isSafeIngestPath("wiki/concepts/foo\nbar.md")).toBe(false)
     expect(isSafeIngestPath("wiki/\x07alarm.md")).toBe(false)
   })
+
+  it("rejects Windows-invalid characters in generated filenames", () => {
+    expect(isSafeIngestPath("wiki/concepts/Article: Why It Matters.md")).toBe(false)
+    expect(isSafeIngestPath('wiki/concepts/quoted"name.md')).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/a|b.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/a?b.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/a*b.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/a<b>.md")).toBe(false)
+  })
+
+  it("rejects Windows reserved device names even with extensions", () => {
+    expect(isSafeIngestPath("wiki/concepts/con.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/NUL.pdf.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/com1.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/LPT9.notes.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/auxiliary.md")).toBe(true)
+  })
+
+  it("rejects segments ending in a space or dot for Windows compatibility", () => {
+    expect(isSafeIngestPath("wiki/concepts/topic .md")).toBe(true)
+    expect(isSafeIngestPath("wiki/concepts/topic.")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/topic ")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/folder./topic.md")).toBe(false)
+    expect(isSafeIngestPath("wiki/concepts/folder /topic.md")).toBe(false)
+  })
 })
 
 describe("parseFileBlocks — path-traversal guard end-to-end", () => {

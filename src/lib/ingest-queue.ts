@@ -80,6 +80,70 @@ function generateId(): string {
   return `ingest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function normalizeSourcePathForQueue(sourcePath: string): string {
+  const normalized = normalizePath(sourcePath)
+  if (currentProjectPath && normalized.startsWith(`${currentProjectPath}/`)) {
+    return normalized.slice(currentProjectPath.length + 1)
+  }
+  return normalized
+}
+
+function sameQueuedSourcePath(a: string, b: string): boolean {
+  return normalizeSourcePathForQueue(a) === normalizeSourcePathForQueue(b)
+}
+
+function upsertQueuedIngestTask(
+  projectId: string,
+  sourcePath: string,
+  folderContext: string,
+): string {
+  const normalizedSourcePath = normalizeSourcePathForQueue(sourcePath)
+  const pendingOrFailed = queue.find((t) =>
+    t.projectId === projectId &&
+    (t.status === "pending" || t.status === "failed") &&
+    sameQueuedSourcePath(t.sourcePath, normalizedSourcePath)
+  )
+
+  if (pendingOrFailed) {
+    pendingOrFailed.sourcePath = normalizedSourcePath
+    pendingOrFailed.folderContext = folderContext || pendingOrFailed.folderContext
+    pendingOrFailed.status = "pending"
+    pendingOrFailed.error = null
+    pendingOrFailed.retryCount = 0
+    return pendingOrFailed.id
+  }
+
+  const processing = queue.find((t) =>
+    t.projectId === projectId &&
+    t.status === "processing" &&
+    sameQueuedSourcePath(t.sourcePath, normalizedSourcePath)
+  )
+  const pendingRerun = processing
+    ? queue.find((t) =>
+        t.projectId === projectId &&
+        t.status === "pending" &&
+        sameQueuedSourcePath(t.sourcePath, normalizedSourcePath)
+      )
+    : null
+
+  if (pendingRerun) {
+    return pendingRerun.id
+  }
+
+  const task: IngestTask = {
+    id: generateId(),
+    projectId,
+    sourcePath: normalizedSourcePath,
+    folderContext,
+    status: "pending",
+    addedAt: Date.now(),
+    error: null,
+    retryCount: 0,
+  }
+  queue.push(task)
+  return task.id
+}
+
 /**
  * Delete files written by a cancelled / failed ingest, AND drop the
  * matching pages' chunks from LanceDB. Called from the cancel paths
@@ -123,23 +187,12 @@ export async function enqueueIngest(
     )
   }
 
-  const task: IngestTask = {
-    id: generateId(),
-    projectId,
-    sourcePath,
-    folderContext,
-    status: "pending",
-    addedAt: Date.now(),
-    error: null,
-    retryCount: 0,
-  }
-
-  queue.push(task)
+  const id = upsertQueuedIngestTask(projectId, sourcePath, folderContext)
   await saveQueue(currentProjectPath)
 
   processNext(currentProjectId)
 
-  return task.id
+  return id
 }
 
 /**
@@ -158,18 +211,7 @@ export async function enqueueBatch(
 
   const ids: string[] = []
   for (const file of files) {
-    const task: IngestTask = {
-      id: generateId(),
-      projectId,
-      sourcePath: file.sourcePath,
-      folderContext: file.folderContext,
-      status: "pending",
-      addedAt: Date.now(),
-      error: null,
-      retryCount: 0,
-    }
-    queue.push(task)
-    ids.push(task.id)
+    ids.push(upsertQueuedIngestTask(projectId, file.sourcePath, file.folderContext))
   }
 
   await saveQueue(currentProjectPath)

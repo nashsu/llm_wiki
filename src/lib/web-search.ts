@@ -1,4 +1,10 @@
-import type { SearchApiConfig, SearchProvider, SearchProviderConfigs, SerpApiEngine } from "@/stores/wiki-store"
+import type {
+  SearchApiConfig,
+  SearchProvider,
+  SearchProviderConfigs,
+  SearXngCategory,
+  SerpApiEngine,
+} from "@/stores/wiki-store"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 
 export interface WebSearchResult {
@@ -20,10 +26,38 @@ export const SERPAPI_ENGINE_OPTIONS: { value: SerpApiEngine; label: string; hint
   { value: "youtube", label: "YouTube", hint: "YouTube video results" },
 ]
 
+export const SEARXNG_CATEGORY_OPTIONS: { value: SearXngCategory; label: string; hint: string }[] = [
+  { value: "general", label: "General", hint: "Default web results" },
+  { value: "news", label: "News", hint: "News engines" },
+  { value: "science", label: "Science", hint: "Academic and science-focused engines" },
+  { value: "it", label: "IT", hint: "Developer and technology engines" },
+  { value: "images", label: "Images", hint: "Image search results" },
+  { value: "videos", label: "Videos", hint: "Video search results" },
+  { value: "files", label: "Files", hint: "File and document search" },
+  { value: "map", label: "Map", hint: "Map and location results" },
+  { value: "music", label: "Music", hint: "Music engines" },
+  { value: "social media", label: "Social", hint: "Social media engines" },
+]
+
 export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   const providerConfigs: SearchProviderConfigs = config.providerConfigs ?? {
     ...(config.provider !== "none" && config.apiKey
-      ? { [config.provider]: { apiKey: config.apiKey, serpApiEngine: config.serpApiEngine } }
+      ? {
+          [config.provider]: {
+            apiKey: config.apiKey,
+            serpApiEngine: config.serpApiEngine,
+            searXngUrl: config.searXngUrl,
+            searXngCategories: config.searXngCategories,
+          },
+        }
+      : {}),
+    ...(config.provider === "searxng" && config.searXngUrl
+      ? {
+          searxng: {
+            searXngUrl: config.searXngUrl,
+            searXngCategories: config.searXngCategories,
+          },
+        }
       : {}),
   }
 
@@ -34,6 +68,8 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
       provider: "none",
       apiKey: "",
       serpApiEngine: config.serpApiEngine ?? providerConfigs.serpapi?.serpApiEngine ?? "google",
+      searXngUrl: config.searXngUrl ?? providerConfigs.searxng?.searXngUrl ?? "",
+      searXngCategories: config.searXngCategories ?? providerConfigs.searxng?.searXngCategories ?? ["general"],
       providerConfigs,
     }
   }
@@ -44,6 +80,8 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
     provider: activeProvider,
     apiKey: activeOverride?.apiKey ?? config.apiKey ?? "",
     serpApiEngine: activeOverride?.serpApiEngine ?? config.serpApiEngine ?? "google",
+    searXngUrl: activeOverride?.searXngUrl ?? config.searXngUrl ?? "",
+    searXngCategories: activeOverride?.searXngCategories ?? config.searXngCategories ?? ["general"],
     providerConfigs,
   }
 }
@@ -54,8 +92,14 @@ export async function webSearch(
   maxResults: number = 10,
 ): Promise<WebSearchResult[]> {
   const resolved = resolveSearchConfig(config)
-  if (resolved.provider === "none" || !resolved.apiKey) {
+  if (resolved.provider === "none") {
+    throw new Error("Web search not configured. Select a search provider in Settings.")
+  }
+  if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
     throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings.")
+  }
+  if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
+    throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
   }
 
   switch (resolved.provider) {
@@ -63,8 +107,89 @@ export async function webSearch(
       return tavilySearch(query, resolved.apiKey, maxResults)
     case "serpapi":
       return serpApiSearch(query, resolved.apiKey, maxResults, resolved.serpApiEngine ?? "google")
+    case "searxng":
+      return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
+  }
+}
+
+function searXngSearchUrl(instanceUrl: string): URL {
+  const trimmed = instanceUrl.trim()
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  const url = new URL(withProtocol)
+  const path = url.pathname.replace(/\/+$/, "")
+  url.pathname = path.endsWith("/search") || path === "/search"
+    ? path
+    : `${path}/search`
+  url.search = ""
+  url.hash = ""
+  return url
+}
+
+async function searXngSearch(
+  query: string,
+  instanceUrl: string,
+  maxResults: number,
+  categories: SearXngCategory[],
+): Promise<WebSearchResult[]> {
+  let endpoint: URL
+  try {
+    endpoint = searXngSearchUrl(instanceUrl)
+  } catch {
+    throw new Error("Invalid SearXNG instance URL. Use a valid http(s) URL, for example https://search.example.com.")
+  }
+
+  endpoint.searchParams.set("q", query)
+  endpoint.searchParams.set("format", "json")
+  endpoint.searchParams.set("categories", (categories.length > 0 ? categories : ["general"]).join(","))
+
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch(endpoint.toString(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching the SearXNG instance. Check the instance URL and whether JSON search is enabled.",
+      )
+    }
+    throw err
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error")
+    throw new Error(`SearXNG search failed (${response.status}): ${errorText}`)
+  }
+
+  const data = await response.json()
+  return normalizeSearXngResults(data, maxResults)
+}
+
+function normalizeSearXngResults(data: { results?: unknown[] }, maxResults: number): WebSearchResult[] {
+  return (data.results ?? [])
+    .slice(0, maxResults)
+    .map((item) => normalizeSearXngResult(item))
+    .filter((item) => item.url.length > 0)
+}
+
+function normalizeSearXngResult(item: unknown): WebSearchResult {
+  const r = item as {
+    title?: string
+    url?: string
+    content?: string
+    engine?: string
+    category?: string
+  }
+  const url = r.url ?? ""
+  return {
+    title: r.title ?? "Untitled",
+    url,
+    snippet: r.content ?? "",
+    source: hostnameFromUrl(url) || r.engine || r.category || "",
   }
 }
 

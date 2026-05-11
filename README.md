@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  English | <a href="README_CN.md">中文</a>
+  English | <a href="README_CN.md">中文</a> | <a href="README_JA.md">日本語</a>
 </p>
 
 ---
@@ -38,7 +38,8 @@
 - **Vector Semantic Search** — optional embedding-based retrieval via LanceDB, supports any OpenAI-compatible endpoint
 - **Persistent Ingest Queue** — serial processing with crash recovery, cancel, retry, and progress visualization
 - **Folder Import** — recursive folder import preserving directory structure, folder context as LLM classification hint
-- **Deep Research** — LLM-optimized search topics, multi-query web search, auto-ingest results into wiki
+- **Source Folder Auto-Watch** — detects external changes in `raw/sources/` and keeps ingest/delete cleanup in sync
+- **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, or SearXNG, auto-ingest results into wiki
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 
@@ -116,12 +117,14 @@ Additional ingest enhancements beyond the original:
 - **SHA256 incremental cache** — source file content is hashed before ingest; unchanged files are skipped automatically, saving LLM tokens and time
 - **Persistent ingest queue** — serial processing prevents concurrent LLM calls; queue persisted to disk, survives app restart; failed tasks auto-retry up to 3 times
 - **Folder import** — recursive folder import preserving directory structure; folder path passed to LLM as classification context (e.g., "papers > energy" helps categorize content)
+- **Source folder auto-watch** — files added, edited, or deleted in `raw/sources/` outside the app are picked up automatically and reuse the same ingest/delete lifecycle as in-app actions
 - **Queue visualization** — Activity Panel shows progress bar, pending/processing/failed tasks with cancel and retry buttons
 - **Auto-embedding** — when vector search is enabled, new pages are automatically embedded after ingest
 - **Source traceability** — every generated wiki page includes a `sources: []` field in YAML frontmatter, linking back to the raw source files that contributed to it
 - **overview.md auto-update** — global summary page regenerated on every ingest to reflect the latest state of the wiki
 - **Guaranteed source summary** — fallback ensures a source summary page is always created, even if the LLM omits it
 - **Language-aware generation** — LLM responds in the user's configured language (English or Chinese)
+- **Progressive Sources view** — large source folders render progressively while scrolling, keeping big source collections responsive
 
 ### 4. Knowledge Graph with Relevance Model
 
@@ -266,7 +269,8 @@ The original suggests staying involved during ingest. We added an **asynchronous
 
 Not in the original. When the LLM identifies knowledge gaps:
 
-- **Web search** (Tavily API) finds relevant sources with full content extraction (no truncation)
+- **Web search** via Tavily, SerpApi, or SearXNG finds relevant sources with full content extraction (no truncation)
+- **Provider-specific configuration** — Tavily and SerpApi use independent API keys; SerpApi supports selectable engines, while SearXNG uses a configured instance URL and search categories
 - **Multiple search queries** per topic — LLM-generated at ingest time, optimized for search engines
 - **LLM-optimized research topics** — when triggered from Graph Insights, LLM reads overview.md + purpose.md to generate domain-specific topics and queries (not generic keywords)
 - **User confirmation dialog** — editable topic and search queries shown for review before research starts
@@ -361,7 +365,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | i18n | react-i18next |
 | State | Zustand |
 | LLM | Streaming fetch (OpenAI, Anthropic, Google, Ollama, Custom) |
-| Web Search | Tavily API |
+| Web Search | Tavily, SerpApi, SearXNG JSON API |
 
 ## Installation
 
@@ -394,12 +398,13 @@ npm run tauri build    # Production build
 
 1. Launch the app → Create a new project (choose a template)
 2. Go to **Settings** → Configure your LLM provider (API key + model)
-3. Go to **Sources** → Import documents (PDF, DOCX, MD, etc.)
-4. Watch the **Activity Panel** — LLM automatically builds wiki pages
-5. Use **Chat** to query your knowledge base
-6. Browse the **Knowledge Graph** to see connections
-7. Check **Review** for items needing your attention
-8. Run **Lint** periodically to maintain wiki health
+3. Optional: configure **Web Search** providers and source folder auto-watch in Settings
+4. Go to **Sources** → Import documents (PDF, DOCX, MD, etc.)
+5. Watch the **Activity Panel** — LLM automatically builds wiki pages
+6. Use **Chat** to query your knowledge base
+7. Browse the **Knowledge Graph** to see connections
+8. Check **Review** for items needing your attention
+9. Run **Lint** periodically to maintain wiki health
 
 ## Project Structure
 

@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Local;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::WikiProject;
@@ -241,26 +243,7 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
     run_guarded("open_project", || {
         let root = Path::new(&path);
 
-        if !root.exists() {
-            return Err(format!("Path does not exist: '{}'", path));
-        }
-        if !root.is_dir() {
-            return Err(format!("Path is not a directory: '{}'", path));
-        }
-
-        // Validate that this looks like a wiki project
-        if !root.join("schema.md").exists() {
-            return Err(format!(
-                "Not a valid wiki project (missing schema.md): '{}'",
-                path
-            ));
-        }
-        if !root.join("wiki").is_dir() {
-            return Err(format!(
-                "Not a valid wiki project (missing wiki/ directory): '{}'",
-                path
-            ));
-        }
+        validate_wiki_project_root(root)?;
 
         // Derive project name from the directory name
         let name = root
@@ -275,6 +258,56 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
             path: path.replace('\\', "/"),
         })
     })
+}
+
+#[tauri::command]
+pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
+    run_guarded("open_project_folder", || {
+        let root = Path::new(&path);
+        validate_wiki_project_root(root)?;
+
+        let canonical = root
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve project path '{}': {}", path, e))?;
+        let canonical = canonical.to_string_lossy().to_string();
+
+        match app.opener().open_path(canonical.clone(), None::<&str>) {
+            Ok(()) => Ok(()),
+            Err(open_err) => app
+                .opener()
+                .reveal_item_in_dir(canonical)
+                .map_err(|reveal_err| {
+                    format!(
+                        "Failed to open project folder: {}; reveal fallback also failed: {}",
+                        open_err, reveal_err
+                    )
+                }),
+        }
+    })
+}
+
+fn validate_wiki_project_root(root: &Path) -> Result<(), String> {
+    if !root.exists() {
+        return Err(format!("Path does not exist: '{}'", root.display()));
+    }
+    if !root.is_dir() {
+        return Err(format!("Path is not a directory: '{}'", root.display()));
+    }
+
+    if !root.join("schema.md").exists() {
+        return Err(format!(
+            "Not a valid wiki project (missing schema.md): '{}'",
+            root.display()
+        ));
+    }
+    if !root.join("wiki").is_dir() {
+        return Err(format!(
+            "Not a valid wiki project (missing wiki/ directory): '{}'",
+            root.display()
+        ));
+    }
+
+    Ok(())
 }
 
 fn write_file_inner(path: std::path::PathBuf, contents: &str) -> Result<(), String> {

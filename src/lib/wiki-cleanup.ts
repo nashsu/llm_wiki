@@ -39,12 +39,18 @@ export interface DeletedPageInfo {
  *   "KV Cache"   → "kvcache"
  *   "kv-cache"   → "kvcache"
  *   "kv_cache"   → "kvcache"
+ *   "wiki/concepts/kv-cache.md" → "kvcache"
  *
- * Does NOT strip punctuation — `[[Hello, World]]` and `[[Hello World]]`
- * stay distinct on purpose.
+ * It strips path prefixes and a trailing `.md` because wiki refs may
+ * be written as bare slugs, filenames, or paths. It does NOT strip
+ * other punctuation — `[[Hello, World]]` and `[[Hello World]]` stay
+ * distinct on purpose.
  */
-function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[\s\-_]+/g, "")
+export function normalizeWikiRefKey(s: string): string {
+  const normalized = s.trim().replace(/\\/g, "/")
+  const leaf = normalized.split("/").pop() ?? normalized
+  const withoutMd = leaf.toLowerCase().endsWith(".md") ? leaf.slice(0, -3) : leaf
+  return withoutMd.toLowerCase().replace(/[\s\-_]+/g, "")
 }
 
 /**
@@ -55,8 +61,8 @@ function normalizeKey(s: string): string {
 export function buildDeletedKeys(infos: DeletedPageInfo[]): Set<string> {
   const keys = new Set<string>()
   for (const info of infos) {
-    if (info.slug) keys.add(normalizeKey(info.slug))
-    if (info.title) keys.add(normalizeKey(info.title))
+    if (info.slug) keys.add(normalizeWikiRefKey(info.slug))
+    if (info.title) keys.add(normalizeWikiRefKey(info.title))
   }
   return keys
 }
@@ -96,7 +102,7 @@ export function cleanIndexListing(text: string, deletedKeys: Set<string>): strin
     .filter((line) => {
       const m = line.match(INDEX_ENTRY_RE)
       if (!m) return true
-      return !deletedKeys.has(normalizeKey(m[1].trim()))
+      return !deletedKeys.has(normalizeWikiRefKey(m[1].trim()))
     })
     .join("\n")
 }
@@ -117,7 +123,7 @@ const WIKILINK_RE = /\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g
 export function stripDeletedWikilinks(text: string, deletedKeys: Set<string>): string {
   if (deletedKeys.size === 0) return text
   return text.replace(WIKILINK_RE, (match, target: string, display: string | undefined) => {
-    const key = normalizeKey(target.trim())
+    const key = normalizeWikiRefKey(target.trim())
     if (!deletedKeys.has(key)) return match
     return display ?? target
   })

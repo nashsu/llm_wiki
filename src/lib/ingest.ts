@@ -99,6 +99,8 @@ const CLOSER_LINE = /^---\s*END\s+FILE\s*---\s*$/i
  *   - paths not starting with `wiki/`
  *   - absolute paths (`/etc/passwd`, `C:/Windows/...`)
  *   - any `..` segment
+ *   - Windows-invalid filename characters / reserved device names
+ *   - segments ending in space or `.`
  *   - NUL or control characters
  *   - empty / whitespace-only paths
  *
@@ -114,9 +116,30 @@ export function isSafeIngestPath(p: string): boolean {
   // Normalize backslashes so a Windows-style payload doesn't sneak past.
   const normalized = p.replace(/\\/g, "/")
   // No `..` segments, regardless of position.
-  if (normalized.split("/").some((seg) => seg === "..")) return false
+  const segments = normalized.split("/")
+  if (segments.some((seg) => seg === "..")) return false
+  if (segments.some((seg) => !isWindowsSafePathSegment(seg))) return false
   // Must live under wiki/ — the only tree the ingest pipeline writes to.
   if (!normalized.startsWith("wiki/")) return false
+  return true
+}
+
+function isWindowsSafePathSegment(segment: string): boolean {
+  if (segment.length === 0) return false
+  if (/[<>:"|?*]/.test(segment)) return false
+  if (/[ .]$/.test(segment)) return false
+  const stem = segment.split(".")[0]?.toUpperCase()
+  if (!stem) return false
+  if (
+    stem === "CON" ||
+    stem === "PRN" ||
+    stem === "AUX" ||
+    stem === "NUL" ||
+    /^COM[1-9]$/.test(stem) ||
+    /^LPT[1-9]$/.test(stem)
+  ) {
+    return false
+  }
   return true
 }
 // Fence delimiters per CommonMark (triple+ backticks or tildes). Leading
@@ -232,7 +255,7 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
     if (!isSafeIngestPath(path)) {
       // Path-traversal guard. Drops blocks whose path tries to escape
       // wiki/ — see isSafeIngestPath for the threat model.
-      const msg = `FILE block with unsafe path "${path}" rejected (must be under wiki/, no .., no absolute paths).`
+      const msg = `FILE block with unsafe path "${path}" rejected (must be under wiki/, no .., no absolute paths, and Windows-safe file names).`
       console.warn(`[ingest] ${msg}`)
       warnings.push(msg)
       continue

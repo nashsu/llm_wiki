@@ -27,6 +27,13 @@ export async function copyFile(
   return invoke("copy_file", { source, destination })
 }
 
+export async function copyDirectory(
+  source: string,
+  destination: string
+): Promise<string[]> {
+  return invoke<string[]>("copy_directory", { source, destination })
+}
+
 export async function preprocessFile(path: string): Promise<string> {
   return invoke<string>("preprocess_file", { path })
 }
@@ -81,6 +88,10 @@ export async function openProject(path: string): Promise<WikiProject> {
   const id = await ensureProjectId(raw.path)
   await upsertProjectInfo(id, raw.path, raw.name)
   return { id, name: raw.name, path: raw.path }
+}
+
+export async function openProjectFolder(path: string): Promise<void> {
+  return invoke<void>("open_project_folder", { path })
 }
 
 export async function clipServerStatus(): Promise<string> {

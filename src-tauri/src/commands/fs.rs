@@ -1,9 +1,12 @@
 use std::fs;
 use std::io::Read as IoRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use calamine::{Reader, open_workbook_auto, Data};
 
+use crate::commands::file_sync;
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::FileNode;
 
@@ -133,6 +136,7 @@ fn write_cache(original: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent).ok();
     }
+    crate::commands::file_sync::mark_app_write_path(&cache_path);
     fs::write(&cache_path, text)
         .map_err(|e| format!("Failed to write cache: {}", e))
 }
@@ -895,16 +899,76 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
             let p = Path::new(&path);
-            if let Some(parent) = p.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
-            }
-            fs::write(&path, contents)
-                .map_err(|e| format!("Failed to write file '{}': {}", path, e))
+            file_sync::mark_app_write_path(p);
+            write_file_atomic(p, &contents)
+                .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+            file_sync::mark_app_write_path(p);
+            Ok(())
         })
     })
     .await
     .map_err(|e| format!("write_file blocking task join error: {e}"))?
+}
+
+fn write_file_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path.display(), e))?;
+    }
+
+    let tmp_path = atomic_temp_path(path);
+    fs::write(&tmp_path, contents)
+        .map_err(|e| format!("Failed to write temporary file '{}': {}", tmp_path.display(), e))?;
+
+    match fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            #[cfg(windows)]
+            {
+                if path.exists() {
+                    fs::remove_file(path)
+                        .map_err(|remove_err| {
+                            let _ = fs::remove_file(&tmp_path);
+                            format!(
+                                "Failed to replace existing file '{}': {}; original rename error: {}",
+                                path.display(),
+                                remove_err,
+                                err
+                            )
+                        })?;
+                    return fs::rename(&tmp_path, path).map_err(|rename_err| {
+                        let _ = fs::remove_file(&tmp_path);
+                        format!(
+                            "Failed to move temporary file '{}' to '{}': {}",
+                            tmp_path.display(),
+                            path.display(),
+                            rename_err
+                        )
+                    });
+                }
+            }
+
+            let _ = fs::remove_file(&tmp_path);
+            Err(format!(
+                "Failed to move temporary file '{}' to '{}': {}",
+                tmp_path.display(),
+                path.display(),
+                err
+            ))
+        }
+    }
+}
+
+fn atomic_temp_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "write-file".to_string());
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    path.with_file_name(format!(".{file_name}.{stamp}.tmp"))
 }
 
 #[tauri::command]
@@ -1002,8 +1066,10 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
             }
+            file_sync::mark_app_write_path(dest);
             fs::copy(&source, &destination)
                 .map_err(|e| format!("Failed to copy '{}' to '{}': {}", source, destination, e))?;
+            file_sync::mark_app_write_path(dest);
             Ok(())
         })
     })
@@ -1019,6 +1085,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
         run_guarded("copy_directory", || {
             let src = Path::new(&source);
             let dest = Path::new(&destination);
+            file_sync::mark_app_write_path(dest);
 
             if !src.is_dir() {
                 return Err(format!("'{}' is not a directory", source));
@@ -1053,6 +1120,7 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
                         fs::copy(&path, &dest_path).map_err(|e| {
                             format!("Failed to copy '{}': {}", path.display(), e)
                         })?;
+                        file_sync::mark_app_write_path(&dest_path);
                         files.push(dest_path.to_string_lossy().replace('\\', "/"));
                     }
                 }
@@ -1072,17 +1140,53 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
             let p = Path::new(&path);
+            file_sync::mark_app_write_path(p);
             if p.is_dir() {
-                fs::remove_dir_all(&path)
-                    .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))
+                remove_path_with_retry(&path, true)
+                    .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))?;
             } else {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to delete file '{}': {}", path, e))
+                remove_path_with_retry(&path, false)
+                    .map_err(|e| format!("Failed to delete file '{}': {}", path, e))?;
             }
+            file_sync::mark_app_write_path(p);
+            Ok(())
         })
     })
     .await
     .map_err(|e| format!("delete_file blocking task join error: {e}"))?
+}
+
+fn remove_path_with_retry(path: &str, is_dir: bool) -> Result<(), std::io::Error> {
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..4 {
+        let result = if is_dir {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt < 3 && is_windows_transient_delete_error(&err) => {
+                last_err = Some(err);
+                thread::sleep(Duration::from_millis(250 * (1_u64 << attempt)));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("delete failed")))
+}
+
+fn is_windows_transient_delete_error(err: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(err.raw_os_error(), Some(32 | 33))
+            || err.kind() == std::io::ErrorKind::PermissionDenied
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = err;
+        false
+    }
 }
 
 /// Find wiki pages that reference a given source file name.

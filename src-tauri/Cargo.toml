@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.4.7"
+version = "0.4.9"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
@@ -56,6 +56,9 @@ uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 sha2 = "0.10"
+md-5 = "0.10"
+notify = "8"
+walkdir = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
