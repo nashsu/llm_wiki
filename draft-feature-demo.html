@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LLM Wiki Draft 功能交互演示</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --panel-2: #f9fafb;
+      --text: #172033;
+      --muted: #667085;
+      --line: #e5e7eb;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #ef4444;
+      --shadow: 0 16px 50px rgba(15, 23, 42, .10);
+      --radius: 18px;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, .16), transparent 34rem),
+        linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: -.03em;
+    }
+
+    .subtitle {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #bfdbfe;
+      background: var(--primary-soft);
+      color: #1d4ed8;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 56px minmax(280px, 1fr) 380px;
+      height: calc(100vh - 150px);
+      min-height: 640px;
+      border: 1px solid rgba(148, 163, 184, .32);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .rail {
+      background: #111827;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      font-weight: 800;
+    }
+
+    .rail-btn {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      color: #cbd5e1;
+      background: transparent;
+      border: 0;
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    .rail-btn.active {
+      color: white;
+      background: rgba(255, 255, 255, .14);
+    }
+
+    .rail-btn.focused {
+      color: white;
+      background: rgba(37, 99, 235, .70);
+      box-shadow: inset 3px 0 0 #93c5fd;
+    }
+
+    .nav-dot {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      min-width: 16px;
+      height: 16px;
+      display: none;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--red);
+      color: white;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 1;
+      border: 2px solid #111827;
+    }
+
+    .nav-dot.show {
+      display: grid;
+    }
+
+    .chat {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .chat-top,
+    .draft-top {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .title {
+      font-weight: 700;
+      letter-spacing: -.01em;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .messages {
+      flex: 1;
+      overflow: auto;
+      padding: 20px;
+      background:
+        linear-gradient(#fff, #fff) padding-box,
+        linear-gradient(180deg, #f8fafc, #fff) border-box;
+    }
+
+    .message {
+      display: flex;
+      margin-bottom: 18px;
+    }
+
+    .message.user { justify-content: flex-end; }
+
+    .bubble {
+      max-width: 760px;
+      border-radius: 16px;
+      padding: 14px 16px;
+      line-height: 1.65;
+      font-size: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .user .bubble {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    .assistant-wrap {
+      max-width: 800px;
+    }
+
+    .refs {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ref-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      padding: 5px 9px;
+      font-size: 12px;
+      color: #374151;
+      background: #fff;
+    }
+
+    .actions {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: #344054;
+      border-radius: 10px;
+      padding: 7px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: .15s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: #bfdbfe;
+      box-shadow: 0 6px 16px rgba(37, 99, 235, .12);
+    }
+
+    .btn.primary {
+      color: white;
+      background: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .btn.done {
+      color: #166534;
+      background: #dcfce7;
+      border-color: #bbf7d0;
+    }
+
+    .input {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+      display: flex;
+      gap: 10px;
+      background: #fff;
+    }
+
+    .input .box {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: #f9fafb;
+      font-size: 13px;
+    }
+
+    .drafts {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--panel-2);
+      transition: .2s ease;
+    }
+
+    .drafts.focus-ring {
+      box-shadow: inset 0 0 0 3px rgba(37, 99, 235, .35);
+    }
+
+    .draft-empty,
+    .draft-detail {
+      padding: 18px;
+    }
+
+    .draft-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .draft-count {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      color: #475569;
+      padding: 5px 9px;
+      font-size: 12px;
+    }
+
+    .empty-card {
+      border: 1px dashed #cbd5e1;
+      border-radius: 16px;
+      padding: 18px;
+      color: var(--muted);
+      background: #fff;
+      line-height: 1.65;
+      font-size: 14px;
+    }
+
+    .draft-card {
+      display: none;
+      margin: 14px 18px 0;
+      border: 1px solid #bfdbfe;
+      background: #fff;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 8px 28px rgba(15, 23, 42, .08);
+    }
+
+    .draft-card.show {
+      display: block;
+      animation: pop .22s ease-out;
+    }
+
+    @keyframes pop {
+      from { opacity: 0; transform: translateY(8px) scale(.99); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .draft-card-head {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #eff6ff, #fff);
+    }
+
+    .draft-name {
+      font-weight: 750;
+      margin-bottom: 4px;
+    }
+
+    .draft-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .draft-body {
+      padding: 14px;
+      font-size: 14px;
+      line-height: 1.7;
+      max-height: 330px;
+      overflow: auto;
+    }
+
+    .section-label {
+      margin: 14px 0 8px;
+      color: #344054;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      padding: 0 14px 14px;
+    }
+
+    .source-row {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: #fff;
+      font-size: 12px;
+      color: #344054;
+    }
+
+    .flow {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+
+    .step {
+      border: 1px solid rgba(148, 163, 184, .36);
+      background: rgba(255, 255, 255, .72);
+      border-radius: 14px;
+      padding: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .step strong {
+      display: block;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 28px;
+      bottom: 28px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: #111827;
+      color: white;
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      font-size: 14px;
+    }
+
+    .toast.show {
+      display: flex;
+      animation: pop .18s ease-out;
+    }
+
+    .callout {
+      margin: 0 0 14px;
+      border-left: 4px solid var(--primary);
+      background: #eff6ff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      color: #1e3a8a;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1100px) {
+      .app {
+        grid-template-columns: 52px 1fr;
+        height: auto;
+      }
+      .drafts {
+        grid-column: 2;
+        min-height: 520px;
+        border-top: 1px solid var(--line);
+      }
+      .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <h1>Draft / 底稿功能交互演示</h1>
+        <p class="subtitle">
+          这个 HTML 用一个通用项目资料示例演示：Chat 回答不会自动变成正式材料；只有用户明确点击“设为底稿”后，系统才把这条回复固化为 Draft，并保留引用来源，供后续修改、套模板、导出使用。
+        </p>
+      </div>
+      <div class="badge">演示重点：最小改动 · 最大产品价值</div>
+    </header>
+
+    <section class="app" aria-label="LLM Wiki Draft demo">
+      <nav class="rail" aria-label="左侧导航示意">
+        <div class="logo">W</div>
+        <div class="rail-btn active" title="Wiki">📄</div>
+        <div class="rail-btn" title="Sources">📁</div>
+        <div class="rail-btn" title="Search">🔎</div>
+        <div class="rail-btn" title="Graph">🕸️</div>
+        <div class="rail-btn" title="Review">✅</div>
+        <button id="draftNavBtn" class="rail-btn" title="Drafts / 底稿">
+          📝
+          <span id="draftNavDot" class="nav-dot">1</span>
+        </button>
+        <div style="flex:1"></div>
+        <div class="rail-btn" title="Settings">⚙️</div>
+      </nav>
+
+      <section class="chat">
+        <div class="chat-top">
+          <div>
+            <div class="title">Chat</div>
+            <div class="hint">普通 Chat 默认行为保持不变；Draft 是用户显式点击后的正式动作。</div>
+          </div>
+          <span class="badge">References 已随回复保存</span>
+        </div>
+
+        <div class="messages">
+          <div class="message user">
+            <div class="bubble">
+              请基于当前项目资料，帮我整理一份“项目阶段性汇报”的初稿，要求包含进展、问题和下一步。
+            </div>
+          </div>
+
+          <div class="message">
+            <div class="assistant-wrap">
+              <div class="bubble">
+                <strong>项目阶段性汇报初稿</strong>
+                <p>
+                  当前项目已经完成资料导入、Wiki 初步编译、核心问题归纳和部分风险识别。已有材料显示，项目的主要价值在于把分散文档转化为可检索、可追溯、可持续更新的知识结构。
+                </p>
+                <p>
+                  <strong>一、阶段进展</strong><br>
+                  1. 已建立资料源目录，并完成多份项目文件的摄入。<br>
+                  2. Wiki 页面已形成初步分类，包括资料摘要、关键概念和阶段性问题。<br>
+                  3. Chat 可以基于 Wiki 内容回答问题，并在回答中显示引用来源。
+                </p>
+                <p>
+                  <strong>二、当前问题</strong><br>
+                  1. 部分材料之间存在口径不一致，需要进入 Review 流程复核。<br>
+                  2. AI 回复如果只停留在聊天记录里，不利于沉淀成正式材料。<br>
+                  3. 正式输出前需要明确底稿版本和引用依据。
+                </p>
+                <p>
+                  <strong>三、下一步建议</strong><br>
+                  优先将高质量 Chat 回复设为底稿，并在底稿基础上进行局部修改、模板匹配和最终导出。
+                </p>
+              </div>
+
+              <div class="refs" aria-label="引用来源">
+                <span class="ref-chip">📄 wiki/sources/project-overview.md</span>
+                <span class="ref-chip">📄 wiki/concepts/material-workbench.md</span>
+                <span class="ref-chip">📄 wiki/synthesis/current-risks.md</span>
+              </div>
+
+              <div class="actions">
+                <button class="btn">复制</button>
+                <button class="btn">保存到 Wiki</button>
+                <button id="setDraftBtn" class="btn primary">设为底稿</button>
+                <button class="btn">重新生成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="input">
+          <div class="box">输入消息……普通提问仍然走原 Chat 流程，不会自动套模板或自动导出。</div>
+          <button class="btn primary">发送</button>
+        </div>
+      </section>
+
+      <aside class="drafts">
+        <div class="draft-top">
+          <div>
+            <div class="title">Draft / 底稿</div>
+            <div class="hint">正式材料的锚点：后续修改、模板、导出都从这里开始。</div>
+          </div>
+        </div>
+
+        <div class="draft-toolbar">
+          <span class="draft-count" id="draftCount">底稿 0</span>
+          <button class="btn" id="focusDraftBtn">打开底稿管理</button>
+        </div>
+
+        <div id="emptyState" class="draft-empty">
+          <div class="empty-card">
+            <strong>当前还没有底稿</strong><br>
+            当用户觉得某条 Chat 回复值得继续加工时，点击“设为底稿”。系统会保存正文、来源会话和引用页面。
+          </div>
+        </div>
+
+        <article id="draftCard" class="draft-card">
+          <div class="draft-card-head">
+            <div class="draft-name">项目阶段性汇报初稿</div>
+            <div class="draft-meta">
+              Draft v1 · 来自当前 Chat 回复 · 3 个引用 · 已持久化到 .llm-wiki/drafts.json
+            </div>
+          </div>
+
+          <div class="draft-body">
+            <p class="callout">
+              用户现在不需要翻聊天记录找“哪条回复可以当正式材料”。这份内容已经被提升为可管理的底稿。
+            </p>
+            <strong>项目阶段性汇报初稿</strong>
+            <p>
+              当前项目已经完成资料导入、Wiki 初步编译、核心问题归纳和部分风险识别。已有材料显示，项目的主要价值在于把分散文档转化为可检索、可追溯、可持续更新的知识结构。
+            </p>
+            <p>
+              <strong>下一步：</strong>可以继续做“只修改问题部分”、模板匹配、导出前确认版本等能力。
+            </p>
+          </div>
+
+          <div class="source-list">
+            <div class="section-label">引用来源随 Draft 保存</div>
+            <div class="source-row">📄 wiki/sources/project-overview.md</div>
+            <div class="source-row">📄 wiki/concepts/material-workbench.md</div>
+            <div class="source-row">📄 wiki/synthesis/current-risks.md</div>
+            <div class="actions">
+              <button class="btn">复制底稿</button>
+              <button class="btn">保存到 Wiki</button>
+              <button class="btn" title="未来功能">从此底稿继续修改</button>
+              <button class="btn" title="未来功能">导出</button>
+            </div>
+          </div>
+        </article>
+      </aside>
+    </section>
+
+    <section class="flow" aria-label="功能流">
+      <div class="step"><strong>1. Chat 生成</strong>基于 Wiki 检索和 references 回答。</div>
+      <div class="step"><strong>2. 用户判断</strong>只有满意回复才点击“设为底稿”。</div>
+      <div class="step"><strong>3. Draft 固化</strong>保存正文、来源会话、引用页面。</div>
+      <div class="step"><strong>4. 后续加工</strong>局部修改、版本、diff guard 都围绕 Draft。</div>
+      <div class="step"><strong>5. 正式输出</strong>导出前确认 Draft 版本和来源。</div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast">✅ 已设为底稿：项目阶段性汇报初稿</div>
+
+  <script>
+    const setDraftBtn = document.getElementById("setDraftBtn")
+    const draftNavBtn = document.getElementById("draftNavBtn")
+    const draftNavDot = document.getElementById("draftNavDot")
+    const draftCount = document.getElementById("draftCount")
+    const focusDraftBtn = document.getElementById("focusDraftBtn")
+    const draftsPanel = document.querySelector(".drafts")
+    const emptyState = document.getElementById("emptyState")
+    const draftCard = document.getElementById("draftCard")
+    const toast = document.getElementById("toast")
+
+    function focusDraftsPanel() {
+      draftNavBtn.classList.add("focused")
+      draftsPanel.classList.add("focus-ring")
+      draftsPanel.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" })
+      setTimeout(() => {
+        draftsPanel.classList.remove("focus-ring")
+      }, 1400)
+    }
+
+    setDraftBtn.addEventListener("click", () => {
+      emptyState.style.display = "none"
+      draftCard.classList.add("show")
+      setDraftBtn.textContent = "已设为底稿"
+      setDraftBtn.classList.remove("primary")
+      setDraftBtn.classList.add("done")
+      draftNavDot.classList.add("show")
+      draftCount.textContent = "底稿 1"
+      focusDraftsPanel()
+      toast.classList.add("show")
+      setTimeout(() => toast.classList.remove("show"), 2400)
+    })
+
+    draftNavBtn.addEventListener("click", focusDraftsPanel)
+    focusDraftBtn.addEventListener("click", focusDraftsPanel)
+  </script>
+</body>
+</html>
