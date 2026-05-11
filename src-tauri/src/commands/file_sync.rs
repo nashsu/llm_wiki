@@ -161,14 +161,21 @@ pub fn start_project_file_watcher(
 
         let tx_for_watcher = tx.clone();
         let root_for_overflow = root.clone();
+        let root_for_error = root.clone();
         let mut watcher = RecommendedWatcher::new(
             move |res: notify::Result<Event>| {
-                if let Ok(event) = res {
-                    for path in event.paths {
-                        if tx_for_watcher.try_send(path).is_err() {
-                            let _ = tx_for_watcher.try_send(root_for_overflow.clone());
-                            break;
+                match res {
+                    Ok(event) => {
+                        for path in event.paths {
+                            if tx_for_watcher.try_send(path).is_err() {
+                                let _ = tx_for_watcher.try_send(root_for_overflow.clone());
+                                break;
+                            }
                         }
+                    }
+                    Err(err) => {
+                        eprintln!("[file-sync] watcher error; scheduling rescan: {err}");
+                        let _ = tx_for_watcher.try_send(root_for_error.clone());
                     }
                 }
             },
@@ -727,6 +734,7 @@ fn normalize_rel_path(path: &Path) -> Option<String> {
     for component in path.components() {
         match component {
             Component::Normal(s) => parts.push(s.to_string_lossy().to_string()),
+            Component::CurDir => {}
             _ => return None,
         }
     }
@@ -759,7 +767,11 @@ fn should_watch_rel(rel: &str) -> bool {
         return false;
     }
     let name = lower.rsplit('/').next().unwrap_or(&lower);
-    if name.starts_with("~$") || (name.starts_with(".~lock.") && name.ends_with('#')) {
+    if name == "thumbs.db"
+        || name == "desktop.ini"
+        || name.starts_with("~$")
+        || (name.starts_with(".~lock.") && name.ends_with('#'))
+    {
         return false;
     }
     rel == "purpose.md"
@@ -846,7 +858,31 @@ fn write_json<T: Serialize>(path: PathBuf, value: &T) -> Result<(), String> {
     }
     let text =
         serde_json::to_string_pretty(value).map_err(|e| format!("JSON encode failed: {e}"))?;
-    fs::write(&path, text).map_err(|e| format!("Failed to write '{}': {e}", path.display()))
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file-sync.json".to_string());
+    let tmp_path = path.with_file_name(format!(
+        ".{file_name}.{}.tmp",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_else(now_ms)
+    ));
+    fs::write(&tmp_path, text)
+        .map_err(|e| format!("Failed to write '{}': {e}", tmp_path.display()))?;
+    #[cfg(windows)]
+    {
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| format!("Failed to replace '{}': {e}", path.display()))?;
+        }
+    }
+    fs::rename(&tmp_path, &path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!(
+            "Failed to move '{}' to '{}': {e}",
+            tmp_path.display(),
+            path.display()
+        )
+    })
 }
 
 fn stable_path_hash(path: &str) -> String {
@@ -913,7 +949,7 @@ fn path_key(path: &Path) -> String {
 }
 
 fn normalize_path_key(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    normalize_key(&path.to_string_lossy().replace('\\', "/"))
 }
 
 fn is_app_write_ignored(path: &Path) -> bool {
@@ -1099,9 +1135,20 @@ mod tests {
         assert!(!should_watch_rel(".llm-wiki/file-change-queue.json"));
         assert!(!should_watch_rel("raw/sources/~$Document.docx"));
         assert!(!should_watch_rel("raw/sources/.~lock.Document.odt#"));
+        assert!(!should_watch_rel("raw/sources/Thumbs.db"));
+        assert!(!should_watch_rel("raw/sources/desktop.ini"));
         assert!(!should_watch_rel("raw/sources/download.crdownload"));
         assert!(!should_watch_rel(".vscode/settings.json"));
         assert!(!should_watch_rel("wiki/media/image.png"));
+    }
+
+    #[test]
+    fn normalize_rel_path_tolerates_current_dir_segments() {
+        let path = Path::new("raw").join(".").join("sources").join("doc.md");
+        assert_eq!(
+            normalize_rel_path(&path),
+            Some("raw/sources/doc.md".to_string())
+        );
     }
 
     #[test]
@@ -1155,6 +1202,15 @@ mod tests {
         assert_eq!(before, after);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_path_key_is_case_insensitive() {
+        assert_eq!(
+            normalize_path_key(Path::new(r"C:\Proj\raw\sources\File.md")),
+            normalize_path_key(Path::new(r"c:\proj\RAW\sources\file.md"))
+        );
     }
 
     #[test]

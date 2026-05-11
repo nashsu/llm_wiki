@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::Read as IoRead;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use calamine::{Reader, open_workbook_auto, Data};
 
@@ -1083,10 +1085,10 @@ pub async fn delete_file(path: String) -> Result<(), String> {
             let p = Path::new(&path);
             file_sync::mark_app_write_path(p);
             if p.is_dir() {
-                fs::remove_dir_all(&path)
+                remove_path_with_retry(&path, true)
                     .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))?;
             } else {
-                fs::remove_file(&path)
+                remove_path_with_retry(&path, false)
                     .map_err(|e| format!("Failed to delete file '{}': {}", path, e))?;
             }
             file_sync::mark_app_write_path(p);
@@ -1095,6 +1097,39 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("delete_file blocking task join error: {e}"))?
+}
+
+fn remove_path_with_retry(path: &str, is_dir: bool) -> Result<(), std::io::Error> {
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..4 {
+        let result = if is_dir {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt < 3 && is_windows_transient_delete_error(&err) => {
+                last_err = Some(err);
+                thread::sleep(Duration::from_millis(250 * (1_u64 << attempt)));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("delete failed")))
+}
+
+fn is_windows_transient_delete_error(err: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(err.raw_os_error(), Some(32 | 33))
+            || err.kind() == std::io::ErrorKind::PermissionDenied
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = err;
+        false
+    }
 }
 
 /// Find wiki pages that reference a given source file name.

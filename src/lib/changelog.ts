@@ -26,6 +26,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.9",
+    date: "2026-05-11",
+    highlights: {
+      en: ["Fixed Windows compatibility issues around file paths, source sync, and file deletion."],
+      zh: ["修复 Windows 下文件路径、原始资料同步和文件删除相关的兼容性问题。"],
+    },
+  },
+  {
     version: "0.4.8",
     date: "2026-05-11",
     highlights: {
