@@ -3,6 +3,11 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import {
+  buildSmokeProofRetentionPlan,
+  buildSmokeProofRun,
+  smokeProofStampFromFileName,
+} from "./lib/live-ingest-smoke-retention.mjs"
 
 const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
 const DEFAULT_RETAIN_RUNS = 8
@@ -154,22 +159,13 @@ function createFixtureVault() {
 
 function buildSmokeProofRetentionPreview(runtimeDir, policy) {
   const runs = collectSmokeProofRuns(runtimeDir)
-  const newestRuns = runs.slice(0, policy.retainRuns)
-  const failedOrGuardedRuns = runs.filter((run) => run.failedOrGuarded)
-  const retained = new Set([
-    ...newestRuns.map((run) => run.stamp),
-    ...failedOrGuardedRuns.slice(0, policy.retainFailedRuns).map((run) => run.stamp),
-  ])
-  const deleteCandidates = runs
-    .filter((run) => !retained.has(run.stamp))
-    .flatMap((run) => run.files)
-    .sort()
+  const plan = buildSmokeProofRetentionPlan(runs, {
+    retainRuns: policy.retainRuns,
+    retainFailedOrGuardedRuns: policy.retainFailedRuns,
+  })
   return {
-    totalRuns: runs.length,
-    retainedRuns: Array.from(retained).sort().reverse(),
-    failedOrGuardedRuns: failedOrGuardedRuns.map((run) => run.stamp),
-    deleteCandidates,
-    wouldDeleteCount: deleteCandidates.length,
+    ...plan,
+    wouldDeleteCount: plan.deleteCandidates.length,
     deletedCount: 0,
   }
 }
@@ -178,20 +174,14 @@ function collectSmokeProofRuns(runtimeDir) {
   if (!existsSync(runtimeDir)) return []
   const grouped = new Map()
   for (const name of readdirSync(runtimeDir)) {
-    const match = /^codex-live-ingest-smoke-(\d{8}T\d{6}Z)\.(json|md)$/.exec(name)
-    if (!match) continue
-    const stamp = match[1]
+    const stamp = smokeProofStampFromFileName(name)
+    if (!stamp) continue
     grouped.set(stamp, [...(grouped.get(stamp) ?? []), name])
   }
   const runs = Array.from(grouped.entries()).map(([stamp, files]) => {
     const proofName = `codex-live-ingest-smoke-${stamp}.json`
     const proof = files.includes(proofName) ? readJsonIfExists(join(runtimeDir, proofName)) : null
-    return {
-      stamp,
-      files: files.sort(),
-      generatedAt: typeof proof?.generatedAt === "string" ? proof.generatedAt : stampToIso(stamp),
-      failedOrGuarded: isFailedOrGuardedSmokeProof(proof),
-    }
+    return buildSmokeProofRun(stamp, files, proof)
   })
   return runs.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
 }
@@ -202,21 +192,6 @@ function readJsonIfExists(filePath) {
   } catch {
     return null
   }
-}
-
-function isFailedOrGuardedSmokeProof(proof) {
-  if (!proof || typeof proof !== "object") return false
-  if (Array.isArray(proof.unexpectedWrites) && proof.unexpectedWrites.length > 0) return true
-  if (Array.isArray(proof.guardedBootstrapWrites) && proof.guardedBootstrapWrites.length > 0) return true
-  if (proof.indexChanged === true || proof.overviewChanged === true) return true
-  return proof.healthOperationalSurface?.status === "warn" || proof.healthOperationalSurface?.status === "fail"
-}
-
-function stampToIso(stamp) {
-  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
-  if (!match) return stamp
-  const [, year, month, day, hour, minute, second] = match
-  return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`
 }
 
 function printHelp() {

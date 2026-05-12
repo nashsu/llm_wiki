@@ -12,6 +12,15 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import {
+  buildSmokeProofRetentionPlan,
+  buildSmokeProofRun,
+  classifySmokeProof,
+  countGuardedReasons,
+  smokeProofStampFromFileName,
+  type SmokeProofGuardedReasonDetail,
+  type SmokeProofRun,
+} from "../../scripts/lib/live-ingest-smoke-retention.mjs"
 
 const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
 const RUN_SMOKE = process.env.RUN_LIVE_INGEST_SMOKE === "1"
@@ -101,9 +110,14 @@ describe("live Vault ingest smoke", () => {
       reviewCount: useReviewStore.getState().items.length,
       recoveryMetrics,
       healthOperationalSurface: health?.operationalSurface ?? null,
+      guardedReasons: [] as string[],
+      guardedReasonDetails: [] as SmokeProofGuardedReasonDetail[],
       retention: null as SmokeProofRetentionReport | null,
       monthlySummary: null as SmokeProofMonthlySummaryReport | null,
     }
+    const classification = classifySmokeProof(proof)
+    proof.guardedReasons = classification.reasons
+    proof.guardedReasonDetails = classification.reasonDetails
     await fs.writeFile(proofPath, JSON.stringify(proof, null, 2))
     proof.retention = await applySmokeProofRetention(runtimeDir, {
       retainRuns: readPositiveIntEnv("LLM_WIKI_SMOKE_RETENTION_RUNS", SMOKE_RETENTION_POLICY.retainRuns),
@@ -284,6 +298,7 @@ interface SmokeProofRetentionReport {
   totalRuns: number
   retainedRuns: string[]
   failedOrGuardedRuns: string[]
+  guardedReasonCounts: Record<string, number>
   deleteCandidates: string[]
   deleted: string[]
 }
@@ -299,6 +314,7 @@ interface SmokeProofMonthlySummaryReport {
   guardedBootstrapWriteRuns: number
   retentionDeleteCandidates: number
   retentionDeleted: number
+  guardedReasonCounts: Record<string, number>
   latestProof: string
 }
 
@@ -308,61 +324,34 @@ async function applySmokeProofRetention(runtimeDir: string, policy: {
   prune: boolean
 }): Promise<SmokeProofRetentionReport> {
   const runs = await collectSmokeProofRuns(runtimeDir)
-  const newestRuns = runs.slice(0, policy.retainRuns)
-  const failedOrGuardedRuns = runs.filter((run) => run.failedOrGuarded)
-  const retained = new Set([
-    ...newestRuns.map((run) => run.stamp),
-    ...failedOrGuardedRuns.slice(0, policy.retainFailedOrGuardedRuns).map((run) => run.stamp),
-  ])
-  const deleteCandidates = runs
-    .filter((run) => !retained.has(run.stamp))
-    .flatMap((run) => run.files)
-    .sort()
+  const plan = buildSmokeProofRetentionPlan(runs, policy)
   const deleted: string[] = []
   if (policy.prune) {
-    for (const file of deleteCandidates) {
+    for (const file of plan.deleteCandidates) {
       await fs.rm(path.join(runtimeDir, file), { force: true })
       deleted.push(file)
     }
   }
   return {
     policy,
-    totalRuns: runs.length,
-    retainedRuns: Array.from(retained).sort().reverse(),
-    failedOrGuardedRuns: failedOrGuardedRuns.map((run) => run.stamp),
-    deleteCandidates,
+    ...plan,
     deleted,
   }
 }
 
-async function collectSmokeProofRuns(runtimeDir: string): Promise<Array<{
-  stamp: string
-  files: string[]
-  generatedAt: string
-  failedOrGuarded: boolean
-  unexpectedWrite: boolean
-  guardedBootstrapWrite: boolean
-}>> {
+async function collectSmokeProofRuns(runtimeDir: string): Promise<SmokeProofRun[]> {
   const names = await fs.readdir(runtimeDir).catch(() => [])
   const grouped = new Map<string, string[]>()
   for (const name of names) {
-    const match = /^codex-live-ingest-smoke-(\d{8}T\d{6}Z)\.(json|md)$/.exec(name)
-    if (!match) continue
-    const stamp = match[1]
+    const stamp = smokeProofStampFromFileName(name)
+    if (!stamp) continue
     grouped.set(stamp, [...(grouped.get(stamp) ?? []), name])
   }
   const runs = await Promise.all(Array.from(grouped.entries()).map(async ([stamp, files]) => {
     const proof = files.includes(`codex-live-ingest-smoke-${stamp}.json`)
       ? await readJsonIfExists(path.join(runtimeDir, `codex-live-ingest-smoke-${stamp}.json`))
       : null
-    return {
-      stamp,
-      files: files.sort(),
-      generatedAt: typeof proof?.generatedAt === "string" ? proof.generatedAt : stampToIso(stamp),
-      failedOrGuarded: isFailedOrGuardedSmokeProof(proof),
-      unexpectedWrite: hasUnexpectedWrite(proof),
-      guardedBootstrapWrite: hasGuardedBootstrapWrite(proof),
-    }
+    return buildSmokeProofRun(stamp, files, proof)
   }))
   return runs.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
 }
@@ -383,6 +372,7 @@ async function writeSmokeProofMonthlySummary(
   const failedOrGuardedRuns = runs.filter((run) => run.failedOrGuarded).length
   const unexpectedWriteRuns = runs.filter((run) => run.unexpectedWrite).length
   const guardedBootstrapWriteRuns = runs.filter((run) => run.guardedBootstrapWrite).length
+  const guardedReasonCounts = countGuardedReasons(runs)
   const report: SmokeProofMonthlySummaryReport = {
     month,
     path: `.llm-wiki/runtime/${path.basename(monthlyPath)}`,
@@ -394,6 +384,7 @@ async function writeSmokeProofMonthlySummary(
     guardedBootstrapWriteRuns,
     retentionDeleteCandidates: retention.deleteCandidates.length,
     retentionDeleted: retention.deleted.length,
+    guardedReasonCounts,
     latestProof: `.llm-wiki/runtime/${path.basename(proofPath)}`,
   }
   const text = renderSmokeProofMonthlySummary(report, proof)
@@ -431,6 +422,10 @@ function renderSmokeProofMonthlySummary(
     `| retention_delete_candidates | ${report.retentionDeleteCandidates} |`,
     `| retention_deleted | ${report.retentionDeleted} |`,
     "",
+    "## Guarded Reasons",
+    "",
+    renderGuardedReasonRows(report.guardedReasonCounts),
+    "",
     "## Boundary",
     "",
     "- Detailed run data stays in per-run JSON proof files.",
@@ -439,37 +434,18 @@ function renderSmokeProofMonthlySummary(
   ].join("\n")
 }
 
-function isFailedOrGuardedSmokeProof(proof: unknown): boolean {
-  if (!proof || typeof proof !== "object") return false
-  if (hasUnexpectedWrite(proof)) return true
-  if (hasGuardedBootstrapWrite(proof)) return true
-  const data = proof as Record<string, unknown>
-  const health = data.healthOperationalSurface as { status?: unknown } | null | undefined
-  return health?.status === "warn" || health?.status === "fail"
-}
-
-function hasUnexpectedWrite(proof: unknown): boolean {
-  if (!proof || typeof proof !== "object") return false
-  const data = proof as Record<string, unknown>
-  return Array.isArray(data.unexpectedWrites) && data.unexpectedWrites.length > 0
-}
-
-function hasGuardedBootstrapWrite(proof: unknown): boolean {
-  if (!proof || typeof proof !== "object") return false
-  const data = proof as Record<string, unknown>
-  if (Array.isArray(data.guardedBootstrapWrites) && data.guardedBootstrapWrites.length > 0) return true
-  return data.indexChanged === true || data.overviewChanged === true
+function renderGuardedReasonRows(counts: Record<string, number>): string {
+  const entries = Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))
+  if (entries.length === 0) return "- none"
+  return [
+    "| Reason | Runs |",
+    "|---|---:|",
+    ...entries.map(([reason, count]) => `| ${reason} | ${count} |`),
+  ].join("\n")
 }
 
 function readPositiveIntEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name])
   if (!Number.isFinite(parsed) || parsed < 1) return fallback
   return Math.floor(parsed)
-}
-
-function stampToIso(stamp: string): string {
-  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
-  if (!match) return stamp
-  const [, year, month, day, hour, minute, second] = match
-  return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`
 }
