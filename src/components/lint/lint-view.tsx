@@ -35,6 +35,7 @@ interface SmokeMonthlySummary {
   totalRuns: number
   passedRuns: number
   failedOrGuardedRuns: number
+  guardedReasonCounts: Record<string, number>
 }
 
 const typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }> = {
@@ -590,7 +591,8 @@ function formatSmokeRetention(summary: SmokeRetentionSummary | null) {
 
 function formatSmokeMonthly(summary: SmokeMonthlySummary | null) {
   if (!summary) return undefined
-  return `Monthly ${summary.month} · ${summary.passedRuns}/${summary.totalRuns} passed`
+  const reasons = formatGuardedReasonCounts(summary.guardedReasonCounts, 2)
+  return `Monthly ${summary.month} · ${summary.passedRuns}/${summary.totalRuns} passed${reasons ? ` · ${reasons}` : ""}`
 }
 
 async function loadSmokeRetentionSummary(projectPath: string, latestPointer: string): Promise<SmokeRetentionSummary | null> {
@@ -630,7 +632,32 @@ function normalizeSmokeMonthlySummary(summary: Partial<SmokeMonthlySummary> | un
     totalRuns: Math.max(0, Number(summary.totalRuns ?? 0)),
     passedRuns: Math.max(0, Number(summary.passedRuns ?? 0)),
     failedOrGuardedRuns: Math.max(0, Number(summary.failedOrGuardedRuns ?? 0)),
+    guardedReasonCounts: normalizeReasonCounts(summary.guardedReasonCounts),
   }
+}
+
+function normalizeReasonCounts(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {}
+  const counts: Record<string, number> = {}
+  for (const [key, count] of Object.entries(value)) {
+    const parsed = Number(count)
+    if (Number.isFinite(parsed) && parsed > 0) counts[key] = parsed
+  }
+  return counts
+}
+
+function formatGuardedReasonCounts(counts: Record<string, number>, limit: number) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, limit)
+  if (entries.length === 0) return ""
+  return `guarded: ${entries.map(([key, count]) => `${shortReasonLabel(key)} ${count}`).join(", ")}`
+}
+
+function shortReasonLabel(reason: string) {
+  if (reason === "guarded-bootstrap-write") return "bootstrap"
+  if (reason === "unexpected-write") return "unexpected"
+  if (reason === "health-warn") return "health warn"
+  if (reason === "health-fail") return "health fail"
+  return reason
 }
 
 function surfaceStatusClass(status: "ok" | "warn" | "fail") {

@@ -315,7 +315,19 @@ interface SmokeProofMonthlySummaryReport {
   retentionDeleteCandidates: number
   retentionDeleted: number
   guardedReasonCounts: Record<string, number>
+  trendWindowMonths: number
+  trendMonths: SmokeProofMonthlyTrend[]
   latestProof: string
+}
+
+interface SmokeProofMonthlyTrend {
+  month: string
+  totalRuns: number
+  passedRuns: number
+  failedOrGuardedRuns: number
+  unexpectedWriteRuns: number
+  guardedBootstrapWriteRuns: number
+  guardedReasonCounts: Record<string, number>
 }
 
 async function applySmokeProofRetention(runtimeDir: string, policy: {
@@ -373,6 +385,8 @@ async function writeSmokeProofMonthlySummary(
   const unexpectedWriteRuns = runs.filter((run) => run.unexpectedWrite).length
   const guardedBootstrapWriteRuns = runs.filter((run) => run.guardedBootstrapWrite).length
   const guardedReasonCounts = countGuardedReasons(runs)
+  const trendWindowMonths = 3
+  const trendMonths = buildRecentMonthlySmokeTrend(await collectSmokeProofRuns(runtimeDir), proof.generatedAt, trendWindowMonths)
   const report: SmokeProofMonthlySummaryReport = {
     month,
     path: `.llm-wiki/runtime/${path.basename(monthlyPath)}`,
@@ -385,6 +399,8 @@ async function writeSmokeProofMonthlySummary(
     retentionDeleteCandidates: retention.deleteCandidates.length,
     retentionDeleted: retention.deleted.length,
     guardedReasonCounts,
+    trendWindowMonths,
+    trendMonths,
     latestProof: `.llm-wiki/runtime/${path.basename(proofPath)}`,
   }
   const text = renderSmokeProofMonthlySummary(report, proof)
@@ -426,12 +442,46 @@ function renderSmokeProofMonthlySummary(
     "",
     renderGuardedReasonRows(report.guardedReasonCounts),
     "",
+    `## Recent ${report.trendWindowMonths} Months`,
+    "",
+    renderRecentTrendRows(report.trendMonths),
+    "",
     "## Boundary",
     "",
     "- Detailed run data stays in per-run JSON proof files.",
     "- This summary is for runtime observability and cleanup review only.",
     "",
   ].join("\n")
+}
+
+function buildRecentMonthlySmokeTrend(
+  runs: SmokeProofRun[],
+  generatedAt: string,
+  monthCount: number,
+): SmokeProofMonthlyTrend[] {
+  const months = recentMonthKeys(generatedAt, monthCount)
+  return months.map((month) => {
+    const monthRuns = runs.filter((run) => run.generatedAt.startsWith(month))
+    const failedOrGuardedRuns = monthRuns.filter((run) => run.failedOrGuarded).length
+    return {
+      month,
+      totalRuns: monthRuns.length,
+      passedRuns: Math.max(0, monthRuns.length - failedOrGuardedRuns),
+      failedOrGuardedRuns,
+      unexpectedWriteRuns: monthRuns.filter((run) => run.unexpectedWrite).length,
+      guardedBootstrapWriteRuns: monthRuns.filter((run) => run.guardedBootstrapWrite).length,
+      guardedReasonCounts: countGuardedReasons(monthRuns),
+    }
+  })
+}
+
+function recentMonthKeys(generatedAt: string, monthCount: number): string[] {
+  const anchor = new Date(`${generatedAt.slice(0, 7)}-01T00:00:00.000Z`)
+  if (Number.isNaN(anchor.getTime())) return [generatedAt.slice(0, 7)]
+  return Array.from({ length: monthCount }, (_, index) => {
+    const date = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - index, 1))
+    return date.toISOString().slice(0, 7)
+  })
 }
 
 function renderGuardedReasonRows(counts: Record<string, number>): string {
@@ -442,6 +492,24 @@ function renderGuardedReasonRows(counts: Record<string, number>): string {
     "|---|---:|",
     ...entries.map(([reason, count]) => `| ${reason} | ${count} |`),
   ].join("\n")
+}
+
+function renderRecentTrendRows(trend: SmokeProofMonthlyTrend[]): string {
+  if (trend.length === 0) return "- none"
+  return [
+    "| Month | Total | Passed | Failed/guarded | Unexpected | Bootstrap | Top guarded reasons |",
+    "|---|---:|---:|---:|---:|---:|---|",
+    ...trend.map((month) => {
+      const topReason = formatTopGuardedReasons(month.guardedReasonCounts, 2)
+      return `| ${month.month} | ${month.totalRuns} | ${month.passedRuns} | ${month.failedOrGuardedRuns} | ${month.unexpectedWriteRuns} | ${month.guardedBootstrapWriteRuns} | ${topReason} |`
+    }),
+  ].join("\n")
+}
+
+function formatTopGuardedReasons(counts: Record<string, number>, limit: number): string {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, limit)
+  if (entries.length === 0) return "none"
+  return entries.map(([reason, count]) => `${reason} (${count})`).join(", ")
 }
 
 function readPositiveIntEnv(name: string, fallback: number): number {
