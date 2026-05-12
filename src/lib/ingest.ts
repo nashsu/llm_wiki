@@ -1,5 +1,6 @@
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
+import type { RequestOverrides } from "@/lib/llm-providers"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
@@ -179,6 +180,24 @@ const INGEST_EVIDENCE_STRENGTH_VALUES = new Set<string>(EVIDENCE_STRENGTH_VALUES
 const INGEST_REVIEW_STATUS_VALUES = new Set<string>(REVIEW_STATUS_VALUES)
 const INGEST_KNOWLEDGE_TYPE_VALUES = new Set<string>(KNOWLEDGE_TYPE_VALUES)
 const INGEST_QUERY_RETENTION_VALUES = new Set<string>(QUERY_RETENTION_VALUES)
+
+function isGemini3IngestConfig(llmConfig: LlmConfig): boolean {
+  return llmConfig.provider === "google" && /(?:^|\/)gemini-3(?:[.\-_]|$)/i.test(llmConfig.model.trim())
+}
+
+function buildIngestRequestOverrides(
+  llmConfig: LlmConfig,
+  maxTokens: number,
+  task: "analysis" | "generation" | "focused" = "generation",
+): RequestOverrides {
+  if (isGemini3IngestConfig(llmConfig)) {
+    return {
+      max_tokens: maxTokens,
+      reasoning: { mode: task === "focused" ? "high" : "medium" },
+    }
+  }
+  return { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: maxTokens }
+}
 
 /**
  * Parse an LLM stage-2 generation into FILE blocks.
@@ -693,6 +712,179 @@ async function ensureComparisonPageForComparisonSource(params: {
   }
 }
 
+async function generateFocusedSourceSummaryGeneration(params: {
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext: string
+  llmConfig: LlmConfig
+  sourceSummaryPlan: SourceSummaryPlan
+  signal?: AbortSignal
+}): Promise<{ generation: string | null; warnings: string[] }> {
+  const {
+    sourceFileName,
+    sourceContent,
+    analysis,
+    verificationContext,
+    llmConfig,
+    sourceSummaryPlan,
+    signal,
+  } = params
+  const date = new Date().toISOString().slice(0, 10)
+  const systemPrompt = [
+    "You are a focused source-summary writer for LLM Wiki.",
+    "Generate exactly ONE FILE block and nothing else.",
+    "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
+    `The first line must be exactly: ---FILE: ${sourceSummaryPlan.path}---`,
+    "The last line must be exactly `---END FILE---`.",
+    "The file content inside the block must start with YAML frontmatter.",
+    "Prefer a complete draft source summary over an empty or malformed answer.",
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
+    "Required quality keys: quality, coverage, needs_upgrade, source_count.",
+    "The frontmatter type must be exactly `source`.",
+    `Use created/updated/last_reviewed date ${date}.`,
+    `Use frontmatter title and H1 exactly: ${sourceSummaryPlan.title}.`,
+    `The sources array MUST include "${sourceFileName}".`,
+    "If evidence is only the raw source, use state: draft, evidence_strength: weak|moderate, review_status: ai_generated, and needs_upgrade: true.",
+    "Do not create entity, concept, comparison, synthesis, query, index, overview, or log pages.",
+    "",
+    languageRule(sourceContent),
+    "",
+    wikiTitleLanguagePolicy(),
+  ].join("\n")
+  const userPrompt = [
+    `Source file: ${sourceFileName}`,
+    "",
+    `Write the source summary page at ${sourceSummaryPlan.path}.`,
+    "",
+    "Required sections:",
+    "- ## 요약",
+    "- ## Source Coverage Matrix",
+    "- ## Atomic Claims",
+    "- ## Evidence Map",
+    "- ## 검증 및 최신성",
+    "- ## 오래 유지할 개념",
+    "- ## 관련 엔티티",
+    "- ## Kevin 운영체계 적용",
+    "- ## 운영 노트",
+    "- ## 열린 질문",
+    "",
+    "Use the Stage 1 analysis for structure, but ground claims in the original source.",
+    "If a concept/entity should not be promoted yet, mention it as a candidate in plain text instead of creating a wikilink.",
+    "",
+    "## Stage 1 Analysis",
+    analysis,
+    "",
+    "## Ingest Verification / Currentness Context",
+    verificationContext,
+    "",
+    "## Original Source Content",
+    sourceContent,
+  ].join("\n")
+
+  const warnings: string[] = []
+  try {
+    const generation = await generateOneFileBlock(
+      llmConfig,
+      systemPrompt,
+      userPrompt,
+      signal,
+      8192,
+    )
+    const parsed = parseFileBlocks(generation)
+    warnings.push(...parsed.warnings)
+    if (!parsed.blocks.some((block) => block.path.startsWith("wiki/sources/"))) {
+      warnings.push(`Focused source-summary pass for "${sourceFileName}" did not emit a wiki/sources FILE block.`)
+      return { generation: null, warnings }
+    }
+    return { generation, warnings }
+  } catch (err) {
+    warnings.push(
+      `Focused source-summary pass failed for "${sourceFileName}": ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return { generation: null, warnings }
+  }
+}
+
+async function recoverMissingSourceSummaryPage(params: {
+  projectPath: string
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext: string
+  llmConfig: LlmConfig
+  sourceSummaryPlan: SourceSummaryPlan
+  signal?: AbortSignal
+  options?: AutoIngestOptions
+}): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
+  const {
+    projectPath,
+    sourceFileName,
+    sourceContent,
+    analysis,
+    verificationContext,
+    llmConfig,
+    sourceSummaryPlan,
+    signal,
+    options = {},
+  } = params
+  if (options.skipSourceSummary || signal?.aborted) {
+    return { writtenPaths: [], warnings: [], hardFailures: [] }
+  }
+
+  const warnings: string[] = []
+  const focused = await generateFocusedSourceSummaryGeneration({
+    llmConfig,
+    sourceFileName,
+    sourceContent,
+    analysis,
+    verificationContext,
+    sourceSummaryPlan,
+    signal,
+  })
+  warnings.push(...focused.warnings)
+  if (!focused.generation) {
+    return { writtenPaths: [], warnings, hardFailures: [] }
+  }
+
+  try {
+    const repairedGeneration = await repairGeneratedQualityIssues({
+      generation: focused.generation,
+      llmConfig,
+      sourceFileName,
+      sourceContent,
+      analysis,
+      verificationContext,
+      signal,
+      onWarning: (msg) => warnings.push(msg),
+    })
+    const result = await writeFileBlocks(
+      projectPath,
+      repairedGeneration,
+      llmConfig,
+      sourceFileName,
+      signal,
+      options,
+      sourceSummaryPlan,
+    )
+    warnings.push(...result.warnings)
+    const sourceWritten = result.writtenPaths.filter((p) => p.startsWith("wiki/sources/"))
+    if (sourceWritten.length > 0) {
+      warnings.push(`Recovered missing source summary for "${sourceFileName}" with a focused retry.`)
+    }
+    return {
+      writtenPaths: sourceWritten,
+      warnings,
+      hardFailures: result.hardFailures,
+    }
+  } catch (err) {
+    warnings.push(
+      `Focused source-summary retry failed for "${sourceFileName}": ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return { writtenPaths: [], warnings, hardFailures: [] }
+  }
+}
+
 async function generateOneFileBlock(
   llmConfig: LlmConfig,
   systemPrompt: string,
@@ -714,7 +906,7 @@ async function generateOneFileBlock(
       onError: (err) => { streamError = err },
     },
     signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: maxTokens },
+    buildIngestRequestOverrides(llmConfig, maxTokens, "focused"),
   )
   if (streamError) throw streamError
   return out
@@ -761,7 +953,10 @@ function qualityHoldReviewBlock(
 }
 
 function normalizeWikiTarget(raw: string): string {
-  const cleaned = raw
+  const rawValue = raw.trim()
+  const wikilink = rawValue.match(/^\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]$/)
+  const value = wikilink ? wikilink[1] : rawValue
+  const cleaned = value
     .split("|")[0]
     .split("#")[0]
     .trim()
@@ -797,48 +992,48 @@ function stripUnknownWikilinks(content: string, knownTargets: Set<string>): stri
   })
 }
 
-function pruneHeldRelatedFrontmatter(content: string, heldTargets: Set<string>): string {
-  if (heldTargets.size === 0) return content
+function pruneYamlArrayFrontmatter(
+  content: string,
+  field: string,
+  shouldKeep: (value: string) => boolean,
+): string {
   const parsed = extractFrontmatterPayload(content)
   if (!parsed) return content
 
-  const lines = parsed.payload.split("\n")
-  const next = lines.map((line) => {
-    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
-    if (!match) return line
-    const kept = match[2]
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .filter((part) => !heldTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
-    return `${match[1]}[${kept.join(", ")}]`
-  })
+  const current = readYamlArrayValues(parsed.payload, field)
+  if (current.length === 0) return content
 
-  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+  const kept = current.filter(shouldKeep)
+  if (kept.length === current.length) return content
+
+  return replaceFrontmatterPayload(replaceYamlArrayField(parsed.payload, field, kept), parsed.body)
+}
+
+function pruneHeldRelatedFrontmatter(content: string, heldTargets: Set<string>): string {
+  if (heldTargets.size === 0) return content
+  return pruneYamlArrayFrontmatter(
+    content,
+    "related",
+    (part) => !heldTargets.has(normalizeWikiTarget(part)),
+  )
 }
 
 function pruneUnknownRelatedFrontmatter(content: string, knownTargets: Set<string>): string {
-  const parsed = extractFrontmatterPayload(content)
-  if (!parsed) return content
-
-  const lines = parsed.payload.split("\n")
-  const next = lines.map((line) => {
-    const match = line.match(/^(\s*related\s*:\s*)\[(.*)\]\s*$/i)
-    if (!match) return line
-    const kept = match[2]
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .filter((part) => knownTargets.has(normalizeWikiTarget(part.replace(/^["']|["']$/g, ""))))
-    return `${match[1]}[${kept.join(", ")}]`
-  })
-
-  return replaceFrontmatterPayload(next.join("\n"), parsed.body)
+  return pruneYamlArrayFrontmatter(
+    content,
+    "related",
+    (part) => knownTargets.has(normalizeWikiTarget(part)),
+  )
 }
 
 function stripHeldTargetsFromGeneratedBlock(block: ParsedFileBlock, heldTargets: Set<string>): ParsedFileBlock {
   if (heldTargets.size === 0) return block
-  const withoutBodyLinks = stripHeldWikilinks(block.content, heldTargets)
+  let withoutBodyLinks = stripHeldWikilinks(block.content, heldTargets)
+  withoutBodyLinks = pruneYamlArrayFrontmatter(
+    withoutBodyLinks,
+    "graph_links",
+    (part) => !heldTargets.has(normalizeWikiTarget(part)),
+  )
   return {
     ...block,
     content: pruneHeldRelatedFrontmatter(withoutBodyLinks, heldTargets),
@@ -846,7 +1041,12 @@ function stripHeldTargetsFromGeneratedBlock(block: ParsedFileBlock, heldTargets:
 }
 
 function stripUnknownTargetsFromGeneratedBlock(block: ParsedFileBlock, knownTargets: Set<string>): ParsedFileBlock {
-  const withoutBodyLinks = stripUnknownWikilinks(block.content, knownTargets)
+  let withoutBodyLinks = stripUnknownWikilinks(block.content, knownTargets)
+  withoutBodyLinks = pruneYamlArrayFrontmatter(
+    withoutBodyLinks,
+    "graph_links",
+    (part) => knownTargets.has(normalizeWikiTarget(part)),
+  )
   return {
     ...block,
     content: pruneUnknownRelatedFrontmatter(withoutBodyLinks, knownTargets),
@@ -857,6 +1057,8 @@ function holdLowQualityGeneratedPages(
   generation: string,
   options: {
     expectedDate?: string
+    sourceFileName?: string
+    sourceContent?: string
     onWarning?: (message: string) => void
   } = {},
 ): string {
@@ -870,7 +1072,13 @@ function holdLowQualityGeneratedPages(
   for (const block of blocks) {
     const normalizedBlock = {
       ...block,
-      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
+      content: normalizeIngestFrontmatter(
+        block.path,
+        block.content,
+        expectedDate,
+        options.sourceFileName,
+        options.sourceContent,
+      ),
     }
     const assessment = assessWikiPageQuality(normalizedBlock.path, normalizedBlock.content, {
       expectedDate,
@@ -1056,11 +1264,17 @@ async function repairGeneratedQualityIssues(params: {
   let repairsAttempted = 0
   const expectedDate = currentIngestDate()
 
-  for (const block of blocks) {
-    let current = {
-      ...block,
-      content: normalizeIngestFrontmatter(block.path, block.content, expectedDate),
-    }
+	  for (const block of blocks) {
+	    let current = {
+	      ...block,
+	      content: normalizeIngestFrontmatter(
+	        block.path,
+	        block.content,
+	        expectedDate,
+	        params.sourceFileName,
+	        params.sourceContent,
+	      ),
+	    }
     let assessment = assessWikiPageQuality(current.path, current.content, {
       expectedDate,
       enforceIngestDates: true,
@@ -1094,11 +1308,17 @@ async function repairGeneratedQualityIssues(params: {
           6144,
         )
         const parsed = parseFileBlocks(repaired).blocks.find((b) => b.path === current.path)
-        if (parsed) {
-          current = {
-            ...parsed,
-            content: normalizeIngestFrontmatter(parsed.path, parsed.content, expectedDate),
-          }
+	        if (parsed) {
+	          current = {
+	            ...parsed,
+	            content: normalizeIngestFrontmatter(
+	              parsed.path,
+	              parsed.content,
+	              expectedDate,
+	              params.sourceFileName,
+	              params.sourceContent,
+	            ),
+	          }
           assessment = assessWikiPageQuality(current.path, current.content, {
             expectedDate,
             enforceIngestDates: true,
@@ -1358,6 +1578,134 @@ async function appendActualIngestLog(
   const entry = buildDeterministicIngestLogEntry(sourceFileName, writtenPaths)
   await writeFile(logPath, appendLogContent(existing, entry))
   if (!writtenPaths.includes("wiki/log.md")) writtenPaths.push("wiki/log.md")
+}
+
+const COMPACT_INDEX_SECTION_BY_TYPE: Record<string, string> = {
+  entity: "Entities",
+  concept: "Concepts",
+  comparison: "Comparisons",
+  synthesis: "Synthesis",
+  source: "Sources",
+  query: "Queries",
+}
+
+const COMPACT_INDEX_LABEL_BY_TYPE: Record<string, string> = {
+  entity: "엔티티",
+  concept: "개념",
+  comparison: "비교",
+  synthesis: "종합",
+  source: "소스",
+  query: "쿼리",
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function titleFromGeneratedPage(relativePath: string, content: string): string {
+  const parsed = extractFrontmatterPayload(content)
+  const frontmatterTitle = parsed ? readYamlScalar(parsed.payload, "title") : ""
+  const markdownTitle = extractMarkdownTitle(content, "")
+  const fallback = relativePath.split("/").pop()?.replace(/\.md$/i, "") ?? relativePath
+  return (frontmatterTitle || markdownTitle || fallback).trim()
+}
+
+function wikiLinkTargetFromPath(relativePath: string): string {
+  return relativePath.split("/").pop()?.replace(/\.md$/i, "")?.trim() ?? relativePath
+}
+
+function shouldAddGeneratedPageToCompactIndex(relativePath: string, content: string): boolean {
+  if (!isIngestContentPage(relativePath)) return false
+  const parsed = extractFrontmatterPayload(content)
+  if (!parsed) return false
+
+  const type = pageTypeFromIngestPath(relativePath)
+  const state = readYamlScalar(parsed.payload, "state").toLowerCase()
+  const quality = readYamlScalar(parsed.payload, "quality").toLowerCase()
+  const reviewStatus = readYamlScalar(parsed.payload, "review_status").toLowerCase()
+  const retention = readYamlScalar(parsed.payload, "retention").toLowerCase()
+  const needsUpgrade = readYamlScalar(parsed.payload, "needs_upgrade").toLowerCase()
+
+  if (state === "archived" || state === "deprecated") return false
+  if (retention === "ephemeral" || retention === "archive") return false
+  if (type === "query") return retention === "reusable" || retention === "promote"
+  if (type === "source") {
+    return state === "active" || state === "canonical" || quality === "reviewed" || quality === "canonical"
+  }
+  if (state === "active" || state === "canonical") return true
+  if (quality === "reviewed" || quality === "canonical") return true
+  return needsUpgrade !== "true" && ["ai_reviewed", "human_reviewed", "validated"].includes(reviewStatus)
+}
+
+function compactIndexEntryForPage(relativePath: string, content: string): string | null {
+  const type = pageTypeFromIngestPath(relativePath)
+  const section = COMPACT_INDEX_SECTION_BY_TYPE[type]
+  if (!section) return null
+  const title = titleFromGeneratedPage(relativePath, content)
+  if (!title) return null
+  const target = wikiLinkTargetFromPath(relativePath)
+  const link = target === title ? `[[${title}]]` : `[[${target}|${title}]]`
+  const label = COMPACT_INDEX_LABEL_BY_TYPE[type] ?? type
+  return `- ${link} — ${label}`
+}
+
+function compactIndexHasPage(indexContent: string, relativePath: string, title: string): boolean {
+  const target = wikiLinkTargetFromPath(relativePath)
+  const escaped = escapeRegExp(title)
+  const escapedTarget = escapeRegExp(target)
+  return new RegExp(`\\[\\[(?:${escapedTarget}|${escaped})(?:\\||\\]\\])`, "u").test(indexContent)
+}
+
+function insertCompactIndexEntry(indexContent: string, section: string, entry: string): string {
+  const headingRe = new RegExp(`^##\\s+${escapeRegExp(section)}\\s*$`, "im")
+  const match = headingRe.exec(indexContent)
+  if (!match) {
+    return `${indexContent.trimEnd()}\n\n## ${section}\n\n${entry}\n`
+  }
+
+  const sectionStart = match.index + match[0].length
+  const rest = indexContent.slice(sectionStart)
+  const nextHeading = rest.search(/\n##\s+/)
+  const insertAt = nextHeading >= 0 ? sectionStart + nextHeading : indexContent.length
+  const before = indexContent.slice(0, insertAt).trimEnd()
+  const after = indexContent.slice(insertAt)
+  return `${before}\n${entry}\n${after.replace(/^\n{3,}/, "\n\n")}`
+}
+
+async function syncCompactIndexAfterWrites(
+  projectPath: string,
+  writtenPaths: string[],
+  warnings?: string[],
+): Promise<void> {
+  const candidatePaths = writtenPaths.filter((p) => isIngestContentPage(p))
+  if (candidatePaths.length === 0) return
+
+  const indexPath = `${projectPath}/wiki/index.md`
+  let indexContent = await tryReadFile(indexPath)
+  if (!indexContent.trim()) return
+
+  let changed = false
+  for (const relativePath of candidatePaths) {
+    try {
+      const content = await readFile(`${projectPath}/${relativePath}`)
+      if (!shouldAddGeneratedPageToCompactIndex(relativePath, content)) continue
+      const entry = compactIndexEntryForPage(relativePath, content)
+      if (!entry) continue
+      const title = titleFromGeneratedPage(relativePath, content)
+      if (compactIndexHasPage(indexContent, relativePath, title)) continue
+      const section = COMPACT_INDEX_SECTION_BY_TYPE[pageTypeFromIngestPath(relativePath)]
+      indexContent = insertCompactIndexEntry(indexContent, section, entry)
+      changed = true
+    } catch (err) {
+      const msg = `Failed to sync compact index for "${relativePath}": ${err instanceof Error ? err.message : String(err)}`
+      console.warn(`[ingest] ${msg}`)
+      warnings?.push(msg)
+    }
+  }
+
+  if (changed) {
+    await writeFile(indexPath, indexContent.trimEnd() + "\n")
+  }
 }
 
 async function syncObsidianGraphLinksAfterWrites(
@@ -1730,7 +2078,7 @@ async function autoIngestImpl(
       },
     },
     signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    buildIngestRequestOverrides(llmConfig, 4096, "analysis"),
   )
 
   // A silent `return []` here would look like success to the queue
@@ -1764,6 +2112,25 @@ async function autoIngestImpl(
   activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
 
   let generation = ""
+  const generationWarnings: string[] = []
+
+  if (isGemini3IngestConfig(llmConfig) && !options.skipSourceSummary && !signal?.aborted) {
+    activity.updateItem(activityId, { detail: "Step 2/2: Generating source summary..." })
+    const focused = await generateFocusedSourceSummaryGeneration({
+      llmConfig,
+      sourceFileName: fileName,
+      sourceContent: truncatedContent,
+      analysis,
+      verificationContext,
+      sourceSummaryPlan,
+      signal,
+    })
+    generationWarnings.push(...focused.warnings)
+    if (focused.generation) {
+      generation = focused.generation
+    }
+    activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
+  }
 
   if (llmConfig.provider === "ollama") {
     try {
@@ -1789,6 +2156,7 @@ async function autoIngestImpl(
       })
     }
   } else {
+    if (generation.trim()) generation += "\n\n"
     await streamChat(
       llmConfig,
       [
@@ -1830,7 +2198,7 @@ async function autoIngestImpl(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+      buildIngestRequestOverrides(llmConfig, 8192, "generation"),
     )
   }
 
@@ -1852,12 +2220,14 @@ async function autoIngestImpl(
       activity.updateItem(activityId, { detail: msg })
     },
   })
-  generation = holdLowQualityGeneratedPages(generation, {
-    expectedDate: currentIngestDate(),
-    onWarning: (msg) => {
-      activity.updateItem(activityId, { detail: msg })
-    },
-  })
+	  generation = holdLowQualityGeneratedPages(generation, {
+	    expectedDate: currentIngestDate(),
+	    sourceFileName: fileName,
+	    sourceContent: truncatedContent,
+	    onWarning: (msg) => {
+	      activity.updateItem(activityId, { detail: msg })
+	    },
+	  })
   generation = await stripUnresolvedGeneratedWikilinks(pp, generation)
 
   // ── Step 3: Write files ───────────────────────────────────────
@@ -1871,6 +2241,7 @@ async function autoIngestImpl(
     options,
     sourceSummaryPlan,
   )
+  writeWarnings.push(...generationWarnings)
 
   // Surface parser / writer warnings to the activity panel so users
   // don't have to open devtools to find out a block was dropped.
@@ -1885,7 +2256,28 @@ async function autoIngestImpl(
 
   // Ensure source summary page exists (LLM may not have generated it correctly)
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
-  const hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
+  let hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
+
+  if (!options.skipSourceSummary && !hasSourceSummary && !signal?.aborted) {
+    activity.updateItem(activityId, { detail: "Retrying source summary as a focused task..." })
+    const recoveryResult = await recoverMissingSourceSummaryPage({
+      projectPath: pp,
+      sourceFileName: fileName,
+      sourceContent: truncatedContent,
+      analysis,
+      verificationContext,
+      llmConfig,
+      sourceSummaryPlan,
+      signal,
+      options,
+    })
+    for (const p of recoveryResult.writtenPaths) {
+      if (!writtenPaths.includes(p)) writtenPaths.push(p)
+    }
+    writeWarnings.push(...recoveryResult.warnings)
+    hardFailures.push(...recoveryResult.hardFailures)
+    hasSourceSummary = writtenPaths.some((p) => p.startsWith("wiki/sources/"))
+  }
 
   // If the signal was aborted (e.g. user switched projects / cancelled),
   // skip the fallback summary write — the LLM streams returned empty
@@ -1978,9 +2370,10 @@ async function autoIngestImpl(
     await injectImagesIntoSourceSummary(pp, fileName, savedImages, sourceSummaryPlan)
   }
 
-  if (writtenPaths.length > 0 && !signal?.aborted) {
-    await syncObsidianGraphLinksAfterWrites(pp, writtenPaths, writeWarnings)
-  }
+	  if (writtenPaths.length > 0 && !signal?.aborted) {
+	    await syncCompactIndexAfterWrites(pp, writtenPaths, writeWarnings)
+	    await syncObsidianGraphLinksAfterWrites(pp, writtenPaths, writeWarnings)
+	  }
 
   if (writtenPaths.length > 0 && !signal?.aborted) {
     try {
@@ -2309,8 +2702,110 @@ function upsertYamlScalar(payload: string, field: string, value: string): string
   return `${payload.trimEnd()}\n${line}`
 }
 
+function removeYamlScalar(payload: string, field: string): string {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const re = new RegExp(`^${escaped}\\s*:.*(?:\\r?\\n)?`, "gmi")
+  return payload.replace(re, "").trimEnd()
+}
+
 function replaceFrontmatterPayload(payload: string, body: string): string {
   return ["---", payload.trimEnd(), "---", "", body].join("\n").trimEnd() + "\n"
+}
+
+function unquoteYamlValue(value: string): string {
+  return value.trim().replace(/^["']|["']$/g, "").trim()
+}
+
+function yamlArrayValueKey(value: string): string {
+  return unquoteYamlValue(value).normalize("NFC").toLowerCase()
+}
+
+function splitYamlInlineArray(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function readYamlArrayValues(payload: string, field: string): string[] {
+  const lines = payload.split(/\r?\n/)
+  const fieldRe = new RegExp(`^${field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*(.*)$`, "i")
+  const start = lines.findIndex((line) => fieldRe.test(line))
+  if (start < 0) return []
+
+  const firstLine = lines[start]
+  const inline = firstLine.match(fieldRe)?.[1]?.trim() ?? ""
+  if (inline.startsWith("[") && inline.endsWith("]")) {
+    return splitYamlInlineArray(inline.slice(1, -1)).map(unquoteYamlValue).filter(Boolean)
+  }
+  if (inline.length > 0) return [unquoteYamlValue(inline)].filter(Boolean)
+
+  const values: string[] = []
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (/^[A-Za-z_][\w-]*\s*:/.test(line)) break
+    const item = line.match(/^\s*-\s*(.+?)\s*$/)?.[1]
+    if (item) values.push(unquoteYamlValue(item))
+  }
+  return values.filter(Boolean)
+}
+
+function countYamlArrayValues(payload: string, field: string): number {
+  return readYamlArrayValues(payload, field).length
+}
+
+function quoteYamlInlineValue(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+function replaceYamlArrayField(payload: string, field: string, values: readonly string[]): string {
+  const line = `${field}: [${values.map(quoteYamlInlineValue).join(", ")}]`
+  const lines = payload.split(/\r?\n/)
+  const fieldRe = new RegExp(`^${field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "i")
+  const start = lines.findIndex((candidate) => fieldRe.test(candidate))
+  if (start < 0) return `${payload.trimEnd()}\n${line}`
+
+  let end = start + 1
+  while (end < lines.length && !/^[A-Za-z_][\w-]*\s*:/.test(lines[end])) {
+    end += 1
+  }
+  return [...lines.slice(0, start), line, ...lines.slice(end)].join("\n")
+}
+
+function ensureYamlArrayIncludes(payload: string, field: string, requiredValues: readonly string[]): string {
+  const existing = readYamlArrayValues(payload, field)
+  const byKey = new Map<string, string>()
+  for (const value of existing) {
+    const key = yamlArrayValueKey(value)
+    if (key) byKey.set(key, value)
+  }
+  for (const value of requiredValues) {
+    const cleaned = value.trim()
+    if (!cleaned) continue
+    const key = yamlArrayValueKey(cleaned)
+    if (!byKey.has(key)) byKey.set(key, cleaned)
+  }
+  return replaceYamlArrayField(payload, field, Array.from(byKey.values()))
+}
+
+function hasFastChangingSourceSignal(text?: string): boolean {
+  if (!text) return false
+  return /freshness_tier:\s*"?short"?|freshness_domain:\s*"?(?:ai_tooling|law|finance|pricing|api|software|regulation)"?/iu.test(text)
+}
+
+function hasFastChangingClaim(text: string): boolean {
+  return /\b(API|SDK|pricing|price|benchmark|version|release|latest|current|tool|model|agent|GitHub|MCP|CLI|install|script|support|preview)\b|최신|현재|버전|가격|요금|벤치마크|성능|정확도|모델|도구|설치|지원|프리뷰|릴리스|업데이트/iu.test(text)
+}
+
+function shouldMarkFreshnessRequired(
+  relativePath: string,
+  payload: string,
+  body: string,
+  sourceContent?: string,
+): boolean {
+  if (!isIngestContentPage(relativePath)) return false
+  if (hasFastChangingSourceSignal(sourceContent)) return true
+  return hasFastChangingClaim(`${payload}\n${body}`)
 }
 
 function hasGeneratedFreshnessSection(content: string): boolean {
@@ -2319,7 +2814,13 @@ function hasGeneratedFreshnessSection(content: string): boolean {
   )
 }
 
-function normalizeIngestFrontmatter(relativePath: string, content: string, date: string): string {
+function normalizeIngestFrontmatter(
+  relativePath: string,
+  content: string,
+  date: string,
+  sourceFileName?: string,
+  sourceContent?: string,
+): string {
   if (!isIngestContentPage(relativePath)) return content
   const parsed = extractFrontmatterPayload(content)
   if (!parsed) return content
@@ -2340,8 +2841,12 @@ function normalizeIngestFrontmatter(relativePath: string, content: string, date:
   const coverage = readYamlScalar(payload, "coverage").toLowerCase()
   const needsUpgrade = readYamlScalar(payload, "needs_upgrade").toLowerCase()
   const sourceCount = readYamlScalar(payload, "source_count")
+  const freshnessRequired = readYamlScalar(payload, "freshness_required").toLowerCase()
 
   let forceNeedsUpgrade = false
+  if (sourceFileName && pageType !== "query") {
+    payload = ensureYamlArrayIncludes(payload, "sources", [sourceFileName])
+  }
   if (!state || !INGEST_STATE_VALUES.has(state)) {
     payload = upsertYamlScalar(payload, "state", inferStateFromQuality(quality))
   }
@@ -2359,6 +2864,8 @@ function normalizeIngestFrontmatter(relativePath: string, content: string, date:
   }
   if (pageType === "query" && (!retention || !INGEST_QUERY_RETENTION_VALUES.has(retention))) {
     payload = upsertYamlScalar(payload, "retention", "ephemeral")
+  } else if (pageType !== "query" && retention) {
+    payload = removeYamlScalar(payload, "retention")
   }
   if (!quality) {
     payload = upsertYamlScalar(payload, "quality", "draft")
@@ -2380,9 +2887,12 @@ function normalizeIngestFrontmatter(relativePath: string, content: string, date:
     payload = upsertYamlScalar(payload, "needs_upgrade", "true")
   }
   if (!sourceCount) {
-    payload = upsertYamlScalar(payload, "source_count", "1")
+    payload = upsertYamlScalar(payload, "source_count", String(Math.max(1, countYamlArrayValues(payload, "sources"))))
   } else if (!/^[1-9]\d*$/.test(sourceCount)) {
-    payload = upsertYamlScalar(payload, "source_count", "1")
+    payload = upsertYamlScalar(payload, "source_count", String(Math.max(1, countYamlArrayValues(payload, "sources"))))
+  }
+  if (!freshnessRequired && shouldMarkFreshnessRequired(relativePath, payload, parsed.body, sourceContent)) {
+    payload = upsertYamlScalar(payload, "freshness_required", "true")
   }
   if (
     readYamlScalar(payload, "evidence_strength").toLowerCase() === "weak" &&
@@ -2472,7 +2982,7 @@ async function writeFileBlocks(
           : extractMarkdownTitle(content, sourceSummaryPlan.title),
       )
     }
-    content = normalizeIngestFrontmatter(relativePath, content, ingestDate)
+	    content = normalizeIngestFrontmatter(relativePath, content, ingestDate, sourceFileName)
 
     const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
     if (!decision.allowed) {
@@ -3468,11 +3978,12 @@ export async function executeIngestWrites(
     }
   }
 
-  if (writtenRelativePaths.length > 0 && !signal?.aborted) {
-    await syncObsidianGraphLinksAfterWrites(pp, writtenRelativePaths)
-    for (const relativePath of writtenRelativePaths) {
-      const fullPath = `${pp}/${relativePath}`
-      if (!writtenPaths.includes(fullPath)) writtenPaths.push(fullPath)
+	  if (writtenRelativePaths.length > 0 && !signal?.aborted) {
+	    await syncCompactIndexAfterWrites(pp, writtenRelativePaths)
+	    await syncObsidianGraphLinksAfterWrites(pp, writtenRelativePaths)
+	    for (const relativePath of writtenRelativePaths) {
+	      const fullPath = `${pp}/${relativePath}`
+	      if (!writtenPaths.includes(fullPath)) writtenPaths.push(fullPath)
     }
   }
 

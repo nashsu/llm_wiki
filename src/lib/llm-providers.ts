@@ -538,6 +538,7 @@ function flattenGoogleSystemParts(content: string | ContentBlock[]): string {
 function buildGoogleBody(
   messages: ChatMessage[],
   overrides?: RequestOverrides,
+  model = "",
 ): Record<string, unknown> {
   const systemMessages = messages.filter((m) => m.role === "system")
   const conversationMessages = messages.filter((m) => m.role !== "system")
@@ -576,17 +577,25 @@ function buildGoogleBody(
     generationConfig.stopSequences = Array.isArray(overrides.stop) ? overrides.stop : [overrides.stop]
   }
   if (overrides?.reasoning?.mode === "off") {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 }
+    generationConfig.thinkingConfig = isGemini3Model(model)
+      ? { thinkingLevel: "minimal" }
+      : { thinkingBudget: 0 }
   } else if (overrides?.reasoning && overrides.reasoning.mode !== "auto") {
-    const budget =
-      overrides.reasoning.mode === "custom" && overrides.reasoning.budgetTokens !== undefined
-        ? overrides.reasoning.budgetTokens
-        : overrides.reasoning.mode === "low"
-          ? 1024
-          : overrides.reasoning.mode === "medium"
-            ? 4096
-            : 8192
-    generationConfig.thinkingConfig = { thinkingBudget: budget }
+    if (isGemini3Model(model)) {
+      generationConfig.thinkingConfig = {
+        thinkingLevel: googleThinkingLevel(overrides.reasoning),
+      }
+    } else {
+      const budget =
+        overrides.reasoning.mode === "custom" && overrides.reasoning.budgetTokens !== undefined
+          ? overrides.reasoning.budgetTokens
+          : overrides.reasoning.mode === "low"
+            ? 1024
+            : overrides.reasoning.mode === "medium"
+              ? 4096
+              : 8192
+      generationConfig.thinkingConfig = { thinkingBudget: budget }
+    }
   }
 
   return {
@@ -594,6 +603,23 @@ function buildGoogleBody(
     ...(systemInstruction !== undefined ? { systemInstruction } : {}),
     ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
   }
+}
+
+function isGemini3Model(model: string): boolean {
+  return /(?:^|\/)gemini-3(?:[.\-_]|$)/i.test(model.trim())
+}
+
+function googleThinkingLevel(reasoning: ReasoningConfig): "low" | "medium" | "high" | "minimal" {
+  if (reasoning.mode === "off") return "minimal"
+  if (reasoning.mode === "low") return "low"
+  if (reasoning.mode === "medium") return "medium"
+  if (reasoning.mode === "custom") {
+    const budget = reasoning.budgetTokens ?? 4096
+    if (budget <= 1024) return "low"
+    if (budget <= 4096) return "medium"
+    return "high"
+  }
+  return "high"
 }
 
 export function getProviderConfig(config: LlmConfig): ProviderConfig {
@@ -642,7 +668,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         buildBody: (messages, overrides) => buildGoogleBody(messages, {
           ...(overrides ?? {}),
           reasoning: effectiveReasoning(config, overrides),
-        }),
+        }, model),
         parseStream: parseGoogleLine,
       }
     }
