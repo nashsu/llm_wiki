@@ -4,7 +4,9 @@ import { normalizePath } from "@/lib/path-utils"
 import type { MaintenanceQueue } from "@/lib/maintenance-queue"
 import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
 import { inferStateFromQuality } from "@/lib/wiki-metadata"
+import { buildOperationalSurfaceReport } from "@/lib/wiki-operational-surface"
 import type { FileNode } from "@/types/wiki"
+import type { OperationalSurfaceDocId, OperationalSurfaceReport } from "@/lib/wiki-operational-surface"
 
 export const LOG_RETENTION_POLICY = {
   keepRecentDays: 30,
@@ -61,6 +63,7 @@ export interface WikiHealthReport {
     rolloverNeeded: boolean
     policy: typeof LOG_RETENTION_POLICY
   }
+  operationalSurface: OperationalSurfaceReport
 }
 
 interface ParsedHealthPage {
@@ -82,6 +85,7 @@ export function buildWikiHealthReport(args: {
   nodes: readonly GraphNode[]
   edges: readonly GraphEdge[]
   maintenanceQueue: MaintenanceQueue
+  controlDocs?: Partial<Record<OperationalSurfaceDocId | "log", string>>
   now?: Date
 }): WikiHealthReport {
   const now = args.now ?? new Date()
@@ -110,7 +114,18 @@ export function buildWikiHealthReport(args: {
   const indexableMissing = indexableMissingPages.length
 
   const maintenanceCounts = countBy(args.maintenanceQueue.items.map((item) => item.type))
-  const logStats = computeLogStats(logPage?.content ?? "", now)
+  const logContent = args.controlDocs?.log ?? logPage?.content ?? ""
+  const logStats = computeLogStats(logContent, now)
+  const operationalSurface = buildOperationalSurfaceReport({
+    purpose: args.controlDocs?.purpose ?? "",
+    schema: args.controlDocs?.schema ?? "",
+    index: args.controlDocs?.index ?? indexPage?.content ?? "",
+    overview: args.controlDocs?.overview ?? parsedPages.find((page) => normalizeWikiPath(page.path).endsWith("wiki/overview.md"))?.content ?? "",
+    log: logContent,
+    logEntryCount: logStats.entryCount,
+    logRolloverNeeded: logStats.rolloverNeeded,
+    now,
+  })
 
   return {
     schemaVersion: 1,
@@ -147,6 +162,7 @@ export function buildWikiHealthReport(args: {
       ...logStats,
       policy: LOG_RETENTION_POLICY,
     },
+    operationalSurface,
   }
 }
 
@@ -164,14 +180,28 @@ export async function buildProjectHealthReport(
   maintenanceQueue: MaintenanceQueue,
   now: Date = new Date(),
 ): Promise<WikiHealthReport> {
-  const pages = await readProjectWikiPages(projectPath)
-  return buildWikiHealthReport({ pages, nodes, edges, maintenanceQueue, now })
+  const pp = normalizePath(projectPath)
+  const [pages, purpose, schema] = await Promise.all([
+    readProjectWikiPages(pp),
+    tryReadProjectFile(`${pp}/purpose.md`),
+    tryReadProjectFile(`${pp}/schema.md`),
+  ])
+  return buildWikiHealthReport({ pages, nodes, edges, maintenanceQueue, controlDocs: { purpose, schema }, now })
 }
 
 export async function saveHealthReport(projectPath: string, report: WikiHealthReport): Promise<void> {
   const pp = normalizePath(projectPath)
   await createDirectory(`${pp}/.llm-wiki`).catch(() => {})
   await writeFile(`${pp}/.llm-wiki/health.json`, JSON.stringify(report, null, 2))
+}
+
+
+async function tryReadProjectFile(path: string): Promise<string> {
+  try {
+    return await readFile(path)
+  } catch {
+    return ""
+  }
 }
 
 async function readProjectWikiPages(projectPath: string): Promise<HealthWikiPage[]> {

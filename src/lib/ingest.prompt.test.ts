@@ -6,6 +6,7 @@ import {
   makeComparisonPagePath,
   shouldForceComparisonPage,
 } from "./ingest"
+import { prepareIngestSurface } from "./wiki-operational-surface"
 import { useWikiStore } from "@/stores/wiki-store"
 
 beforeEach(() => {
@@ -132,11 +133,13 @@ describe("buildGenerationPrompt language directive", () => {
     const prompt = buildGenerationPrompt("", "", "", "important-source.md")
     expect(prompt).toContain("## Quality Contract")
     expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("For source summary pages, keep the body compact")
     expect(prompt).toContain("## Atomic Claims")
     expect(prompt).toContain("## Evidence Map")
     expect(prompt).toContain("## 검증 및 최신성")
     expect(prompt).toContain("## Kevin 운영체계 적용")
     expect(prompt).toContain("Thin page guard")
+    expect(prompt).toContain("Every FILE block MUST close")
     expect(prompt).toContain("Verification and freshness")
     expect(prompt).toContain("Treat the raw source as primary evidence")
     expect(prompt).toContain("Ingest Verification Search Results")
@@ -220,5 +223,30 @@ describe("analysis + generation prompt consistency", () => {
     const generation = buildGenerationPrompt("", "", "", "f.pdf", undefined, korean)
     expect(analysis).toContain("MANDATORY OUTPUT LANGUAGE: Korean")
     expect(generation).toContain("MANDATORY OUTPUT LANGUAGE: Korean")
+  })
+})
+
+
+describe("ingest operational surface", () => {
+  it("caps bootstrap docs deterministically and records excluded surfaces without content", () => {
+    const hugeSchema = Array.from({ length: 2000 }, (_, index) => `contract rule ${index}`).join("\n")
+    const first = prepareIngestSurface({
+      purpose: "# Purpose\n\nShort purpose.",
+      schema: hugeSchema,
+      index: "# Index\n\n- [[Canonical Page]]",
+      overview: "# Overview\n\nCurrent snapshot.",
+    }, new Date("2026-05-12T00:00:00.000Z"))
+    const second = prepareIngestSurface({
+      purpose: "# Purpose\n\nShort purpose.",
+      schema: hugeSchema,
+      index: "# Index\n\n- [[Canonical Page]]",
+      overview: "# Overview\n\nCurrent snapshot.",
+    }, new Date("2026-05-12T00:00:00.000Z"))
+
+    expect(first.docs.schema.truncated).toBe(true)
+    expect(first.docs.schema.content).toBe(second.docs.schema.content)
+    expect(first.snapshot.docs.find((doc) => doc.id === "schema")?.truncated).toBe(true)
+    expect(first.snapshot.excludedSections).toContain(".llm-wiki/log-archive/*")
+    expect(JSON.stringify(first.snapshot)).not.toContain("contract rule 1999")
   })
 })

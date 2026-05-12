@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import {
   Link2Off,
   Unlink,
@@ -18,6 +18,7 @@ import { runStructuralLint, runSemanticLint, type LintResult } from "@/lib/lint"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import type { WikiHealthReport } from "@/lib/wiki-health-report"
 
 const typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }> = {
   orphan: { icon: Unlink, label: "Orphan Page" },
@@ -40,6 +41,28 @@ export function LintView() {
   const [hasRun, setHasRun] = useState(false)
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
+  const [operationalSurface, setOperationalSurface] = useState<WikiHealthReport["operationalSurface"] | null>(null)
+  const [surfaceError, setSurfaceError] = useState<string | null>(null)
+
+  const loadOperationalSurface = useCallback(async () => {
+    if (!project) {
+      setOperationalSurface(null)
+      setSurfaceError(null)
+      return
+    }
+    try {
+      const health = JSON.parse(await readFile(`${normalizePath(project.path)}/.llm-wiki/health.json`)) as Partial<WikiHealthReport>
+      setOperationalSurface(health.operationalSurface ?? null)
+      setSurfaceError(health.operationalSurface ? null : "Operational surface data is not available yet.")
+    } catch (err) {
+      setOperationalSurface(null)
+      setSurfaceError(err instanceof Error ? err.message : String(err))
+    }
+  }, [project])
+
+  useEffect(() => {
+    void loadOperationalSurface()
+  }, [loadOperationalSurface])
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
@@ -57,12 +80,13 @@ export function LintView() {
 
       setResults(all)
       setHasRun(true)
+      await loadOperationalSurface()
     } catch (err) {
       console.error("Lint failed:", err)
     } finally {
       setRunning(false)
     }
-  }, [project, llmConfig, running, runSemantic])
+  }, [project, llmConfig, running, runSemantic, loadOperationalSurface])
 
   async function handleOpenPage(page: string) {
     if (!project) return
@@ -235,6 +259,14 @@ export function LintView() {
         </div>
       </div>
 
+      {project && (
+        <OperationalSurfaceSummary
+          surface={operationalSurface}
+          error={surfaceError}
+          onRefresh={loadOperationalSurface}
+        />
+      )}
+
       <div className="flex-1 overflow-y-auto">
         {!hasRun ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
@@ -389,4 +421,78 @@ function LintCard({
       </div>
     </div>
   )
+}
+
+function OperationalSurfaceSummary({
+  surface,
+  error,
+  onRefresh,
+}: {
+  surface: WikiHealthReport["operationalSurface"] | null
+  error: string | null
+  onRefresh: () => void
+}) {
+  const statusClass = surfaceStatusClass(surface?.status ?? (error ? "warn" : "ok"))
+  return (
+    <div className="border-b bg-muted/20 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Wrench className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">Operational surface</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass}`}>
+            {surface?.status ?? (error ? "warn" : "ok")}
+          </span>
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => onRefresh()}>
+          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {surface ? (
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+          <SurfaceMetric
+            label="Ingest surface"
+            value={`${formatBytes(surface.ingestPromptSurfaceBytes)} / ${surface.ingestPromptSurfaceStatus}`}
+          />
+          <SurfaceMetric
+            label="Schema"
+            value={`${surface.docs.schema.lineCount} lines / ${surface.docs.schema.status}`}
+          />
+          <SurfaceMetric
+            label="Overview"
+            value={`${surface.docs.overview.lineCount} lines / ${surface.docs.overview.status}`}
+          />
+          <SurfaceMetric
+            label="Log"
+            value={`${surface.docs.log.entryCount} entries / ${surface.docs.log.rolloverNeeded ? "rollover needed" : "rollover ok"}`}
+          />
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {error ?? "Open or refresh a project health report to show surface status."}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function SurfaceMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border/60 bg-background/60 px-3 py-2">
+      <div className="text-muted-foreground">{label}</div>
+      <div className="mt-1 font-medium">{value}</div>
+    </div>
+  )
+}
+
+function surfaceStatusClass(status: "ok" | "warn" | "fail") {
+  if (status === "fail") return "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+  if (status === "warn") return "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+  return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KiB`
 }

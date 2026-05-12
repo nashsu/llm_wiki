@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { sanitizeIngestedFileContent } from "./ingest-sanitize"
+import { sanitizeGeneratedIndexContent, sanitizeIngestedFileContent } from "./ingest-sanitize"
 
 describe("sanitizeIngestedFileContent", () => {
   it("returns clean content unchanged", () => {
@@ -99,5 +99,46 @@ describe("sanitizeIngestedFileContent", () => {
     expect(out).toBe(
       `---\ntype: entity\nrelated: ["[[a]]", "[[b]]"]\n---\n\n# Body`,
     )
+  })
+})
+
+
+describe("sanitizeGeneratedIndexContent", () => {
+  it("removes archived/deprecated/ephemeral index listing rows", () => {
+    const input = [
+      "---",
+      "type: index",
+      "title: Index",
+      "---",
+      "# Index",
+      "",
+      "## Concepts",
+      "- [[wiki/concepts/current.md|현재 개념]] — active",
+      "- [[wiki/concepts/old.md|오래된 개념]] — state: archived",
+      "- [[wiki/concepts/temp.md|임시 개념]] — retention: ephemeral",
+      "| page | status |",
+      "| --- | --- |",
+      "| [[wiki/concepts/deprecated.md]] | deprecated |",
+      "",
+    ].join("\n")
+
+    expect(sanitizeGeneratedIndexContent(input)).toBe([
+      "---",
+      "type: index",
+      "title: Index",
+      "---",
+      "# Index",
+      "",
+      "## Concepts",
+      "- [[wiki/concepts/current.md|현재 개념]] — active",
+      "| page | status |",
+      "| --- | --- |",
+      "",
+    ].join("\n"))
+  })
+
+  it("leaves policy prose mentioning archive outside listing rows", () => {
+    const input = "# Index\n\nArchive policy prose can mention archived pages.\n\n- [[wiki/concepts/current.md]]"
+    expect(sanitizeGeneratedIndexContent(input)).toBe(input)
   })
 })

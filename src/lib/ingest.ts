@@ -1,4 +1,4 @@
-import { readFile, writeFile, listDirectory } from "@/commands/fs"
+import { createDirectory, readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { RequestOverrides } from "@/lib/llm-providers"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -8,7 +8,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, INGEST_PIPELINE_VERSION, saveIngestCache } from "@/lib/ingest-cache"
-import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
+import { sanitizeGeneratedIndexContent, sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -79,6 +79,8 @@ import {
   inferKnowledgeTypeFromPageType,
   inferStateFromQuality,
 } from "@/lib/wiki-metadata"
+import { prepareIngestSurface } from "@/lib/wiki-operational-surface"
+import type { IngestSurfaceSnapshot } from "@/lib/wiki-operational-surface"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -627,6 +629,7 @@ async function ensureComparisonPageForComparisonSource(params: {
     "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
     `The first line must be exactly: ---FILE: ${comparisonPath}---`,
     "The last line must be exactly `---END FILE---`.",
+    "Never start another FILE block before closing the current one with exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "The frontmatter type must be exactly `comparison`.",
@@ -737,8 +740,10 @@ async function generateFocusedSourceSummaryGeneration(params: {
     "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
     `The first line must be exactly: ---FILE: ${sourceSummaryPlan.path}---`,
     "The last line must be exactly `---END FILE---`.",
+    "Never start another FILE block before closing the current one with exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Prefer a complete draft source summary over an empty or malformed answer.",
+    "Keep source summaries compact: normally 450-1800 body characters; exceed that only when the source is long, technical, and materially reusable.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "Required quality keys: quality, coverage, needs_upgrade, source_count.",
     "The frontmatter type must be exactly `source`.",
@@ -1395,6 +1400,7 @@ async function generateOllamaSplitFileBlocks(params: {
     "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
     "The first line must be the requested `---FILE: path---` line.",
     "The last line must be exactly `---END FILE---`.",
+    "Never start another FILE block before closing the current one with exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
@@ -1455,6 +1461,7 @@ async function generateOllamaSplitFileBlocks(params: {
           : "",
         "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
+        "Keep the source summary compact: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
         "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
@@ -1704,6 +1711,7 @@ async function syncCompactIndexAfterWrites(
   }
 
   if (changed) {
+    indexContent = sanitizeGeneratedIndexContent(indexContent)
     await writeFile(indexPath, indexContent.trimEnd() + "\n")
   }
 }
@@ -1811,13 +1819,30 @@ async function autoIngestImpl(
     filesWritten: [],
   })
 
-  const [sourceContent, schema, purpose, index, overview] = await Promise.all([
+  const [sourceContent, rawSchema, rawPurpose, rawIndex, rawOverview] = await Promise.all([
     tryReadFile(sp),
     readProjectControlDoc(pp, "schema.md"),
     readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+
+  const ingestSurface = prepareIngestSurface({
+    schema: rawSchema,
+    purpose: rawPurpose,
+    index: rawIndex,
+    overview: rawOverview,
+  })
+  await saveIngestSurfaceSnapshot(pp, ingestSurface.snapshot).catch((err) => {
+    console.warn(
+      `[ingest:surface] failed to write ingest surface snapshot:`,
+      err instanceof Error ? err.message : err,
+    )
+  })
+  const schema = ingestSurface.docs.schema.content
+  const purpose = ingestSurface.docs.purpose.content
+  const index = ingestSurface.docs.index.content
+  const overview = ingestSurface.docs.overview.content
 
   const sourceSummaryPlan = await resolveSourceSummaryPlan(pp, fileName, sourceContent, options.sourceSummaryTitle)
   const sourceSummaryPath = sourceSummaryPlan.path
@@ -2983,6 +3008,9 @@ async function writeFileBlocks(
       )
     }
 	    content = normalizeIngestFrontmatter(relativePath, content, ingestDate, sourceFileName)
+    if (relativePath === "wiki/index.md" || relativePath.endsWith("/index.md")) {
+      content = sanitizeGeneratedIndexContent(content)
+    }
 
     const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
     if (!decision.allowed) {
@@ -3213,6 +3241,7 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- Assign a quality recommendation: seed, draft, reviewed, or canonical.",
     "",
     "",
+    "Keep the source summary compact when recommending a source page: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
     "Be thorough but concise. Focus on what's genuinely important, source-grounded, and reusable.",
     "",
     "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
@@ -3286,6 +3315,7 @@ export function buildGenerationPrompt(
     "Do not create average one-paragraph wiki stubs for important material.",
     "High-quality source-derived pages should show that the source was digested, not merely summarized.",
     "",
+    "For source summary pages, keep the body compact: normally 450-1800 characters unless the source is long, technical, and materially reusable.",
     "For source summary pages, include these sections when the source is important:",
     "- ## 요약",
     "- ## Source Coverage Matrix",
@@ -3454,6 +3484,7 @@ export function buildGenerationPrompt(
     "## Output Requirements (STRICT — deviations will cause parse failure)",
     "",
     "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
+    "1a. Every FILE block MUST close with exactly `---END FILE---`; never leave a file block open, even if you emit only one file.",
     "2. DO NOT output any preamble such as \"Here are the files:\", \"Based on the analysis...\", or any introductory prose.",
     "3. DO NOT echo or restate the analysis — that was stage 1's job. Your job is to emit FILE blocks.",
     "4. DO NOT output markdown tables, bullet lists, or headings outside of FILE/REVIEW blocks.",
@@ -3484,6 +3515,14 @@ async function tryReadFile(path: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+
+async function saveIngestSurfaceSnapshot(projectPath: string, snapshot: IngestSurfaceSnapshot): Promise<void> {
+  const runtimeDir = `${projectPath}/.llm-wiki/runtime`
+  await createDirectory(`${projectPath}/.llm-wiki`).catch(() => {})
+  await createDirectory(runtimeDir).catch(() => {})
+  await writeFile(`${runtimeDir}/ingest-surface-snapshot.json`, JSON.stringify(snapshot, null, 2))
 }
 
 async function readProjectControlDoc(projectPath: string, fileName: "schema.md" | "purpose.md"): Promise<string> {
