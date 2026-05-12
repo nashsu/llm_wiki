@@ -80,7 +80,7 @@ export function buildMaintenanceQueue(
     if (node.evidenceStrength === "weak") {
       items.push(item(node, "weak-evidence-page", "high", "evidence_strength is weak."))
     }
-    if (node.needsUpgrade === true || node.quality === "seed" || node.quality === "draft" || node.coverage === "low") {
+    if (shouldQueueLowQualityPage(node)) {
       items.push(item(node, "low-quality-page", "medium", "Quality metadata marks this page as incomplete."))
     }
     if (isKnowledgeNode(node) && (node.sources?.length ?? 0) === 0) {
@@ -120,6 +120,22 @@ export async function saveMaintenanceQueue(
   const pp = normalizePath(projectPath)
   await createDirectory(`${pp}/.llm-wiki`).catch(() => {})
   await writeFile(`${pp}/.llm-wiki/maintenance.json`, JSON.stringify(queue, null, 2))
+}
+
+function shouldQueueLowQualityPage(node: GraphNode): boolean {
+  const markedIncomplete =
+    node.needsUpgrade === true || node.quality === "seed" || node.quality === "draft" || node.coverage === "low"
+  if (!markedIncomplete) return false
+  if (isRoutineDraftSourceSummary(node)) return false
+  return true
+}
+
+function isRoutineDraftSourceSummary(node: GraphNode): boolean {
+  if (node.type !== "source") return false
+  const hasSourceTrace = (node.sources?.length ?? 0) > 0 || (node.sourceCount ?? 0) > 0
+  const hasUsableEvidence = node.evidenceStrength === "moderate" || node.evidenceStrength === "strong"
+  const hasUsableCoverage = node.coverage === "medium" || node.coverage === "high"
+  return hasSourceTrace && hasUsableEvidence && hasUsableCoverage
 }
 
 function item(

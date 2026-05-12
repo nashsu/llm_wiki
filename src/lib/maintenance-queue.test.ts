@@ -94,6 +94,70 @@ describe("maintenance queue", () => {
     })
   })
 
+  it("does not queue routine draft source summaries as low quality", () => {
+    const nodes: GraphNode[] = [
+      makeNode({
+        id: "source-summary",
+        label: "Source Summary",
+        type: "source",
+        path: "/p/wiki/sources/source-summary.md",
+        sources: ["raw-source.md"],
+        quality: "draft",
+        coverage: "medium",
+        evidenceStrength: "moderate",
+        needsUpgrade: true,
+        sourceCount: 1,
+        linkCount: 1,
+      }),
+      makeNode({
+        id: "draft-concept",
+        label: "Draft Concept",
+        type: "concept",
+        path: "/p/wiki/concepts/draft-concept.md",
+        sources: ["raw-source.md"],
+        quality: "draft",
+        coverage: "medium",
+        evidenceStrength: "moderate",
+        needsUpgrade: true,
+        sourceCount: 1,
+        linkCount: 1,
+      }),
+    ]
+
+    const queue = buildMaintenanceQueue(nodes, [], new Date("2026-05-11T00:00:00.000Z"))
+
+    expect(queue.items).toHaveLength(1)
+    expect(queue.items[0]).toMatchObject({
+      type: "low-quality-page",
+      pageTitle: "Draft Concept",
+    })
+  })
+
+  it("keeps genuinely weak source summaries in the maintenance queue", () => {
+    const nodes: GraphNode[] = [
+      makeNode({
+        id: "weak-source-summary",
+        label: "Weak Source Summary",
+        type: "source",
+        path: "/p/wiki/sources/weak-source-summary.md",
+        sources: ["raw-source.md"],
+        quality: "draft",
+        coverage: "low",
+        evidenceStrength: "weak",
+        needsUpgrade: true,
+        sourceCount: 1,
+        linkCount: 1,
+      }),
+    ]
+
+    const queue = buildMaintenanceQueue(nodes, [], new Date("2026-05-11T00:00:00.000Z"))
+
+    expect(queue.items.map((item) => item.type)).toEqual([
+      "weak-evidence-page",
+      "low-quality-page",
+    ])
+  })
+
   it("adds hidden query promotion and archived reference candidates", async () => {
     mockListDirectory.mockResolvedValueOnce([
       {

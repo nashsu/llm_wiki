@@ -321,6 +321,60 @@ describe("ingest scenarios (fixture-driven)", () => {
   )
 })
 
+describe("focused source-summary recovery", () => {
+  it("retries a missing source summary as a small focused task before writing fallback", async () => {
+    ctx = { tmp: await createTempProject("ingest-focused-source-retry") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(
+      ctx.tmp.path,
+      "raw",
+      "sources",
+      "제미나이 리커버리.md",
+    )
+    await writeFileRaw(
+      sourceFullPath,
+      "# 제미나이 리커버리\n\n빠른 모델은 큰 작업보다 작은 source summary 작업을 안정적으로 처리한다.\n",
+    )
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Concepts\n- Gemini 3 focused ingest retry\n",
+      requestedFileBlock,
+      "The broad generation failed to emit FILE blocks.",
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "google",
+        apiKey: "test-key",
+        model: "gemini-3-flash-preview",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    const sourcePath = written.find((p) => p.startsWith("wiki/sources/"))
+    expect(sourcePath).toBeTruthy()
+    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, sourcePath!))
+    expect(sourceSummary).toContain("이 source summary는 테스트 raw source의 핵심 주장")
+    expect(sourceSummary).not.toContain("Fallback summary generated because the model did not emit a valid source summary page.")
+  })
+})
+
 describe("ollama split ingest", () => {
   it("keeps Korean source concept paths distinct instead of collapsing to an ASCII fallback", async () => {
     ctx = { tmp: await createTempProject("ingest-korean-ollama") }
@@ -603,7 +657,7 @@ describe("Obsidian graph link sync", () => {
 })
 
 describe("ingest write scope guard", () => {
-  it("normalizes overclaimed source metadata and strips links to held pages", async () => {
+	  it("normalizes overclaimed source metadata and strips links to held pages", async () => {
     ctx = { tmp: await createTempProject("ingest-quality-held-link-prune") }
     await minimalProject(ctx.tmp.path)
 
@@ -736,11 +790,220 @@ describe("ingest write scope guard", () => {
     expect(indexContent).not.toContain("[[ghost-tool]]")
     expect(indexContent).toContain("dify")
     expect(indexContent).toContain("ghost-tool")
-    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "entities", "dify.md"))).toBe(false)
-    expect(useReviewStore.getState().items.some((item) => item.title === "Quality hold: wiki/entities/dify.md")).toBe(true)
-  })
+	    expect(await fileExists(path.join(ctx.tmp.path, "wiki", "entities", "dify.md"))).toBe(false)
+	    expect(useReviewStore.getState().items.some((item) => item.title === "Quality hold: wiki/entities/dify.md")).toBe(true)
+	  })
 
-  it("reuses an existing legacy source page and drops over-generated or noncanonical paths", async () => {
+	  it("normalizes Gemini-style missing source trace, block related links, freshness, and compact index", async () => {
+	    ctx = { tmp: await createTempProject("ingest-gemini-postprocess-safety-net") }
+	    await minimalProject(ctx.tmp.path)
+
+	    const sourceFileName = "케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법.md"
+	    const sourceFullPath = path.join(ctx.tmp.path, "raw", "sources", sourceFileName)
+	    await writeFileRaw(
+	      sourceFullPath,
+	      [
+	        "---",
+	        "freshness_tier: short",
+	        "freshness_domain: ai_tooling",
+	        "---",
+	        "# 케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법",
+	        "",
+	        "Caveman 프롬프트 방식은 최신 AI 도구 사용에서 토큰을 아끼고 답변을 빠르게 만드는 운영 패턴이다.",
+	      ].join("\n"),
+	    )
+
+	    useWikiStore.setState({
+	      project: {
+	        name: "t",
+	        path: ctx.tmp.path,
+	        createdAt: 0,
+	        purposeText: "",
+	        fileTree: [],
+	      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+	      outputLanguage: "Korean",
+	    })
+
+	    pendingResponses = [
+	      "## Key Entities\n- Caveman\n\n## Verification & Freshness Plan\n- 최신 AI tooling 맥락이므로 freshness_required가 필요합니다.",
+	      [
+	        "---FILE: wiki/sources/케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법 소스 요약.md---",
+	        "---",
+	        "type: source",
+	        "title: 케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법 소스 요약",
+	        "created: 2024-05-10",
+	        "updated: 2024-05-10",
+	        "tags: [ai-tooling]",
+	        "related:",
+	        "  - wiki/entities/Caveman",
+	        "  - Cursor",
+	        `sources: ["${sourceFileName}"]`,
+	        "confidence: medium",
+	        "evidence_strength: moderate",
+	        "review_status: ai_generated",
+	        "knowledge_type: operational",
+	        "last_reviewed: 2024-05-10",
+	        "quality: draft",
+	        "coverage: medium",
+	        "needs_upgrade: true",
+	        "source_count: 1",
+	        "---",
+	        "",
+	        "# 케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법 소스 요약",
+	        "",
+	        "## 요약",
+	        "이 source summary는 Caveman 방식이 긴 프롬프트 대신 짧고 직접적인 명령을 사용해 AI 답변 비용과 시간을 줄이려는 운영 패턴임을 설명합니다. 원문은 프롬프트 설계, 토큰 절약, 빠른 반복, 간결한 질문 구조를 함께 다룹니다.",
+	        "",
+	        "## Source Coverage Matrix",
+	        "- 핵심 주장: 짧은 명령은 반복 작업에서 비용과 시간을 줄일 수 있습니다.",
+	        "- 구조: 문제 정의, 짧은 명령 예시, 운영 적용 조건, 주의점으로 나뉩니다.",
+	        "",
+	        "## Atomic Claims",
+	        "- Caveman 방식은 복잡한 역할극보다 목적어와 동사를 명확히 쓰는 방식입니다.",
+	        "- 최신 모델과 도구별 응답 품질은 별도 검증이 필요합니다.",
+	        "",
+	        "## Evidence Map",
+	        `- Primary source: ${sourceFileName}`,
+	        "",
+	        "## 검증 및 최신성",
+	        "AI tooling과 모델 응답 품질은 빠르게 바뀌므로 최신 모델별 효과는 외부 확인이 필요합니다. 이 문서는 원문 기반 draft로 보존합니다.",
+	        "",
+	        "## Kevin 운영체계 적용",
+	        "반복 Codex/Gemini 작업에서 짧은 명령 템플릿을 운영 패턴으로 시험하고, 성공한 표현만 재사용 지식으로 승격합니다.",
+	        "",
+	        "## 운영 노트",
+	        "이 source page는 원문 근거 추적용이며, 독립 concept 승격은 반복 검증 후 수행합니다.",
+	        "",
+	        "## 열린 질문",
+	        "- 어떤 모델에서 짧은 명령이 실제 비용과 품질 모두에 유리한가?",
+	        "---END FILE---",
+	        "",
+	        "---FILE: wiki/entities/Caveman.md---",
+	        "---",
+	        "type: entity",
+	        "title: Caveman",
+	        "created: 2024-05-10",
+	        "updated: 2024-05-10",
+	        "tags: [ai-tooling]",
+	        "related: []",
+	        `sources: ["${sourceFileName}"]`,
+	        "confidence: high",
+	        "evidence_strength: moderate",
+	        "review_status: ai_reviewed",
+	        "knowledge_type: operational",
+	        "last_reviewed: 2024-05-10",
+	        "quality: reviewed",
+	        "coverage: high",
+	        "needs_upgrade: false",
+	        "source_count: 1",
+	        "---",
+	        "",
+	        "# Caveman",
+	        "",
+	        "## Kevin OS에서의 역할",
+	        "Caveman은 복잡한 지시문을 줄이고 핵심 동작만 짧게 전달하는 프롬프트 운영 방식의 이름으로 쓰입니다. Kevin의 LLM Wiki에서는 반복 작업 명령을 빠르게 만들고, 모델별 반응을 비교하는 기준 엔티티로 사용합니다. 이 엔티티는 특정 회사나 제품이라기보다 원문에서 명명된 작업 방식의 식별자로 남깁니다. 실제 운영에서는 긴 프롬프트를 무조건 버리는 뜻이 아니라, 먼저 작은 명령으로 모델 반응을 확인하고 필요한 검증 조건을 뒤에 붙이는 출발점으로 해석합니다.",
+	        "",
+	        "## 제약",
+	        "짧은 명령이 항상 좋은 결과를 보장하지는 않습니다. 복잡한 법률, 재무, 시스템 설계 작업처럼 맥락과 검증 조건이 중요한 경우에는 짧은 명령 뒤에 품질 기준과 검증 루프를 별도로 붙여야 합니다. 최신 모델별 성능은 계속 바뀌므로 freshness 확인이 필요합니다. 특히 Gemini 3처럼 속도가 빠른 모델은 작은 작업을 빠르게 여러 번 수행하는 데 강점이 있지만, 한 번에 지나치게 많은 문서 구조를 요구하면 누락이나 형식 흔들림이 생길 수 있습니다.",
+	        "",
+	        "## 연결",
+	        "- source summary와 비교 문서에서 Caveman 방식의 비용, 속도, 품질 균형을 추적합니다.",
+	        "- AI Agent Engineering 작업에서는 작은 단계로 쪼개는 Gemini 3 ingest 전략과 함께 사용됩니다.",
+	        "- LLM Wiki의 품질 계약에서는 이 엔티티를 active로 둘 수 있지만, 모델별 성능 claim은 항상 source summary나 comparison 문서에서 검증 필요 항목으로 남깁니다.",
+	        "",
+	        "## Source Trace",
+	        `- Primary source: ${sourceFileName}`,
+	        "---END FILE---",
+	        "",
+	        "---FILE: wiki/comparisons/케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법.md---",
+	        "---",
+	        "type: comparison",
+	        "title: 케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법",
+	        "created: 2024-05-10",
+	        "updated: 2024-05-10",
+	        "tags: [ai-tooling]",
+	        "related:",
+	        "  - wiki/entities/Caveman",
+	        "  - wiki/concepts/토큰 압축",
+	        "  - wiki/concepts/메모리 압축",
+	        "graph_links:",
+	        "  - \"[[Caveman]]\"",
+	        "  - \"[[Kevin 운영체계 적용]]\"",
+	        "confidence: high",
+	        "evidence_strength: moderate",
+	        "review_status: ai_generated",
+	        "knowledge_type: strategic",
+	        "last_reviewed: 2024-05-10",
+	        "quality: draft",
+	        "coverage: medium",
+	        "needs_upgrade: true",
+	        "source_count: 0",
+	        "---",
+	        "",
+	        "# 케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법",
+	        "",
+	        "## 핵심 비교",
+	        "Caveman 방식은 길고 장식적인 프롬프트보다 짧고 직접적인 명령을 선호합니다. 장점은 반복 비용과 작성 시간을 줄인다는 점이고, 단점은 복잡한 품질 조건을 빠뜨릴 수 있다는 점입니다. 기존 긴 프롬프트 방식은 맥락을 많이 넣어 안정성을 확보하지만 매번 토큰 비용과 작성 시간이 커질 수 있습니다.",
+	        "",
+	        "## 판단 기준",
+	        "반복적이고 위험도가 낮은 작업에서는 Caveman 방식이 유리합니다. 반면 계약, 법률, 재무, 보안, 구조 설계처럼 누락 위험이 큰 작업에서는 짧은 명령만으로는 부족합니다. 이때는 짧은 명령을 쓰더라도 완료 기준, 검증 기준, rollback 조건을 함께 붙여야 합니다.",
+	        "",
+	        "## 운영 적용",
+	        "Kevin 운영체계 적용 관점에서는 Caveman 명령을 기본 초안으로 사용하고, 중요한 작업에는 LLM Wiki 품질 계약을 붙여 보강합니다. 예를 들어 '이 source 위키에 넣어줘' 같은 짧은 명령은 빠르게 시작하기 좋지만, 최종 저장 전에는 source trace, freshness, review_status를 확인해야 합니다.",
+	        "",
+	        "## 검증 및 최신성",
+	        "AI 모델별 짧은 명령 처리 능력은 빠르게 변합니다. Gemini 3 Flash Preview 같은 빠른 모델은 작은 단계로 나누면 충분히 좋은 결과를 낼 수 있지만, 모델 업데이트나 provider 설정에 따라 결과가 달라질 수 있어 최신성 검증이 필요합니다.",
+	        "",
+	        "## Source Trace",
+	        `- Primary source: ${sourceFileName}`,
+	        "---END FILE---",
+	      ].join("\n"),
+	    ]
+
+	    await autoIngest(
+	      ctx.tmp.path,
+	      sourceFullPath,
+	      {
+	        provider: "google",
+	        apiKey: "test-key",
+	        model: "gemini-3-flash-preview",
+	        ollamaUrl: "",
+	        customEndpoint: "",
+	        maxContextSize: 128000,
+	      },
+	    )
+
+	    const today = new Date().toISOString().slice(0, 10)
+	    const comparison = await readFileRaw(
+	      path.join(ctx.tmp.path, "wiki", "comparisons", "케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법.md"),
+	    )
+	    expect(comparison).toContain(`sources: ["${sourceFileName}"]`)
+	    expect(comparison).toContain("source_count: 1")
+	    expect(comparison).toContain("freshness_required: true")
+	    expect(comparison).toContain(`created: ${today}`)
+	    expect(comparison).not.toContain("wiki/concepts/토큰 압축")
+	    expect(comparison).not.toContain("wiki/concepts/메모리 압축")
+	    expect(comparison).not.toContain("[[Kevin 운영체계 적용]]")
+	    expect(comparison).toContain("Kevin 운영체계 적용")
+
+	    const sourceSummary = await readFileRaw(
+	      path.join(ctx.tmp.path, "wiki", "sources", "케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법 소스 요약.md"),
+	    )
+	    expect(sourceSummary).not.toContain("Cursor")
+	    expect(sourceSummary).toContain("freshness_required: true")
+	    expect(sourceSummary).not.toContain("retention:")
+
+	    const indexContent = await readFileRaw(path.join(ctx.tmp.path, "wiki", "index.md"))
+	    expect(indexContent).toContain("## Entities")
+	    expect(indexContent).toContain("[[Caveman]]")
+	    expect(indexContent).not.toContain("케이브맨으로 AI 답변을 짧고 싸고 빠르게 만드는 법 소스 요약")
+
+	    const reviewTitles = useReviewStore.getState().items.map((item) => item.title)
+	    expect(reviewTitles.some((title) => title.includes("Cursor"))).toBe(false)
+	    expect(reviewTitles.some((title) => title.includes("Kevin 운영체계 적용"))).toBe(false)
+	  })
+
+	  it("reuses an existing legacy source page and drops over-generated or noncanonical paths", async () => {
     ctx = { tmp: await createTempProject("ingest-write-scope-guard") }
     await minimalProject(ctx.tmp.path)
     await writeFileRaw(

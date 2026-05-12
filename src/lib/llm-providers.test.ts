@@ -246,4 +246,24 @@ describe("reasoning controls", () => {
 
     expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
   })
+
+  it("maps Gemini 3 reasoning off to thinkingLevel minimal", () => {
+    const cfg = mkConfig({ provider: "google", model: "gemini-3-flash-preview" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as { generationConfig?: Record<string, unknown> }
+
+    expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: "minimal" })
+  })
+
+  it("maps Gemini 3 medium reasoning to thinkingLevel medium", () => {
+    const cfg = mkConfig({ provider: "google", model: "gemini-3-flash-preview" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "medium" } },
+    ) as { generationConfig?: Record<string, unknown> }
+
+    expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: "medium" })
+  })
 })
