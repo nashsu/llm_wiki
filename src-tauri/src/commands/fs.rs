@@ -1322,6 +1322,21 @@ pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
     .map_err(|e| format!("get_file_modified_time blocking task join error: {e}"))?
 }
 
+/// Compute MD5 hash of a file. Returns the hex-encoded hash string.
+#[tauri::command]
+pub async fn get_file_md5(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("get_file_md5", || {
+            let bytes = fs::read(&path)
+                .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
+            let digest = md5::compute(&bytes);
+            Ok(format!("{:x}", digest))
+        })
+    })
+    .await
+    .map_err(|e| format!("get_file_md5 blocking task join error: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

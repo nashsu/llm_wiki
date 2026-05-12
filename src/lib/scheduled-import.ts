@@ -1,4 +1,4 @@
-import { listDirectory, copyFile, preprocessFile, getFileModifiedTime } from "@/commands/fs"
+import { listDirectory, copyFile, preprocessFile, getFileMd5, createDirectory, fileExists, readFile, writeFile } from "@/commands/fs"
 import { enqueueIngest } from "@/lib/ingest-queue"
 import { normalizePath, getFileName } from "@/lib/path-utils"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
@@ -16,13 +16,21 @@ const IMPORTABLE_EXTENSIONS = new Set([
   "c", "cpp", "h", "rb", "php", "swift", "sql", "sh",
 ])
 
+// Hidden config folder name in the monitored directory
+const IMPORT_DB_FOLDER = ".llm-wiki-imported"
+const IMPORT_DB_FILE = "db.json"
+
 let scanTimer: ReturnType<typeof setInterval> | null = null
 let scanning = false
 
-interface FileChange {
-  type: "new" | "modified"
-  sourcePath: string // absolute path in monitored directory
-  fileName: string
+interface ImportDbEntry {
+  md5: string
+  importedAt: number
+}
+
+interface ImportDb {
+  files: Record<string, ImportDbEntry>
+  lastScan: number
 }
 
 /**
@@ -49,91 +57,66 @@ function isImportableFile(fileName: string): boolean {
 }
 
 /**
- * Build a map of existing sources: fileName -> { path, modifiedTime }.
- * Uses base filename as key to match files across different directories.
+ * Get the path to the import db folder within the monitored directory.
  */
-async function buildExistingSourcesMap(projectPath: string): Promise<Map<string, { path: string; modified: number }>> {
-  const pp = normalizePath(projectPath)
-  const map = new Map<string, { path: string; modified: number }>()
+function getDbFolderPath(importPath: string): string {
+  return `${importPath}/${IMPORT_DB_FOLDER}`
+}
 
+/**
+ * Get the path to the import db.json file.
+ */
+function getDbFilePath(importPath: string): string {
+  return `${importPath}/${IMPORT_DB_FOLDER}/${IMPORT_DB_FILE}`
+}
+
+/**
+ * Ensure the .llm-wiki-imported/ directory exists in the monitored directory.
+ */
+async function ensureImportDb(importPath: string): Promise<void> {
+  const dbFolder = getDbFolderPath(importPath)
   try {
-    const tree = await listDirectory(`${pp}/raw/sources`)
-    const files = collectFiles(tree)
+    await createDirectory(dbFolder)
+  } catch {
+    // Directory may already exist
+  }
+}
 
-    for (const file of files) {
-      try {
-        const modified = await getFileModifiedTime(file.path)
-        const baseName = getFileName(file.path) || file.name
-        map.set(baseName, { path: file.path, modified })
-      } catch {
-        // Can't get modified time, skip
-      }
+/**
+ * Load the import database from .llm-wiki-imported/db.json.
+ * Returns an empty database if the file doesn't exist.
+ */
+async function loadImportDb(importPath: string): Promise<ImportDb> {
+  const dbFilePath = getDbFilePath(importPath)
+  try {
+    const exists = await fileExists(dbFilePath)
+    if (!exists) return { files: {}, lastScan: 0 }
+    const content = await readFile(dbFilePath)
+    const parsed = JSON.parse(content)
+    return {
+      files: parsed.files || {},
+      lastScan: parsed.lastScan || 0,
     }
   } catch {
-    // sources directory may not exist yet
+    return { files: {}, lastScan: 0 }
   }
-
-  return map
 }
 
 /**
- * Detect changes between monitored directory and existing sources.
- * Compares by filename to match files across different directories.
+ * Save the import database to .llm-wiki-imported/db.json.
  */
-async function detectChanges(
-  monitoredPath: string,
-  existingSources: Map<string, { path: string; modified: number }>,
-): Promise<FileChange[]> {
-  const changes: FileChange[] = []
-
+async function saveImportDb(importPath: string, db: ImportDb): Promise<void> {
+  const dbFilePath = getDbFilePath(importPath)
   try {
-    const tree = await listDirectory(monitoredPath)
-    const files = collectFiles(tree)
-
-    for (const file of files) {
-      if (!isImportableFile(file.name)) continue
-
-      const baseName = getFileName(file.path) || file.name
-      const existing = existingSources.get(baseName)
-
-      if (!existing) {
-        // New file - not in sources yet
-        changes.push({
-          type: "new",
-          sourcePath: file.path,
-          fileName: baseName,
-        })
-      } else {
-        // File exists in sources - check if modified
-        const normalizedSource = normalizePath(file.path)
-        const normalizedExisting = normalizePath(existing.path)
-
-        // Skip if it's the exact same file (monitored dir IS raw/sources)
-        if (normalizedSource === normalizedExisting) continue
-
-        try {
-          const sourceModified = await getFileModifiedTime(file.path)
-          if (sourceModified > existing.modified) {
-            changes.push({
-              type: "modified",
-              sourcePath: file.path,
-              fileName: baseName,
-            })
-          }
-        } catch {
-          // Can't compare, skip
-        }
-      }
-    }
+    await writeFile(dbFilePath, JSON.stringify(db, null, 2))
   } catch (err) {
-    console.error("[Scheduled Import] Failed to scan monitored directory:", err)
+    console.error("[Scheduled Import] Failed to save import db:", err)
   }
-
-  return changes
 }
 
 /**
- * Execute a scan: detect changes and import modified/new files.
+ * Scan the monitored directory and import new or modified files.
+ * Uses MD5 hashing stored in .llm-wiki-imported/db.json to detect changes.
  */
 export async function scanAndImport(projectPath: string, importPath: string): Promise<void> {
   if (scanning) {
@@ -148,28 +131,65 @@ export async function scanAndImport(projectPath: string, importPath: string): Pr
   console.log(`[Scheduled Import] Starting scan of ${ip}`)
 
   try {
-    const existingSources = await buildExistingSourcesMap(pp)
-    const changes = await detectChanges(ip, existingSources)
+    // Ensure the hidden config folder exists
+    await ensureImportDb(ip)
 
-    if (changes.length === 0) {
-      console.log("[Scheduled Import] No changes detected")
+    // Load existing import database
+    const db = await loadImportDb(ip)
+
+    // List all files in the monitored directory
+    let monitoredFiles: Array<{ name: string; path: string }> = []
+    try {
+      const tree = await listDirectory(ip)
+      monitoredFiles = collectFiles(tree)
+    } catch (err) {
+      console.error("[Scheduled Import] Failed to list monitored directory:", err)
       return
     }
 
-    console.log(`[Scheduled Import] Found ${changes.length} changes`)
+    // Filter to importable files only
+    const importableFiles = monitoredFiles.filter(f => {
+      // Skip files inside the hidden config folder
+      if (f.path.includes(`/${IMPORT_DB_FOLDER}/`) || f.path.includes(`\\${IMPORT_DB_FOLDER}\\`)) {
+        return false
+      }
+      return isImportableFile(f.name)
+    })
+
+    if (importableFiles.length === 0) {
+      console.log("[Scheduled Import] No importable files found")
+      return
+    }
+
+    console.log(`[Scheduled Import] Found ${importableFiles.length} importable files`)
 
     const llmConfig = useWikiStore.getState().llmConfig
     const hasLlm = hasUsableLlm(llmConfig)
+    let importedCount = 0
+    let skippedCount = 0
 
-    for (const change of changes) {
+    for (const file of importableFiles) {
       try {
-        const destPath = `${pp}/raw/sources/${change.fileName}`
-        const normalizedSource = normalizePath(change.sourcePath)
-        const normalizedDest = normalizePath(destPath)
+        // Use relative path (from monitored dir) as the key
+        const relativePath = file.name
+        const currentMd5 = await getFileMd5(file.path)
+        const existing = db.files[relativePath]
 
+        // Check if file has changed
+        if (existing && existing.md5 === currentMd5) {
+          skippedCount++
+          continue
+        }
+
+        // File is new or modified - import it
+        const baseName = getFileName(file.path) || file.name
+        const destPath = `${pp}/raw/sources/${baseName}`
+
+        // Copy file to sources directory (skip if source IS the destination)
+        const normalizedSource = normalizePath(file.path)
+        const normalizedDest = normalizePath(destPath)
         if (normalizedSource !== normalizedDest) {
-          // Source is outside raw/sources - copy it
-          await copyFile(change.sourcePath, destPath)
+          await copyFile(file.path, destPath)
         }
 
         // Preprocess the file
@@ -183,17 +203,27 @@ export async function scanAndImport(projectPath: string, importPath: string): Pr
           }
         }
 
-        console.log(`[Scheduled Import] ${change.type === "new" ? "Imported" : "Updated"}: ${change.fileName}`)
+        // Update the database with the new MD5
+        db.files[relativePath] = {
+          md5: currentMd5,
+          importedAt: Date.now(),
+        }
+
+        importedCount++
+        console.log(`[Scheduled Import] ${existing ? "Updated" : "Imported"}: ${baseName}`)
       } catch (err) {
-        console.error(`[Scheduled Import] Failed to process ${change.fileName}:`, err)
+        console.error(`[Scheduled Import] Failed to process ${file.name}:`, err)
       }
     }
 
-    // Update last scan time
+    // Save the updated database
+    db.lastScan = Date.now()
+    await saveImportDb(ip, db)
+
+    // Update last scan time in the store
     const config = useWikiStore.getState().scheduledImportConfig
     const updatedConfig = { ...config, lastScan: Date.now() }
     useWikiStore.getState().setScheduledImportConfig(updatedConfig)
-    // Persist per-project config
     const { saveScheduledImportConfig } = await import("@/lib/project-store")
     await saveScheduledImportConfig(projectPath, updatedConfig)
 
@@ -203,6 +233,7 @@ export async function scanAndImport(projectPath: string, importPath: string): Pr
     useWikiStore.getState().setFileTree(tree)
     useWikiStore.getState().bumpDataVersion()
 
+    console.log(`[Scheduled Import] Scan complete: ${importedCount} imported, ${skippedCount} skipped`)
   } catch (err) {
     console.error("[Scheduled Import] Scan failed:", err)
   } finally {
@@ -217,13 +248,10 @@ export async function scanAndImport(projectPath: string, importPath: string): Pr
  */
 export function resolveImportPath(projectPath: string, configPath: string): string {
   const pp = normalizePath(projectPath)
-  // Default to "raw/sources" if path is empty
   const path = configPath || "raw/sources"
-  // If path is already absolute, use it as-is
   if (path.startsWith("/") || path.match(/^[a-zA-Z]:[/\\]/)) {
     return normalizePath(path)
   }
-  // Otherwise, treat as relative to project path
   return `${pp}/${path}`
 }
 
