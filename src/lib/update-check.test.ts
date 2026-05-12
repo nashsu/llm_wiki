@@ -71,20 +71,20 @@ describe("isNewer — semver comparison", () => {
 describe("toLatestReleaseUrl — canonical /releases/latest mapping", () => {
   it("converts a tag-specific release URL to /releases/latest", () => {
     expect(
-      toLatestReleaseUrl("https://github.com/nashsu/llm_wiki/releases/tag/v0.4.0"),
-    ).toBe("https://github.com/nashsu/llm_wiki/releases/latest")
+      toLatestReleaseUrl("https://github.com/slowtokki0409/llm-wiki-app/releases/tag/v0.4.0"),
+    ).toBe("https://github.com/slowtokki0409/llm-wiki-app/releases/latest")
   })
 
   it("normalizes a bare /releases listing URL to /releases/latest", () => {
     expect(
-      toLatestReleaseUrl("https://github.com/nashsu/llm_wiki/releases"),
-    ).toBe("https://github.com/nashsu/llm_wiki/releases/latest")
+      toLatestReleaseUrl("https://github.com/slowtokki0409/llm-wiki-app/releases"),
+    ).toBe("https://github.com/slowtokki0409/llm-wiki-app/releases/latest")
   })
 
   it("is idempotent on an already-/latest URL", () => {
     expect(
-      toLatestReleaseUrl("https://github.com/nashsu/llm_wiki/releases/latest"),
-    ).toBe("https://github.com/nashsu/llm_wiki/releases/latest")
+      toLatestReleaseUrl("https://github.com/slowtokki0409/llm-wiki-app/releases/latest"),
+    ).toBe("https://github.com/slowtokki0409/llm-wiki-app/releases/latest")
   })
 
   it("works for any owner/repo combination", () => {
@@ -112,11 +112,11 @@ describe("toLatestReleaseUrl — canonical /releases/latest mapping", () => {
   })
 
   it("falls through unchanged for non-release github URLs", () => {
-    expect(toLatestReleaseUrl("https://github.com/nashsu/llm_wiki/issues/42")).toBe(
-      "https://github.com/nashsu/llm_wiki/issues/42",
+    expect(toLatestReleaseUrl("https://github.com/slowtokki0409/llm-wiki-app/issues/42")).toBe(
+      "https://github.com/slowtokki0409/llm-wiki-app/issues/42",
     )
-    expect(toLatestReleaseUrl("https://github.com/nashsu/llm_wiki")).toBe(
-      "https://github.com/nashsu/llm_wiki",
+    expect(toLatestReleaseUrl("https://github.com/slowtokki0409/llm-wiki-app")).toBe(
+      "https://github.com/slowtokki0409/llm-wiki-app",
     )
   })
 })

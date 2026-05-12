@@ -20,7 +20,7 @@ import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
  * Kevin fork release channel. The app is locally optimized and should
  * not prompt the user to download upstream nashsu/llm_wiki binaries.
  */
-export const LLM_WIKI_UPDATE_REPO = "slowtokki0409/llm_wiki-codexian"
+export const LLM_WIKI_UPDATE_REPO = "slowtokki0409/llm-wiki-app"
 
 /** The subset of the GitHub release API response we care about. */
 /**

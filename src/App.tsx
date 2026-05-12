@@ -89,7 +89,7 @@ function App() {
               "- Bigger red dot on the Settings icon\n" +
               "- Top banner with one-click dismiss\n" +
               "- Once dismissed, won't reappear for this version",
-            html_url: "https://github.com/nashsu/llm_wiki/releases",
+            html_url: "https://github.com/slowtokki0409/llm-wiki-app/releases",
             published_at: new Date().toISOString(),
           },
         },
