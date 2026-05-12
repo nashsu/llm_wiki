@@ -11,6 +11,7 @@
     "test": "npm run test:mocks && npm run test:llm",
     "test:mocks": "vitest run --exclude='**/*.real-llm.test.ts'",
     "test:llm": "vitest run real-llm --no-file-parallelism --reporter=verbose",
+    "smoke:live-ingest": "node scripts/codex-live-ingest-smoke.mjs",
     "tauri": "tauri",
     "install:macos": "bash scripts/install-macos-app.sh",
     "verify:macos-app": "node scripts/verify-macos-app.mjs"

@@ -1,0 +1,235 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
+const DEFAULT_RETAIN_RUNS = 8
+const DEFAULT_RETAIN_FAILED_RUNS = 4
+
+const args = parseArgs(process.argv.slice(2))
+const vault = args.fixture ? createFixtureVault() : (args.vault ?? DEFAULT_VAULT)
+const model = args.model ?? "gemini-3-flash-preview"
+const retainRuns = parsePositiveInt(args.retainRuns, DEFAULT_RETAIN_RUNS)
+const retainFailedRuns = parsePositiveInt(args.retainFailedRuns, DEFAULT_RETAIN_FAILED_RUNS)
+const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+const validation = validateVault(vault)
+
+if (args.help) {
+  printHelp()
+  process.exit(0)
+}
+
+if (args.dryRun) {
+  const retentionPreview = buildSmokeProofRetentionPreview(join(vault, ".llm-wiki", "runtime"), {
+    retainRuns,
+    retainFailedRuns,
+  })
+  console.log(JSON.stringify({
+    ok: validation.ok,
+    mode: args.pruneProofs ? "prune-preview" : "dry-run",
+    vault,
+    model,
+    apiKeyPresent: Boolean(apiKey),
+    retention: {
+      retainRuns,
+      retainFailedRuns,
+      pruneProofs: Boolean(args.pruneProofs),
+      action: args.pruneProofs ? "preview-delete-candidates" : "report-only",
+      ...retentionPreview,
+    },
+    checks: validation.checks,
+  }, null, 2))
+  process.exit(validation.ok ? 0 : 1)
+}
+
+if (!apiKey) {
+  console.error("Missing GOOGLE_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY")
+  process.exit(1)
+}
+if (!validation.ok) {
+  console.error(`Not an LLM Wiki Vault: ${vault}`)
+  for (const check of validation.checks) {
+    if (!check.ok) console.error(`- missing: ${check.path}`)
+  }
+  process.exit(1)
+}
+
+const result = spawnSync(
+  "./node_modules/.bin/vitest",
+  ["run", "src/lib/live-ingest-smoke.real-llm.test.ts", "--reporter=verbose"],
+  {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      RUN_LIVE_INGEST_SMOKE: "1",
+      LLM_WIKI_VAULT_PATH: vault,
+      LLM_WIKI_SMOKE_MODEL: model,
+      LLM_WIKI_SMOKE_RETENTION_RUNS: String(retainRuns),
+      LLM_WIKI_SMOKE_RETENTION_FAILED_RUNS: String(retainFailedRuns),
+      LLM_WIKI_SMOKE_PRUNE_PROOFS: args.pruneProofs ? "1" : "0",
+      LLM_WIKI_SMOKE_FIXTURE: args.fixture ? "1" : "0",
+    },
+    stdio: "inherit",
+  },
+)
+
+if (result.error) {
+  console.error(result.error.message)
+  process.exit(1)
+}
+process.exit(result.status ?? 1)
+
+function parseArgs(argv) {
+  const out = {}
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === "--help" || arg === "-h") out.help = true
+    else if (arg === "--dry-run") out.dryRun = true
+    else if (arg === "--fixture") out.fixture = true
+    else if (arg === "--prune-proofs") out.pruneProofs = true
+    else if (arg === "--vault") out.vault = argv[++i]
+    else if (arg.startsWith("--vault=")) out.vault = arg.slice("--vault=".length)
+    else if (arg === "--model") out.model = argv[++i]
+    else if (arg.startsWith("--model=")) out.model = arg.slice("--model=".length)
+    else if (arg === "--retain-runs") out.retainRuns = argv[++i]
+    else if (arg.startsWith("--retain-runs=")) out.retainRuns = arg.slice("--retain-runs=".length)
+    else if (arg === "--retain-failed-runs") out.retainFailedRuns = argv[++i]
+    else if (arg.startsWith("--retain-failed-runs=")) out.retainFailedRuns = arg.slice("--retain-failed-runs=".length)
+    else throw new Error(`Unknown argument: ${arg}`)
+  }
+  return out
+}
+
+function validateVault(vault) {
+  const paths = [
+    "purpose.md",
+    "schema.md",
+    "wiki",
+    "wiki/index.md",
+    "wiki/overview.md",
+    ".llm-wiki",
+  ]
+  const checks = paths.map((path) => ({ path, ok: existsSync(join(vault, path)) }))
+  return { ok: checks.every((check) => check.ok), checks }
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback
+  return Math.floor(parsed)
+}
+
+function createFixtureVault() {
+  const vault = mkdtempSync(join(tmpdir(), "llm-wiki-live-ingest-vault-"))
+  mkdirSync(join(vault, ".llm-wiki", "runtime"), { recursive: true })
+  mkdirSync(join(vault, "wiki"), { recursive: true })
+  writeFileSync(join(vault, ".llm-wiki", "review.json"), "[]\n")
+  writeFileSync(join(vault, ".llm-wiki", "ingest-queue.json"), "[]\n")
+  writeFileSync(
+    join(vault, "purpose.md"),
+    [
+      "# Purpose",
+      "",
+      "This temporary fixture wiki validates LLM Wiki App ingest behavior with synthetic content only.",
+    ].join("\n"),
+  )
+  writeFileSync(
+    join(vault, "schema.md"),
+    [
+      "# Schema",
+      "",
+      "- Write concise markdown pages with YAML frontmatter.",
+      "- Include source trace and avoid creating unsupported links.",
+      "- Keep index and overview compact.",
+    ].join("\n"),
+  )
+  writeFileSync(join(vault, "wiki", "index.md"), "# Index\n\n")
+  writeFileSync(join(vault, "wiki", "overview.md"), "# Overview\n\nSynthetic fixture wiki.\n")
+  writeFileSync(join(vault, "wiki", "log.md"), "# Log\n\n")
+  console.log(`Using synthetic fixture vault: ${vault}`)
+  return vault
+}
+
+function buildSmokeProofRetentionPreview(runtimeDir, policy) {
+  const runs = collectSmokeProofRuns(runtimeDir)
+  const newestRuns = runs.slice(0, policy.retainRuns)
+  const failedOrGuardedRuns = runs.filter((run) => run.failedOrGuarded)
+  const retained = new Set([
+    ...newestRuns.map((run) => run.stamp),
+    ...failedOrGuardedRuns.slice(0, policy.retainFailedRuns).map((run) => run.stamp),
+  ])
+  const deleteCandidates = runs
+    .filter((run) => !retained.has(run.stamp))
+    .flatMap((run) => run.files)
+    .sort()
+  return {
+    totalRuns: runs.length,
+    retainedRuns: Array.from(retained).sort().reverse(),
+    failedOrGuardedRuns: failedOrGuardedRuns.map((run) => run.stamp),
+    deleteCandidates,
+    wouldDeleteCount: deleteCandidates.length,
+    deletedCount: 0,
+  }
+}
+
+function collectSmokeProofRuns(runtimeDir) {
+  if (!existsSync(runtimeDir)) return []
+  const grouped = new Map()
+  for (const name of readdirSync(runtimeDir)) {
+    const match = /^codex-live-ingest-smoke-(\d{8}T\d{6}Z)\.(json|md)$/.exec(name)
+    if (!match) continue
+    const stamp = match[1]
+    grouped.set(stamp, [...(grouped.get(stamp) ?? []), name])
+  }
+  const runs = Array.from(grouped.entries()).map(([stamp, files]) => {
+    const proofName = `codex-live-ingest-smoke-${stamp}.json`
+    const proof = files.includes(proofName) ? readJsonIfExists(join(runtimeDir, proofName)) : null
+    return {
+      stamp,
+      files: files.sort(),
+      generatedAt: typeof proof?.generatedAt === "string" ? proof.generatedAt : stampToIso(stamp),
+      failedOrGuarded: isFailedOrGuardedSmokeProof(proof),
+    }
+  })
+  return runs.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
+}
+
+function readJsonIfExists(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"))
+  } catch {
+    return null
+  }
+}
+
+function isFailedOrGuardedSmokeProof(proof) {
+  if (!proof || typeof proof !== "object") return false
+  if (Array.isArray(proof.unexpectedWrites) && proof.unexpectedWrites.length > 0) return true
+  if (Array.isArray(proof.guardedBootstrapWrites) && proof.guardedBootstrapWrites.length > 0) return true
+  if (proof.indexChanged === true || proof.overviewChanged === true) return true
+  return proof.healthOperationalSurface?.status === "warn" || proof.healthOperationalSurface?.status === "fail"
+}
+
+function stampToIso(stamp) {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
+  if (!match) return stamp
+  const [, year, month, day, hour, minute, second] = match
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`
+}
+
+function printHelp() {
+  console.log(`Usage: npm run smoke:live-ingest -- [options]
+
+Options:
+  --dry-run                  Validate vault, model, and retention policy without calling Gemini.
+  --dry-run --prune-proofs   Preview proof files that would be deleted; never deletes files.
+  --fixture                  Use a temporary synthetic vault instead of the user's real Vault.
+  --vault <path>             LLM Wiki Vault path.
+  --model <name>             Gemini model name.
+  --retain-runs <n>          Keep newest N smoke proof runs. Default: ${DEFAULT_RETAIN_RUNS}.
+  --retain-failed-runs <n>   Keep newest N failed/guarded proof runs in addition. Default: ${DEFAULT_RETAIN_FAILED_RUNS}.
+  --prune-proofs             Delete proof artifacts outside the retention policy. Default reports candidates only.
+`)
+}
