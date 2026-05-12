@@ -26,6 +26,7 @@ const QUALITY_KEYS = ["quality", "coverage", "needs_upgrade", "source_count"]
 const args = parseArgs(process.argv.slice(2))
 const vault = args.vault ?? DEFAULT_VAULT
 const model = args.model ?? DEFAULT_MODEL
+const runs = Math.max(1, Number(args.runs ?? 1))
 const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
 if (!apiKey) {
   throw new Error("Missing GOOGLE_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY")
@@ -46,48 +47,57 @@ for (const sample of samples) {
     { id: "before", docs: beforeDocs },
     { id: "after", docs: afterDocs },
   ]) {
-    const prompt = buildPrompt({ sample, docs: variant.docs, variant: variant.id })
-    const startedAt = Date.now()
-    const response = await callGemini({ apiKey, model, prompt })
-    const elapsedMs = Date.now() - startedAt
-    const evaluation = evaluateResponse(response, sample, variant.id)
-    results.push({
-      sampleId: sample.id,
-      sampleTitle: sample.title,
-      variant: variant.id,
-      model,
-      promptBytes: byteLength(prompt),
-      surfaceBytes: variant.docs.totalBytes,
-      elapsedMs,
-      responseBytes: byteLength(response),
-      evaluation,
-      responsePreview: response.slice(0, 1200),
-    })
-    process.stdout.write(`${sample.id} ${variant.id}: ${evaluation.score}/${evaluation.maxScore}\n`)
+    for (let run = 1; run <= runs; run++) {
+      const prompt = buildPrompt({ sample, docs: variant.docs, variant: variant.id })
+      const startedAt = Date.now()
+      const response = await callGemini({ apiKey, model, prompt })
+      const elapsedMs = Date.now() - startedAt
+      const evaluation = evaluateResponse(response, sample, variant.id)
+      results.push({
+        sampleId: sample.id,
+        sampleTitle: sample.title,
+        variant: variant.id,
+        run,
+        model,
+        promptBytes: byteLength(prompt),
+        surfaceBytes: variant.docs.totalBytes,
+        elapsedMs,
+        responseBytes: byteLength(response),
+        evaluation,
+        responsePreview: response.slice(0, 1200),
+      })
+      process.stdout.write(`${sample.id} ${variant.id} run ${run}/${runs}: ${evaluation.score}/${evaluation.maxScore}\n`)
+    }
   }
 }
 
 const bySample = samples.map((sample) => {
-  const before = results.find((r) => r.sampleId === sample.id && r.variant === "before")
-  const after = results.find((r) => r.sampleId === sample.id && r.variant === "after")
+  const beforeRuns = results.filter((r) => r.sampleId === sample.id && r.variant === "before")
+  const afterRuns = results.filter((r) => r.sampleId === sample.id && r.variant === "after")
+  const beforeScore = median(beforeRuns.map((r) => r.evaluation.score))
+  const afterScore = median(afterRuns.map((r) => r.evaluation.score))
+  const maxScore = afterRuns[0]?.evaluation.maxScore ?? beforeRuns[0]?.evaluation.maxScore ?? 0
   return {
     sampleId: sample.id,
     sampleTitle: sample.title,
-    beforeScore: before?.evaluation.score ?? 0,
-    afterScore: after?.evaluation.score ?? 0,
-    delta: (after?.evaluation.score ?? 0) - (before?.evaluation.score ?? 0),
-    maxScore: after?.evaluation.maxScore ?? before?.evaluation.maxScore ?? 0,
+    beforeScore,
+    afterScore,
+    delta: afterScore - beforeScore,
+    maxScore,
+    beforeRuns: beforeRuns.map((r) => r.evaluation.score),
+    afterRuns: afterRuns.map((r) => r.evaluation.score),
   }
 })
-const beforeTotal = sum(results.filter((r) => r.variant === "before").map((r) => r.evaluation.score))
-const afterTotal = sum(results.filter((r) => r.variant === "after").map((r) => r.evaluation.score))
-const maxTotal = sum(results.filter((r) => r.variant === "after").map((r) => r.evaluation.maxScore))
+const beforeTotal = sum(bySample.map((sample) => sample.beforeScore))
+const afterTotal = sum(bySample.map((sample) => sample.afterScore))
+const maxTotal = sum(bySample.map((sample) => sample.maxScore))
 const report = {
   schemaVersion: 1,
   generatedAt: now.toISOString(),
   model,
   vault,
   method: "live-gemini-ab-surface-eval",
+  runsPerVariant: runs,
   bootstrapDocs: BOOTSTRAP_DOCS,
   surfaceBytes: {
     before: beforeDocs.totalBytes,
@@ -106,7 +116,7 @@ const report = {
   bySample,
   postProcessing: {
     before: [],
-    after: ["indexInactiveListingFilter"],
+    after: ["indexInactiveListingFilter", "overviewCurrentSnapshotFilter"],
   },
   results,
 }
@@ -125,6 +135,7 @@ function parseArgs(argv) {
     const arg = argv[i]
     if (arg === "--vault") out.vault = argv[++i]
     else if (arg === "--model") out.model = argv[++i]
+    else if (arg === "--runs") out.runs = argv[++i]
   }
   return out
 }
@@ -341,8 +352,15 @@ function evaluateResponse(response, sample, variant) {
 }
 
 function applyAfterPostProcessors(block) {
-  if (!normalizePath(block.path).endsWith("wiki/index.md")) return block
-  const content = sanitizeIndexContentForEvaluation(block.content)
+  const path = normalizePath(block.path)
+  let content = block.content
+  if (path.endsWith("wiki/index.md")) {
+    content = sanitizeIndexContentForEvaluation(content)
+  } else if (path.endsWith("wiki/overview.md")) {
+    content = sanitizeOverviewContentForEvaluation(content)
+  } else {
+    return block
+  }
   const { frontmatter, body } = parseFrontmatter(content)
   return { ...block, content, frontmatter, body }
 }
@@ -361,6 +379,41 @@ function sanitizeIndexContentForEvaluation(content) {
   })
   if (!changed) return content
   return `${kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`
+}
+
+
+function sanitizeOverviewContentForEvaluation(content) {
+  const lines = content.split(/\r?\n/)
+  const kept = []
+  let changed = false
+  let skipHeadingLevel = null
+  for (const line of lines) {
+    const heading = line.match(/^(#{2,6})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1].length
+      if (skipHeadingLevel !== null && level <= skipHeadingLevel) skipHeadingLevel = null
+      if (skipHeadingLevel === null && historicalOverviewMarker(heading[2])) {
+        skipHeadingLevel = level
+        changed = true
+        continue
+      }
+    }
+    if (skipHeadingLevel !== null) {
+      changed = true
+      continue
+    }
+    if (historicalOverviewMarker(line)) {
+      changed = true
+      continue
+    }
+    kept.push(line)
+  }
+  if (!changed) return content
+  return `${kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`
+}
+
+function historicalOverviewMarker(line) {
+  return /전체\s*역사|taxonomy\s+evolution|deprecated\s+direction|오래된\s+design\s+rationale|design\s+rationale|history\s+of\s+the\s+wiki|과거\s*분류|분류\s*진화|이전\s*방향|폐기된\s*방향/iu.test(line)
 }
 
 function parseFileBlocks(text) {
@@ -466,6 +519,13 @@ function sum(values) {
   return values.reduce((acc, value) => acc + value, 0)
 }
 
+function median(values) {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+}
+
 function round1(value) {
   return Math.round(value * 10) / 10
 }
@@ -476,6 +536,7 @@ function renderMarkdown(report) {
     "",
     `- generated_at: ${report.generatedAt}`,
     `- model: ${report.model}`,
+    `- runs_per_variant: ${report.runsPerVariant}`,
     `- before_surface_bytes: ${report.surfaceBytes.before}`,
     `- after_surface_bytes: ${report.surfaceBytes.after}`,
     `- surface_reduction: ${report.surfaceBytes.reductionPercent}%`,

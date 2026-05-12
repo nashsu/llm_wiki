@@ -20,6 +20,13 @@ import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import type { WikiHealthReport } from "@/lib/wiki-health-report"
 
+interface SmokeRetentionSummary {
+  totalRuns: number
+  failedOrGuardedRunCount: number
+  deleteCandidateCount: number
+  deletedCount: number
+}
+
 const typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }> = {
   orphan: { icon: Unlink, label: "Orphan Page" },
   "broken-link": { icon: Link2Off, label: "Broken Link" },
@@ -42,20 +49,27 @@ export function LintView() {
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
   const [operationalSurface, setOperationalSurface] = useState<WikiHealthReport["operationalSurface"] | null>(null)
+  const [smokeRetention, setSmokeRetention] = useState<SmokeRetentionSummary | null>(null)
   const [surfaceError, setSurfaceError] = useState<string | null>(null)
 
   const loadOperationalSurface = useCallback(async () => {
     if (!project) {
       setOperationalSurface(null)
+      setSmokeRetention(null)
       setSurfaceError(null)
       return
     }
     try {
-      const health = JSON.parse(await readFile(`${normalizePath(project.path)}/.llm-wiki/health.json`)) as Partial<WikiHealthReport>
+      const pp = normalizePath(project.path)
+      const health = JSON.parse(await readFile(`${pp}/.llm-wiki/health.json`)) as Partial<WikiHealthReport>
       setOperationalSurface(health.operationalSurface ?? null)
       setSurfaceError(health.operationalSurface ? null : "Operational surface data is not available yet.")
+      const latestPointer = health.operationalSurface?.runtimeProofRetention.liveIngestSmoke.latestPointer
+        ?? ".llm-wiki/runtime/codex-live-ingest-smoke-latest.json"
+      setSmokeRetention(await loadSmokeRetentionSummary(pp, latestPointer))
     } catch (err) {
       setOperationalSurface(null)
+      setSmokeRetention(null)
       setSurfaceError(err instanceof Error ? err.message : String(err))
     }
   }, [project])
@@ -262,6 +276,7 @@ export function LintView() {
       {project && (
         <OperationalSurfaceSummary
           surface={operationalSurface}
+          smokeRetention={smokeRetention}
           error={surfaceError}
           onRefresh={loadOperationalSurface}
         />
@@ -425,10 +440,12 @@ function LintCard({
 
 function OperationalSurfaceSummary({
   surface,
+  smokeRetention,
   error,
   onRefresh,
 }: {
   surface: WikiHealthReport["operationalSurface"] | null
+  smokeRetention: SmokeRetentionSummary | null
   error: string | null
   onRefresh: () => void
 }) {
@@ -442,6 +459,7 @@ function OperationalSurfaceSummary({
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass}`}>
             {surface?.status ?? (error ? "warn" : "ok")}
           </span>
+          {surface && <RecoveryPill recovery={surface.recovery} />}
         </div>
         <Button size="sm" variant="ghost" onClick={() => onRefresh()}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
@@ -450,7 +468,7 @@ function OperationalSurfaceSummary({
       </div>
 
       {surface ? (
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-6">
           <SurfaceMetric
             label="Ingest surface"
             value={`${formatBytes(surface.ingestPromptSurfaceBytes)} / ${surface.ingestPromptSurfaceStatus}`}
@@ -467,6 +485,14 @@ function OperationalSurfaceSummary({
             label="Log"
             value={`${surface.docs.log.entryCount} entries / ${surface.docs.log.rolloverNeeded ? "rollover needed" : "rollover ok"}`}
           />
+          <SurfaceMetric
+            label="Recovery"
+            value={`${formatRecoveryTotals(surface.recovery)} · week ${surface.recovery.currentWeek.weekKey}`}
+          />
+          <SurfaceMetric
+            label="Proof retention"
+            value={formatSmokeRetention(smokeRetention)}
+          />
         </div>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">
@@ -477,6 +503,14 @@ function OperationalSurfaceSummary({
   )
 }
 
+function RecoveryPill({ recovery }: { recovery: WikiHealthReport["operationalSurface"]["recovery"] }) {
+  return (
+    <span className="rounded-full bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+      This week {formatRecoveryWeek(recovery)}
+    </span>
+  )
+}
+
 function SurfaceMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border/60 bg-background/60 px-3 py-2">
@@ -484,6 +518,46 @@ function SurfaceMetric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-medium">{value}</div>
     </div>
   )
+}
+
+function formatRecoveryTotals(recovery: WikiHealthReport["operationalSurface"]["recovery"]) {
+  return `${recovery.malformedFileFocusedRetryRecovered}/${recovery.malformedFileFocusedRetryAttempts} retries · ${recovery.oneFileFallbackRecovered}/${recovery.oneFileFallbackAttempts} fallback`
+}
+
+function formatRecoveryWeek(recovery: WikiHealthReport["operationalSurface"]["recovery"]) {
+  const week = recovery.currentWeek
+  return `${week.malformedFileFocusedRetryRecovered}/${week.malformedFileFocusedRetryAttempts} retry · ${week.oneFileFallbackRecovered}/${week.oneFileFallbackAttempts} fallback`
+}
+
+function formatSmokeRetention(summary: SmokeRetentionSummary | null) {
+  if (!summary) return "not captured"
+  return `${summary.deleteCandidateCount} candidates · ${summary.failedOrGuardedRunCount} guarded`
+}
+
+async function loadSmokeRetentionSummary(projectPath: string, latestPointer: string): Promise<SmokeRetentionSummary | null> {
+  try {
+    const proof = JSON.parse(await readFile(`${projectPath}/${latestPointer}`)) as {
+      retention?: {
+        totalRuns?: number
+        failedOrGuardedRuns?: unknown[]
+        deleteCandidates?: unknown[]
+        deleted?: unknown[]
+      }
+    }
+    if (!proof.retention) return null
+    return {
+      totalRuns: Math.max(0, Number(proof.retention.totalRuns ?? 0)),
+      failedOrGuardedRunCount: Array.isArray(proof.retention.failedOrGuardedRuns)
+        ? proof.retention.failedOrGuardedRuns.length
+        : 0,
+      deleteCandidateCount: Array.isArray(proof.retention.deleteCandidates)
+        ? proof.retention.deleteCandidates.length
+        : 0,
+      deletedCount: Array.isArray(proof.retention.deleted) ? proof.retention.deleted.length : 0,
+    }
+  } catch {
+    return null
+  }
 }
 
 function surfaceStatusClass(status: "ok" | "warn" | "fail") {

@@ -8,7 +8,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, INGEST_PIPELINE_VERSION, saveIngestCache } from "@/lib/ingest-cache"
-import { sanitizeGeneratedIndexContent, sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
+import { sanitizeGeneratedIndexContent, sanitizeGeneratedOverviewContent, sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -117,6 +117,41 @@ export interface AutoIngestOptions {
    * to the research result title instead of the raw question text.
    */
   sourceSummaryTitle?: string
+}
+
+interface IngestRecoveryMetricUpdate {
+  sourceFileName: string
+  attemptedPaths: string[]
+  recoveredPaths: string[]
+  oneFileFallbackPaths: string[]
+}
+
+interface IngestRecoveryMetricsFile {
+  schemaVersion: 1
+  updatedAt: string
+  totals: {
+    malformedFileFocusedRetryAttempts: number
+    malformedFileFocusedRetryRecovered: number
+    oneFileFallbackAttempts: number
+    oneFileFallbackRecovered: number
+  }
+  weekly: Record<string, IngestRecoveryMetricsWeek>
+  latest: {
+    at: string
+    sourceFileName: string
+    attemptedPaths: string[]
+    recoveredPaths: string[]
+    oneFileFallbackPaths: string[]
+  }
+}
+
+interface IngestRecoveryMetricsWeek {
+  weekKey: string
+  weekStart: string
+  malformedFileFocusedRetryAttempts: number
+  malformedFileFocusedRetryRecovered: number
+  oneFileFallbackAttempts: number
+  oneFileFallbackRecovered: number
 }
 
 // Line-level openers / closers. Both are case-insensitive, tolerant of
@@ -319,6 +354,64 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
   }
 
   return { blocks, warnings }
+}
+
+
+export function extractUnclosedFileBlockAttempts(text: string): ParsedFileBlock[] {
+  const normalized = text.replace(/\r\n/g, "\n")
+  const lines = normalized.split("\n")
+  const attempts: ParsedFileBlock[] = []
+
+  let i = 0
+  while (i < lines.length) {
+    const opener = OPENER_LINE.exec(lines[i])
+    if (!opener) {
+      i++
+      continue
+    }
+
+    const path = opener[1].trim()
+    const start = i + 1
+    let j = start
+    let fenceMarker: string | null = null
+    let fenceLen = 0
+    let closed = false
+
+    while (j < lines.length) {
+      const line = lines[j]
+      const nextOpener = j > start && fenceMarker === null && OPENER_LINE.test(line)
+      if (nextOpener) break
+
+      const fenceMatch = FENCE_LINE.exec(line)
+      if (fenceMatch) {
+        const run = fenceMatch[1]
+        const char = run[0]
+        const len = run.length
+        if (fenceMarker === null) {
+          fenceMarker = char
+          fenceLen = len
+        } else if (char === fenceMarker && len >= fenceLen) {
+          fenceMarker = null
+          fenceLen = 0
+        }
+        j++
+        continue
+      }
+
+      if (fenceMarker === null && CLOSER_LINE.test(line)) {
+        closed = true
+        break
+      }
+      j++
+    }
+
+    if (!closed && path && isSafeIngestPath(path)) {
+      attempts.push({ path, content: lines.slice(start, j).join("\n").trim() })
+    }
+    i = Math.max(j, i + 1)
+  }
+
+  return attempts
 }
 
 /**
@@ -723,7 +816,7 @@ async function generateFocusedSourceSummaryGeneration(params: {
   llmConfig: LlmConfig
   sourceSummaryPlan: SourceSummaryPlan
   signal?: AbortSignal
-}): Promise<{ generation: string | null; warnings: string[] }> {
+}): Promise<{ generation: string | null; warnings: string[]; usedFallback: boolean }> {
   const {
     sourceFileName,
     sourceContent,
@@ -800,14 +893,14 @@ async function generateFocusedSourceSummaryGeneration(params: {
     warnings.push(...parsed.warnings)
     if (!parsed.blocks.some((block) => block.path.startsWith("wiki/sources/"))) {
       warnings.push(`Focused source-summary pass for "${sourceFileName}" did not emit a wiki/sources FILE block.`)
-      return { generation: null, warnings }
+      return { generation: null, warnings, usedFallback: false }
     }
-    return { generation, warnings }
+    return { generation, warnings, usedFallback: false }
   } catch (err) {
     warnings.push(
       `Focused source-summary pass failed for "${sourceFileName}": ${err instanceof Error ? err.message : String(err)}`,
     )
-    return { generation: null, warnings }
+    return { generation: null, warnings, usedFallback: false }
   }
 }
 
@@ -853,16 +946,18 @@ async function recoverMissingSourceSummaryPage(params: {
   }
 
   try {
-    const repairedGeneration = await repairGeneratedQualityIssues({
-      generation: focused.generation,
-      llmConfig,
-      sourceFileName,
-      sourceContent,
-      analysis,
-      verificationContext,
-      signal,
-      onWarning: (msg) => warnings.push(msg),
-    })
+    const repairedGeneration = focused.usedFallback
+      ? focused.generation
+      : await repairGeneratedQualityIssues({
+          generation: focused.generation,
+          llmConfig,
+          sourceFileName,
+          sourceContent,
+          analysis,
+          verificationContext,
+          signal,
+          onWarning: (msg) => warnings.push(msg),
+        })
     const result = await writeFileBlocks(
       projectPath,
       repairedGeneration,
@@ -887,6 +982,435 @@ async function recoverMissingSourceSummaryPage(params: {
       `Focused source-summary retry failed for "${sourceFileName}": ${err instanceof Error ? err.message : String(err)}`,
     )
     return { writtenPaths: [], warnings, hardFailures: [] }
+  }
+}
+
+
+function pageTypeForRecoveryPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  if (normalized === "wiki/index.md" || normalized.endsWith("/index.md")) return "index"
+  if (normalized === "wiki/overview.md" || normalized.endsWith("/overview.md")) return "overview"
+  if (normalized.startsWith("wiki/sources/")) return "source"
+  if (normalized.startsWith("wiki/entities/")) return "entity"
+  if (normalized.startsWith("wiki/concepts/")) return "concept"
+  if (normalized.startsWith("wiki/comparisons/")) return "comparison"
+  if (normalized.startsWith("wiki/synthesis/")) return "synthesis"
+  if (normalized.startsWith("wiki/queries/")) return "query"
+  if (normalized.startsWith("wiki/decisions/")) return "decision"
+  return "concept"
+}
+
+function shouldRecoverMalformedFilePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/")
+  return normalized.startsWith("wiki/") && normalized !== "wiki/log.md" && !normalized.endsWith("/log.md")
+}
+
+function emptyRecoveryMetrics(): IngestRecoveryMetricsFile {
+  return {
+    schemaVersion: 1,
+    updatedAt: new Date(0).toISOString(),
+    totals: {
+      malformedFileFocusedRetryAttempts: 0,
+      malformedFileFocusedRetryRecovered: 0,
+      oneFileFallbackAttempts: 0,
+      oneFileFallbackRecovered: 0,
+    },
+    weekly: {},
+    latest: {
+      at: new Date(0).toISOString(),
+      sourceFileName: "",
+      attemptedPaths: [],
+      recoveredPaths: [],
+      oneFileFallbackPaths: [],
+    },
+  }
+}
+
+function parseRecoveryMetricsFile(content: string): IngestRecoveryMetricsFile {
+  if (!content.trim()) return emptyRecoveryMetrics()
+  try {
+    const parsed = JSON.parse(content) as Partial<IngestRecoveryMetricsFile>
+    const base = emptyRecoveryMetrics()
+    return {
+      schemaVersion: 1,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : base.updatedAt,
+      totals: {
+        malformedFileFocusedRetryAttempts: Number(parsed.totals?.malformedFileFocusedRetryAttempts ?? 0),
+        malformedFileFocusedRetryRecovered: Number(parsed.totals?.malformedFileFocusedRetryRecovered ?? 0),
+        oneFileFallbackAttempts: Number(parsed.totals?.oneFileFallbackAttempts ?? 0),
+        oneFileFallbackRecovered: Number(parsed.totals?.oneFileFallbackRecovered ?? 0),
+      },
+      weekly: normalizeRecoveryMetricWeeks(parsed.weekly),
+      latest: {
+        at: typeof parsed.latest?.at === "string" ? parsed.latest.at : base.latest.at,
+        sourceFileName: typeof parsed.latest?.sourceFileName === "string" ? parsed.latest.sourceFileName : "",
+        attemptedPaths: Array.isArray(parsed.latest?.attemptedPaths) ? parsed.latest.attemptedPaths.filter((p): p is string => typeof p === "string") : [],
+        recoveredPaths: Array.isArray(parsed.latest?.recoveredPaths) ? parsed.latest.recoveredPaths.filter((p): p is string => typeof p === "string") : [],
+        oneFileFallbackPaths: Array.isArray(parsed.latest?.oneFileFallbackPaths) ? parsed.latest.oneFileFallbackPaths.filter((p): p is string => typeof p === "string") : [],
+      },
+    }
+  } catch {
+    return emptyRecoveryMetrics()
+  }
+}
+
+function normalizeRecoveryMetricWeeks(value: unknown): Record<string, IngestRecoveryMetricsWeek> {
+  if (!value || typeof value !== "object") return {}
+  const weeks: Record<string, IngestRecoveryMetricsWeek> = {}
+  for (const [key, rawWeek] of Object.entries(value as Record<string, Partial<IngestRecoveryMetricsWeek>>)) {
+    if (!/^\d{4}-W\d{2}$/.test(key)) continue
+    weeks[key] = {
+      ...emptyRecoveryMetricsWeek(key),
+      weekStart: typeof rawWeek.weekStart === "string" ? rawWeek.weekStart : recoveryWeekStartForWeekKey(key),
+      malformedFileFocusedRetryAttempts: Number(rawWeek.malformedFileFocusedRetryAttempts ?? 0),
+      malformedFileFocusedRetryRecovered: Number(rawWeek.malformedFileFocusedRetryRecovered ?? 0),
+      oneFileFallbackAttempts: Number(rawWeek.oneFileFallbackAttempts ?? 0),
+      oneFileFallbackRecovered: Number(rawWeek.oneFileFallbackRecovered ?? 0),
+    }
+  }
+  return weeks
+}
+
+function emptyRecoveryMetricsWeek(weekKey: string): IngestRecoveryMetricsWeek {
+  return {
+    weekKey,
+    weekStart: recoveryWeekStartForWeekKey(weekKey),
+    malformedFileFocusedRetryAttempts: 0,
+    malformedFileFocusedRetryRecovered: 0,
+    oneFileFallbackAttempts: 0,
+    oneFileFallbackRecovered: 0,
+  }
+}
+
+function recoveryWeekKeyForDate(date: Date): string {
+  const weekStart = startOfUtcWeek(date)
+  const yearStart = startOfUtcWeek(new Date(Date.UTC(weekStart.getUTCFullYear(), 0, 1)))
+  const weekNumber = Math.floor((weekStart.getTime() - yearStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1
+  return `${weekStart.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`
+}
+
+function recoveryWeekStartForWeekKey(weekKey: string): string {
+  const match = weekKey.match(/^(\d{4})-W(\d{2})$/)
+  if (!match) return ""
+  const year = Number(match[1])
+  const week = Number(match[2])
+  const yearStart = startOfUtcWeek(new Date(Date.UTC(year, 0, 1)))
+  const start = new Date(yearStart.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000)
+  return start.toISOString().slice(0, 10)
+}
+
+function startOfUtcWeek(date: Date): Date {
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const day = start.getUTCDay()
+  const diff = day === 0 ? -6 : 1 - day
+  start.setUTCDate(start.getUTCDate() + diff)
+  return start
+}
+
+async function recordIngestRecoveryMetrics(projectPath: string, update: IngestRecoveryMetricUpdate): Promise<void> {
+  if (update.attemptedPaths.length === 0 && update.oneFileFallbackPaths.length === 0) return
+  const pp = normalizePath(projectPath)
+  const metricsPath = `${pp}/.llm-wiki/runtime/ingest-recovery-metrics.json`
+  let current = emptyRecoveryMetrics()
+  try {
+    current = parseRecoveryMetricsFile(await readFile(metricsPath))
+  } catch {
+    current = emptyRecoveryMetrics()
+  }
+
+  const now = new Date().toISOString()
+  const weekKey = recoveryWeekKeyForDate(new Date(now))
+  const existingWeek = current.weekly[weekKey] ?? emptyRecoveryMetricsWeek(weekKey)
+  const oneFileFallbackRecovered = update.oneFileFallbackPaths.filter((path) => update.recoveredPaths.includes(path)).length
+  const updatedWeek: IngestRecoveryMetricsWeek = {
+    ...existingWeek,
+    malformedFileFocusedRetryAttempts:
+      existingWeek.malformedFileFocusedRetryAttempts + update.attemptedPaths.length,
+    malformedFileFocusedRetryRecovered:
+      existingWeek.malformedFileFocusedRetryRecovered + update.recoveredPaths.length,
+    oneFileFallbackAttempts:
+      existingWeek.oneFileFallbackAttempts + update.oneFileFallbackPaths.length,
+    oneFileFallbackRecovered:
+      existingWeek.oneFileFallbackRecovered + oneFileFallbackRecovered,
+  }
+  const next: IngestRecoveryMetricsFile = {
+    schemaVersion: 1,
+    updatedAt: now,
+    totals: {
+      malformedFileFocusedRetryAttempts:
+        current.totals.malformedFileFocusedRetryAttempts + update.attemptedPaths.length,
+      malformedFileFocusedRetryRecovered:
+        current.totals.malformedFileFocusedRetryRecovered + update.recoveredPaths.length,
+      oneFileFallbackAttempts:
+        current.totals.oneFileFallbackAttempts + update.oneFileFallbackPaths.length,
+      oneFileFallbackRecovered:
+        current.totals.oneFileFallbackRecovered + oneFileFallbackRecovered,
+    },
+    weekly: {
+      ...current.weekly,
+      [weekKey]: updatedWeek,
+    },
+    latest: {
+      at: now,
+      sourceFileName: update.sourceFileName,
+      attemptedPaths: update.attemptedPaths,
+      recoveredPaths: update.recoveredPaths,
+      oneFileFallbackPaths: update.oneFileFallbackPaths,
+    },
+  }
+
+  await createDirectory(`${pp}/.llm-wiki/runtime`).catch(() => {})
+  await writeFile(metricsPath, JSON.stringify(next, null, 2))
+  await writeFile(
+    `${pp}/.llm-wiki/runtime/ingest-recovery-weekly-${weekKey}.json`,
+    JSON.stringify(updatedWeek, null, 2),
+  )
+  await writeFile(
+    `${pp}/.llm-wiki/runtime/ingest-recovery-weekly-latest.md`,
+    renderRecoveryWeeklyMarkdown(updatedWeek),
+  )
+}
+
+function renderRecoveryWeeklyMarkdown(week: IngestRecoveryMetricsWeek): string {
+  return [
+    `# Ingest Recovery Weekly Summary - ${week.weekKey}`,
+    "",
+    `- week_start: ${week.weekStart}`,
+    `- malformed_file_focused_retry: ${week.malformedFileFocusedRetryRecovered}/${week.malformedFileFocusedRetryAttempts}`,
+    `- one_file_fallback: ${week.oneFileFallbackRecovered}/${week.oneFileFallbackAttempts}`,
+    "",
+    "This runtime artifact is not part of the ingest bootstrap surface.",
+  ].join("\n")
+}
+
+async function generateMalformedFileBlockRecovery(params: {
+  target: ParsedFileBlock
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext: string
+  llmConfig: LlmConfig
+  signal?: AbortSignal
+}): Promise<{ generation: string | null; warnings: string[]; usedFallback: boolean }> {
+  const { target, sourceFileName, sourceContent, analysis, verificationContext, llmConfig, signal } = params
+  const date = currentIngestDate()
+  const pageType = pageTypeForRecoveryPath(target.path)
+  const systemPrompt = [
+    "You are a strict wiki maintainer repairing one malformed FILE block.",
+    "Generate exactly ONE FILE block and nothing else.",
+    "Do not output chain-of-thought, hidden reasoning, explanatory preamble, markdown fences, or extra text.",
+    `The first line must be exactly: ---FILE: ${target.path}---`,
+    "The last line must be exactly `---END FILE---`.",
+    "Never start another FILE block before closing the current one with exactly `---END FILE---`.",
+    "The file content inside the block must start with YAML frontmatter.",
+    `The frontmatter type must be exactly \`${pageType}\`.`,
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
+    "Required quality keys for content pages: quality, coverage, needs_upgrade, source_count.",
+    `Use created/updated/last_reviewed date ${date}.`,
+    `The sources array MUST include "${sourceFileName}" for content pages.`,
+    "If evidence is only the raw source, use state: draft, evidence_strength: weak|moderate, review_status: ai_generated, and needs_upgrade: true.",
+    "If this is wiki/index.md, keep only compact active/reviewed/canonical listings and exclude archived/deprecated/ephemeral/archive entries.",
+    "If this is wiki/overview.md, keep only a current identity snapshot; exclude whole history, taxonomy evolution, deprecated direction, and old design rationale.",
+    "Keep source summaries compact: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
+    "Do not create log pages or additional files.",
+    "",
+    languageRule(sourceContent),
+    "",
+    wikiTitleLanguagePolicy(),
+  ].join("\n")
+
+  const userPrompt = [
+    `The previous broad generation emitted an unclosed FILE block at ${target.path}.`,
+    "Regenerate only that file as a complete, closed FILE block.",
+    "Use the partial attempt as a hint, but do not copy malformed or truncated text blindly.",
+    "",
+    "## Partial malformed attempt",
+    target.content.slice(0, 2400),
+    "",
+    "## Stage 1 Analysis",
+    analysis,
+    "",
+    "## Ingest Verification / Currentness Context",
+    verificationContext,
+    "",
+    "## Original Source Content",
+    sourceContent,
+  ].join("\n")
+
+  const warnings: string[] = []
+  try {
+    const generation = await generateOneFileBlock(llmConfig, systemPrompt, userPrompt, signal, 4096)
+    const parsed = parseFileBlocks(generation)
+    warnings.push(...parsed.warnings)
+    if (!parsed.blocks.some((block) => block.path === target.path)) {
+      warnings.push(`Malformed FILE retry did not emit the expected FILE block for "${target.path}".`)
+      return await generateMinimalMalformedFileBlockFallback({
+        ...params,
+        warnings,
+        previousFailure: `Focused retry did not emit ${target.path}.`,
+      })
+    }
+    return { generation, warnings, usedFallback: false }
+  } catch (err) {
+    warnings.push(`Malformed FILE retry failed for "${target.path}": ${err instanceof Error ? err.message : String(err)}`)
+    return await generateMinimalMalformedFileBlockFallback({
+      ...params,
+      warnings,
+      previousFailure: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+async function generateMinimalMalformedFileBlockFallback(params: {
+  target: ParsedFileBlock
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext: string
+  llmConfig: LlmConfig
+  signal?: AbortSignal
+  warnings: string[]
+  previousFailure: string
+}): Promise<{ generation: string | null; warnings: string[]; usedFallback: boolean }> {
+  const { target, sourceFileName, sourceContent, analysis, verificationContext, llmConfig, signal, warnings, previousFailure } = params
+  const date = currentIngestDate()
+  const pageType = pageTypeForRecoveryPath(target.path)
+  const systemPrompt = [
+    "You are repairing a truncated wiki FILE block with the smallest complete output possible.",
+    "Generate exactly ONE FILE block and nothing else.",
+    `First line: ---FILE: ${target.path}---`,
+    "Last line: ---END FILE---",
+    "Keep the body short, complete, and valid. Prefer a concise valid page over a long page.",
+    "The content must start with YAML frontmatter.",
+    `Frontmatter type: ${pageType}`,
+    "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
+    "For source/concept/comparison/synthesis/query pages also include: quality, coverage, needs_upgrade, source_count.",
+    `Use date ${date}.`,
+    `For content pages, sources must include "${sourceFileName}".`,
+    "Do not create index/log/overview sections unless the requested path is exactly that file.",
+    "",
+    languageRule(sourceContent),
+  ].join("\n")
+
+  const userPrompt = [
+    "The previous focused repair failed or still looked truncated.",
+    `Failure: ${previousFailure}`,
+    `Requested path: ${target.path}`,
+    "",
+    "Use only the essential facts below. Do not be exhaustive.",
+    "",
+    "## Partial malformed attempt excerpt",
+    target.content.slice(0, 1200),
+    "",
+    "## Analysis excerpt",
+    analysis.slice(0, 1600),
+    "",
+    "## Verification excerpt",
+    verificationContext.slice(0, 1000),
+    "",
+    "## Source excerpt",
+    sourceContent.slice(0, 2600),
+  ].join("\n")
+
+  try {
+    const generation = await generateOneFileBlock(llmConfig, systemPrompt, userPrompt, signal, 3072)
+    const parsed = parseFileBlocks(generation)
+    warnings.push(...parsed.warnings)
+    if (!parsed.blocks.some((block) => block.path === target.path)) {
+      warnings.push(`Minimal one-file fallback did not emit the expected FILE block for "${target.path}".`)
+      return { generation: null, warnings, usedFallback: true }
+    }
+    warnings.push(`Recovered "${target.path}" with minimal one-file fallback after focused retry failure.`)
+    return { generation, warnings, usedFallback: true }
+  } catch (err) {
+    warnings.push(`Minimal one-file fallback failed for "${target.path}": ${err instanceof Error ? err.message : String(err)}`)
+    return { generation: null, warnings, usedFallback: true }
+  }
+}
+
+async function recoverMalformedFileBlocks(params: {
+  projectPath: string
+  sourceFileName: string
+  sourceContent: string
+  analysis: string
+  verificationContext: string
+  llmConfig: LlmConfig
+  targets: ParsedFileBlock[]
+  writtenPaths: string[]
+  signal?: AbortSignal
+  options?: AutoIngestOptions
+  sourceSummaryPlan: SourceSummaryPlan
+}): Promise<{
+  writtenPaths: string[]
+  warnings: string[]
+  hardFailures: string[]
+  attemptedPaths: string[]
+  oneFileFallbackPaths: string[]
+}> {
+  const { projectPath, sourceFileName, sourceContent, analysis, verificationContext, llmConfig, targets, writtenPaths, signal, options = {}, sourceSummaryPlan } = params
+  if (signal?.aborted) return { writtenPaths: [], warnings: [], hardFailures: [], attemptedPaths: [], oneFileFallbackPaths: [] }
+
+  const warnings: string[] = []
+  const recoveredPaths: string[] = []
+  const hardFailures: string[] = []
+  const oneFileFallbackPaths: string[] = []
+  const uniqueTargets = targets
+    .filter((target) => shouldRecoverMalformedFilePath(target.path))
+    .filter((target, idx, arr) => arr.findIndex((candidate) => candidate.path === target.path) === idx)
+    .filter((target) => !writtenPaths.includes(target.path))
+    .slice(0, 3)
+
+  for (const target of uniqueTargets) {
+    const focused = await generateMalformedFileBlockRecovery({
+      target,
+      sourceFileName,
+      sourceContent,
+      analysis,
+      verificationContext,
+      llmConfig,
+      signal,
+    })
+    warnings.push(...focused.warnings)
+    if (focused.usedFallback && !oneFileFallbackPaths.includes(target.path)) {
+      oneFileFallbackPaths.push(target.path)
+    }
+    if (!focused.generation) continue
+
+    const repairedGeneration = await repairGeneratedQualityIssues({
+      generation: focused.generation,
+      llmConfig,
+      sourceFileName,
+      sourceContent,
+      analysis,
+      verificationContext,
+      signal,
+      onWarning: (msg) => warnings.push(msg),
+    })
+    const result = await writeFileBlocks(
+      projectPath,
+      repairedGeneration,
+      llmConfig,
+      sourceFileName,
+      signal,
+      options,
+      sourceSummaryPlan,
+    )
+    warnings.push(...result.warnings)
+    hardFailures.push(...result.hardFailures)
+    for (const p of result.writtenPaths) {
+      if (!recoveredPaths.includes(p)) recoveredPaths.push(p)
+    }
+  }
+
+  if (recoveredPaths.length > 0) {
+    warnings.push(`Recovered ${recoveredPaths.length} malformed FILE block(s) with focused retry: ${recoveredPaths.join(", ")}.`)
+  }
+  return {
+    writtenPaths: recoveredPaths,
+    warnings,
+    hardFailures,
+    attemptedPaths: uniqueTargets.map((target) => target.path),
+    oneFileFallbackPaths,
   }
 }
 
@@ -2232,6 +2756,8 @@ async function autoIngestImpl(
     throw new Error(generationActivity.detail || "Generation stream failed")
   }
 
+  const malformedFileAttempts = extractUnclosedFileBlockAttempts(generation)
+
   generation = await repairGeneratedQualityIssues({
     generation,
     llmConfig,
@@ -2267,6 +2793,38 @@ async function autoIngestImpl(
     sourceSummaryPlan,
   )
   writeWarnings.push(...generationWarnings)
+
+  if (malformedFileAttempts.length > 0 && !signal?.aborted) {
+    activity.updateItem(activityId, { detail: "Retrying malformed FILE block(s) as focused tasks..." })
+    const malformedRecovery = await recoverMalformedFileBlocks({
+      projectPath: pp,
+      sourceFileName: fileName,
+      sourceContent: truncatedContent,
+      analysis,
+      verificationContext,
+      llmConfig,
+      targets: malformedFileAttempts,
+      writtenPaths,
+      signal,
+      options,
+      sourceSummaryPlan,
+    })
+    for (const p of malformedRecovery.writtenPaths) {
+      if (!writtenPaths.includes(p)) writtenPaths.push(p)
+    }
+    writeWarnings.push(...malformedRecovery.warnings)
+    hardFailures.push(...malformedRecovery.hardFailures)
+    await recordIngestRecoveryMetrics(pp, {
+      sourceFileName: fileName,
+      attemptedPaths: malformedRecovery.attemptedPaths,
+      recoveredPaths: malformedRecovery.writtenPaths,
+      oneFileFallbackPaths: malformedRecovery.oneFileFallbackPaths,
+    }).catch((err) => {
+      const msg = `Failed to record ingest recovery metrics: ${err instanceof Error ? err.message : String(err)}`
+      console.warn(`[ingest] ${msg}`)
+      writeWarnings.push(msg)
+    })
+  }
 
   // Surface parser / writer warnings to the activity panel so users
   // don't have to open devtools to find out a block was dropped.
@@ -3010,6 +3568,8 @@ async function writeFileBlocks(
 	    content = normalizeIngestFrontmatter(relativePath, content, ingestDate, sourceFileName)
     if (relativePath === "wiki/index.md" || relativePath.endsWith("/index.md")) {
       content = sanitizeGeneratedIndexContent(content)
+    } else if (relativePath === "wiki/overview.md" || relativePath.endsWith("/overview.md")) {
+      content = sanitizeGeneratedOverviewContent(content)
     }
 
     const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)

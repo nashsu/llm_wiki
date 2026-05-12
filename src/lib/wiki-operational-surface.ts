@@ -9,6 +9,14 @@ export const OPERATIONAL_SURFACE_POLICY = {
   },
   log: { warnEntries: 50, failEntries: 60 },
   ingestSurface: { warnBytes: 45 * 1024, failBytes: 60 * 1024 },
+  runtimeProofRetention: {
+    liveIngestSmoke: {
+      retainRuns: 8,
+      retainFailedOrGuardedRuns: 4,
+      latestPointer: ".llm-wiki/runtime/codex-live-ingest-smoke-latest.json",
+      artifactPrefix: "codex-live-ingest-smoke-",
+    },
+  },
   excludedFromBootstrap: [
     ".llm-wiki/policy/*",
     ".llm-wiki/log-archive/*",
@@ -47,6 +55,8 @@ export interface OperationalSurfaceReport {
   controlSurfaceBytes: number
   ingestPromptSurfaceBytes: number
   ingestPromptSurfaceStatus: OperationalSurfaceStatus
+  recovery: OperationalSurfaceRecoveryReport
+  runtimeProofRetention: typeof OPERATIONAL_SURFACE_POLICY.runtimeProofRetention
   capsApplied: boolean
   deterministicTruncation: true
   promptContaminationRisk: {
@@ -63,6 +73,39 @@ export interface OperationalSurfaceReport {
     overview: OperationalSurfaceDocReport
     log: OperationalSurfaceLogReport
   }
+}
+
+export interface IngestRecoveryMetricsInput {
+  totals?: Partial<{
+    malformedFileFocusedRetryAttempts: number
+    malformedFileFocusedRetryRecovered: number
+    oneFileFallbackAttempts: number
+    oneFileFallbackRecovered: number
+  }>
+  latest?: Partial<{
+    at: string
+    sourceFileName: string
+  }>
+  weekly?: Record<string, Partial<IngestRecoveryWeekReport>>
+}
+
+export interface OperationalSurfaceRecoveryReport {
+  malformedFileFocusedRetryAttempts: number
+  malformedFileFocusedRetryRecovered: number
+  oneFileFallbackAttempts: number
+  oneFileFallbackRecovered: number
+  latestAt: string | null
+  latestSource: string | null
+  currentWeek: IngestRecoveryWeekReport
+}
+
+export interface IngestRecoveryWeekReport {
+  weekKey: string
+  weekStart: string
+  malformedFileFocusedRetryAttempts: number
+  malformedFileFocusedRetryRecovered: number
+  oneFileFallbackAttempts: number
+  oneFileFallbackRecovered: number
 }
 
 export interface IngestSurfaceInput {
@@ -114,6 +157,7 @@ export function buildOperationalSurfaceReport(input: IngestSurfaceInput & {
   log: string
   logEntryCount: number
   logRolloverNeeded: boolean
+  recoveryMetrics?: IngestRecoveryMetricsInput | null
   now?: Date
 }): OperationalSurfaceReport {
   const prepared = prepareIngestSurface(input, input.now)
@@ -141,6 +185,8 @@ export function buildOperationalSurfaceReport(input: IngestSurfaceInput & {
     controlSurfaceBytes: byteLength(input.purpose) + byteLength(input.schema) + byteLength(input.index) + byteLength(input.overview) + byteLength(input.log),
     ingestPromptSurfaceBytes: prepared.totalIncludedBytes,
     ingestPromptSurfaceStatus,
+    recovery: normalizeRecoveryMetrics(input.recoveryMetrics, input.now ?? new Date()),
+    runtimeProofRetention: OPERATIONAL_SURFACE_POLICY.runtimeProofRetention,
     capsApplied: Object.values(prepared.docs).some((doc) => doc.truncated),
     deterministicTruncation: true,
     promptContaminationRisk: {
@@ -151,6 +197,31 @@ export function buildOperationalSurfaceReport(input: IngestSurfaceInput & {
     },
     excludedFromBootstrap: OPERATIONAL_SURFACE_POLICY.excludedFromBootstrap,
     docs,
+  }
+}
+
+function normalizeRecoveryMetrics(metrics: IngestRecoveryMetricsInput | null | undefined, now: Date): OperationalSurfaceRecoveryReport {
+  const currentWeekKey = weekKeyForDate(now)
+  const currentWeek = normalizeRecoveryWeek(currentWeekKey, metrics?.weekly?.[currentWeekKey])
+  return {
+    malformedFileFocusedRetryAttempts: Math.max(0, Number(metrics?.totals?.malformedFileFocusedRetryAttempts ?? 0)),
+    malformedFileFocusedRetryRecovered: Math.max(0, Number(metrics?.totals?.malformedFileFocusedRetryRecovered ?? 0)),
+    oneFileFallbackAttempts: Math.max(0, Number(metrics?.totals?.oneFileFallbackAttempts ?? 0)),
+    oneFileFallbackRecovered: Math.max(0, Number(metrics?.totals?.oneFileFallbackRecovered ?? 0)),
+    latestAt: typeof metrics?.latest?.at === "string" ? metrics.latest.at : null,
+    latestSource: typeof metrics?.latest?.sourceFileName === "string" ? metrics.latest.sourceFileName : null,
+    currentWeek,
+  }
+}
+
+function normalizeRecoveryWeek(weekKey: string, week?: Partial<IngestRecoveryWeekReport>): IngestRecoveryWeekReport {
+  return {
+    weekKey,
+    weekStart: typeof week?.weekStart === "string" ? week.weekStart : weekStartForWeekKey(weekKey),
+    malformedFileFocusedRetryAttempts: Math.max(0, Number(week?.malformedFileFocusedRetryAttempts ?? 0)),
+    malformedFileFocusedRetryRecovered: Math.max(0, Number(week?.malformedFileFocusedRetryRecovered ?? 0)),
+    oneFileFallbackAttempts: Math.max(0, Number(week?.oneFileFallbackAttempts ?? 0)),
+    oneFileFallbackRecovered: Math.max(0, Number(week?.oneFileFallbackRecovered ?? 0)),
   }
 }
 
@@ -275,4 +346,29 @@ function maxStatus(statuses: OperationalSurfaceStatus[]): OperationalSurfaceStat
   if (statuses.includes("fail")) return "fail"
   if (statuses.includes("warn")) return "warn"
   return "ok"
+}
+
+function weekKeyForDate(date: Date): string {
+  const weekStart = startOfUtcWeek(date)
+  const yearStart = startOfUtcWeek(new Date(Date.UTC(weekStart.getUTCFullYear(), 0, 1)))
+  const weekNumber = Math.floor((weekStart.getTime() - yearStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1
+  return `${weekStart.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`
+}
+
+function weekStartForWeekKey(weekKey: string): string {
+  const match = weekKey.match(/^(\d{4})-W(\d{2})$/)
+  if (!match) return ""
+  const year = Number(match[1])
+  const week = Number(match[2])
+  const yearStart = startOfUtcWeek(new Date(Date.UTC(year, 0, 1)))
+  const start = new Date(yearStart.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000)
+  return start.toISOString().slice(0, 10)
+}
+
+function startOfUtcWeek(date: Date): Date {
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const day = start.getUTCDay()
+  const diff = day === 0 ? -6 : 1 - day
+  start.setUTCDate(start.getUTCDate() + diff)
+  return start
 }

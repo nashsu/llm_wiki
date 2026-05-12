@@ -187,3 +187,52 @@ function isIndexListingLine(line: string): boolean {
 function hasInactiveIndexMarker(line: string): boolean {
   return /\bretention\s*:\s*(?:ephemeral|archive)\b|\bstate\s*:\s*(?:archived|deprecated)\b|\b(?:archived|deprecated)\b|아카이브|폐기|보관됨/iu.test(line)
 }
+
+
+/**
+ * Keep generated overview pages as a current identity snapshot.
+ *
+ * Overview is part of the bootstrap prompt. Historical taxonomy changes,
+ * deprecated direction narratives, and long design-rationale sections can
+ * become hidden prompts on the next ingest. This removes only explicit
+ * history/deprecation sections or lines; current map prose is preserved.
+ */
+export function sanitizeGeneratedOverviewContent(content: string): string {
+  const lines = content.split(/\r?\n/)
+  const kept: string[] = []
+  let changed = false
+  let skipHeadingLevel: number | null = null
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{2,6})\s+(.+)$/)
+    if (heading) {
+      const level = heading[1].length
+      if (skipHeadingLevel !== null && level <= skipHeadingLevel) {
+        skipHeadingLevel = null
+      }
+      if (skipHeadingLevel === null && hasHistoricalOverviewMarker(heading[2])) {
+        skipHeadingLevel = level
+        changed = true
+        continue
+      }
+    }
+
+    if (skipHeadingLevel !== null) {
+      changed = true
+      continue
+    }
+
+    if (hasHistoricalOverviewMarker(line)) {
+      changed = true
+      continue
+    }
+    kept.push(line)
+  }
+
+  if (!changed) return content
+  return `${kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`
+}
+
+function hasHistoricalOverviewMarker(line: string): boolean {
+  return /전체\s*역사|taxonomy\s+evolution|deprecated\s+direction|오래된\s+design\s+rationale|design\s+rationale|history\s+of\s+the\s+wiki|과거\s*분류|분류\s*진화|이전\s*방향|폐기된\s*방향/iu.test(line)
+}

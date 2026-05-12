@@ -67,6 +67,28 @@ describe("wiki health report", () => {
         purpose: "# Purpose\n\nBootstrap purpose.",
         schema: "# Schema\n\nContract-only schema.",
       },
+      recoveryMetrics: {
+        totals: {
+          malformedFileFocusedRetryAttempts: 2,
+          malformedFileFocusedRetryRecovered: 1,
+          oneFileFallbackAttempts: 1,
+          oneFileFallbackRecovered: 1,
+        },
+        latest: {
+          at: "2026-05-11T00:00:00.000Z",
+          sourceFileName: "retry-source.md",
+        },
+        weekly: {
+          "2026-W20": {
+            weekKey: "2026-W20",
+            weekStart: "2026-05-11",
+            malformedFileFocusedRetryAttempts: 2,
+            malformedFileFocusedRetryRecovered: 1,
+            oneFileFallbackAttempts: 1,
+            oneFileFallbackRecovered: 1,
+          },
+        },
+      },
       maintenanceQueue: {
         generatedAt: "2026-05-11T00:00:00.000Z",
         items: [
@@ -106,6 +128,23 @@ describe("wiki health report", () => {
     expect(report.operationalSurface.docs.index.lineCount).toBeGreaterThan(0)
     expect(report.operationalSurface.docs.log.rolloverNeeded).toBe(true)
     expect(report.operationalSurface.promptContaminationRisk.archivesExcludedFromBootstrap).toBe(true)
+    expect(report.operationalSurface.runtimeProofRetention.liveIngestSmoke.retainRuns).toBe(8)
+    expect(report.operationalSurface.recovery).toEqual({
+      malformedFileFocusedRetryAttempts: 2,
+      malformedFileFocusedRetryRecovered: 1,
+      oneFileFallbackAttempts: 1,
+      oneFileFallbackRecovered: 1,
+      latestAt: "2026-05-11T00:00:00.000Z",
+      latestSource: "retry-source.md",
+      currentWeek: {
+        weekKey: "2026-W20",
+        weekStart: "2026-05-11",
+        malformedFileFocusedRetryAttempts: 2,
+        malformedFileFocusedRetryRecovered: 1,
+        oneFileFallbackAttempts: 1,
+        oneFileFallbackRecovered: 1,
+      },
+    })
   })
 
   it("reports operational surface budget failures for oversized bootstrap docs", () => {

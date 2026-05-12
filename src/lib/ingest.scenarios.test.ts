@@ -322,6 +322,235 @@ describe("ingest scenarios (fixture-driven)", () => {
 })
 
 describe("focused source-summary recovery", () => {
+
+
+  it("recovers an unclosed generated FILE block with a focused retry", async () => {
+    ctx = { tmp: await createTempProject("ingest-malformed-file-retry") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(ctx.tmp.path, "raw", "sources", "파일블록 복구.md")
+    await writeFileRaw(sourceFullPath, "# 파일블록 복구\n\nGemini preview 모델은 FILE block 종료 태그를 누락할 수 있다.\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    pendingResponses = [
+      "## Key Concepts\n- malformed FILE block focused retry\n",
+      "",
+      [
+        "---FILE: wiki/sources/파일블록 복구 소스 요약.md---",
+        "---",
+        "type: source",
+        "title: 파일블록 복구 소스 요약",
+        "created: 2026-05-12",
+        "updated: 2026-05-12",
+        "tags: []",
+        "related: []",
+        'sources: ["파일블록 복구.md"]',
+        "state: draft",
+        "confidence: medium",
+        "evidence_strength: moderate",
+        "review_status: ai_generated",
+        "knowledge_type: operational",
+        "last_reviewed: 2026-05-12",
+        "quality: draft",
+        "coverage: medium",
+        "needs_upgrade: true",
+        "source_count: 1",
+        "---",
+        "# 파일블록 복구 소스 요약",
+        "닫힘 태그가 없는 부분 응답입니다.",
+      ].join("\n"),
+      [
+        "---FILE: wiki/sources/파일블록 복구 소스 요약.md---",
+        "---",
+        "type: source",
+        "title: 파일블록 복구 소스 요약",
+        "created: 2026-05-12",
+        "updated: 2026-05-12",
+        "tags: []",
+        "related: []",
+        'sources: ["파일블록 복구.md"]',
+        "state: draft",
+        "confidence: medium",
+        "evidence_strength: moderate",
+        "review_status: ai_generated",
+        "knowledge_type: operational",
+        "last_reviewed: 2026-05-12",
+        "quality: draft",
+        "coverage: medium",
+        "needs_upgrade: true",
+        "source_count: 1",
+        "---",
+        "# 파일블록 복구 소스 요약",
+        "",
+        "## 요약",
+        "이 source summary는 테스트 raw source의 핵심 주장과 malformed FILE block 복구 경로를 검증하기 위한 충분한 본문입니다.",
+        "",
+        "## Source Coverage Matrix",
+        "- 원본의 FILE block 종료 태그 누락 위험을 source summary와 운영 노트에 반영합니다.",
+        "",
+        "## Atomic Claims",
+        "- Preview 모델은 종료 태그를 누락할 수 있으므로 focused retry가 필요합니다.",
+        "",
+        "## Evidence Map",
+        "- Primary evidence는 테스트 raw source입니다.",
+        "",
+        "## 운영 노트",
+        "- retry는 같은 path 하나만 다시 생성해야 합니다.",
+        "",
+        "## 열린 질문",
+        "- 실제 live 모델에서 retry 성공률을 반복 측정합니다.",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "google",
+        apiKey: "test-key",
+        model: "gemini-3-flash-preview",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    expect(written).toContain("wiki/sources/파일블록 복구 소스 요약.md")
+    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, "wiki/sources/파일블록 복구 소스 요약.md"))
+    expect(sourceSummary).toContain("이 source summary는 테스트 raw source의 핵심 주장")
+    expect(sourceSummary).toContain("---")
+    const metrics = JSON.parse(await readFileRaw(path.join(ctx.tmp.path, ".llm-wiki/runtime/ingest-recovery-metrics.json")))
+    expect(metrics.totals.malformedFileFocusedRetryAttempts).toBe(1)
+    expect(metrics.totals.malformedFileFocusedRetryRecovered).toBe(1)
+    expect(metrics.totals.oneFileFallbackAttempts).toBe(0)
+    expect(metrics.latest.attemptedPaths).toEqual(["wiki/sources/파일블록 복구 소스 요약.md"])
+    expect(metrics.weekly["2026-W20"].malformedFileFocusedRetryAttempts).toBe(1)
+    expect(await fileExists(path.join(ctx.tmp.path, ".llm-wiki/runtime/ingest-recovery-weekly-2026-W20.json"))).toBe(true)
+    const weeklySummary = await readFileRaw(path.join(ctx.tmp.path, ".llm-wiki/runtime/ingest-recovery-weekly-latest.md"))
+    expect(weeklySummary).toContain("malformed_file_focused_retry: 1/1")
+  })
+
+  it("falls back to a minimal one-file repair when the focused retry is still malformed", async () => {
+    ctx = { tmp: await createTempProject("ingest-one-file-fallback") }
+    await minimalProject(ctx.tmp.path)
+
+    const sourceFullPath = path.join(ctx.tmp.path, "raw", "sources", "원파일 폴백.md")
+    await writeFileRaw(sourceFullPath, "# 원파일 폴백\n\n반복 truncation이 발생하면 더 짧은 one-file fallback이 필요하다.\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: ctx.tmp.path,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+      outputLanguage: "Korean",
+    })
+
+    const fallbackBlock = [
+      "---FILE: wiki/sources/원파일 폴백 소스 요약.md---",
+      "---",
+      "type: source",
+      "title: 원파일 폴백 소스 요약",
+      "created: 2026-05-12",
+      "updated: 2026-05-12",
+      "tags: []",
+      "related: []",
+      'sources: ["원파일 폴백.md"]',
+      "state: draft",
+      "confidence: medium",
+      "evidence_strength: moderate",
+      "review_status: ai_generated",
+      "knowledge_type: operational",
+      "last_reviewed: 2026-05-12",
+      "quality: draft",
+      "coverage: medium",
+      "needs_upgrade: true",
+      "source_count: 1",
+      "---",
+      "# 원파일 폴백 소스 요약",
+      "",
+      "## 요약",
+      "반복 절단이 발생한 경우에도 최소 단일 파일 폴백은 닫힌 파일 블록을 생성해 원본 추적을 보존합니다.",
+      "",
+      "## Source Coverage Matrix",
+      "- 원본의 복구 필요성과 단일 파일 폴백 정책을 요약합니다.",
+      "",
+      "## Atomic Claims",
+      "- 긴 재시도보다 짧고 완결된 단일 파일 재시도가 안정적입니다.",
+      "",
+      "## Evidence Map",
+      "- Primary evidence는 테스트 raw source입니다.",
+      "",
+      "## 열린 질문",
+      "- 실제 미리보기 모델에서 폴백 발생률을 건강 지표로 추적합니다.",
+      "---END FILE---",
+    ].join("\n")
+    const recoveryResponder: PendingResponse = (messages) => {
+      const prompt = messages.map((message) => message.content ?? "").join("\n")
+      if (prompt.includes("smallest complete output possible")) return fallbackBlock
+      if (prompt.includes("strict wiki maintainer repairing one malformed FILE block")) {
+        return "This retry is still malformed and has no FILE block."
+      }
+      return ""
+    }
+
+    pendingResponses = [
+      "## Key Concepts\n- minimal one-file fallback\n",
+      "",
+      [
+        "---FILE: wiki/sources/원파일 폴백 소스 요약.md---",
+        "---",
+        "type: source",
+        "title: 원파일 폴백 소스 요약",
+        "---",
+        "# 원파일 폴백 소스 요약",
+        "닫히지 않은 초기 응답입니다.",
+      ].join("\n"),
+      recoveryResponder,
+      recoveryResponder,
+      recoveryResponder,
+    ]
+
+    const written = await autoIngest(
+      ctx.tmp.path,
+      sourceFullPath,
+      {
+        provider: "google",
+        apiKey: "test-key",
+        model: "gemini-3-flash-preview",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+    )
+
+    expect(written).toContain("wiki/sources/원파일 폴백 소스 요약.md")
+    const sourceSummary = await readFileRaw(path.join(ctx.tmp.path, "wiki/sources/원파일 폴백 소스 요약.md"))
+    expect(sourceSummary).toContain("최소 단일 파일 폴백")
+    const metrics = JSON.parse(await readFileRaw(path.join(ctx.tmp.path, ".llm-wiki/runtime/ingest-recovery-metrics.json")))
+    expect(metrics.totals.malformedFileFocusedRetryAttempts).toBe(1)
+    expect(metrics.totals.malformedFileFocusedRetryRecovered).toBe(1)
+    expect(metrics.totals.oneFileFallbackAttempts).toBe(1)
+    expect(metrics.totals.oneFileFallbackRecovered).toBe(1)
+    expect(metrics.latest.oneFileFallbackPaths).toEqual(["wiki/sources/원파일 폴백 소스 요약.md"])
+    expect(metrics.weekly["2026-W20"].oneFileFallbackAttempts).toBe(1)
+    const weeklySummary = await readFileRaw(path.join(ctx.tmp.path, ".llm-wiki/runtime/ingest-recovery-weekly-latest.md"))
+    expect(weeklySummary).toContain("one_file_fallback: 1/1")
+  })
+
   it("retries a missing source summary as a small focused task before writing fallback", async () => {
     ctx = { tmp: await createTempProject("ingest-focused-source-retry") }
     await minimalProject(ctx.tmp.path)
