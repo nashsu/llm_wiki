@@ -387,7 +387,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 ### Pre-built Binaries
 
-Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
+Download from [Releases](https://github.com/slowtokki0409/llm-wiki-app/releases):
 - **macOS**: `.dmg` (Apple Silicon + Intel)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
@@ -396,8 +396,8 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.70+
-git clone https://github.com/nashsu/llm_wiki.git
-cd llm_wiki
+git clone https://github.com/slowtokki0409/llm-wiki-app.git
+cd llm-wiki-app
 npm install
 npm run tauri dev      # Development
 npm run tauri build    # Production build
@@ -489,11 +489,11 @@ Note: if an external Codex workflow keeps a root-level `codex-memory/` folder in
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=slowtokki0409%2Fllm-wiki-app&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=slowtokki0409/llm-wiki-app&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=slowtokki0409/llm-wiki-app&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=slowtokki0409/llm-wiki-app&type=date&legend=top-left" />
  </picture>
 </a>
 
