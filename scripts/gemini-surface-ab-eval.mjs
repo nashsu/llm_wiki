@@ -50,7 +50,7 @@ for (const sample of samples) {
     const startedAt = Date.now()
     const response = await callGemini({ apiKey, model, prompt })
     const elapsedMs = Date.now() - startedAt
-    const evaluation = evaluateResponse(response, sample)
+    const evaluation = evaluateResponse(response, sample, variant.id)
     results.push({
       sampleId: sample.id,
       sampleTitle: sample.title,
@@ -104,6 +104,10 @@ const report = {
     afterPercent: round1((afterTotal / maxTotal) * 100),
   },
   bySample,
+  postProcessing: {
+    before: [],
+    after: ["indexInactiveListingFilter"],
+  },
   results,
 }
 
@@ -188,6 +192,45 @@ function buildSamples() {
         "이 원칙은 Codex, Gemini, Obsidian LLM Wiki 모두에 적용된다.",
       ].join("\n\n"),
     },
+    {
+      id: "freshness-claim-source",
+      title: "최신성 요구 source",
+      sourceFileName: "Gemini 가격과 최신 모델 운영 메모.md",
+      mustHavePathFragment: "wiki/concepts/",
+      source: [
+        "# Gemini 가격과 최신 모델 운영 메모",
+        "",
+        "모델 가격, 컨텍스트 한도, API 이름처럼 빠르게 바뀌는 정보는 현재성 검증 없이는 canonical로 승격하면 안 된다.",
+        "운영 문서는 latest라는 단어를 그대로 믿지 말고, 확인 날짜와 source trace를 남겨야 한다.",
+        "Gemini 3 Flash Preview를 쓰는 평가도 preview 모델이라는 제한과 재현성 한계를 명시해야 한다.",
+      ].join("\n"),
+    },
+    {
+      id: "archive-hygiene-source",
+      title: "archive/index hygiene source",
+      sourceFileName: "LLM Wiki Archive Hygiene.md",
+      mustHavePathFragment: "wiki/concepts/",
+      source: [
+        "# LLM Wiki Archive Hygiene",
+        "",
+        "오래된 log archive와 deprecated page는 검색 가능해야 하지만 bootstrap index에는 자동 노출되면 안 된다.",
+        "예전 페이지 old-taxonomy.md는 state: archived이고 retention: archive이므로 index listing에서 제외되어야 한다.",
+        "새로운 current-taxonomy.md는 active concept 후보로 남길 수 있다.",
+      ].join("\n"),
+    },
+    {
+      id: "thin-page-risk-source",
+      title: "얇은 페이지 위험 source",
+      sourceFileName: "One-off Tool Memo.md",
+      mustHavePathFragment: "wiki/sources/",
+      source: [
+        "# One-off Tool Memo",
+        "",
+        "한 번 등장한 도구명만으로 entity page를 만드는 것은 graph noise가 된다.",
+        "근거가 약하면 source summary에 후보로만 적고, source_count가 쌓인 뒤 concept/entity로 승격한다.",
+        "짧은 원천이라도 요약은 너무 짧으면 안 되며, 다음 검증 질문을 남겨야 한다.",
+      ].join("\n"),
+    },
   ]
 }
 
@@ -271,25 +314,51 @@ async function callGemini({ apiKey, model, prompt }) {
   return text.trim()
 }
 
-function evaluateResponse(response, sample) {
-  const blocks = parseFileBlocks(response)
+function evaluateResponse(response, sample, variant) {
+  const rawBlocks = parseFileBlocks(response)
+  const blocks = variant === "after" ? rawBlocks.map(applyAfterPostProcessors) : rawBlocks
   const checks = []
   add(checks, "startsWithFileBlock", response.trimStart().startsWith("---FILE:"), 8)
   add(checks, "hasClosedFileBlock", blocks.length > 0, 8)
   add(checks, "noLogFileGenerated", !blocks.some((b) => normalizePath(b.path) === "wiki/log.md"), 8)
   add(checks, "requiredPathPresent", blocks.some((b) => normalizePath(b.path).includes(sample.mustHavePathFragment)), 10)
   add(checks, "reasonablePageCount", blocks.length >= 2 && blocks.length <= 6, 6)
-  add(checks, "requiredFrontmatter", blocks.length > 0 && blocks.every((b) => hasRequiredFrontmatter(b.frontmatter)), 12)
-  add(checks, "sourceTrace", blocks.length > 0 && blocks.every((b) => String(b.frontmatter.sources ?? "").includes(sample.sourceFileName)), 10)
-  add(checks, "qualityValues", blocks.length > 0 && blocks.every((b) => ["seed", "draft", "reviewed", "canonical"].includes(String(b.frontmatter.quality ?? ""))), 6)
-  add(checks, "canonicalGate", blocks.every(canonicalGateOk), 8)
+  const contentBlocks = blocks.filter((block) => !isStructuralBlock(block))
+  add(checks, "requiredFrontmatter", blocks.length > 0 && contentBlocks.length > 0 && contentBlocks.every((b) => hasRequiredFrontmatter(b.frontmatter)), 12)
+  add(checks, "sourceTrace", contentBlocks.length > 0 && contentBlocks.every((b) => String(b.frontmatter.sources ?? "").includes(sample.sourceFileName)), 10)
+  add(checks, "qualityValues", contentBlocks.length > 0 && contentBlocks.every((b) => ["seed", "draft", "reviewed", "canonical"].includes(String(b.frontmatter.quality ?? ""))), 6)
+  add(checks, "canonicalGate", contentBlocks.every(canonicalGateOk), 8)
   add(checks, "koreanOutput", hangulRatio(blocks.map((b) => b.content).join("\n")) > 0.12, 8)
-  add(checks, "thinPageGuard", blocks.length > 0 && blocks.every((b) => b.body.trim().length >= 220 || normalizePath(b.path).endsWith("wiki/index.md") || normalizePath(b.path).endsWith("wiki/overview.md")), 8)
+  add(checks, "thinPageGuard", contentBlocks.length > 0 && contentBlocks.every((b) => b.body.trim().length >= 220), 8)
+  add(checks, "sourceSummaryCompactness", sourceSummaryCompactnessOk(contentBlocks), 6)
   add(checks, "indexHygiene", indexHygieneOk(blocks), 6)
   add(checks, "overviewCurrentOnly", overviewCurrentOnlyOk(blocks), 4)
   const score = sum(checks.map((c) => c.passed ? c.points : 0))
   const maxScore = sum(checks.map((c) => c.points))
   return { score, maxScore, percent: round1((score / maxScore) * 100), blocks: blocks.map(summarizeBlock), checks }
+}
+
+function applyAfterPostProcessors(block) {
+  if (!normalizePath(block.path).endsWith("wiki/index.md")) return block
+  const content = sanitizeIndexContentForEvaluation(block.content)
+  const { frontmatter, body } = parseFrontmatter(content)
+  return { ...block, content, frontmatter, body }
+}
+
+function sanitizeIndexContentForEvaluation(content) {
+  const lines = content.split(/\r?\n/)
+  let changed = false
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim()
+    const isListing = /^[-*]\s+/.test(trimmed) || /^\|.*\|$/.test(trimmed)
+    if (!isListing) return true
+    const inactive = /\bretention\s*:\s*(?:ephemeral|archive)\b|\bstate\s*:\s*(?:archived|deprecated)\b|\b(?:archived|deprecated)\b|아카이브|폐기|보관됨/iu.test(line)
+    if (!inactive) return true
+    changed = true
+    return false
+  })
+  if (!changed) return content
+  return `${kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`
 }
 
 function parseFileBlocks(text) {
@@ -333,10 +402,26 @@ function canonicalGateOk(block) {
   return ["moderate", "strong"].includes(evidence) && ["ai_reviewed", "human_reviewed", "validated"].includes(review) && needsUpgrade === "false"
 }
 
+function sourceSummaryCompactnessOk(contentBlocks) {
+  const sourceBlocks = contentBlocks.filter((block) => String(block.frontmatter.type ?? "") === "source" || normalizePath(block.path).includes("wiki/sources/"))
+  if (sourceBlocks.length === 0) return true
+  return sourceBlocks.every((block) => {
+    const chars = block.body.trim().length
+    return chars >= 350 && chars <= 2500
+  })
+}
+
 function indexHygieneOk(blocks) {
   const index = blocks.find((b) => normalizePath(b.path).endsWith("wiki/index.md"))
   if (!index) return true
-  return !/retention:\s*(ephemeral|archive)|state:\s*(archived|deprecated)|archived|deprecated/iu.test(index.content)
+  const listingLines = index.body.split(/\r?\n/).filter((line) => /^\s*[-*]\s+/.test(line))
+  return !listingLines.some((line) => /retention:\s*(ephemeral|archive)|state:\s*(archived|deprecated)|\barchived\b|\bdeprecated\b|아카이브|폐기/iu.test(line))
+}
+
+function isStructuralBlock(block) {
+  const path = normalizePath(block.path)
+  const type = String(block.frontmatter.type ?? "")
+  return type === "index" || type === "overview" || type === "log" || path.endsWith("wiki/index.md") || path.endsWith("wiki/overview.md") || path.endsWith("wiki/log.md")
 }
 
 function overviewCurrentOnlyOk(blocks) {
@@ -395,6 +480,7 @@ function renderMarkdown(report) {
     `- before_score: ${report.totals.beforeScore}/${report.totals.maxScore} (${report.totals.beforePercent}%)`,
     `- after_score: ${report.totals.afterScore}/${report.totals.maxScore} (${report.totals.afterPercent}%)`,
     `- delta: ${report.totals.delta}`,
+    `- after_post_processing: ${(report.postProcessing?.after ?? []).join(", ") || "none"}`,
     "",
     "| sample | before | after | delta |",
     "| --- | ---: | ---: | ---: |",

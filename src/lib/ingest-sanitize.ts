@@ -153,3 +153,37 @@ function addMissingOpeningFrontmatterFence(content: string): string {
 
   return `---\n${content}`
 }
+
+
+/**
+ * Keep generated index pages out of archive/history mode.
+ *
+ * The index is part of the ingest bootstrap surface, so model-generated
+ * listings that advertise archived, deprecated, or ephemeral pages are
+ * prompt-contamination risk. This filter is intentionally narrow: it only
+ * removes list/table rows that look like index entries and carry explicit
+ * archive/deprecation/ephemeral markers. Policy prose and headings are left
+ * intact.
+ */
+export function sanitizeGeneratedIndexContent(content: string): string {
+  const lines = content.split(/\r?\n/)
+  let changed = false
+  const kept = lines.filter((line) => {
+    if (!isIndexListingLine(line)) return true
+    if (!hasInactiveIndexMarker(line)) return true
+    changed = true
+    return false
+  })
+
+  if (!changed) return content
+  return `${kept.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`
+}
+
+function isIndexListingLine(line: string): boolean {
+  const trimmed = line.trim()
+  return /^[-*]\s+/.test(trimmed) || /^\|.*\|$/.test(trimmed)
+}
+
+function hasInactiveIndexMarker(line: string): boolean {
+  return /\bretention\s*:\s*(?:ephemeral|archive)\b|\bstate\s*:\s*(?:archived|deprecated)\b|\b(?:archived|deprecated)\b|아카이브|폐기|보관됨/iu.test(line)
+}

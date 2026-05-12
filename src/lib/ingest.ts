@@ -8,7 +8,7 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { checkIngestCache, INGEST_PIPELINE_VERSION, saveIngestCache } from "@/lib/ingest-cache"
-import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
+import { sanitizeGeneratedIndexContent, sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { appendLogContent } from "@/lib/log-append"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -741,6 +741,7 @@ async function generateFocusedSourceSummaryGeneration(params: {
     "The last line must be exactly `---END FILE---`.",
     "The file content inside the block must start with YAML frontmatter.",
     "Prefer a complete draft source summary over an empty or malformed answer.",
+    "Keep source summaries compact: normally 450-1800 body characters; exceed that only when the source is long, technical, and materially reusable.",
     "Required frontmatter keys: type, title, created, updated, tags, related, sources, state, confidence, evidence_strength, review_status, knowledge_type, last_reviewed.",
     "Required quality keys: quality, coverage, needs_upgrade, source_count.",
     "The frontmatter type must be exactly `source`.",
@@ -1457,6 +1458,7 @@ async function generateOllamaSplitFileBlocks(params: {
           : "",
         "Do not use the original filename, raw research command, Research:, Research Log:, or Source: as the page title.",
         "Summarize the source; do not copy it wholesale.",
+        "Keep the source summary compact: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
         "Include Source Coverage Matrix, Atomic Claims, Evidence Map, 검증 및 최신성, 오래 유지할 개념, 관련 엔티티, Kevin 운영체계 적용, 운영 노트, 열린 질문.",
       ].filter(Boolean).join("\n"),
       maxTokens: 4096,
@@ -1706,6 +1708,7 @@ async function syncCompactIndexAfterWrites(
   }
 
   if (changed) {
+    indexContent = sanitizeGeneratedIndexContent(indexContent)
     await writeFile(indexPath, indexContent.trimEnd() + "\n")
   }
 }
@@ -3002,6 +3005,9 @@ async function writeFileBlocks(
       )
     }
 	    content = normalizeIngestFrontmatter(relativePath, content, ingestDate, sourceFileName)
+    if (relativePath === "wiki/index.md" || relativePath.endsWith("/index.md")) {
+      content = sanitizeGeneratedIndexContent(content)
+    }
 
     const decision = shouldWriteIngestPath(relativePath, content, sourceFileName, writePolicy)
     if (!decision.allowed) {
@@ -3232,6 +3238,7 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- Assign a quality recommendation: seed, draft, reviewed, or canonical.",
     "",
     "",
+    "Keep the source summary compact when recommending a source page: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
     "Be thorough but concise. Focus on what's genuinely important, source-grounded, and reusable.",
     "",
     "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
@@ -3305,6 +3312,7 @@ export function buildGenerationPrompt(
     "Do not create average one-paragraph wiki stubs for important material.",
     "High-quality source-derived pages should show that the source was digested, not merely summarized.",
     "",
+    "For source summary pages, keep the body compact: normally 450-1800 characters unless the source is long, technical, and materially reusable.",
     "For source summary pages, include these sections when the source is important:",
     "- ## 요약",
     "- ## Source Coverage Matrix",

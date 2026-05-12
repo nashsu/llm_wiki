@@ -133,6 +133,7 @@ describe("buildGenerationPrompt language directive", () => {
     const prompt = buildGenerationPrompt("", "", "", "important-source.md")
     expect(prompt).toContain("## Quality Contract")
     expect(prompt).toContain("## Source Coverage Matrix")
+    expect(prompt).toContain("Keep the source summary compact")
     expect(prompt).toContain("## Atomic Claims")
     expect(prompt).toContain("## Evidence Map")
     expect(prompt).toContain("## 검증 및 최신성")
