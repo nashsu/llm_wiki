@@ -147,10 +147,11 @@ export async function scanAndImport(projectPath: string, importPath: string): Pr
       return
     }
 
-    // Filter to importable files only
+    // Filter to importable files only, excluding the hidden config folder
+    const dbFolderPrefix = `${ip}/${IMPORT_DB_FOLDER}`
     const importableFiles = monitoredFiles.filter(f => {
-      // Skip files inside the hidden config folder
-      if (f.path.includes(`/${IMPORT_DB_FOLDER}/`) || f.path.includes(`\\${IMPORT_DB_FOLDER}\\`)) {
+      // Skip files inside .llm-wiki-imported/ (compare normalized paths)
+      if (normalizePath(f.path).startsWith(dbFolderPrefix)) {
         return false
       }
       return isImportableFile(f.name)
