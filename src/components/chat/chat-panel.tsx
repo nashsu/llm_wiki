@@ -8,7 +8,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile, deleteFile } from "@/commands/fs"
-import { searchWiki } from "@/lib/search"
+import { searchWiki, tokenizeQuery } from "@/lib/search"
 import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance"
 import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
@@ -212,7 +212,6 @@ export function ChatPanel() {
         // ── Trim index by relevance if over budget ─────────────
         let index = rawIndex
         if (rawIndex.length > INDEX_BUDGET) {
-          const { tokenizeQuery } = await import("@/lib/search")
           const tokens = tokenizeQuery(text)
           const lines = rawIndex.split("\n")
           const keptLines: string[] = []

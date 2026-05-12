@@ -22,6 +22,32 @@ export default defineConfig(async () => ({
     __APP_VERSION__: JSON.stringify(pkgJson.version),
   },
 
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "react-vendor",
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              priority: 30,
+            },
+            {
+              name: "markdown-vendor",
+              test: /node_modules[\\/](react-markdown|remark|rehype|micromark|unified|vfile|mdast|hast|katex)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: "ui-vendor",
+              test: /node_modules[\\/](lucide-react|@radix-ui)[\\/]/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors

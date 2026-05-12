@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
@@ -6,11 +6,12 @@ import { IconSidebar } from "./icon-sidebar"
 import { UpdateBanner } from "./update-banner"
 import { SidebarPanel } from "./sidebar-panel"
 import { ContentArea } from "./content-area"
-import { PreviewPanel } from "./preview-panel"
-import { ResearchPanel } from "./research-panel"
 import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
+
+const PreviewPanel = lazy(() => import("./preview-panel").then((module) => ({ default: module.PreviewPanel })))
+const ResearchPanel = lazy(() => import("./research-panel").then((module) => ({ default: module.ResearchPanel })))
 
 interface AppLayoutProps {
   onSwitchProject: () => void
@@ -142,13 +143,17 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 {/* File preview on top (if file selected) */}
                 {selectedFile && (
                   <div className={researchPanelOpen ? "flex-1 overflow-hidden border-b" : "flex-1 overflow-hidden"}>
-                    <PreviewPanel />
+                    <Suspense fallback={null}>
+                      <PreviewPanel />
+                    </Suspense>
                   </div>
                 )}
                 {/* Research panel on bottom (if open) */}
                 {researchPanelOpen && (
                   <div className={selectedFile ? "h-1/2 shrink-0 overflow-hidden" : "flex-1 overflow-hidden"}>
-                    <ResearchPanel />
+                    <Suspense fallback={null}>
+                      <ResearchPanel />
+                    </Suspense>
                   </div>
                 )}
               </ErrorBoundary>

@@ -1,29 +1,41 @@
+import { lazy, Suspense } from "react"
+import type { ReactNode } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { ChatPanel } from "@/components/chat/chat-panel"
-import { SettingsView } from "@/components/settings/settings-view"
-import { SourcesView } from "@/components/sources/sources-view"
-import { ReviewView } from "@/components/review/review-view"
-import { LintView } from "@/components/lint/lint-view"
-import { SearchView } from "@/components/search/search-view"
-import { GraphView } from "@/components/graph/graph-view"
+
+const ChatPanel = lazy(() => import("@/components/chat/chat-panel").then((module) => ({ default: module.ChatPanel })))
+const SettingsView = lazy(() => import("@/components/settings/settings-view").then((module) => ({ default: module.SettingsView })))
+const SourcesView = lazy(() => import("@/components/sources/sources-view").then((module) => ({ default: module.SourcesView })))
+const ReviewView = lazy(() => import("@/components/review/review-view").then((module) => ({ default: module.ReviewView })))
+const LintView = lazy(() => import("@/components/lint/lint-view").then((module) => ({ default: module.LintView })))
+const SearchView = lazy(() => import("@/components/search/search-view").then((module) => ({ default: module.SearchView })))
+const GraphView = lazy(() => import("@/components/graph/graph-view").then((module) => ({ default: module.GraphView })))
 
 export function ContentArea() {
   const activeView = useWikiStore((s) => s.activeView)
 
+  let view: ReactNode
   switch (activeView) {
     case "settings":
-      return <SettingsView />
+      view = <SettingsView />
+      break
     case "sources":
-      return <SourcesView />
+      view = <SourcesView />
+      break
     case "review":
-      return <ReviewView />
+      view = <ReviewView />
+      break
     case "lint":
-      return <LintView />
+      view = <LintView />
+      break
     case "search":
-      return <SearchView />
+      view = <SearchView />
+      break
     case "graph":
-      return <GraphView />
+      view = <GraphView />
+      break
     default:
-      return <ChatPanel />
+      view = <ChatPanel />
   }
+
+  return <Suspense fallback={null}>{view}</Suspense>
 }

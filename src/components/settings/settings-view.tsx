@@ -18,7 +18,16 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
-import { loadUiTheme, saveLanguage, saveUiTheme } from "@/lib/project-store"
+import {
+  loadUiTheme,
+  saveLanguage,
+  saveUiTheme,
+  saveLlmConfig,
+  saveEmbeddingConfig,
+  saveMultimodalConfig,
+  saveOutputLanguage,
+  saveProxyConfig,
+} from "@/lib/project-store"
 import { activateUiTheme, normalizeUiTheme, type UiTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { LlmProviderSection } from "./sections/llm-provider-section"
@@ -196,14 +205,6 @@ export function SettingsView() {
   }, [])
 
   const handleSave = useCallback(async () => {
-    const {
-      saveLlmConfig,
-      saveEmbeddingConfig,
-      saveMultimodalConfig,
-      saveOutputLanguage,
-      saveProxyConfig,
-    } = await import("@/lib/project-store")
-
     const newLlm = {
       provider: draft.provider,
       apiKey: draft.apiKey,

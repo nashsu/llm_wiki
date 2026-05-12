@@ -9,6 +9,7 @@ import { LLM_PRESETS, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
 import { resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
+import { saveActivePresetId, saveLlmConfig, saveProviderConfigs } from "@/lib/project-store"
 
 export function LlmProviderSection() {
   const { t } = useTranslation()
@@ -27,9 +28,6 @@ export function LlmProviderSection() {
   }
 
   async function persist(newConfigs: typeof providerConfigs, newActive: string | null) {
-    const { saveProviderConfigs, saveActivePresetId, saveLlmConfig } = await import(
-      "@/lib/project-store"
-    )
     await saveProviderConfigs(newConfigs)
     await saveActivePresetId(newActive)
     if (newActive) {
