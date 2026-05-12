@@ -139,6 +139,7 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("## 검증 및 최신성")
     expect(prompt).toContain("## Kevin 운영체계 적용")
     expect(prompt).toContain("Thin page guard")
+    expect(prompt).toContain("Every FILE block MUST close")
     expect(prompt).toContain("Verification and freshness")
     expect(prompt).toContain("Treat the raw source as primary evidence")
     expect(prompt).toContain("Ingest Verification Search Results")

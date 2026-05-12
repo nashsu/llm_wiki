@@ -240,6 +240,8 @@ function buildPrompt({ sample, docs, variant }) {
     "Return FILE blocks only. Do not add preamble. The first character must be `-` from `---FILE:`.",
     "Use Korean for page titles and body except official product/entity names.",
     "Do not generate wiki/log.md. The app writes logs deterministically.",
+    "Every FILE block must close with exactly `---END FILE---`; never start a second FILE before closing the current one.",
+    "Use created, updated, and last_reviewed date 2026-05-12.",
     "Do not list archived/deprecated/ephemeral pages in wiki/index.md.",
     "Do not mark canonical unless evidence is moderate or strong, review_status is ai_reviewed or better, and needs_upgrade is false.",
     "Every FILE block must start with YAML frontmatter and include required fields.",
