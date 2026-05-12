@@ -531,7 +531,8 @@ function formatRecoveryWeek(recovery: WikiHealthReport["operationalSurface"]["re
 
 function formatSmokeRetention(summary: SmokeRetentionSummary | null) {
   if (!summary) return "not captured"
-  return `${summary.deleteCandidateCount} candidates · ${summary.failedOrGuardedRunCount} guarded`
+  const deleted = summary.deletedCount > 0 ? ` · ${summary.deletedCount} deleted` : ""
+  return `${summary.deleteCandidateCount} candidates · ${summary.failedOrGuardedRunCount}/${summary.totalRuns} guarded${deleted}`
 }
 
 async function loadSmokeRetentionSummary(projectPath: string, latestPointer: string): Promise<SmokeRetentionSummary | null> {

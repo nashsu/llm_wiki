@@ -357,6 +357,10 @@ open -a "LLM Wiki"
 npm run verify:macos-app
 ```
 
+`install:macos`는 로컬 개발 설치 경로입니다. 기존 앱을 백업하고, 필요하면 legacy bundle id `com.llmwiki.app`의 macOS support 데이터를 `com.llmwiki.desktop`으로 마이그레이션하며, WebView/cache 상태를 비우고, ad-hoc signing 후 설치 앱을 잠급니다. `verify:macos-app`은 폴더명 변경 전 stale build marker를 확인하고, strict signature 검증이 이미 유효하지 않을 때만 target bundle에 ad-hoc signing을 수행합니다.
+
+이 흐름은 공개 배포용 signing/notarization이 아닙니다. Developer ID signing, notarization, hardened runtime, release certificate 처리는 로컬 install/verify 스크립트가 아니라 별도 release script 또는 CI job으로 분리해야 합니다.
+
 Vault까지 함께 증명하려면 큐 처리, stale missing-page review, unresolved wikilink 검사용 경로를 넘깁니다.
 
 ```bash
@@ -365,6 +369,14 @@ LLM_WIKI_VERIFY_SOURCE="local-deep-researcher.md" \
 LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entities/local-deep-researcher.md,wiki/index.md" \
 npm run verify:macos-app
 ```
+
+실제 Vault를 외부로 보내지 않고 Gemini ingest live 경로만 확인하려면 합성 fixture 모드를 사용합니다.
+
+```bash
+npm run smoke:live-ingest -- --fixture
+```
+
+real Vault 대상 live smoke는 runtime proof 파일을 쓰고 source/context 내용을 설정된 LLM provider로 보내므로, 명시적인 운영 판단이 있을 때만 실행합니다.
 
 ### Chrome Extension
 

@@ -423,6 +423,10 @@ open -a "LLM Wiki"
 npm run verify:macos-app
 ```
 
+`install:macos` is a local developer install path. It backs up the previous app, migrates local macOS support data from the legacy bundle id `com.llmwiki.app` to `com.llmwiki.desktop` when needed, clears the old WebView/cache state, ad-hoc signs the bundle, and locks the installed app. `verify:macos-app` also checks for stale pre-rename build markers and ad-hoc signs target bundles only when strict signature verification is not already valid.
+
+This is not a public release signing or notarization flow. Developer ID signing, notarization, hardened runtime, and release certificate handling should live in a separate release script or CI job, not in the local install/verify scripts.
+
 For a Vault-backed proof, pass the project path and pages that should be checked for drained ingest queue, stale missing-page reviews, and unresolved wikilinks:
 
 ```bash
@@ -431,6 +435,14 @@ LLM_WIKI_VERIFY_SOURCE="local-deep-researcher.md" \
 LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entities/local-deep-researcher.md,wiki/index.md" \
 npm run verify:macos-app
 ```
+
+To exercise the live Gemini ingest path without exporting the real Vault, use the synthetic fixture mode:
+
+```bash
+npm run smoke:live-ingest -- --fixture
+```
+
+Running live smoke against the real Vault should be an explicit operator decision because it writes runtime proof files and sends source/context content to the configured LLM provider.
 
 ### Chrome Extension
 
