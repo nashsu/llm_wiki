@@ -6,7 +6,7 @@ import type { GraphEdge, GraphNode } from "@/lib/wiki-graph"
 import { inferStateFromQuality } from "@/lib/wiki-metadata"
 import { buildOperationalSurfaceReport } from "@/lib/wiki-operational-surface"
 import type { FileNode } from "@/types/wiki"
-import type { OperationalSurfaceDocId, OperationalSurfaceReport } from "@/lib/wiki-operational-surface"
+import type { IngestRecoveryMetricsInput, OperationalSurfaceDocId, OperationalSurfaceReport } from "@/lib/wiki-operational-surface"
 
 export const LOG_RETENTION_POLICY = {
   keepRecentDays: 30,
@@ -86,6 +86,7 @@ export function buildWikiHealthReport(args: {
   edges: readonly GraphEdge[]
   maintenanceQueue: MaintenanceQueue
   controlDocs?: Partial<Record<OperationalSurfaceDocId | "log", string>>
+  recoveryMetrics?: IngestRecoveryMetricsInput | null
   now?: Date
 }): WikiHealthReport {
   const now = args.now ?? new Date()
@@ -124,6 +125,7 @@ export function buildWikiHealthReport(args: {
     log: logContent,
     logEntryCount: logStats.entryCount,
     logRolloverNeeded: logStats.rolloverNeeded,
+    recoveryMetrics: args.recoveryMetrics ?? null,
     now,
   })
 
@@ -186,7 +188,10 @@ export async function buildProjectHealthReport(
     tryReadProjectFile(`${pp}/purpose.md`),
     tryReadProjectFile(`${pp}/schema.md`),
   ])
-  return buildWikiHealthReport({ pages, nodes, edges, maintenanceQueue, controlDocs: { purpose, schema }, now })
+  const recoveryMetrics = parseRecoveryMetrics(
+    await tryReadProjectFile(`${pp}/.llm-wiki/runtime/ingest-recovery-metrics.json`),
+  )
+  return buildWikiHealthReport({ pages, nodes, edges, maintenanceQueue, controlDocs: { purpose, schema }, recoveryMetrics, now })
 }
 
 export async function saveHealthReport(projectPath: string, report: WikiHealthReport): Promise<void> {
@@ -201,6 +206,17 @@ async function tryReadProjectFile(path: string): Promise<string> {
     return await readFile(path)
   } catch {
     return ""
+  }
+}
+
+function parseRecoveryMetrics(content: string): IngestRecoveryMetricsInput | null {
+  if (!content.trim()) return null
+  try {
+    const parsed = JSON.parse(content) as IngestRecoveryMetricsInput
+    if (!parsed || typeof parsed !== "object") return null
+    return parsed
+  } catch {
+    return null
   }
 }
 

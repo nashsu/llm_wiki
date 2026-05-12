@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LLM Wiki",
   "version": "0.4.7",
-  "identifier": "com.llmwiki.app",
+  "identifier": "com.llmwiki.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

@@ -5,14 +5,36 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadUiTheme } from "@/lib/project-store"
+import {
+  getLastProject,
+  getRecentProjects,
+  saveLastProject,
+  loadLlmConfig,
+  loadLanguage,
+  loadSearchApiConfig,
+  loadEmbeddingConfig,
+  loadMultimodalConfig,
+  loadOutputLanguage,
+  loadProviderConfigs,
+  loadActivePresetId,
+  loadProxyConfig,
+  loadUiTheme,
+  loadUpdateCheckState,
+  saveUpdateCheckState,
+  saveLlmConfig,
+} from "@/lib/project-store"
+import { useUpdateStore } from "@/stores/update-store"
+import { checkForUpdates, LLM_WIKI_UPDATE_REPO, UPDATE_CHECK_CACHE_MS } from "@/lib/update-check"
 import { activateUiTheme, normalizeUiTheme } from "@/lib/theme"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { refreshProjectMaintenanceQueue } from "@/lib/maintenance-refresh"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
+import { LLM_PRESETS } from "@/components/settings/llm-presets"
+import { resolveConfig } from "@/components/settings/preset-resolver"
 import type { WikiProject } from "@/types/wiki"
 
 function App() {
@@ -41,47 +63,43 @@ function App() {
   // ships in production builds.
   useEffect(() => {
     if (!import.meta.env.DEV) return
-    ;(async () => {
-      const storeMod = await import("@/stores/update-store")
-      const { useUpdateStore } = storeMod
-      // Expose the live store getter on window so you can inspect
-      // state from devtools when debugging banner behavior.
-      ;(window as unknown as { __llmwiki_updateStore?: typeof useUpdateStore }).__llmwiki_updateStore = useUpdateStore
-      ;(window as unknown as { __llmwiki_testUpdateBanner?: (clear?: boolean) => void }).__llmwiki_testUpdateBanner = (clear = false) => {
-        if (clear) {
-          useUpdateStore.getState().setResult(
-            { kind: "up-to-date", local: __APP_VERSION__, remote: __APP_VERSION__ },
-            Date.now(),
-          )
-          useUpdateStore.getState().setDismissed(null)
-          console.log("[test] update banner cleared")
-          return
-        }
+    // Expose the live store getter on window so you can inspect
+    // state from devtools when debugging banner behavior.
+    ;(window as unknown as { __llmwiki_updateStore?: typeof useUpdateStore }).__llmwiki_updateStore = useUpdateStore
+    ;(window as unknown as { __llmwiki_testUpdateBanner?: (clear?: boolean) => void }).__llmwiki_testUpdateBanner = (clear = false) => {
+      if (clear) {
         useUpdateStore.getState().setResult(
-          {
-            kind: "available",
-            local: __APP_VERSION__,
-            remote: "v999.0.0",
-            release: {
-              name: "v999.0.0 (test)",
-              tag_name: "v999.0.0",
-              body:
-                "Test release for banner-UX verification.\n\n" +
-                "- Bigger red dot on the Settings icon\n" +
-                "- Top banner with one-click dismiss\n" +
-                "- Once dismissed, won't reappear for this version",
-              html_url: "https://github.com/nashsu/llm_wiki/releases",
-              published_at: new Date().toISOString(),
-            },
-          },
+          { kind: "up-to-date", local: __APP_VERSION__, remote: __APP_VERSION__ },
           Date.now(),
         )
         useUpdateStore.getState().setDismissed(null)
-        console.log(
-          "[test] update banner injected. Run __llmwiki_testUpdateBanner(true) to clear.",
-        )
+        console.log("[test] update banner cleared")
+        return
       }
-    })()
+      useUpdateStore.getState().setResult(
+        {
+          kind: "available",
+          local: __APP_VERSION__,
+          remote: "v999.0.0",
+          release: {
+            name: "v999.0.0 (test)",
+            tag_name: "v999.0.0",
+            body:
+              "Test release for banner-UX verification.\n\n" +
+              "- Bigger red dot on the Settings icon\n" +
+              "- Top banner with one-click dismiss\n" +
+              "- Once dismissed, won't reappear for this version",
+            html_url: "https://github.com/nashsu/llm_wiki/releases",
+            published_at: new Date().toISOString(),
+          },
+        },
+        Date.now(),
+      )
+      useUpdateStore.getState().setDismissed(null)
+      console.log(
+        "[test] update banner injected. Run __llmwiki_testUpdateBanner(true) to clear.",
+      )
+    }
   }, [])
 
   // Background update check — hydrate persisted user preferences, then
@@ -96,14 +114,6 @@ function App() {
     const timer = setTimeout(async () => {
       if (cancelled) return
       try {
-        const { loadUpdateCheckState, saveUpdateCheckState } = await import(
-          "@/lib/project-store"
-        )
-        const { useUpdateStore } = await import("@/stores/update-store")
-        const { checkForUpdates, LLM_WIKI_UPDATE_REPO, UPDATE_CHECK_CACHE_MS } = await import(
-          "@/lib/update-check"
-        )
-
         const persisted = await loadUpdateCheckState()
         if (persisted) useUpdateStore.getState().hydrate(persisted)
 
@@ -196,15 +206,12 @@ function App() {
           // `llmConfig` snapshot from a previous launch would keep the
           // old value. Overrides still win, so an explicit user choice
           // is preserved.
-          const { LLM_PRESETS } = await import("@/components/settings/llm-presets")
-          const { resolveConfig } = await import("@/components/settings/preset-resolver")
           const preset = LLM_PRESETS.find((p) => p.id === savedActivePreset)
           if (preset) {
             const currentFallback = useWikiStore.getState().llmConfig
             const override = (savedProviderConfigs ?? {})[savedActivePreset]
             const resolved = resolveConfig(preset, override, currentFallback)
             useWikiStore.getState().setLlmConfig(resolved)
-            const { saveLlmConfig } = await import("@/lib/project-store")
             await saveLlmConfig(resolved)
           }
         }
@@ -254,11 +261,8 @@ function App() {
     if (!project) return
     let cancelled = false
     const timer = window.setTimeout(() => {
-      import("@/lib/maintenance-refresh")
-        .then(({ refreshProjectMaintenanceQueue }) => {
-          if (cancelled) return undefined
-          return refreshProjectMaintenanceQueue(project.path)
-        })
+      if (cancelled) return
+      refreshProjectMaintenanceQueue(project.path)
         .catch((err) => {
           if (!cancelled) console.warn("[maintenance] Failed to refresh queue:", err)
         })

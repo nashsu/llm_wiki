@@ -20,6 +20,24 @@ import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import type { WikiHealthReport } from "@/lib/wiki-health-report"
 
+interface SmokeRetentionSummary {
+  totalRuns: number
+  failedOrGuardedRunCount: number
+  deleteCandidateCount: number
+  deletedCount: number
+  monthlySummary: SmokeMonthlySummary | null
+}
+
+interface SmokeMonthlySummary {
+  month: string
+  path: string
+  latestPath: string
+  totalRuns: number
+  passedRuns: number
+  failedOrGuardedRuns: number
+  guardedReasonCounts: Record<string, number>
+}
+
 const typeConfig: Record<string, { icon: typeof AlertTriangle; label: string }> = {
   orphan: { icon: Unlink, label: "Orphan Page" },
   "broken-link": { icon: Link2Off, label: "Broken Link" },
@@ -42,20 +60,27 @@ export function LintView() {
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
   const [operationalSurface, setOperationalSurface] = useState<WikiHealthReport["operationalSurface"] | null>(null)
+  const [smokeRetention, setSmokeRetention] = useState<SmokeRetentionSummary | null>(null)
   const [surfaceError, setSurfaceError] = useState<string | null>(null)
 
   const loadOperationalSurface = useCallback(async () => {
     if (!project) {
       setOperationalSurface(null)
+      setSmokeRetention(null)
       setSurfaceError(null)
       return
     }
     try {
-      const health = JSON.parse(await readFile(`${normalizePath(project.path)}/.llm-wiki/health.json`)) as Partial<WikiHealthReport>
+      const pp = normalizePath(project.path)
+      const health = JSON.parse(await readFile(`${pp}/.llm-wiki/health.json`)) as Partial<WikiHealthReport>
       setOperationalSurface(health.operationalSurface ?? null)
       setSurfaceError(health.operationalSurface ? null : "Operational surface data is not available yet.")
+      const latestPointer = health.operationalSurface?.runtimeProofRetention.liveIngestSmoke.latestPointer
+        ?? ".llm-wiki/runtime/codex-live-ingest-smoke-latest.json"
+      setSmokeRetention(await loadSmokeRetentionSummary(pp, latestPointer))
     } catch (err) {
       setOperationalSurface(null)
+      setSmokeRetention(null)
       setSurfaceError(err instanceof Error ? err.message : String(err))
     }
   }, [project])
@@ -63,6 +88,14 @@ export function LintView() {
   useEffect(() => {
     void loadOperationalSurface()
   }, [loadOperationalSurface])
+
+  const handleOpenRuntimeFile = useCallback(async (relativePath: string) => {
+    if (!project) return
+    const fullPath = `${normalizePath(project.path)}/${relativePath}`
+    setActiveView("wiki")
+    setSelectedFile(fullPath)
+    setFileContent(await readFile(fullPath))
+  }, [project, setActiveView, setFileContent, setSelectedFile])
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
@@ -262,8 +295,10 @@ export function LintView() {
       {project && (
         <OperationalSurfaceSummary
           surface={operationalSurface}
+          smokeRetention={smokeRetention}
           error={surfaceError}
           onRefresh={loadOperationalSurface}
+          onOpenRuntimeFile={handleOpenRuntimeFile}
         />
       )}
 
@@ -425,12 +460,16 @@ function LintCard({
 
 function OperationalSurfaceSummary({
   surface,
+  smokeRetention,
   error,
   onRefresh,
+  onOpenRuntimeFile,
 }: {
   surface: WikiHealthReport["operationalSurface"] | null
+  smokeRetention: SmokeRetentionSummary | null
   error: string | null
   onRefresh: () => void
+  onOpenRuntimeFile: (relativePath: string) => void
 }) {
   const statusClass = surfaceStatusClass(surface?.status ?? (error ? "warn" : "ok"))
   return (
@@ -442,6 +481,7 @@ function OperationalSurfaceSummary({
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass}`}>
             {surface?.status ?? (error ? "warn" : "ok")}
           </span>
+          {surface && <RecoveryPill recovery={surface.recovery} />}
         </div>
         <Button size="sm" variant="ghost" onClick={() => onRefresh()}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
@@ -450,7 +490,7 @@ function OperationalSurfaceSummary({
       </div>
 
       {surface ? (
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-6">
           <SurfaceMetric
             label="Ingest surface"
             value={`${formatBytes(surface.ingestPromptSurfaceBytes)} / ${surface.ingestPromptSurfaceStatus}`}
@@ -467,6 +507,19 @@ function OperationalSurfaceSummary({
             label="Log"
             value={`${surface.docs.log.entryCount} entries / ${surface.docs.log.rolloverNeeded ? "rollover needed" : "rollover ok"}`}
           />
+          <SurfaceMetric
+            label="Recovery"
+            value={`${formatRecoveryTotals(surface.recovery)} · week ${surface.recovery.currentWeek.weekKey}`}
+          />
+          <SurfaceMetric
+            label="Proof retention"
+            value={formatSmokeRetention(smokeRetention)}
+            note={formatSmokeMonthly(smokeRetention?.monthlySummary ?? null)}
+            actionLabel={smokeRetention?.monthlySummary ? "Open" : undefined}
+            onAction={smokeRetention?.monthlySummary
+              ? () => onOpenRuntimeFile(smokeRetention.monthlySummary!.latestPath)
+              : undefined}
+          />
         </div>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">
@@ -477,13 +530,134 @@ function OperationalSurfaceSummary({
   )
 }
 
-function SurfaceMetric({ label, value }: { label: string; value: string }) {
+function RecoveryPill({ recovery }: { recovery: WikiHealthReport["operationalSurface"]["recovery"] }) {
+  return (
+    <span className="rounded-full bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+      This week {formatRecoveryWeek(recovery)}
+    </span>
+  )
+}
+
+function SurfaceMetric({
+  label,
+  value,
+  note,
+  actionLabel,
+  onAction,
+}: {
+  label: string
+  value: string
+  note?: string
+  actionLabel?: string
+  onAction?: () => void
+}) {
   return (
     <div className="rounded border border-border/60 bg-background/60 px-3 py-2">
       <div className="text-muted-foreground">{label}</div>
       <div className="mt-1 font-medium">{value}</div>
+      {(note || onAction) && (
+        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+          {note && <span className="truncate">{note}</span>}
+          {onAction && (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
+              onClick={onAction}
+            >
+              {actionLabel ?? "Open"}
+              <ArrowUpRight className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+function formatRecoveryTotals(recovery: WikiHealthReport["operationalSurface"]["recovery"]) {
+  return `${recovery.malformedFileFocusedRetryRecovered}/${recovery.malformedFileFocusedRetryAttempts} retries · ${recovery.oneFileFallbackRecovered}/${recovery.oneFileFallbackAttempts} fallback`
+}
+
+function formatRecoveryWeek(recovery: WikiHealthReport["operationalSurface"]["recovery"]) {
+  const week = recovery.currentWeek
+  return `${week.malformedFileFocusedRetryRecovered}/${week.malformedFileFocusedRetryAttempts} retry · ${week.oneFileFallbackRecovered}/${week.oneFileFallbackAttempts} fallback`
+}
+
+function formatSmokeRetention(summary: SmokeRetentionSummary | null) {
+  if (!summary) return "not captured"
+  const deleted = summary.deletedCount > 0 ? ` · ${summary.deletedCount} deleted` : ""
+  return `${summary.deleteCandidateCount} candidates · ${summary.failedOrGuardedRunCount}/${summary.totalRuns} guarded${deleted}`
+}
+
+function formatSmokeMonthly(summary: SmokeMonthlySummary | null) {
+  if (!summary) return undefined
+  const reasons = formatGuardedReasonCounts(summary.guardedReasonCounts, 2)
+  return `Monthly ${summary.month} · ${summary.passedRuns}/${summary.totalRuns} passed${reasons ? ` · ${reasons}` : ""}`
+}
+
+async function loadSmokeRetentionSummary(projectPath: string, latestPointer: string): Promise<SmokeRetentionSummary | null> {
+  try {
+    const proof = JSON.parse(await readFile(`${projectPath}/${latestPointer}`)) as {
+      retention?: {
+        totalRuns?: number
+        failedOrGuardedRuns?: unknown[]
+        deleteCandidates?: unknown[]
+        deleted?: unknown[]
+      }
+      monthlySummary?: Partial<SmokeMonthlySummary>
+    }
+    if (!proof.retention) return null
+    return {
+      totalRuns: Math.max(0, Number(proof.retention.totalRuns ?? 0)),
+      failedOrGuardedRunCount: Array.isArray(proof.retention.failedOrGuardedRuns)
+        ? proof.retention.failedOrGuardedRuns.length
+        : 0,
+      deleteCandidateCount: Array.isArray(proof.retention.deleteCandidates)
+        ? proof.retention.deleteCandidates.length
+        : 0,
+      deletedCount: Array.isArray(proof.retention.deleted) ? proof.retention.deleted.length : 0,
+      monthlySummary: normalizeSmokeMonthlySummary(proof.monthlySummary),
+    }
+  } catch {
+    return null
+  }
+}
+
+function normalizeSmokeMonthlySummary(summary: Partial<SmokeMonthlySummary> | undefined): SmokeMonthlySummary | null {
+  if (!summary || typeof summary.latestPath !== "string") return null
+  return {
+    month: typeof summary.month === "string" ? summary.month : "unknown",
+    path: typeof summary.path === "string" ? summary.path : summary.latestPath,
+    latestPath: summary.latestPath,
+    totalRuns: Math.max(0, Number(summary.totalRuns ?? 0)),
+    passedRuns: Math.max(0, Number(summary.passedRuns ?? 0)),
+    failedOrGuardedRuns: Math.max(0, Number(summary.failedOrGuardedRuns ?? 0)),
+    guardedReasonCounts: normalizeReasonCounts(summary.guardedReasonCounts),
+  }
+}
+
+function normalizeReasonCounts(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {}
+  const counts: Record<string, number> = {}
+  for (const [key, count] of Object.entries(value)) {
+    const parsed = Number(count)
+    if (Number.isFinite(parsed) && parsed > 0) counts[key] = parsed
+  }
+  return counts
+}
+
+function formatGuardedReasonCounts(counts: Record<string, number>, limit: number) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, limit)
+  if (entries.length === 0) return ""
+  return `guarded: ${entries.map(([key, count]) => `${shortReasonLabel(key)} ${count}`).join(", ")}`
+}
+
+function shortReasonLabel(reason: string) {
+  if (reason === "guarded-bootstrap-write") return "bootstrap"
+  if (reason === "unexpected-write") return "unexpected"
+  if (reason === "health-warn") return "health warn"
+  if (reason === "health-fail") return "health fail"
+  return reason
 }
 
 function surfaceStatusClass(status: "ok" | "warn" | "fail") {

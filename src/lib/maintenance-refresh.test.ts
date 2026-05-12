@@ -3,6 +3,7 @@ import type { GraphNode } from "@/lib/wiki-graph"
 import { buildWikiGraph } from "@/lib/wiki-graph"
 import { buildProjectMaintenanceQueue, saveMaintenanceQueue } from "@/lib/maintenance-queue"
 import { buildProjectHealthReport, saveHealthReport } from "@/lib/wiki-health-report"
+import { OPERATIONAL_SURFACE_POLICY } from "@/lib/wiki-operational-surface"
 import { refreshProjectMaintenanceQueue, saveMaintenanceQueueForGraph } from "./maintenance-refresh"
 
 vi.mock("@/lib/wiki-graph", () => ({
@@ -111,6 +112,23 @@ function makeHealthReport() {
       controlSurfaceBytes: 0,
       ingestPromptSurfaceBytes: 0,
       ingestPromptSurfaceStatus: "ok" as const,
+      recovery: {
+        malformedFileFocusedRetryAttempts: 0,
+        malformedFileFocusedRetryRecovered: 0,
+        oneFileFallbackAttempts: 0,
+        oneFileFallbackRecovered: 0,
+        latestAt: null,
+        latestSource: null,
+        currentWeek: {
+          weekKey: "2026-W20",
+          weekStart: "2026-05-11",
+          malformedFileFocusedRetryAttempts: 0,
+          malformedFileFocusedRetryRecovered: 0,
+          oneFileFallbackAttempts: 0,
+          oneFileFallbackRecovered: 0,
+        },
+      },
+      runtimeProofRetention: OPERATIONAL_SURFACE_POLICY.runtimeProofRetention,
       capsApplied: false,
       deterministicTruncation: true as const,
       promptContaminationRisk: {

@@ -18,7 +18,7 @@
  * to dropping pages without telling anyone.
  */
 import { describe, it, expect } from "vitest"
-import { parseFileBlocks, isSafeIngestPath } from "./ingest"
+import { extractUnclosedFileBlockAttempts, parseFileBlocks, isSafeIngestPath } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
 
@@ -144,6 +144,57 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
     expect(blocks).toHaveLength(0)
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toMatch(/rope\.md/)
+  })
+})
+
+describe("extractUnclosedFileBlockAttempts", () => {
+  it("extracts safe unclosed wiki blocks for focused retry", () => {
+    const text = [
+      "---FILE: wiki/entities/qwen.md---",
+      "# Qwen",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/sources/paper.md---",
+      "# Source summary",
+      "stream cut here",
+    ].join("\n")
+
+    expect(extractUnclosedFileBlockAttempts(text)).toEqual([
+      {
+        path: "wiki/sources/paper.md",
+        content: "# Source summary\nstream cut here",
+      },
+    ])
+  })
+
+  it("does not return unsafe unclosed paths", () => {
+    const text = [
+      "---FILE: ../outside.md---",
+      "unsafe partial body",
+    ].join("\n")
+
+    expect(extractUnclosedFileBlockAttempts(text)).toEqual([])
+  })
+
+  it("finds unclosed FILE blocks before a next opener or end of stream", () => {
+    const text = [
+      "---FILE: wiki/sources/broken.md---",
+      "---",
+      "type: source",
+      "---",
+      "# Broken",
+      "partial body",
+      "---FILE: wiki/concepts/also-broken.md---",
+      "---",
+      "type: concept",
+      "---",
+      "# Also Broken",
+    ].join("\n")
+
+    expect(extractUnclosedFileBlockAttempts(text)).toEqual([
+      expect.objectContaining({ path: "wiki/sources/broken.md", content: expect.stringContaining("partial body") }),
+      expect.objectContaining({ path: "wiki/concepts/also-broken.md", content: expect.stringContaining("# Also Broken") }),
+    ])
   })
 })
 

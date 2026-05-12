@@ -9,6 +9,7 @@ import {
   type SearchProvider,
   type SearchProviderOverride,
 } from "@/stores/wiki-store"
+import { saveSearchApiConfig } from "@/lib/project-store"
 import { SEARXNG_CATEGORY_OPTIONS, SERPAPI_ENGINE_OPTIONS, resolveSearchConfig } from "@/lib/web-search"
 
 const SEARCH_PROVIDERS = [
@@ -44,7 +45,6 @@ export function WebSearchSection() {
   const [savedId, setSavedId] = useState<string | null>(null)
 
   async function persist(next: SearchApiConfig) {
-    const { saveSearchApiConfig } = await import("@/lib/project-store")
     setSearchApiConfig(next)
     await saveSearchApiConfig(next)
   }

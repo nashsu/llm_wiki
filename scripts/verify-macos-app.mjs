@@ -8,7 +8,20 @@ import { fileURLToPath } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const appPath = process.env.LLM_WIKI_APP_PATH || "/Applications/LLM Wiki.app"
 const executablePath = path.join(appPath, "Contents", "MacOS", "llm-wiki")
-const distAssetsPath = path.join(repoRoot, "dist", "assets")
+const distAssetsPath = process.env.LLM_WIKI_DIST_ASSETS_PATH || path.join(repoRoot, "dist", "assets")
+const localTargetPath = process.env.LLM_WIKI_TARGET_PATH || path.join(repoRoot, "src-tauri", "target")
+const codesignBin = process.env.LLM_WIKI_CODESIGN_BIN || process.env.LLM_WIKI_CODESIGN || "/usr/bin/codesign"
+const stringsBin = process.env.LLM_WIKI_STRINGS_BIN || "/usr/bin/strings"
+const psBin = process.env.LLM_WIKI_PS_BIN || "/bin/ps"
+const defaultStaleTargetMarkers = [
+  "llm_wiki-codexian",
+  "/Users/kevin/codex/projects/llm_wiki-codexian",
+]
+const staleTargetMarkers = (process.env.LLM_WIKI_STALE_TARGET_MARKERS || defaultStaleTargetMarkers.join(","))
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean)
+let signedBundleExecutableMtime = null
 
 function fail(message) {
   console.error(`[verify:macos-app] ${message}`)
@@ -22,6 +35,15 @@ function run(command, args, options = {}) {
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
   })
+}
+
+function commandSucceeds(command, args) {
+  try {
+    run(command, args)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function assertExists(target, label) {
@@ -46,14 +68,97 @@ function walkMarkdownFiles(root) {
   return files
 }
 
+function shouldScanTargetFile(name) {
+  return (
+    name === "output" ||
+    name === "root-output" ||
+    name.endsWith(".d") ||
+    name.endsWith(".json") ||
+    name.endsWith(".toml") ||
+    name.endsWith(".txt")
+  )
+}
+
+function readTargetProbe(filePath) {
+  const stat = fs.statSync(filePath)
+  const maxBytes = 2 * 1024 * 1024
+  const fd = fs.openSync(filePath, "r")
+  try {
+    const firstSize = Math.min(stat.size, maxBytes)
+    const first = Buffer.alloc(firstSize)
+    fs.readSync(fd, first, 0, firstSize, 0)
+    if (stat.size <= maxBytes) return first.toString("utf8")
+
+    const last = Buffer.alloc(maxBytes)
+    fs.readSync(fd, last, 0, maxBytes, stat.size - maxBytes)
+    return `${first.toString("utf8")}\n${last.toString("utf8")}`
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function verifyLocalBuildTarget() {
+  if (process.env.LLM_WIKI_SKIP_TARGET_STALE_CHECK === "1") {
+    console.log("[verify:macos-app] local target stale-path check skipped by LLM_WIKI_SKIP_TARGET_STALE_CHECK=1")
+    return
+  }
+  if (!fs.existsSync(localTargetPath)) return
+
+  const hits = []
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const target = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        visit(target)
+        if (hits.length >= 5) return
+        continue
+      }
+      if (!entry.isFile() || !shouldScanTargetFile(entry.name)) continue
+      const content = readTargetProbe(target)
+      const marker = staleTargetMarkers.find((value) => content.includes(value))
+      if (marker) {
+        hits.push({ file: target, marker })
+        if (hits.length >= 5) return
+      }
+    }
+  }
+
+  visit(localTargetPath)
+  if (hits.length > 0) {
+    fail(
+      [
+        "Local src-tauri/target contains stale pre-rename path markers.",
+        `Target: ${localTargetPath}`,
+        "Move or rebuild the target directory before trusting this app bundle.",
+        `Matches: ${hits.map((hit) => `${path.relative(repoRoot, hit.file)} (${hit.marker})`).join(", ")}`,
+      ].join("\n"),
+    )
+  }
+
+  console.log("[verify:macos-app] local target stale-path check passed")
+}
+
 function verifyBundle() {
   assertExists(appPath, "installed app bundle")
   assertExists(executablePath, "installed app executable")
   assertExists(distAssetsPath, "dist assets; run `npm run build` first")
 
-  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath])
+  if (process.env.LLM_WIKI_SKIP_ADHOC_SIGN === "1") {
+    console.log("[verify:macos-app] ad-hoc signing skipped by LLM_WIKI_SKIP_ADHOC_SIGN=1")
+  } else if (
+    process.env.LLM_WIKI_FORCE_ADHOC_SIGN !== "1" &&
+    commandSucceeds(codesignBin, ["--verify", "--deep", "--strict", "--verbose=2", appPath])
+  ) {
+    console.log(`[verify:macos-app] ad-hoc signing skipped; bundle signature already valid: ${appPath}`)
+  } else {
+    signedBundleExecutableMtime = fs.statSync(executablePath).mtime.getTime()
+    run(codesignBin, ["--force", "--deep", "--sign", "-", appPath])
+    console.log(`[verify:macos-app] ad-hoc signing completed: ${appPath}`)
+  }
 
-  const installedStrings = run("/usr/bin/strings", [executablePath])
+  run(codesignBin, ["--verify", "--deep", "--strict", "--verbose=2", appPath])
+
+  const installedStrings = run(stringsBin, [executablePath])
   const requiredAssets = fs
     .readdirSync(distAssetsPath)
     .filter((name) => /^(ingest|sweep-reviews)-[A-Za-z0-9_-]+\.js$/.test(name))
@@ -77,7 +182,7 @@ function verifyRunningProcess() {
     return
   }
 
-  const ps = run("/bin/ps", ["-axo", "pid,lstart,args"])
+  const ps = run(psBin, ["-axo", "pid,lstart,args"])
   const lines = ps
     .split("\n")
     .filter((line) => line.includes(executablePath))
@@ -86,7 +191,7 @@ function verifyRunningProcess() {
     fail(`LLM Wiki is not running from ${executablePath}`)
   }
 
-  const executableMtime = fs.statSync(executablePath).mtime.getTime()
+  const executableMtime = signedBundleExecutableMtime ?? fs.statSync(executablePath).mtime.getTime()
   const runningAfterInstall = lines.some((line) => {
     const match = line.match(/^\s*(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/)
     if (!match) return false
@@ -164,6 +269,7 @@ function verifyVault() {
   console.log(`[verify:macos-app] vault proof verified: ${vaultPath}`)
 }
 
+verifyLocalBuildTarget()
 verifyBundle()
 verifyRunningProcess()
 verifyVault()

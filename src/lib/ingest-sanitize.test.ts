@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { sanitizeGeneratedIndexContent, sanitizeIngestedFileContent } from "./ingest-sanitize"
+import { sanitizeGeneratedIndexContent, sanitizeGeneratedOverviewContent, sanitizeIngestedFileContent } from "./ingest-sanitize"
 
 describe("sanitizeIngestedFileContent", () => {
   it("returns clean content unchanged", () => {
@@ -140,5 +140,45 @@ describe("sanitizeGeneratedIndexContent", () => {
   it("leaves policy prose mentioning archive outside listing rows", () => {
     const input = "# Index\n\nArchive policy prose can mention archived pages.\n\n- [[wiki/concepts/current.md]]"
     expect(sanitizeGeneratedIndexContent(input)).toBe(input)
+  })
+})
+
+
+describe("sanitizeGeneratedOverviewContent", () => {
+  it("removes historical/deprecated overview sections but keeps current snapshot sections", () => {
+    const input = [
+      "---",
+      "type: overview",
+      "title: Overview",
+      "---",
+      "# Overview",
+      "",
+      "## Current Identity",
+      "This wiki is a current operating map.",
+      "",
+      "## 전체 역사",
+      "Old taxonomy evolution story should not stay in bootstrap.",
+      "",
+      "## Current Review Backlog",
+      "Keep this pointer.",
+      "- Review current candidates.",
+      "",
+    ].join("\n")
+
+    expect(sanitizeGeneratedOverviewContent(input)).toBe([
+      "---",
+      "type: overview",
+      "title: Overview",
+      "---",
+      "# Overview",
+      "",
+      "## Current Identity",
+      "This wiki is a current operating map.",
+      "",
+      "## Current Review Backlog",
+      "Keep this pointer.",
+      "- Review current candidates.",
+      "",
+    ].join("\n"))
   })
 })
