@@ -63,6 +63,10 @@ describe("wiki health report", () => {
       pages,
       nodes,
       edges: [{ source: "active", target: "missing", types: ["wikilink"], weight: 1 }],
+      controlDocs: {
+        purpose: "# Purpose\n\nBootstrap purpose.",
+        schema: "# Schema\n\nContract-only schema.",
+      },
       maintenanceQueue: {
         generatedAt: "2026-05-11T00:00:00.000Z",
         items: [
@@ -98,6 +102,30 @@ describe("wiki health report", () => {
     ])
     expect(report.log.entryCount).toBe(2)
     expect(report.log.rolloverNeeded).toBe(true)
+    expect(report.operationalSurface.docs.schema.status).toBe("ok")
+    expect(report.operationalSurface.docs.index.lineCount).toBeGreaterThan(0)
+    expect(report.operationalSurface.docs.log.rolloverNeeded).toBe(true)
+    expect(report.operationalSurface.promptContaminationRisk.archivesExcludedFromBootstrap).toBe(true)
+  })
+
+  it("reports operational surface budget failures for oversized bootstrap docs", () => {
+    const largeSchema = Array.from({ length: 330 }, (_, index) => `rule ${index}`).join("\n")
+    const report = buildWikiHealthReport({
+      pages: [
+        page("/p/wiki/index.md", "index.md", "# Index\n"),
+        page("/p/wiki/overview.md", "overview.md", "# Overview\n"),
+        page("/p/wiki/log.md", "log.md", "# Log\n"),
+      ],
+      nodes: [],
+      edges: [],
+      controlDocs: { purpose: "# Purpose", schema: largeSchema },
+      maintenanceQueue: { generatedAt: "2026-05-11T00:00:00.000Z", items: [] },
+      now: new Date("2026-05-11T00:00:00.000Z"),
+    })
+
+    expect(report.operationalSurface.docs.schema.status).toBe("fail")
+    expect(report.operationalSurface.status).toBe("fail")
+    expect(report.operationalSurface.deterministicTruncation).toBe(true)
   })
 })
 

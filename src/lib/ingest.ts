@@ -1,4 +1,4 @@
-import { readFile, writeFile, listDirectory } from "@/commands/fs"
+import { createDirectory, readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { RequestOverrides } from "@/lib/llm-providers"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -79,6 +79,8 @@ import {
   inferKnowledgeTypeFromPageType,
   inferStateFromQuality,
 } from "@/lib/wiki-metadata"
+import { prepareIngestSurface } from "@/lib/wiki-operational-surface"
+import type { IngestSurfaceSnapshot } from "@/lib/wiki-operational-surface"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -1811,13 +1813,30 @@ async function autoIngestImpl(
     filesWritten: [],
   })
 
-  const [sourceContent, schema, purpose, index, overview] = await Promise.all([
+  const [sourceContent, rawSchema, rawPurpose, rawIndex, rawOverview] = await Promise.all([
     tryReadFile(sp),
     readProjectControlDoc(pp, "schema.md"),
     readProjectControlDoc(pp, "purpose.md"),
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+
+  const ingestSurface = prepareIngestSurface({
+    schema: rawSchema,
+    purpose: rawPurpose,
+    index: rawIndex,
+    overview: rawOverview,
+  })
+  await saveIngestSurfaceSnapshot(pp, ingestSurface.snapshot).catch((err) => {
+    console.warn(
+      `[ingest:surface] failed to write ingest surface snapshot:`,
+      err instanceof Error ? err.message : err,
+    )
+  })
+  const schema = ingestSurface.docs.schema.content
+  const purpose = ingestSurface.docs.purpose.content
+  const index = ingestSurface.docs.index.content
+  const overview = ingestSurface.docs.overview.content
 
   const sourceSummaryPlan = await resolveSourceSummaryPlan(pp, fileName, sourceContent, options.sourceSummaryTitle)
   const sourceSummaryPath = sourceSummaryPlan.path
@@ -3484,6 +3503,14 @@ async function tryReadFile(path: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+
+async function saveIngestSurfaceSnapshot(projectPath: string, snapshot: IngestSurfaceSnapshot): Promise<void> {
+  const runtimeDir = `${projectPath}/.llm-wiki/runtime`
+  await createDirectory(`${projectPath}/.llm-wiki`).catch(() => {})
+  await createDirectory(runtimeDir).catch(() => {})
+  await writeFile(`${runtimeDir}/ingest-surface-snapshot.json`, JSON.stringify(snapshot, null, 2))
 }
 
 async function readProjectControlDoc(projectPath: string, fileName: "schema.md" | "purpose.md"): Promise<string> {

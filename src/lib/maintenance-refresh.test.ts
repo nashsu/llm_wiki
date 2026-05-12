@@ -106,6 +106,56 @@ function makeHealthReport() {
       rolloverNeeded: false,
       policy: TEST_LOG_RETENTION_POLICY,
     },
+    operationalSurface: {
+      status: "ok" as const,
+      controlSurfaceBytes: 0,
+      ingestPromptSurfaceBytes: 0,
+      ingestPromptSurfaceStatus: "ok" as const,
+      capsApplied: false,
+      deterministicTruncation: true as const,
+      promptContaminationRisk: {
+        archivesExcludedFromBootstrap: true as const,
+        deepPolicyExcludedFromBootstrap: true as const,
+        runtimeArtifactsExcludedFromBootstrap: true as const,
+        archivedOrDeprecatedPagesExcluded: true as const,
+      },
+      excludedFromBootstrap: [
+        ".llm-wiki/policy/*",
+        ".llm-wiki/log-archive/*",
+        ".llm-wiki/runtime/*",
+        "state: archived",
+        "state: deprecated",
+      ],
+      docs: {
+        purpose: makeOperationalSurfaceDoc("purpose.md"),
+        schema: makeOperationalSurfaceDoc("schema.md"),
+        index: makeOperationalSurfaceDoc("wiki/index.md"),
+        overview: makeOperationalSurfaceDoc("wiki/overview.md"),
+        log: {
+          path: "wiki/log.md" as const,
+          lineCount: 0,
+          byteLength: 0,
+          entryCount: 0,
+          status: "ok" as const,
+          rolloverNeeded: false,
+          warnEntries: 50,
+          failEntries: 60,
+        },
+      },
+    },
+  }
+}
+
+function makeOperationalSurfaceDoc(path: string) {
+  return {
+    path,
+    lineCount: 0,
+    byteLength: 0,
+    status: "ok" as const,
+    warnLines: 0,
+    failLines: 0,
+    capBytes: 0,
+    truncatedForIngest: false,
   }
 }
 
