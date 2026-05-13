@@ -5,7 +5,7 @@
  * Why this exists:
  *
  *   The image-extraction step (Phase 1) lands raster images on disk
- *   under `wiki/media/<source-slug>/`, but the text we hand to the
+ *   under `raw/assets/<source-slug>/`, but the text we hand to the
  *   ingest LLM contains those images as `![](...)` references with
  *   EMPTY alt text — meaningless to a text-only summarizer. Generation
  *   models silently strip empty-alt images when paraphrasing the

@@ -370,13 +370,13 @@ LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entitie
 npm run verify:macos-app
 ```
 
-실제 Vault를 외부로 보내지 않고 Gemini ingest live 경로만 확인하려면 합성 fixture 모드를 사용합니다.
+실제 Vault를 외부로 보내거나 Gemini를 호출하지 않고 live ingest 연결만 확인하려면 합성 fixture dry-run을 사용합니다.
 
 ```bash
-npm run smoke:live-ingest -- --fixture
+npm run smoke:live-ingest -- --fixture --dry-run
 ```
 
-real Vault 대상 live smoke는 runtime proof 파일을 쓰고 source/context 내용을 설정된 LLM provider로 보내므로, 명시적인 운영 판단이 있을 때만 실행합니다.
+`--dry-run`을 빼면 live smoke가 실행됩니다. 이 명령은 runtime proof 파일을 쓰고 source/context 내용을 설정된 LLM provider로 보내므로, 명시적인 운영 판단이 있을 때만 실행합니다.
 
 ### Chrome Extension
 

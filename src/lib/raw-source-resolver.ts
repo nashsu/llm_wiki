@@ -2,10 +2,10 @@
  * Map a wiki-side image reference back to its raw source file.
  *
  * Image URLs we generate always live under
- *   `<project>/wiki/media/<slug>/img-N.<ext>`
+ *   `<project>/raw/assets/<slug>/img-N.<ext>`
  * — emitted either ABSOLUTE (from the unified Rust extractor that
- * runs at `read_file` time) or WIKI-RELATIVE
- * (`media/<slug>/img-N.png`, from the post-write safety-net section
+ * runs at `read_file` time) or PROJECT-RELATIVE
+ * (`raw/assets/<slug>/img-N.png`, from the post-write safety-net section
  * in `wiki/sources/<slug>.md`). The slug equals the basename of
  * the original raw source file (we wrote it that way at extraction
  * time in `extract_pdf_markdown` / fs.rs's raw-sources-layout
@@ -18,7 +18,7 @@
  *   - chat references panel's image badge (Phase 4 multimodal UI)
  *
  * Returns null when:
- *   - the URL doesn't match the expected media-directory shape, OR
+ *   - the URL doesn't match the expected assets-directory shape, OR
  *   - no file with that stem exists under raw/sources/ (e.g. the
  *     user moved / deleted the original after ingest, leaving only
  *     the wiki summary). Callers fall back gracefully.
@@ -31,10 +31,11 @@ export async function findRawSourceForImage(
   projectPath: string,
 ): Promise<string | null> {
   // Image URLs reach us in TWO shapes:
-  //   1. ABSOLUTE: `/Users/.../wiki/media/<slug>/img-N.png`
-  //   2. WIKI-RELATIVE: `media/<slug>/img-N.png`
-  // Match `media/<slug>/` either at the URL start or after any `/`.
-  const m = imageUrl.replace(/\\/g, "/").match(/(?:^|\/)media\/([^/]+)\//)
+  //   1. ABSOLUTE: `/Users/.../raw/assets/<slug>/img-N.png`
+  //   2. PROJECT-RELATIVE: `raw/assets/<slug>/img-N.png`
+  //   3. LEGACY: `/Users/.../wiki/media/<slug>/img-N.png` or
+  //      `media/<slug>/img-N.png`
+  const m = imageUrl.replace(/\\/g, "/").match(/(?:^|\/)(?:raw\/assets|media)\/([^/]+)\//)
   if (!m) return null
   const slug = m[1]
 
@@ -83,5 +84,7 @@ export function imageUrlToAbsolute(
     imageUrl.startsWith("\\\\")
   if (isAbsolute) return imageUrl
   const cleaned = imageUrl.replace(/^\.\//, "")
-  return `${projectPath.replace(/\/+$/, "")}/wiki/${cleaned}`
+  const pp = projectPath.replace(/\/+$/, "")
+  if (cleaned.startsWith("raw/assets/")) return `${pp}/${cleaned}`
+  return `${pp}/wiki/${cleaned}`
 }

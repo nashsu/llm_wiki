@@ -436,13 +436,13 @@ LLM_WIKI_VERIFY_PAGES="wiki/sources/local-deep-researcher-source.md,wiki/entitie
 npm run verify:macos-app
 ```
 
-To exercise the live Gemini ingest path without exporting the real Vault, use the synthetic fixture mode:
+To check the live Gemini ingest wiring without exporting the real Vault or calling Gemini, use the synthetic fixture dry-run:
 
 ```bash
-npm run smoke:live-ingest -- --fixture
+npm run smoke:live-ingest -- --fixture --dry-run
 ```
 
-Running live smoke against the real Vault should be an explicit operator decision because it writes runtime proof files and sends source/context content to the configured LLM provider.
+Dropping `--dry-run` runs the live smoke and should be an explicit operator decision because it writes runtime proof files and sends source/context content to the configured LLM provider.
 
 ### Chrome Extension
 

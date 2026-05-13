@@ -41,9 +41,15 @@ describe("resolveMarkdownImageSrc", () => {
     )
   })
 
-  it("treats a wiki-rooted relative path as media under <project>/wiki/", () => {
+  it("treats raw/assets as project-rooted", () => {
     // This is the canonical case — ingest emits exactly this shape:
-    //   ![](media/<source-slug>/img-1.png)
+    //   ![](raw/assets/<source-slug>/img-1.png)
+    expect(
+      resolveMarkdownImageSrc("raw/assets/rope-paper/img-1.png", PROJECT),
+    ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/rope-paper/img-1.png")
+  })
+
+  it("keeps legacy media paths rooted under <project>/wiki/", () => {
     expect(
       resolveMarkdownImageSrc("media/rope-paper/img-1.png", PROJECT),
     ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/rope-paper/img-1.png")
@@ -51,8 +57,8 @@ describe("resolveMarkdownImageSrc", () => {
 
   it("strips a leading ./ for cleanliness", () => {
     expect(
-      resolveMarkdownImageSrc("./media/foo/img-2.png", PROJECT),
-    ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/foo/img-2.png")
+      resolveMarkdownImageSrc("./raw/assets/foo/img-2.png", PROJECT),
+    ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/foo/img-2.png")
   })
 
   it("resolves nested paths (e.g. user-organized subfolders) under wiki/ root", () => {
@@ -96,10 +102,10 @@ describe("resolveMarkdownImageSrc", () => {
     // uses forward slashes regardless of OS.
     expect(
       resolveMarkdownImageSrc(
-        "media/x/y.png",
+        "raw/assets/x/y.png",
         "C:\\Users\\me\\MyWiki",
       ),
-    ).toBe("tauri-asset:C:/Users/me/MyWiki/wiki/media/x/y.png")
+    ).toBe("tauri-asset:C:/Users/me/MyWiki/raw/assets/x/y.png")
   })
 
   it("returns empty string verbatim for empty src", () => {

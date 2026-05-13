@@ -217,6 +217,43 @@ const INGEST_EVIDENCE_STRENGTH_VALUES = new Set<string>(EVIDENCE_STRENGTH_VALUES
 const INGEST_REVIEW_STATUS_VALUES = new Set<string>(REVIEW_STATUS_VALUES)
 const INGEST_KNOWLEDGE_TYPE_VALUES = new Set<string>(KNOWLEDGE_TYPE_VALUES)
 const INGEST_QUERY_RETENTION_VALUES = new Set<string>(QUERY_RETENTION_VALUES)
+const PDF_SOURCE_SUMMARY_SECTIONS = [
+  "## 요약",
+  "## 논문 구조",
+  "## 핵심 주장",
+  "## 방법론",
+  "## 실험 및 근거",
+  "## 표/그림 근거",
+  "## 한계와 주의점",
+  "## LLM Wiki / AI Native Solo Business OS 관점",
+  "## 승격 후보",
+  "## 검증 및 최신성",
+  "## Source Trace",
+]
+
+export interface PdfPromotionCandidate {
+  type: "entity" | "concept" | "comparison" | "synthesis" | "query" | "workflow" | "review"
+  title: string
+  decision: string
+  evidenceStrength: string
+  coverage: string
+  sourceTrace: string
+  reuseValue: string
+  reason: string
+}
+
+export interface PdfStructureSummary {
+  title: string
+  sections: string[]
+  figures: string[]
+  tables: string[]
+  extractionQuality: {
+    status: "ok" | "partial" | "failed"
+    quality: "normal" | "low" | "missing"
+    method: "tauri-read-file" | "pdf-structure-fallback"
+    textLength: number
+  }
+}
 
 function isGemini3IngestConfig(llmConfig: LlmConfig): boolean {
   return llmConfig.provider === "google" && /(?:^|\/)gemini-3(?:[.\-_]|$)/i.test(llmConfig.model.trim())
@@ -475,6 +512,140 @@ const COMPARISON_SIGNAL_RE = /\b(vs\.?|versus|compare[sd]?|comparison|trade-?off
 
 function getSourceBaseName(sourceFileName: string): string {
   return sourceFileName.replace(/\.[^.]+$/, "")
+}
+
+function sourceAssetPrefix(projectPath: string, sourceFileName: string): string {
+  return `${normalizePath(projectPath)}/raw/assets/${getSourceBaseName(sourceFileName)}/`
+}
+
+export function isPdfSourceFile(sourceFileName: string): boolean {
+  return /\.pdf$/iu.test(sourceFileName.trim())
+}
+
+function normalizePdfGateValue(value: string): string {
+  return value.trim().toLowerCase().replace(/^["']|["']$/g, "")
+}
+
+function readPdfCandidateField(line: string, field: string): string {
+  const match = line.match(new RegExp(`${field}\\s*[:=]\\s*([^|;,]+)`, "iu"))
+  return match?.[1]?.trim() ?? ""
+}
+
+function roleForPdfCandidate(rawType: string): PdfPromotionCandidate["type"] {
+  const type = normalizePdfGateValue(rawType)
+  if (type === "entity") return "entity"
+  if (type === "concept") return "concept"
+  if (type === "comparison") return "comparison"
+  if (type === "synthesis") return "synthesis"
+  if (type === "query") return "query"
+  if (type === "workflow") return "workflow"
+  return "review"
+}
+
+export function parsePdfPromotionCandidates(analysis: string): PdfPromotionCandidate[] {
+  const section = analysis.match(/##\s*(?:PDF\s+)?Promotion Candidates?\s*([\s\S]*?)(?=\n##\s+|$)/iu)?.[1] ??
+    analysis.match(/##\s*승격 후보\s*([\s\S]*?)(?=\n##\s+|$)/iu)?.[1] ??
+    ""
+  if (!section.trim()) return []
+
+  const candidates: PdfPromotionCandidate[] = []
+  for (const rawLine of section.split("\n")) {
+    const line = rawLine.trim().replace(/^[-*]\s*/, "")
+    if (!line || !/[|:=]/u.test(line)) continue
+
+    const parts = line.split("|").map((part) => part.trim()).filter(Boolean)
+    const typePart = readPdfCandidateField(line, "type") || parts[0] || ""
+    const titlePart = readPdfCandidateField(line, "title") || parts[1] || ""
+    const candidate: PdfPromotionCandidate = {
+      type: roleForPdfCandidate(typePart),
+      title: titlePart.replace(/^title\s*[:=]\s*/iu, "").trim(),
+      decision: normalizePdfGateValue(readPdfCandidateField(line, "decision") || "review"),
+      evidenceStrength: normalizePdfGateValue(
+        readPdfCandidateField(line, "evidence_strength") ||
+        readPdfCandidateField(line, "evidenceStrength") ||
+        readPdfCandidateField(line, "evidence") ||
+        "",
+      ),
+      coverage: normalizePdfGateValue(readPdfCandidateField(line, "coverage") || ""),
+      sourceTrace: readPdfCandidateField(line, "source_trace") || readPdfCandidateField(line, "sourceTrace") || "",
+      reuseValue: normalizePdfGateValue(
+        readPdfCandidateField(line, "reuse_value") ||
+        readPdfCandidateField(line, "reuseValue") ||
+        "",
+      ),
+      reason: normalizePdfGateValue(readPdfCandidateField(line, "reason") || "pdf-promotion-candidate"),
+    }
+    if (candidate.title) candidates.push(candidate)
+  }
+  return candidates
+}
+
+function pdfTraceIsUsable(sourceTrace: string): boolean {
+  return /\.pdf\b/iu.test(sourceTrace) && /\b(page|p\.|section|sec\.|쪽|페이지|섹션)\b/iu.test(sourceTrace)
+}
+
+export function isStrongPdfPromotionCandidate(candidate: PdfPromotionCandidate): boolean {
+  if (!["create", "promote"].includes(candidate.decision)) return false
+  if (!["medium", "high", "strong"].includes(candidate.coverage)) return false
+  if (!["medium", "high", "strong"].includes(candidate.evidenceStrength)) return false
+  if (!pdfTraceIsUsable(candidate.sourceTrace)) return false
+  if (candidate.type === "concept" && !["medium", "high", "strong"].includes(candidate.reuseValue)) return false
+  return true
+}
+
+function extractPdfHeadingLines(sourceContent: string): string[] {
+  const lines = sourceContent.split(/\r?\n/)
+  const headings: string[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (/^(abstract|introduction|background|method|methods|methodology|experiment|experiments|results|discussion|limitations?|conclusion|references)\b/iu.test(trimmed)) {
+      headings.push(trimmed.slice(0, 120))
+    }
+    if (/^\d+(?:\.\d+)*\s+[A-Z][^\n]{3,120}$/u.test(trimmed)) {
+      headings.push(trimmed.slice(0, 120))
+    }
+    if (headings.length >= 12) break
+  }
+  return Array.from(new Set(headings))
+}
+
+export function buildPdfStructureSummary(sourceFileName: string, sourceContent: string): PdfStructureSummary {
+  const compact = sourceContent.trim()
+  const title = compact.split(/\r?\n/).find((line) => line.trim().length >= 4)?.trim() || getSourceBaseName(sourceFileName)
+  const sections = extractPdfHeadingLines(compact)
+  const figures = Array.from(compact.matchAll(/\b(?:figure|fig\.)\s*\d+[:.\s-][^\n]{0,160}/giu))
+    .map((match) => match[0].trim())
+    .slice(0, 8)
+  const tables = Array.from(compact.matchAll(/\btable\s*\d+[:.\s-][^\n]{0,160}/giu))
+    .map((match) => match[0].trim())
+    .slice(0, 8)
+  const quality = compact.length >= 1200 ? "normal" : compact.length > 0 ? "low" : "missing"
+  return {
+    title,
+    sections,
+    figures,
+    tables,
+    extractionQuality: {
+      status: quality === "missing" ? "failed" : quality === "low" ? "partial" : "ok",
+      quality,
+      method: compact ? "tauri-read-file" : "pdf-structure-fallback",
+      textLength: compact.length,
+    },
+  }
+}
+
+function formatPdfStructureForPrompt(sourceFileName: string, sourceContent: string): string {
+  if (!isPdfSourceFile(sourceFileName)) return ""
+  const structure = buildPdfStructureSummary(sourceFileName, sourceContent)
+  return [
+    "## pdfStructure",
+    `- file: ${sourceFileName}`,
+    `- title_hint: ${structure.title}`,
+    `- extraction: status=${structure.extractionQuality.status}; quality=${structure.extractionQuality.quality}; method=${structure.extractionQuality.method}; text_length=${structure.extractionQuality.textLength}`,
+    structure.sections.length > 0 ? `- sections: ${structure.sections.join(" | ")}` : "- sections: not detected; infer conservatively from text order",
+    structure.figures.length > 0 ? `- figures: ${structure.figures.join(" | ")}` : "- figures: not detected in extracted text; ask for review if figure evidence matters",
+    structure.tables.length > 0 ? `- tables: ${structure.tables.join(" | ")}` : "- tables: not detected in extracted text; ask for review if table evidence matters",
+  ].join("\n")
 }
 
 function legacySourceSummaryPath(sourceFileName: string): string {
@@ -827,6 +998,19 @@ async function generateFocusedSourceSummaryGeneration(params: {
     signal,
   } = params
   const date = new Date().toISOString().slice(0, 10)
+  const pdfSectionRequirements = isPdfSourceFile(sourceFileName)
+    ? [
+        "",
+        "PDF paper requirements:",
+        "- This is a PDF paper source. Do not create or imply a `wiki/pdf/` folder.",
+        "- Write a source-node-first summary. Keep entity/concept/comparison/synthesis/query/workflow ideas as promotion candidates unless the Stage 1 PDF Promotion Candidates gate clearly passed.",
+        "- Do not add `retention` frontmatter to this source page.",
+        "- Include every required PDF section below:",
+        ...PDF_SOURCE_SUMMARY_SECTIONS.map((section) => `  - ${section}`),
+        "",
+        formatPdfStructureForPrompt(sourceFileName, sourceContent),
+      ].join("\n")
+    : ""
   const systemPrompt = [
     "You are a focused source-summary writer for LLM Wiki.",
     "Generate exactly ONE FILE block and nothing else.",
@@ -849,6 +1033,7 @@ async function generateFocusedSourceSummaryGeneration(params: {
     languageRule(sourceContent),
     "",
     wikiTitleLanguagePolicy(),
+    pdfSectionRequirements,
   ].join("\n")
   const userPrompt = [
     `Source file: ${sourceFileName}`,
@@ -856,16 +1041,20 @@ async function generateFocusedSourceSummaryGeneration(params: {
     `Write the source summary page at ${sourceSummaryPlan.path}.`,
     "",
     "Required sections:",
-    "- ## 요약",
-    "- ## Source Coverage Matrix",
-    "- ## Atomic Claims",
-    "- ## Evidence Map",
-    "- ## 검증 및 최신성",
-    "- ## 오래 유지할 개념",
-    "- ## 관련 엔티티",
-    "- ## Kevin 운영체계 적용",
-    "- ## 운영 노트",
-    "- ## 열린 질문",
+    ...(isPdfSourceFile(sourceFileName)
+      ? PDF_SOURCE_SUMMARY_SECTIONS.map((section) => `- ${section}`)
+      : [
+          "- ## 요약",
+          "- ## Source Coverage Matrix",
+          "- ## Atomic Claims",
+          "- ## Evidence Map",
+          "- ## 검증 및 최신성",
+          "- ## 오래 유지할 개념",
+          "- ## 관련 엔티티",
+          "- ## Kevin 운영체계 적용",
+          "- ## 운영 노트",
+          "- ## 열린 질문",
+        ]),
     "",
     "Use the Stage 1 analysis for structure, but ground claims in the original source.",
     "If a concept/entity should not be promoted yet, mention it as a candidate in plain text instead of creating a wikilink.",
@@ -1479,6 +1668,126 @@ function qualityHoldReviewBlock(
       : "",
     "---END REVIEW---",
   ].filter(Boolean).join("\n")
+}
+
+function pdfPromotionReviewBlock(
+  candidate: PdfPromotionCandidate,
+  sourceFileName: string,
+  path?: string,
+): string {
+  const pageFolderByType: Record<PdfPromotionCandidate["type"], string> = {
+    entity: "entities",
+    concept: "concepts",
+    comparison: "comparisons",
+    synthesis: "synthesis",
+    query: "queries",
+    workflow: "workflows",
+    review: "reviews",
+  }
+  const pagePath = path ?? `wiki/${pageFolderByType[candidate.type]}/${candidate.title}.md`
+  const blockers = [
+    !["create", "promote"].includes(candidate.decision) ? `decision=${candidate.decision || "missing"}` : "",
+    !["medium", "high", "strong"].includes(candidate.coverage) ? `coverage=${candidate.coverage || "missing"}` : "",
+    !["medium", "high", "strong"].includes(candidate.evidenceStrength) ? `evidence_strength=${candidate.evidenceStrength || "missing"}` : "",
+    !pdfTraceIsUsable(candidate.sourceTrace) ? "source_trace must include PDF plus page/section evidence" : "",
+    candidate.type === "concept" && !["medium", "high", "strong"].includes(candidate.reuseValue)
+      ? `reuse_value=${candidate.reuseValue || "missing"}`
+      : "",
+  ].filter(Boolean)
+  return [
+    `---REVIEW: suggestion | PDF promotion candidate: ${candidate.title}---`,
+    `PDF source "${sourceFileName}" produced a candidate that should stay out of the wiki graph until the promotion gate is satisfied.`,
+    "",
+    `- type: ${candidate.type}`,
+    `- reason: ${candidate.reason || "pdf-promotion-candidate"}`,
+    `- source_trace: ${candidate.sourceTrace || "(missing)"}`,
+    ...blockers.map((blocker) => `- blocker: ${blocker}`),
+    "",
+    "Keep this as a review seed unless evidence, coverage, and source trace are strong enough.",
+    "OPTIONS: Create Page | Skip",
+    `PAGES: ${pagePath}`,
+    `SEARCH: ${candidate.title} ${sourceFileName} evidence | ${candidate.title} paper method result | ${candidate.title} replication limitation`,
+    "---END REVIEW---",
+  ].join("\n")
+}
+
+function titleMatchesPdfCandidate(pageTitle: string, candidateTitle: string): boolean {
+  const left = normalizeWikiTarget(pageTitle)
+  const right = normalizeWikiTarget(candidateTitle)
+  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)))
+}
+
+function pageTitleForGeneratedBlock(block: ParsedFileBlock): string {
+  const parsed = extractFrontmatterPayload(block.content)
+  const frontmatterTitle = parsed ? readYamlScalar(parsed.payload, "title") : ""
+  const fileTitle = block.path.split("/").pop()?.replace(/\.md$/iu, "") ?? ""
+  const heading = extractMarkdownTitle(block.content, fileTitle)
+  return frontmatterTitle || heading || fileTitle
+}
+
+export function applyPdfPromotionGateToGeneration(
+  generation: string,
+  sourceFileName: string,
+  analysis: string,
+  onWarning?: (message: string) => void,
+): string {
+  if (!isPdfSourceFile(sourceFileName)) return generation
+  const { blocks, warnings } = parseFileBlocks(generation)
+  if (blocks.length === 0) return generation
+  for (const warning of warnings) onWarning?.(warning)
+
+  const candidates = parsePdfPromotionCandidates(analysis)
+  const strongCandidates = candidates.filter(isStrongPdfPromotionCandidate)
+  const kept: ParsedFileBlock[] = []
+  const heldReviews: string[] = []
+  const heldTargets = new Set<string>()
+  const heldCandidateKeys = new Set<string>()
+
+  for (const block of blocks) {
+    const pageType = pageTypeForRecoveryPath(block.path)
+    if (pageType === "source" || pageType === "index" || pageType === "overview") {
+      kept.push(block)
+      continue
+    }
+
+    const title = pageTitleForGeneratedBlock(block)
+    const matched = strongCandidates.find((candidate) =>
+      candidate.type === pageType && titleMatchesPdfCandidate(title, candidate.title)
+    )
+    if (matched) {
+      kept.push(block)
+      continue
+    }
+
+    const candidate = candidates.find((item) => titleMatchesPdfCandidate(title, item.title)) ?? {
+      type: roleForPdfCandidate(pageType),
+      title,
+      decision: "review",
+      evidenceStrength: "",
+      coverage: "",
+      sourceTrace: "",
+      reuseValue: "",
+      reason: "pdf-promotion-candidate",
+    }
+    heldTargets.add(targetFromWikiPath(block.path))
+    heldCandidateKeys.add(`${candidate.type}:${normalizeWikiTarget(candidate.title)}`)
+    heldReviews.push(pdfPromotionReviewBlock(candidate, sourceFileName, block.path))
+    onWarning?.(`Held PDF generated page "${block.path}" before write — promotion candidate did not pass the PDF quality gate.`)
+  }
+
+  const blockedCandidateReviews = candidates
+    .filter((candidate) =>
+      !isStrongPdfPromotionCandidate(candidate) &&
+      !heldCandidateKeys.has(`${candidate.type}:${normalizeWikiTarget(candidate.title)}`)
+    )
+    .map((candidate) => pdfPromotionReviewBlock(candidate, sourceFileName))
+
+  return [
+    ...kept.map((block) => serializeFileBlock(stripHeldTargetsFromGeneratedBlock(block, heldTargets))),
+    ...extractReviewBlocks(generation),
+    ...heldReviews,
+    ...blockedCandidateReviews,
+  ].join("\n\n")
 }
 
 function normalizeWikiTarget(raw: string): string {
@@ -2375,7 +2684,7 @@ async function autoIngestImpl(
   //
   // Image cascade still runs on cache hits. Reason: a user may have
   // ingested this source on a previous app version that didn't extract
-  // images yet, or the media dir may have been deleted out from under
+  // images yet, or the asset dir may have been deleted out from under
   // us. `extractAndSaveSourceImages` + injection are both idempotent
   // (deterministic output paths, marker-bracketed replacement), so
   // re-running them costs only the extraction time and converges the
@@ -2432,8 +2741,7 @@ async function autoIngestImpl(
             try {
               await captionMarkdownImages(pp, sourceContent, captionLlm, {
                 signal,
-                shouldCaption: (url) =>
-                  url.startsWith(`${pp}/wiki/media/${fileName.replace(/\.[^.]+$/, "")}/`),
+                shouldCaption: (url) => url.startsWith(sourceAssetPrefix(pp, fileName)),
                 urlToAbsPath: (url) => url,
                 concurrency: mmCfg.concurrency,
                 onProgress: (done, total) =>
@@ -2486,18 +2794,15 @@ async function autoIngestImpl(
 
   // ── Step 0.5: Extract embedded images ─────────────────────────
   // Pulls every embedded image out of PDF / PPTX / DOCX into
-  // `wiki/media/<source-slug>/`. We DON'T inject the markdown
-  // references into sourceContent here — without VLM captions
-  // (Phase 3a) the alt text is empty, which gives the LLM no
-  // semantic signal to preserve them. The LLM tends to silently
-  // strip empty-alt images when summarizing.
+  // `raw/assets/<source-slug>/`. We DON'T inject the markdown
+  // references into sourceContent here unless captioning is enabled;
+  // empty alt text gives the LLM no semantic signal to preserve the
+  // images, so text-only/default ingest keeps the wiki page lean.
   //
   // Instead, the markdown section is appended to the source-summary
   // page on disk AFTER writeFileBlocks (see Step 5b below). That
-  // guarantees images appear in `wiki/sources/<slug>.md` regardless
-  // of LLM behavior. Once Phase 3a lands, we'll re-introduce the
-  // sourceContent injection because the captioned alt-text gives
-  // the LLM something meaningful to work with.
+  // guarantees images appear in `wiki/sources/<slug>.md` when the
+  // multimodal captioning path chooses to surface them.
   //
   // Failure here is never fatal — extractAndSaveSourceImages logs
   // and returns [] on any error.
@@ -2507,7 +2812,7 @@ async function autoIngestImpl(
   console.log(`[ingest:diag] full-pipeline branch: got ${savedImages.length} image(s)`)
   if (savedImages.length > 0) {
     console.log(
-      `[ingest:images] saved ${savedImages.length} image(s) for "${fileName}" → wiki/media/${fileName.replace(/\.[^.]+$/, "")}/`,
+      `[ingest:images] saved ${savedImages.length} image(s) for "${fileName}" → raw/assets/${getSourceBaseName(fileName)}/`,
     )
   }
 
@@ -2525,7 +2830,7 @@ async function autoIngestImpl(
   // image reference inline at the right paragraph.
   //
   // Scope: we only caption images whose absolute path lives under
-  // <project>/wiki/media/<source-slug>/ — i.e. images the current
+  // <project>/raw/assets/<source-slug>/ — i.e. images the current
   // ingest produced. User-typed external URLs in markdown source
   // documents are passed through untouched.
   //
@@ -2546,7 +2851,7 @@ async function autoIngestImpl(
   // surprising behavior that prompted the fix.
   //
   // Rust extraction itself is untouched: images still land on disk
-  // under wiki/media/<slug>/ (cheap), and the raw-source preview
+  // under raw/assets/<slug>/ (cheap), and the raw-source preview
   // (which renders read_file output directly) still shows them —
   // that surface is "the source document as-is", separate from
   // "the curated wiki knowledge".
@@ -2570,17 +2875,16 @@ async function autoIngestImpl(
     /!\[\]\(/.test(sourceContent)
   ) {
     activity.updateItem(activityId, { detail: "Captioning images..." })
-    const sourceSlug = fileName.replace(/\.[^.]+$/, "")
-    const ourMediaPrefix = `${pp}/wiki/media/${sourceSlug}/`
+    const ourAssetPrefix = sourceAssetPrefix(pp, fileName)
     try {
       const result = await captionMarkdownImages(pp, sourceContent, captionLlm, {
         signal,
         // Strict filter: only caption images we know we just
-        // extracted into this source's media directory. Skips any
+        // extracted into this source's asset directory. Skips any
         // pre-existing markdown image refs the user may have typed
         // into the source content (e.g. for hand-authored .md
         // sources).
-        shouldCaption: (url) => url.startsWith(ourMediaPrefix),
+        shouldCaption: (url) => url.startsWith(ourAssetPrefix),
         urlToAbsPath: (url) => url, // already absolute in our extraction output
         concurrency: mmCfg.concurrency,
         onProgress: (done, total) =>
@@ -2616,7 +2920,7 @@ async function autoIngestImpl(
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildAnalysisPrompt(purpose, index, truncatedContent) },
+      { role: "system", content: buildAnalysisPrompt(purpose, index, truncatedContent, fileName) },
       { role: "user", content: `Analyze this source document:\n\n**File:** ${fileName}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${truncatedContent}` },
     ],
     {
@@ -2771,14 +3075,23 @@ async function autoIngestImpl(
       activity.updateItem(activityId, { detail: msg })
     },
   })
-	  generation = holdLowQualityGeneratedPages(generation, {
-	    expectedDate: currentIngestDate(),
-	    sourceFileName: fileName,
-	    sourceContent: truncatedContent,
-	    onWarning: (msg) => {
-	      activity.updateItem(activityId, { detail: msg })
-	    },
-	  })
+  generation = holdLowQualityGeneratedPages(generation, {
+    expectedDate: currentIngestDate(),
+    sourceFileName: fileName,
+    sourceContent: truncatedContent,
+    onWarning: (msg) => {
+      activity.updateItem(activityId, { detail: msg })
+    },
+  })
+  generation = applyPdfPromotionGateToGeneration(
+    generation,
+    fileName,
+    analysis,
+    (msg) => {
+      console.warn(`[ingest:pdf] ${msg}`)
+      activity.updateItem(activityId, { detail: msg })
+    },
+  )
   generation = await stripUnresolvedGeneratedWikilinks(pp, generation)
 
   // ── Step 3: Write files ───────────────────────────────────────
@@ -2871,6 +3184,66 @@ async function autoIngestImpl(
   if (!options.skipSourceSummary && !hasSourceSummary && !signal?.aborted) {
     const date = new Date().toISOString().slice(0, 10)
     const fallbackTitle = sourceSummaryPlan.title
+    const fallbackBody = isPdfSourceFile(fileName)
+      ? [
+          "## 요약",
+          analysis ? analysis.slice(0, 2200) : "(Analysis not available)",
+          "",
+          "## 논문 구조",
+          formatPdfStructureForPrompt(fileName, truncatedContent),
+          "",
+          "## 핵심 주장",
+          "- Claim extraction requires manual or automated repair.",
+          "",
+          "## 방법론",
+          "- Method extraction requires repair from the original PDF text.",
+          "",
+          "## 실험 및 근거",
+          "- Evidence extraction requires repair from the original PDF text.",
+          "",
+          "## 표/그림 근거",
+          "- Figure/table evidence was not reliably summarized by the fallback path.",
+          "",
+          "## 한계와 주의점",
+          "- This fallback summary is marked `needs_upgrade: true` because the model did not emit a valid PDF source summary.",
+          "",
+          "## LLM Wiki / AI Native Solo Business OS 관점",
+          "- 적용 판단은 원본 PDF 재검토 후 확정합니다.",
+          "",
+          "## 승격 후보",
+          "- Weak candidates remain review seeds until source trace, coverage, and evidence strength are sufficient.",
+          "",
+          "## 검증 및 최신성",
+          "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
+          "",
+          "## Source Trace",
+          `- Primary source: ${fileName}`,
+        ]
+      : [
+          "## 요약",
+          analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
+          "",
+          "## Source Coverage Matrix",
+          "- Fallback summary generated because the model did not emit a valid source summary page.",
+          "",
+          "## Atomic Claims",
+          "- Claim extraction requires manual or automated repair.",
+          "",
+          "## Evidence Map",
+          "- Primary evidence: original raw source file.",
+          "",
+          "## 검증 및 최신성",
+          "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
+          "",
+          "## Kevin 운영체계 적용",
+          "- 적용 판단은 원본 source 재검토 후 확정합니다.",
+          "",
+          "## 운영 노트",
+          "- This page is intentionally marked `needs_upgrade: true`.",
+          "",
+          "## 열린 질문",
+          "- Which claims require external verification or latest/current checks?",
+        ]
     const fallbackContent = [
       "---",
       `type: source`,
@@ -2894,29 +3267,7 @@ async function autoIngestImpl(
       "",
       `# ${fallbackTitle}`,
       "",
-      "## 요약",
-      analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
-      "",
-      "## Source Coverage Matrix",
-      "- Fallback summary generated because the model did not emit a valid source summary page.",
-      "",
-      "## Atomic Claims",
-      "- Claim extraction requires manual or automated repair.",
-      "",
-      "## Evidence Map",
-      "- Primary evidence: original raw source file.",
-      "",
-      "## 검증 및 최신성",
-      "- 외부 검색 근거가 없으면 최신/공식 상태를 확정하지 않습니다.",
-      "",
-      "## Kevin 운영체계 적용",
-      "- 적용 판단은 원본 source 재검토 후 확정합니다.",
-      "",
-      "## 운영 노트",
-      "- This page is intentionally marked `needs_upgrade: true`.",
-      "",
-      "## 열린 질문",
-      "- Which claims require external verification or latest/current checks?",
+      ...fallbackBody,
     ].join("\n")
     try {
       await writeFile(sourceSummaryFullPath, fallbackContent)
@@ -3737,7 +4088,26 @@ function parseReviewBlocks(
  * Step 1 prompt: AI reads the source and produces a structured analysis.
  * This is the "discussion" step — the AI reasons about the source before writing wiki pages.
  */
-export function buildAnalysisPrompt(purpose: string, index: string, sourceContent: string = ""): string {
+export function buildAnalysisPrompt(purpose: string, index: string, sourceContent: string = "", sourceFileName = ""): string {
+  const pdfInstructions = isPdfSourceFile(sourceFileName)
+    ? [
+        "## PDF Paper Structure Pass",
+        "This source is a PDF paper. Do not treat the extracted text as ordinary markdown.",
+        "Use the pdfStructure hint below plus the extracted text to identify paper structure before recommending pages.",
+        "PDF source-node-first policy:",
+        "- Default output should be a source summary in wiki/sources/.",
+        "- Do not recommend concept/comparison/synthesis/query pages unless a promotion candidate passes the gate.",
+        "- Strong entity candidates may be promoted only when they have clear PDF page/section trace, medium+ coverage, and medium+ evidence.",
+        "- Thin concepts, weak claims, comparison/synthesis ideas, and figure/table uncertainty must become review seeds, not wiki pages.",
+        "",
+        "Add this exact section to your final analysis:",
+        "## PDF Promotion Candidates",
+        "Each line must use this parseable form:",
+        "- type=entity|concept|comparison|synthesis|query | title=... | decision=create|promote|review|defer|skip | evidence_strength=weak|medium|strong | coverage=low|medium|high | source_trace=PDF filename + page/section | reuse_value=low|medium|high | reason=pdf-promotion-candidate|pdf-structure-incomplete|pdf-extraction-low-quality|pdf-figure-uncaptioned",
+        "",
+        formatPdfStructureForPrompt(sourceFileName, sourceContent),
+      ].join("\n")
+    : ""
   return [
     "You are an expert research analyst. Read the source document and produce a structured analysis.",
     "Do not output chain-of-thought, hidden reasoning, or a thinking transcript. Reason internally and write only the concise final analysis.",
@@ -3804,6 +4174,8 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "Keep the source summary compact when recommending a source page: normally 450-1800 body characters unless the source is long, technical, and materially reusable.",
     "Be thorough but concise. Focus on what's genuinely important, source-grounded, and reusable.",
     "",
+    pdfInstructions,
+    "",
     "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
     "",
     purpose ? `## Wiki Purpose (for context)\n${purpose}` : "",
@@ -3828,6 +4200,25 @@ export function buildGenerationPrompt(
   const sourceSummaryPlan = sourceSummaryPlanOverride ??
     buildSourceSummaryPlan(sourceFileName, sourceContent, options.sourceSummaryTitle)
   const sourceSubjectSlug = sourceSummaryPlan.titleSlug
+  const isPdf = isPdfSourceFile(sourceFileName)
+  const pdfGenerationPolicy = isPdf
+    ? [
+        "## PDF Paper Ingest Policy",
+        "This source is a PDF paper. Use the source-node-first flow:",
+        "- The default durable output is the source summary page.",
+        "- Do not create `wiki/pdf/` folders or PDF page-split notes.",
+        "- Do not create concept, comparison, synthesis, query, or workflow pages from weak candidates.",
+        "- Entity pages are allowed only when Stage 1 lists a strong `PDF Promotion Candidates` entity with decision=create|promote, medium+ coverage, medium+ evidence_strength, and source_trace containing the PDF filename plus page/section evidence.",
+        "- Concepts need medium+ reuse_value and clear source_trace; otherwise keep them in the source summary's `승격 후보` section and emit a REVIEW block.",
+        "- Comparison/synthesis/query candidates from one paper are review seeds unless the analysis explicitly marks them as promoted with strong evidence.",
+        "- Do not add wikilinks for held candidates. Use plain text in the source summary and REVIEW blocks.",
+        "",
+        "PDF source summary pages must include these sections:",
+        ...PDF_SOURCE_SUMMARY_SECTIONS.map((section) => `- ${section}`),
+        "",
+        formatPdfStructureForPrompt(sourceFileName, sourceContent),
+      ].join("\n")
+    : ""
   const sourceSummaryInstruction = options.skipSourceSummary
     ? [
         "1. Do NOT generate a source summary page in wiki/sources/ for this source.",
@@ -3887,6 +4278,8 @@ export function buildGenerationPrompt(
     "- ## Kevin 운영체계 적용",
     "- ## 운영 노트",
     "- ## 열린 질문",
+    "",
+    pdfGenerationPolicy,
     "",
     "For concept pages, include definition, decision criteria, application conditions, failure modes or caveats, source trace, and links to related pages.",
     "For entity pages, include what it is, its role in the user's operating system, relevant constraints, and how it connects to other tools or concepts.",
@@ -4232,9 +4625,9 @@ async function injectImagesIntoSourceSummary(
     } else {
       // Page is missing — write a minimal stub so the user actually
       // sees the images in the file tree. Without this fallback, the
-      // images sit in wiki/media/<slug>/ with no .md page referencing
+      // images sit in raw/assets/<slug>/ with no .md page referencing
       // them, which means the lint view's orphan-page sweep eventually
-      // reaps the media directory (cascadeDeleteWikiPage triggered by
+      // reaps the owned image directory (cascadeDeleteWikiPage triggered by
       // a missing source page) — silent loss of extracted images.
       const date = new Date().toISOString().slice(0, 10)
       const stubFrontmatter = [
@@ -4536,7 +4929,7 @@ export async function executeIngestWrites(
   // Image cascade: surface any embedded images on the source-summary
   // page. `startIngest` already kicked off extraction in parallel
   // with the chat stream — by now the images are sitting in
-  // `wiki/media/<slug>/`, but no markdown references them yet. We
+  // `raw/assets/<slug>/`, but no markdown references them yet. We
   // re-run extraction here to get back the SavedImage metadata
   // (rel_path, page) needed to build the markdown section. The Rust
   // command is idempotent (deterministic file paths, overwrite-safe

@@ -5,6 +5,10 @@ import {
   buildGenerationPrompt,
   makeComparisonPagePath,
   shouldForceComparisonPage,
+  applyPdfPromotionGateToGeneration,
+  buildPdfStructureSummary,
+  isStrongPdfPromotionCandidate,
+  parsePdfPromotionCandidates,
 } from "./ingest"
 import { prepareIngestSurface } from "./wiki-operational-surface"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -51,6 +55,15 @@ describe("buildAnalysisPrompt language directive", () => {
     expect(prompt).toContain("## Kevin / OS Implications")
     expect(prompt).toContain("## Recommendations")
     expect(prompt).not.toContain("Codexian Memory")
+  })
+
+  it("adds PDF structure and promotion candidate contract for PDF papers", () => {
+    const prompt = buildAnalysisPrompt("", "", "Abstract\n\n1 Introduction\n\nMethod\n\nFigure 1: pipeline", "Meta Harness.pdf")
+    expect(prompt).toContain("## PDF Paper Structure Pass")
+    expect(prompt).toContain("## pdfStructure")
+    expect(prompt).toContain("## PDF Promotion Candidates")
+    expect(prompt).toContain("source_trace=PDF filename + page/section")
+    expect(prompt).toContain("source-node-first")
   })
 })
 
@@ -158,6 +171,83 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("knowledge_type — conceptual | operational | experimental | strategic")
     expect(prompt).toContain("retention — ephemeral | reusable | promote | archive")
     expect(prompt).toContain("Never write gold")
+  })
+
+  it("keeps PDF papers source-node-first and requires PDF summary sections", () => {
+    const prompt = buildGenerationPrompt("", "", "", "Meta Harness.pdf", undefined, "Abstract\n\nMethod\n\nResults")
+    expect(prompt).toContain("## PDF Paper Ingest Policy")
+    expect(prompt).toContain("source-node-first")
+    expect(prompt).toContain("Do not create `wiki/pdf/`")
+    expect(prompt).toContain("## 논문 구조")
+    expect(prompt).toContain("## 승격 후보")
+    expect(prompt).toContain("## Source Trace")
+  })
+})
+
+describe("PDF paper promotion gate", () => {
+  const analysis = [
+    "## PDF Promotion Candidates",
+    "- type=entity | title=Meta Harness | decision=create | evidence_strength=strong | coverage=high | source_trace=Meta Harness.pdf page 1 | reuse_value=high | reason=pdf-promotion-candidate",
+    "- type=concept | title=하네스 엔지니어링 | decision=review | evidence_strength=weak | coverage=low | source_trace=Meta Harness.pdf section Method | reuse_value=medium | reason=pdf-promotion-candidate",
+  ].join("\n")
+
+  it("parses PDF promotion candidates and identifies strong candidates", () => {
+    const candidates = parsePdfPromotionCandidates(analysis)
+    expect(candidates).toHaveLength(2)
+    expect(candidates[0].title).toBe("Meta Harness")
+    expect(isStrongPdfPromotionCandidate(candidates[0])).toBe(true)
+    expect(isStrongPdfPromotionCandidate(candidates[1])).toBe(false)
+  })
+
+  it("extracts lightweight pdfStructure from PDF text", () => {
+    const structure = buildPdfStructureSummary("Meta Harness.pdf", [
+      "Meta Harness",
+      "Abstract",
+      "1 Introduction",
+      "Method",
+      "Figure 1: Harness loop",
+      "Table 1: Results",
+    ].join("\n"))
+    expect(structure.title).toBe("Meta Harness")
+    expect(structure.sections).toContain("Abstract")
+    expect(structure.figures[0]).toContain("Figure 1")
+    expect(structure.tables[0]).toContain("Table 1")
+  })
+
+  it("holds weak PDF concept pages as review seeds while allowing strong entities", () => {
+    const generation = [
+      "---FILE: wiki/sources/Meta Harness 소스 요약.md---",
+      "---",
+      "type: source",
+      "title: Meta Harness 소스 요약",
+      "retention: promote",
+      "---",
+      "# Meta Harness 소스 요약",
+      "## 요약",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/entities/Meta Harness.md---",
+      "---",
+      "type: entity",
+      "title: Meta Harness",
+      "---",
+      "# Meta Harness",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/concepts/하네스 엔지니어링.md---",
+      "---",
+      "type: concept",
+      "title: 하네스 엔지니어링",
+      "---",
+      "# 하네스 엔지니어링",
+      "---END FILE---",
+    ].join("\n")
+
+    const gated = applyPdfPromotionGateToGeneration(generation, "Meta Harness.pdf", analysis)
+    expect(gated).toContain("---FILE: wiki/sources/Meta Harness 소스 요약.md---")
+    expect(gated).toContain("---FILE: wiki/entities/Meta Harness.md---")
+    expect(gated).not.toContain("---FILE: wiki/concepts/하네스 엔지니어링.md---")
+    expect(gated).toContain("---REVIEW: suggestion | PDF promotion candidate: 하네스 엔지니어링---")
   })
 })
 

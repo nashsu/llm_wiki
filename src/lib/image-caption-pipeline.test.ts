@@ -220,6 +220,15 @@ describe("captionMarkdownImages", () => {
     expect(mockReadBase64).toHaveBeenCalledWith("/custom/anchor/media/foo/img-1.png")
   })
 
+  it("resolves raw/assets project-relative URLs by default", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("c")
+
+    await captionMarkdownImages("/proj", "![](raw/assets/foo/img-1.png)", cfg)
+
+    expect(mockReadBase64).toHaveBeenCalledWith("/proj/raw/assets/foo/img-1.png")
+  })
+
   it("forwards AbortSignal to captionImage", async () => {
     mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
     mockCaption.mockResolvedValue("c")

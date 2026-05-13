@@ -4,14 +4,12 @@
  * Pure dispatch + path-shaping layer over the Rust commands
  * `extract_and_save_pdf_images_cmd` / `extract_and_save_office_images_cmd`.
  * Decides which command to call based on file extension, computes the
- * destination directory (`wiki/media/<source-slug>/`), and gives back
+ * destination directory (`raw/assets/<source-slug>/`), and gives back
  * a small markdown snippet ready to paste into the LLM's source
  * context.
  *
- * NOTE: this layer does NOT call any LLM (no captions yet — that's
- * Phase 3a). The alt text on each image is a placeholder; once
- * captioning lands, the same helper grows a `caption` field per
- * image and the markdown line uses that instead.
+ * NOTE: this layer does NOT call any LLM. Captioning is handled by
+ * `image-caption-pipeline` after extraction, keyed by the image hash.
  */
 import { invoke } from "@tauri-apps/api/core"
 import { getFileName, normalizePath } from "@/lib/path-utils"
@@ -24,7 +22,7 @@ export interface SavedImage {
   page: number | null
   width: number
   height: number
-  /** Path relative to the wiki/ root, e.g. `media/rope-paper/img-1.png`. */
+  /** Path relative to the project root, e.g. `raw/assets/rope-paper/img-1.png`. */
   relPath: string
   /** Absolute filesystem path — used by `convertFileSrc` for preview. */
   absPath: string
@@ -43,7 +41,7 @@ const SUPPORTED_OFFICE_EXTS = ["pptx", "docx", "ppt", "doc"] as const
 
 /**
  * Extract every embedded image from `sourcePath` and save them to
- * `<projectPath>/wiki/media/<slug>/`. Returns metadata only — image
+ * `<projectPath>/raw/assets/<slug>/`. Returns metadata only — image
  * bytes never traverse JS (the Rust command writes directly).
  *
  * Returns `[]` for unsupported file types or when the source has no
@@ -68,8 +66,8 @@ export async function extractAndSaveSourceImages(
   if (!isPdf && !isOffice) return []
 
   const slug = fileName.replace(/\.[^.]+$/, "")
-  const destDir = `${pp}/wiki/media/${slug}`
-  const relTo = `${pp}/wiki`
+  const destDir = `${pp}/raw/assets/${slug}`
+  const relTo = pp
 
   try {
     const images = await invoke<unknown[]>(
@@ -104,9 +102,8 @@ export async function extractAndSaveSourceImages(
 
 /**
  * Build the markdown section to splice into `sourceContent` so the
- * generation LLM sees the available images. Each image is referenced
- * once by its rel_path with a placeholder alt-text (Phase 3a will
- * replace this with VLM-generated captions).
+ * generation LLM sees the available images. When captions are
+ * available, each image uses the cached factual caption as alt text.
  *
  * Returns an empty string when there are no images — no leading
  * separator gets inserted, which keeps the prompt size unchanged for

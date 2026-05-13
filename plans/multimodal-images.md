@@ -49,10 +49,10 @@ Three rejected alternatives are documented at the bottom of this file
 for posterity. The chosen path:
 
 1. **Extract images** from PDF / PPTX / DOCX during preprocess
-2. **Save originals** to `<project>/wiki/media/<source-slug>/<n>.<ext>`
+2. **Save originals** to `<project>/raw/assets/<source-slug>/<n>.<ext>`
 3. **Caption with vision LLM** ("describe factually, include any text,
    chart axes, key visual elements; 2–4 sentences")
-4. **Inject as markdown** `![<caption>](media/<source-slug>/<n>.png)`
+4. **Inject as markdown** `![<caption>](raw/assets/<source-slug>/<n>.png)`
    into the source content fed to the analysis / generation prompts —
    so the LLM that builds the wiki page can place these images
    contextually
@@ -212,7 +212,7 @@ After `preprocess_file` returns text, BEFORE the analysis stage:
 const images = await invoke('extract_pdf_images' or 'extract_office_images', { path })
 const captioned = []
 for (const img of images) {
-  const relPath = `wiki/media/${slug}/img-${img.index}.${ext}`
+  const relPath = `raw/assets/${slug}/img-${img.index}.${ext}`
   await writeFile(`${pp}/${relPath}`, base64ToBytes(img.data_base64))
   const caption = await captionImage(img.data_base64, img.mime_type, llmConfig, signal)
   captioned.push({ relPath, caption, page: img.page })
@@ -306,10 +306,10 @@ current LM Studio `qwen3-embedding-0.6b` is NOT.
    **Tentative**: yes, but as a follow-up after Phase 1–4 land for
    embedded images.
 
-7. **Image sub-dir naming**: `wiki/media/<source-slug>/` or flat
-   `wiki/media/<slug>-<n>.<ext>`? Subdirs are cleaner; conflicts
-   resolved by source-delete cascade automatically. **Tentative**:
-   subdirs.
+7. **Image sub-dir naming**: `raw/assets/<source-slug>/` or flat
+   `raw/assets/<slug>-<n>.<ext>`? Subdirs are cleaner; conflicts
+   resolved by source-delete cascade automatically. **Chosen**:
+   subdirs. Legacy `wiki/media/<source-slug>/` is migration input only.
 
 ---
 
@@ -352,7 +352,7 @@ Per phase, in priority order:
 - Real-LLM test (gated by `RUN_LLM_TESTS=1`): pass a known image,
   verify caption is non-trivial and contains expected keywords
 - Integration test: full autoIngest on a small fixture PDF with 2
-  known images → assert wiki/media/ has the files + the generated
+  known images → assert raw/assets/ has the files + the generated
   page references them in markdown
 
 **Phase 4 (toggle):**

@@ -4,7 +4,7 @@
 //! NO LLM calls happen in this module. Output is the raw extracted
 //! images as PNG-encoded base64 strings, ready for either:
 //!   - the vision-caption helper (Phase 3) which sends them to a VLM
-//!   - direct write-to-disk in `wiki/media/<source-slug>/`
+//!   - direct write-to-disk in `raw/assets/<source-slug>/`
 //!
 //! This module is intentionally separate from `fs.rs` (which already
 //! has its own pdfium binding lifecycle for text extraction). PDF
@@ -55,7 +55,7 @@ impl Default for ExtractOptions {
 pub struct ExtractedImage {
     /// 1-based index in document order. Stable across re-extractions.
     /// Used as the filename suffix when the caller writes images to
-    /// `wiki/media/<slug>/img-<index>.<ext>`.
+    /// `raw/assets/<slug>/img-<index>.<ext>`.
     pub index: u32,
     /// MIME type ("image/png" / "image/jpeg" / etc.). PNG for any
     /// image we re-encode (PDFs always); pass-through for office docs
@@ -204,10 +204,10 @@ pub fn extract_pdf_markdown(
                 continue;
             }
             total_saved += 1;
-            // Empty alt-text on purpose: until the vision-caption
-            // helper lands (Phase 3a) we have nothing meaningful to
-            // put there, and a placeholder like "image" or the file
-            // name only adds noise to the LLM and to screen readers.
+            // Empty alt-text on purpose: the JS caption pipeline
+            // fills factual captions later when multimodal captioning
+            // is enabled. A placeholder like "image" or the file name
+            // only adds noise to the LLM and to screen readers.
             page_image_md.push(format!("![]({prefix}/{file_name})"));
             if total_saved as usize >= options.max_images {
                 eprintln!(
@@ -589,11 +589,10 @@ pub struct SavedImage {
     pub width: u32,
     pub height: u32,
     /// Path of the written file, relative to `dest_dir_relative_to`.
-    /// E.g. when `dest_dir` is `<project>/wiki/media/foo` and
-    /// `dest_dir_relative_to` is `<project>/wiki`, this is
-    /// `media/foo/img-1.png`. The caller-provided base lets us
-    /// generate paths that work inside markdown rendered from
-    /// anywhere under the wiki root.
+    /// E.g. when `dest_dir` is `<project>/raw/assets/foo` and
+    /// `dest_dir_relative_to` is `<project>`, this is
+    /// `raw/assets/foo/img-1.png`. The caller-provided base lets us
+    /// generate paths that are stable regardless of wiki page depth.
     pub rel_path: String,
     /// Absolute path on disk — the chat / file-preview UI uses this
     /// (via `convertFileSrc`) to actually load the image.
