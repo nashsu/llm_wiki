@@ -1,6 +1,9 @@
 # Multimodal: image extraction + indexing for documents
 
-**Status:** Spec, not started. Branch will be cut from `main` at commit `63d8538`.
+**Status:** Historical implementation plan. Core extraction, captioning,
+settings, and `raw/assets/<source-slug>/` storage have since been wired into
+the app; keep this file as design rationale and deferred-work notes, not as a
+current delivery checklist.
 
 **Goal:** When a user ingests a PDF / PPTX / DOCX that contains images
 (charts, diagrams, photos, screenshots), the images become discoverable
@@ -375,15 +378,11 @@ Per phase, in priority order:
 
 ---
 
-## Branch + delivery plan
+## Current Use
 
-- Cut branch `feat/multimodal-images` from `main` @ `63d8538`
-- Phase 1 → 1 commit, ~3-4 days work
-- Phase 2 → 1 commit, ~2 days
-- Phase 3 → 2 commits (caption helper + ingest integration), ~3 days
-- Phase 4 → 1 commit, ~1 day
-- Each commit independently runnable + tested. Merge phases into
-  branch as they land. Final merge to main as one big feature, OR
-  as 4 separate PRs depending on review preference.
-
-Total estimate: ~10 days of focused work.
+- Treat this document as historical context for the multimodal ingest design.
+- Use current code and tests as the source of truth for implemented behavior.
+- Deferred work remains useful only where explicitly marked as Phase 5 or
+  follow-up risk mitigation.
+- Historical phase estimates were removed because they no longer describe the
+  current delivery state.
