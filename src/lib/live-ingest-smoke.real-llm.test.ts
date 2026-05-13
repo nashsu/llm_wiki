@@ -22,7 +22,6 @@ import {
   type SmokeProofRun,
 } from "../../scripts/lib/live-ingest-smoke-retention.mjs"
 
-const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
 const RUN_SMOKE = process.env.RUN_LIVE_INGEST_SMOKE === "1"
 const SMOKE_RETENTION_POLICY = OPERATIONAL_SURFACE_POLICY.runtimeProofRetention.liveIngestSmoke
 
@@ -33,7 +32,7 @@ describe("live Vault ingest smoke", () => {
     const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
     expect(apiKey, "GOOGLE_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY is required").toBeTruthy()
 
-    const vault = process.env.LLM_WIKI_VAULT_PATH || DEFAULT_VAULT
+    const vault = requiredEnv("LLM_WIKI_VAULT_PATH")
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
     const runtimeDir = path.join(vault, ".llm-wiki", "runtime")
     const sourcePath = path.join(runtimeDir, `codex-live-ingest-smoke-${stamp}.md`)
@@ -138,6 +137,12 @@ describe("live Vault ingest smoke", () => {
     expect(await fs.readFile(overviewPath, "utf8")).toBe(beforeOverview)
   }, 240_000)
 })
+
+function requiredEnv(name: string): string {
+  const value = process.env[name]
+  expect(value, `${name} is required for live ingest smoke`).toBeTruthy()
+  return value as string
+}
 
 function resetStores(vault: string) {
   useReviewStore.setState({ items: [] })

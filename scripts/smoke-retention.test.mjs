@@ -1,10 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import {
   buildSmokeProofRetentionPlan,
   buildSmokeProofRun,
   classifySmokeProof,
 } from "./lib/live-ingest-smoke-retention.mjs"
+
+const smokeCliPath = fileURLToPath(new URL("./codex-live-ingest-smoke.mjs", import.meta.url))
 
 test("classifies guarded smoke proof reasons", () => {
   const classification = classifySmokeProof({
@@ -49,4 +53,27 @@ test("plans retention from the same run model used by script and live smoke", ()
   assert.deepEqual(plan.retainedRuns, ["20260512T000300Z", "20260512T000200Z"])
   assert.deepEqual(plan.deleteCandidates, ["codex-live-ingest-smoke-20260512T000100Z.json"])
   assert.equal(plan.guardedReasonCounts["guarded-bootstrap-write"], 1)
+})
+
+test("live ingest smoke CLI fails safe without explicit mode", () => {
+  const result = spawnSync(process.execPath, [smokeCliPath], { encoding: "utf8" })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Choose --dry-run for safe validation or --live/)
+})
+
+test("live ingest smoke CLI requires a fixture or vault path", () => {
+  const result = spawnSync(process.execPath, [smokeCliPath, "--live"], { encoding: "utf8" })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Choose --fixture or --vault <path>/)
+})
+
+test("live ingest smoke CLI rejects ambiguous dry-run and live modes", () => {
+  const result = spawnSync(process.execPath, [smokeCliPath, "--fixture", "--dry-run", "--live"], {
+    encoding: "utf8",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Choose either --dry-run or --live/)
 })

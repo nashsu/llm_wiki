@@ -442,7 +442,7 @@ To check the live Gemini ingest wiring without exporting the real Vault or calli
 npm run smoke:live-ingest -- --fixture --dry-run
 ```
 
-Dropping `--dry-run` runs the live smoke and should be an explicit operator decision because it writes runtime proof files and sends source/context content to the configured LLM provider.
+To run the live smoke, replace `--dry-run` with `--live` and pass either `--fixture` or an explicit `--vault <path>`. This should be an explicit operator decision because it writes runtime proof files and sends source/context content to the configured LLM provider; the script does not fall back to a default real Vault.
 
 ### Chrome Extension
 

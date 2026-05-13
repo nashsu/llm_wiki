@@ -9,22 +9,27 @@ import {
   smokeProofStampFromFileName,
 } from "./lib/live-ingest-smoke-retention.mjs"
 
-const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
 const DEFAULT_RETAIN_RUNS = 8
 const DEFAULT_RETAIN_FAILED_RUNS = 4
 
 const args = parseArgs(process.argv.slice(2))
-const vault = args.fixture ? createFixtureVault() : (args.vault ?? DEFAULT_VAULT)
+if (args.help) {
+  printHelp()
+  process.exit(0)
+}
+const argsError = validateArgs(args)
+if (argsError) {
+  console.error(argsError)
+  printHelp()
+  process.exit(1)
+}
+
+const vault = args.fixture ? createFixtureVault() : args.vault
 const model = args.model ?? "gemini-3-flash-preview"
 const retainRuns = parsePositiveInt(args.retainRuns, DEFAULT_RETAIN_RUNS)
 const retainFailedRuns = parsePositiveInt(args.retainFailedRuns, DEFAULT_RETAIN_FAILED_RUNS)
 const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
 const validation = validateVault(vault)
-
-if (args.help) {
-  printHelp()
-  process.exit(0)
-}
 
 if (args.dryRun) {
   const retentionPreview = buildSmokeProofRetentionPreview(join(vault, ".llm-wiki", "runtime"), {
@@ -92,6 +97,7 @@ function parseArgs(argv) {
     const arg = argv[i]
     if (arg === "--help" || arg === "-h") out.help = true
     else if (arg === "--dry-run") out.dryRun = true
+    else if (arg === "--live") out.live = true
     else if (arg === "--fixture") out.fixture = true
     else if (arg === "--prune-proofs") out.pruneProofs = true
     else if (arg === "--vault") out.vault = argv[++i]
@@ -105,6 +111,19 @@ function parseArgs(argv) {
     else throw new Error(`Unknown argument: ${arg}`)
   }
   return out
+}
+
+function validateArgs(args) {
+  if (args.dryRun && args.live) {
+    return "Choose either --dry-run or --live, not both."
+  }
+  if (!args.dryRun && !args.live) {
+    return "Choose --dry-run for safe validation or --live for the explicit Gemini smoke."
+  }
+  if (!args.fixture && !args.vault) {
+    return "Choose --fixture or --vault <path>; no default real Vault is used."
+  }
+  return null
 }
 
 function validateVault(vault) {
@@ -199,12 +218,13 @@ function printHelp() {
 
 Options:
   --dry-run                  Validate vault, model, and retention policy without calling Gemini.
+  --live                     Explicitly run the Gemini smoke. Requires --fixture or --vault.
   --dry-run --prune-proofs   Preview proof files that would be deleted; never deletes files.
   --fixture                  Use a temporary synthetic vault instead of the user's real Vault.
-  --vault <path>             LLM Wiki Vault path.
+  --vault <path>             LLM Wiki Vault path. No default real Vault path is used.
   --model <name>             Gemini model name.
   --retain-runs <n>          Keep newest N smoke proof runs. Default: ${DEFAULT_RETAIN_RUNS}.
   --retain-failed-runs <n>   Keep newest N failed/guarded proof runs in addition. Default: ${DEFAULT_RETAIN_FAILED_RUNS}.
-  --prune-proofs             Delete proof artifacts outside the retention policy. Default reports candidates only.
+  --prune-proofs             With --dry-run, preview delete candidates. With --live, delete proof artifacts outside the retention policy.
 `)
 }

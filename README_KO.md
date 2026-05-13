@@ -376,7 +376,7 @@ npm run verify:macos-app
 npm run smoke:live-ingest -- --fixture --dry-run
 ```
 
-`--dry-run`을 빼면 live smoke가 실행됩니다. 이 명령은 runtime proof 파일을 쓰고 source/context 내용을 설정된 LLM provider로 보내므로, 명시적인 운영 판단이 있을 때만 실행합니다.
+live smoke를 실행하려면 `--dry-run`을 `--live`로 바꾸고 `--fixture` 또는 명시적인 `--vault <path>`를 함께 전달해야 합니다. 이 명령은 runtime proof 파일을 쓰고 source/context 내용을 설정된 LLM provider로 보내므로, 명시적인 운영 판단이 있을 때만 실행합니다. 스크립트는 기본 실제 Vault 경로로 자동 fallback하지 않습니다.
 
 ### Chrome Extension
 

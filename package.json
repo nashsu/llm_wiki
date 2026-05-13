@@ -8,7 +8,7 @@
     "typecheck": "tsc --build --pretty",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "test": "npm run test:mocks && npm run test:llm",
+    "test": "npm run test:mocks && npm run test:scripts",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:mocks": "vitest run --exclude='**/*.real-llm.test.ts' --exclude='scripts/*.test.mjs'",
     "test:llm": "vitest run real-llm --no-file-parallelism --reporter=verbose",

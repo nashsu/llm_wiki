@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 
-const DEFAULT_VAULT = "/Users/kevin/내 드라이브/LLM WIKI Vault"
 const DEFAULT_MODEL = "gemini-3-flash-preview"
 const BOOTSTRAP_DOCS = ["purpose.md", "schema.md", "wiki/index.md", "wiki/overview.md"]
 const REQUIRED_KEYS = [
@@ -24,7 +23,17 @@ const REQUIRED_KEYS = [
 const QUALITY_KEYS = ["quality", "coverage", "needs_upgrade", "source_count"]
 
 const args = parseArgs(process.argv.slice(2))
-const vault = args.vault ?? DEFAULT_VAULT
+if (args.help) {
+  printHelp()
+  process.exit(0)
+}
+if (!args.vault) {
+  console.error("Missing --vault <path>; no default real Vault is used.")
+  printHelp()
+  process.exit(1)
+}
+
+const vault = args.vault
 const model = args.model ?? DEFAULT_MODEL
 const runs = Math.max(1, Number(args.runs ?? 1))
 const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY
@@ -133,11 +142,23 @@ function parseArgs(argv) {
   const out = {}
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === "--vault") out.vault = argv[++i]
+    if (arg === "--help" || arg === "-h") out.help = true
+    else if (arg === "--vault") out.vault = argv[++i]
     else if (arg === "--model") out.model = argv[++i]
     else if (arg === "--runs") out.runs = argv[++i]
+    else throw new Error(`Unknown argument: ${arg}`)
   }
   return out
+}
+
+function printHelp() {
+  console.log(`Usage: node scripts/gemini-surface-ab-eval.mjs --vault <path> [options]
+
+Options:
+  --vault <path>   LLM Wiki Vault path. Required; no default real Vault path is used.
+  --model <name>   Gemini model name. Default: ${DEFAULT_MODEL}.
+  --runs <n>       Runs per sample/variant. Default: 1.
+`)
 }
 
 function readBootstrapDocs(vault, variant) {
