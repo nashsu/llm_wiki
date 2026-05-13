@@ -134,8 +134,8 @@ export function SearchView() {
    * click a search-result image is "show me where this came
    * from in the actual document," and that's the raw file.
    *
-   * Path derivation: image URLs always live under
-   * `<project>/wiki/media/<slug>/img-N.<ext>`. The slug matches
+   * Path derivation: image URLs live under
+   * `<project>/raw/assets/<slug>/img-N.<ext>`. The slug matches
    * the basename of the original raw source (we wrote it that
    * way at extraction time in extract_pdf_markdown / fs.rs's
    * raw-sources-layout heuristic). We list `raw/sources/` once

@@ -2,12 +2,12 @@
  * Resolve markdown image `src` attributes so they actually load in
  * the Tauri webview.
  *
- * The problem: ingest writes images to `<project>/wiki/media/<slug>/`
+ * The problem: ingest writes images to `<project>/raw/assets/<slug>/`
  * and embeds them in generated wiki pages as
- * `![](media/<slug>/img-1.png)`. A markdown renderer interprets that
+ * `![](raw/assets/<slug>/img-1.png)`. A markdown renderer interprets that
  * relative to the rendering page's URL — but in Tauri there IS no
  * URL context for arbitrary file paths, AND the wiki page may be
- * located deeper than `wiki/concepts/foo.md` so naive `../media/...`
+ * located deeper than `wiki/concepts/foo.md` so naive `../raw/...`
  * fixups don't generalize.
  *
  * Convention we settle on:
@@ -17,9 +17,11 @@
  *   - Any src starting with `/` (absolute) is wrapped with
  *     `convertFileSrc` directly — the path is the filesystem
  *     absolute path.
- *   - **Anything else is treated as relative to the project's
- *     `wiki/` root.** Generated content uses this form
- *     (`media/foo/img-1.png`); user-written content can use it too.
+ *   - `raw/assets/...` is treated as relative to the project root.
+ *   - Legacy `media/...` is treated as `wiki/media/...` so older
+ *     projects keep rendering until they are migrated.
+ *   - Anything else is treated as relative to the project's `wiki/`
+ *     root for user-authored wiki-local images.
  *
  * The resolver returns a string that React's <img src=...> can load:
  * the appropriate `convertFileSrc(...)` URL or the original src
@@ -52,14 +54,12 @@ export function resolveMarkdownImageSrc(
   // some plugin) explicitly chose that path; we don't second-guess.
   if (isAbsolute) return convertFileSrc(rawSrc)
 
-  // Strip a leading `./` for cleanliness; treat `media/foo.png` and
-  // `./media/foo.png` identically.
+  // Strip a leading `./` for cleanliness; treat `raw/assets/foo.png`
+  // and `./raw/assets/foo.png` identically.
   const cleaned = rawSrc.replace(/^\.\//, "")
 
-  // Resolve as wiki-root-relative. The markdown lives somewhere
-  // under wiki/ but we ignore its location — image references in
-  // generated content always use this convention so the path is
-  // stable regardless of page depth.
-  const absolute = `${pp}/wiki/${cleaned}`
+  const absolute = cleaned.startsWith("raw/assets/")
+    ? `${pp}/${cleaned}`
+    : `${pp}/wiki/${cleaned}`
   return convertFileSrc(absolute)
 }

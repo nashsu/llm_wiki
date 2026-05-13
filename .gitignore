@@ -24,6 +24,7 @@ src-tauri/gen/
 # Internal docs (not shipped)
 docs/
 AGENTS.md
+.omx/
 
 # Benchmark and test data (local only)
 tests/

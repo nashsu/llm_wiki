@@ -163,7 +163,7 @@
         "title": "图片描述",
         "description": "导入时调用视觉模型为 PDF / DOCX / PPTX 中提取的图片生成事实性描述。描述会写入源 markdown 的 alt 属性，语义搜索按图片内容查询时就靠它命中。按图片字节 SHA-256 缓存，跨文档重复出现的 logo / 图表模板只调用一次。",
         "enableLabel": "导入时生成图片描述",
-        "enableHint": "关：ingest 时把图片引用从内容里剥掉 —— wiki 页面里不会出现图片，搜索也不会返回。（图片仍会落到 wiki/media/，原始文档预览能看到。）开：每张新图调用视觉模型生成事实性 caption（按 hash 缓存），写入 wiki 页面 alt 属性。",
+        "enableHint": "关：ingest 时把图片引用从内容里剥掉 —— wiki 页面里不会出现图片，搜索也不会返回。（图片仍会落到 raw/assets/，原始文档预览能看到。）开：每张新图调用视觉模型生成事实性 caption（按 hash 缓存），写入 wiki 页面 alt 属性。",
         "stateOn": "已开启",
         "stateOff": "已关闭",
         "useMainLabel": "使用主 LLM 生成 caption",

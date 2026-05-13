@@ -315,7 +315,7 @@ pub(crate) fn pdfium() -> Result<&'static pdfium_render::prelude::Pdfium, String
 ///
 /// Layout heuristic: a PDF at `<project>/raw/sources/<name>.pdf`
 /// implies project root = `<project>` and image dest =
-/// `<project>/wiki/media/<name>/`. We use absolute filesystem paths
+/// `<project>/raw/assets/<name>/`. We use absolute filesystem paths
 /// in the emitted `![](url)` references so the markdown previews
 /// (raw-source view AND wiki-summary view) both render via
 /// `convertFileSrc` without anyone having to know which directory
@@ -351,16 +351,16 @@ fn extract_pdf_text(path: &str) -> Result<String, String> {
 
     if let Some(root) = project_root {
         if !stem.is_empty() {
-            let media_dir = root.join("wiki").join("media").join(&stem);
+            let asset_dir = root.join("raw").join("assets").join(&stem);
             // Forward-slash absolute path so we don't ship `\` into
             // markdown that the JS-side resolver would then have to
             // re-normalize. The resolver does handle backslashes,
             // but emitting clean URLs in the first place avoids
             // surprises in cache files we save to disk.
-            let url_prefix = media_dir.to_string_lossy().replace('\\', "/");
+            let url_prefix = asset_dir.to_string_lossy().replace('\\', "/");
             return extract_pdf_markdown(
                 path,
-                Some(&media_dir),
+                Some(&asset_dir),
                 &url_prefix,
                 &ExtractOptions::default(),
             );

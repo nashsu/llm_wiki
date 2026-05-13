@@ -89,14 +89,6 @@ export function LintView() {
     void loadOperationalSurface()
   }, [loadOperationalSurface])
 
-  const handleOpenRuntimeFile = useCallback(async (relativePath: string) => {
-    if (!project) return
-    const fullPath = `${normalizePath(project.path)}/${relativePath}`
-    setActiveView("wiki")
-    setSelectedFile(fullPath)
-    setFileContent(await readFile(fullPath))
-  }, [project, setActiveView, setFileContent, setSelectedFile])
-
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
     const pp = normalizePath(project.path)
@@ -298,7 +290,6 @@ export function LintView() {
           smokeRetention={smokeRetention}
           error={surfaceError}
           onRefresh={loadOperationalSurface}
-          onOpenRuntimeFile={handleOpenRuntimeFile}
         />
       )}
 
@@ -463,13 +454,11 @@ function OperationalSurfaceSummary({
   smokeRetention,
   error,
   onRefresh,
-  onOpenRuntimeFile,
 }: {
   surface: WikiHealthReport["operationalSurface"] | null
   smokeRetention: SmokeRetentionSummary | null
   error: string | null
   onRefresh: () => void
-  onOpenRuntimeFile: (relativePath: string) => void
 }) {
   const statusClass = surfaceStatusClass(surface?.status ?? (error ? "warn" : "ok"))
   return (
@@ -514,11 +503,7 @@ function OperationalSurfaceSummary({
           <SurfaceMetric
             label="Proof retention"
             value={formatSmokeRetention(smokeRetention)}
-            note={formatSmokeMonthly(smokeRetention?.monthlySummary ?? null)}
-            actionLabel={smokeRetention?.monthlySummary ? "Open" : undefined}
-            onAction={smokeRetention?.monthlySummary
-              ? () => onOpenRuntimeFile(smokeRetention.monthlySummary!.latestPath)
-              : undefined}
+            note={formatSmokeTopReasons(smokeRetention?.monthlySummary ?? null)}
           />
         </div>
       ) : (
@@ -542,34 +527,16 @@ function SurfaceMetric({
   label,
   value,
   note,
-  actionLabel,
-  onAction,
 }: {
   label: string
   value: string
   note?: string
-  actionLabel?: string
-  onAction?: () => void
 }) {
   return (
     <div className="rounded border border-border/60 bg-background/60 px-3 py-2">
       <div className="text-muted-foreground">{label}</div>
       <div className="mt-1 font-medium">{value}</div>
-      {(note || onAction) && (
-        <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          {note && <span className="truncate">{note}</span>}
-          {onAction && (
-            <button
-              type="button"
-              className="inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
-              onClick={onAction}
-            >
-              {actionLabel ?? "Open"}
-              <ArrowUpRight className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-      )}
+      {note && <div className="mt-1 truncate text-[11px] text-muted-foreground">{note}</div>}
     </div>
   )
 }
@@ -589,10 +556,10 @@ function formatSmokeRetention(summary: SmokeRetentionSummary | null) {
   return `${summary.deleteCandidateCount} candidates · ${summary.failedOrGuardedRunCount}/${summary.totalRuns} guarded${deleted}`
 }
 
-function formatSmokeMonthly(summary: SmokeMonthlySummary | null) {
+function formatSmokeTopReasons(summary: SmokeMonthlySummary | null) {
   if (!summary) return undefined
   const reasons = formatGuardedReasonCounts(summary.guardedReasonCounts, 2)
-  return `Monthly ${summary.month} · ${summary.passedRuns}/${summary.totalRuns} passed${reasons ? ` · ${reasons}` : ""}`
+  return `${summary.month}: ${summary.passedRuns}/${summary.totalRuns} passed${reasons ? ` · ${reasons}` : ""}`
 }
 
 async function loadSmokeRetentionSummary(projectPath: string, latestPointer: string): Promise<SmokeRetentionSummary | null> {

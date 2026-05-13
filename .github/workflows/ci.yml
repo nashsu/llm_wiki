@@ -54,7 +54,7 @@ jobs:
         run: npm run test:scripts
 
       - name: Check live ingest smoke fixture setup
-        run: npm run smoke:live-ingest -- --fixture --dry-run --prune-proofs
+        run: npm run smoke:live-ingest -- --fixture --dry-run
 
       - name: Check frontend build
         run: npx vite build

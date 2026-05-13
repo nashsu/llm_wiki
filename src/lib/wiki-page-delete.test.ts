@@ -128,28 +128,29 @@ describe("cascadeDeleteWikiPage", () => {
     expect(mockRemovePageEmbedding).not.toHaveBeenCalled()
   })
 
-  // ── Media cascade: source-summary deletion drops images too ──────
+  // ── Asset cascade: source-summary deletion drops images too ──────
   //
-  // The image-extraction step writes to wiki/media/<slug>/ keyed by
+  // The image-extraction step writes to raw/assets/<slug>/ keyed by
   // the SOURCE document's slug. The source-summary page at
   // wiki/sources/<slug>.md is the canonical home for those images
   // (we append a markdown section to it post-write). When the
   // source page is deleted (either via source-delete cascade in
-  // sources-view, or a manual delete), the matching media directory
+  // sources-view, or a manual delete), the matching asset directory
   // becomes orphaned — these tests pin that we drop it too.
 
-  it("deleting wiki/sources/<slug>.md also deletes wiki/media/<slug>/", async () => {
+  it("deleting wiki/sources/<slug>.md also deletes raw/assets and legacy wiki/media for that slug", async () => {
     await cascadeDeleteWikiPage("/proj", "/proj/wiki/sources/rope-paper.md")
 
-    expect(mockDeleteFile).toHaveBeenCalledTimes(2)
+    expect(mockDeleteFile).toHaveBeenCalledTimes(3)
     expect(mockDeleteFile).toHaveBeenNthCalledWith(1, "/proj/wiki/sources/rope-paper.md")
-    expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "/proj/wiki/media/rope-paper")
+    expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "/proj/raw/assets/rope-paper")
+    expect(mockDeleteFile).toHaveBeenNthCalledWith(3, "/proj/wiki/media/rope-paper")
     expect(mockRemovePageEmbedding).toHaveBeenCalledWith("/proj", "rope-paper")
   })
 
-  it("does NOT cascade media when deleting a non-source page (concept / entity / queries)", async () => {
-    // Concept / entity pages don't own a media directory of their own.
-    // Multiple pages can reference images from any source's media/.
+  it("does NOT cascade assets when deleting a non-source page (concept / entity / queries)", async () => {
+    // Concept / entity pages don't own an asset directory of their own.
+    // Multiple pages can reference images from any source's assets.
     // Deleting one concept page must not destroy the source's images.
     await cascadeDeleteWikiPage("/proj", "/proj/wiki/concepts/rope.md")
 
@@ -164,20 +165,21 @@ describe("cascadeDeleteWikiPage", () => {
     expect(mockDeleteFile).toHaveBeenCalledTimes(3)
   })
 
-  it("media-cascade tolerates a missing media directory (no images were extracted)", async () => {
-    // Most wiki/sources/ pages won't have an associated media/<slug>/
+  it("asset cascade tolerates missing asset directories (no images were extracted)", async () => {
+    // Most wiki/sources/ pages won't have an associated raw/assets/<slug>/
     // — only PDF/PPTX/DOCX sources with embedded images do. The
     // delete attempt fails with ENOENT and we swallow it silently.
     mockDeleteFile
       .mockResolvedValueOnce(undefined) // source page delete: OK
-      .mockRejectedValueOnce(new Error("ENOENT: no such directory")) // media: doesn't exist
+      .mockRejectedValueOnce(new Error("ENOENT: no such directory")) // raw/assets: doesn't exist
+      .mockRejectedValueOnce(new Error("ENOENT: no such directory")) // legacy media: doesn't exist
 
-    // Should NOT throw — media absence is normal.
+    // Should NOT throw — asset absence is normal.
     await expect(
       cascadeDeleteWikiPage("/proj", "/proj/wiki/sources/text-only-source.md"),
     ).resolves.toBeUndefined()
-    // Both attempts happened.
-    expect(mockDeleteFile).toHaveBeenCalledTimes(2)
+    // All attempts happened.
+    expect(mockDeleteFile).toHaveBeenCalledTimes(3)
     // Embedding cascade still ran in between.
     expect(mockRemovePageEmbedding).toHaveBeenCalledWith("/proj", "text-only-source")
   })
@@ -191,17 +193,18 @@ describe("cascadeDeleteWikiPage", () => {
       "C:\\proj\\wiki\\sources\\winsrc.md",
     )
 
-    expect(mockDeleteFile).toHaveBeenCalledTimes(2)
-    // Second call is the media dir, normalized to forward slashes
-    // because we built it from project path + literal path.
-    expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "C:/proj/wiki/media/winsrc")
+    expect(mockDeleteFile).toHaveBeenCalledTimes(3)
+    // Asset dirs are normalized to forward slashes because we build
+    // them from project path + literal path.
+    expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "C:/proj/raw/assets/winsrc")
+    expect(mockDeleteFile).toHaveBeenNthCalledWith(3, "C:/proj/wiki/media/winsrc")
   })
 
-  it("does not attempt media deletion when slug is empty or hidden (defensive)", async () => {
+  it("does not attempt asset deletion when slug is empty or hidden (defensive)", async () => {
     // wiki/sources/.md → getFileStem returns ".md" (since lastIndexOf
     // is at position 0, the function falls back to the full name).
-    // Without the dot-prefix guard we'd build a media path of
-    // `wiki/media/.md`, which is at best a leak and at worst risks
+    // Without the dot-prefix guard we'd build an asset path of
+    // `raw/assets/.md`, which is at best a leak and at worst risks
     // touching dotfiles. Both `.md` (slug-from-pure-ext) and `.foo`
     // (hidden-name) must be rejected by the media cascade even though
     // the file delete still happens.

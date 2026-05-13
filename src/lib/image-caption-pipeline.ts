@@ -2,7 +2,7 @@
  * Caption-the-images pipeline + persistent cache.
  *
  * Sits between the Rust extractor (which lands images on disk under
- * `wiki/media/<slug>/`) and the ingest LLM (which sees source
+ * `raw/assets/<slug>/`) and the ingest LLM (which sees source
  * markdown with `![](abs_path)` references). The job is twofold:
  *
  *   1. For each image referenced in the source markdown, get a
@@ -237,9 +237,9 @@ function sliceContext(
  * `urlToAbsPath` is a hook for path resolution: every image URL
  * we see in the markdown needs to map to an absolute filesystem
  * path so the Rust read_file_as_base64 command can pick up the
- * bytes. The default treats non-absolute URLs as wiki-rooted
- * (mirroring `markdown-image-resolver`), but autoIngest passes a
- * stricter version that knows the source's media directory.
+ * bytes. The default treats `raw/assets/...` as project-rooted,
+ * legacy `media/...` as wiki-rooted, and other relative paths as
+ * wiki-rooted.
  */
 export interface CaptionPipelineOptions {
   /** Override the default URL→path resolution. */
@@ -347,11 +347,16 @@ export async function captionMarkdownImages(
    * captions are valid anyway.
    */
   async function processOne(ref: ImageRef): Promise<void> {
+    const cleanedUrl = ref.url.replace(/^\.\//, "")
+    const isAbsoluteUrl =
+      ref.url.startsWith("/") || /^[a-zA-Z]:/.test(ref.url) || ref.url.startsWith("\\\\")
     const absPath = options?.urlToAbsPath
       ? options.urlToAbsPath(ref.url)
-      : ref.url.startsWith("/")
+      : isAbsoluteUrl
         ? ref.url
-        : `${normalizePath(projectPath)}/wiki/${ref.url}`
+        : cleanedUrl.startsWith("raw/assets/")
+          ? `${normalizePath(projectPath)}/${cleanedUrl}`
+          : `${normalizePath(projectPath)}/wiki/${cleanedUrl}`
     if (!absPath) {
       failed++
       return
