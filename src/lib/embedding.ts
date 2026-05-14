@@ -84,8 +84,16 @@ export async function fetchEmbedding(
 ): Promise<number[] | null> {
   if (!cfg.endpoint) return null
 
+  const isGoogleNative = isGoogleEmbeddingConfig(cfg)
+  const endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
   const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`
+  if (cfg.apiKey) {
+    if (isGoogleNative) {
+      headers["x-goog-api-key"] = cfg.apiKey
+    } else {
+      headers.Authorization = `Bearer ${cfg.apiKey}`
+    }
+  }
 
   let current = text
   let attempts = 0
@@ -93,20 +101,27 @@ export async function fetchEmbedding(
     attempts++
     try {
       const httpFetch = await getHttpFetch()
-      const resp = await httpFetch(cfg.endpoint, {
+      const resp = await httpFetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ model: cfg.model, input: current }),
+        body: JSON.stringify(
+          isGoogleNative
+            ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
+            : { model: cfg.model, input: current },
+        ),
       })
 
       if (resp.ok) {
         const data = await resp.json()
-        const embedding = data?.data?.[0]?.embedding ?? null
-        if (embedding) {
+        const embedding = isGoogleNative
+          ? data?.embedding?.values ?? null
+          : data?.data?.[0]?.embedding ?? null
+        if (isNonEmptyNumberArray(embedding)) {
           lastEmbeddingError = null
           return embedding
         }
-        lastEmbeddingError = `Embedding response missing data[0].embedding (got ${JSON.stringify(data).slice(0, 200)})`
+        const expectedShape = isGoogleNative ? "embedding.values" : "data[0].embedding"
+        lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
         console.warn(`[Embedding] ${lastEmbeddingError}`)
         return null
       }
@@ -139,12 +154,12 @@ export async function fetchEmbedding(
       }
 
       // Non-oversize definitive failure (auth, rate limit, server down, …).
-      lastEmbeddingError = `API ${resp.status} ${resp.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""} at ${cfg.endpoint}`
+      lastEmbeddingError = `API ${resp.status} ${resp.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""} at ${endpoint}`
       console.warn(`[Embedding] ${lastEmbeddingError}`)
       return null
     } catch (err) {
       if (isFetchNetworkError(err)) {
-        lastEmbeddingError = `Network error reaching ${cfg.endpoint}. Check endpoint URL, API key, and connectivity.`
+        lastEmbeddingError = `Network error reaching ${endpoint}. Check endpoint URL, API key, and connectivity.`
       } else {
         lastEmbeddingError = err instanceof Error ? err.message : String(err)
       }
@@ -158,6 +173,68 @@ export async function fetchEmbedding(
   lastEmbeddingError = `Embedding endpoint rejected every size down to ${current.length} chars — the server's context is smaller than ${current.length * 2}. Lower Settings → Embedding → Max Chunk Chars.`
   console.warn(`[Embedding] ${lastEmbeddingError}`)
   return null
+}
+
+function isNonEmptyNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => typeof item === "number" && Number.isFinite(item))
+}
+
+function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+  const endpoint = cfg.endpoint.toLowerCase()
+  return endpoint.includes("generativelanguage.googleapis.com")
+    || /:embedcontent(\?|$)/i.test(endpoint)
+}
+
+function googleEmbeddingEndpoint(cfg: EmbeddingConfig): string {
+  const raw = stripGoogleApiKeyQuery(cfg.endpoint.trim()).replace(/\/+$/, "")
+  if (/:batchEmbedContents(\?|$)/i.test(raw)) {
+    return raw.replace(/:batchEmbedContents/i, ":embedContent")
+  }
+  if (/:embedContent(\?|$)/i.test(raw)) return raw
+
+  const modelPath = googleModelPath(cfg.model)
+  if (/\/models\/[^/?]+$/i.test(raw)) {
+    return `${raw}:embedContent`
+  }
+  return `${raw}/models/${encodeURIComponent(modelPath.replace(/^models\//, ""))}:embedContent`
+}
+
+function stripGoogleApiKeyQuery(endpoint: string): string {
+  if (!endpoint.includes("?")) return endpoint
+  try {
+    const url = new URL(endpoint)
+    url.searchParams.delete("key")
+    return url.toString()
+  } catch {
+    return endpoint.replace(/([?&])key=[^&]*&?/i, (_, prefix: string) => prefix === "?" ? "?" : "&")
+      .replace(/[?&]$/, "")
+      .replace("?&", "?")
+  }
+}
+
+function googleModelPath(model: string): string {
+  const trimmed = model.trim()
+  if (trimmed.startsWith("models/")) return trimmed
+  return `models/${trimmed}`
+}
+
+function googleEmbeddingBody(
+  model: string,
+  text: string,
+  outputDimensionality?: number,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: googleModelPath(model),
+    content: {
+      parts: [{ text }],
+    },
+  }
+  if (typeof outputDimensionality === "number" && Number.isFinite(outputDimensionality) && outputDimensionality > 0) {
+    body.output_dimensionality = Math.floor(outputDimensionality)
+  }
+  return body
 }
 
 // ── LanceDB v2 operations (via Rust Tauri commands) ──────────────────────

@@ -27,6 +27,11 @@ export interface FileChangeQueue {
   tasks: FileChangeTask[]
 }
 
+export interface FileChangeRescanResult {
+  queue: FileChangeQueue
+  changedTasks: FileChangeTask[]
+}
+
 export interface FileSyncPayload {
   projectId: string
   tasks: FileChangeTask[]
@@ -52,8 +57,8 @@ export function rescanProjectFiles(
   projectId: string,
   projectPath: string,
   sourceWatchConfig?: SourceWatchConfig,
-): Promise<FileChangeQueue> {
-  return invoke<FileChangeQueue>("rescan_project_files", {
+): Promise<FileChangeRescanResult> {
+  return invoke<FileChangeRescanResult>("rescan_project_files", {
     projectId,
     projectPath,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatchConfig),

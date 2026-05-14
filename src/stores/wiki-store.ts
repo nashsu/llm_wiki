@@ -75,6 +75,8 @@ interface EmbeddingConfig {
   endpoint: string // e.g. "http://127.0.0.1:1234/v1/embeddings"
   apiKey: string
   model: string // e.g. "text-embedding-qwen3-embedding-0.6b"
+  /** Optional Gemini native `output_dimensionality` value. Ignored by OpenAI-compatible endpoints. */
+  outputDimensionality?: number
   /**
    * Chunking knobs (Phase 1 RAG). Undefined values fall back to the
    * chunker's built-in defaults in `src/lib/text-chunker.ts`:

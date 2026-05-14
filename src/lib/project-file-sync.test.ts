@@ -12,6 +12,42 @@ const mocks = vi.hoisted(() => {
     }),
     emit: (event: string, payload: unknown) => listeners[event]?.({ payload }),
     stopProjectFileWatcher: vi.fn(async () => undefined),
+    rescanProjectFiles: vi.fn(async (projectId: string): Promise<{
+      queue: {
+        version: number
+        tasks: Array<{
+          id: string
+          projectId: string
+          path: string
+          kind: "created" | "modified" | "deleted"
+          status: "pending" | "processing" | "done" | "failed" | "superseded"
+          createdAt: number
+          updatedAt: number
+          retryCount: number
+          needsRerun: boolean
+        }>
+      }
+      changedTasks: Array<{
+        id: string
+        projectId: string
+        path: string
+        kind: "created" | "modified" | "deleted"
+        status: "pending" | "processing" | "done" | "failed" | "superseded"
+        createdAt: number
+        updatedAt: number
+        retryCount: number
+        needsRerun: boolean
+      }>
+    }> => {
+      void projectId
+      return {
+        queue: {
+          version: 1,
+          tasks: [],
+        },
+        changedTasks: [],
+      }
+    }),
     startProjectFileWatcher: vi.fn(() => new Promise((resolve) => {
       resolvers.push(resolve)
     })),
@@ -58,6 +94,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }))
 
 vi.mock("@/commands/file-sync", () => ({
+  rescanProjectFiles: mocks.rescanProjectFiles,
   startProjectFileWatcher: mocks.startProjectFileWatcher,
   stopProjectFileWatcher: mocks.stopProjectFileWatcher,
 }))
@@ -92,6 +129,16 @@ describe("project file sync", () => {
     vi.useRealTimers()
     vi.clearAllMocks()
     mocks.clearResolvers()
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => {
+      void projectId
+      return {
+        queue: {
+          version: 1,
+          tasks: [],
+        },
+        changedTasks: [],
+      }
+    })
     mocks.listDirectory.mockImplementation(async (_path?: string) => [])
     mocks.readFile.mockImplementation(async (_path?: string) => "")
     mocks.getFileSize.mockImplementation(async (_path?: string) => 1024)
@@ -231,6 +278,150 @@ describe("project file sync", () => {
     })
 
     await vi.advanceTimersByTimeAsync(250)
+
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+  })
+
+  it("manual rescan uses the same source ingest flow when the watcher is stopped", async () => {
+    const { rescanProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => {
+      return {
+        queue: { version: 1, tasks: [] },
+        changedTasks: [
+          {
+            id: "t1",
+            projectId,
+            path: "raw/sources/manual.pdf",
+            kind: "created",
+            status: "done",
+            createdAt: 1,
+            updatedAt: 1,
+            retryCount: 0,
+            needsRerun: false,
+          },
+        ],
+      }
+    })
+
+    await rescanProjectFileSync(project)
+
+    expect(mocks.rescanProjectFiles).toHaveBeenCalledWith(
+      "A",
+      "/tmp/a",
+      expect.objectContaining({ enabled: true, autoIngest: true }),
+    )
+    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
+      { sourcePath: "raw/sources/manual.pdf", folderContext: "" },
+    ])
+  })
+
+  it("manual rescan uses returned changed tasks while the watcher is running", async () => {
+    const { startProjectFileSync, rescanProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    void startProjectFileSync(project)
+    await vi.waitFor(() => {
+      expect(mocks.listen).toHaveBeenCalledTimes(2)
+    })
+
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => ({
+      queue: { version: 1, tasks: [] },
+      changedTasks: [
+        {
+          id: "t1",
+          projectId,
+          path: "raw/sources/watcher-running.pdf",
+          kind: "created",
+          status: "done",
+          createdAt: 1,
+          updatedAt: 1,
+          retryCount: 0,
+          needsRerun: false,
+        },
+      ],
+    }))
+
+    await rescanProjectFileSync(project)
+
+    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
+      { sourcePath: "raw/sources/watcher-running.pdf", folderContext: "" },
+    ])
+  })
+
+  it("manual rescan ignores changed tasks after project switch", async () => {
+    const { rescanProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+
+    const projectA = { id: "A", name: "A", path: "/tmp/a" }
+    const projectB = { id: "B", name: "B", path: "/tmp/b" }
+    useWikiStore.getState().setProject(projectA)
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => {
+      useWikiStore.getState().setProject(projectB)
+      return {
+        queue: { version: 1, tasks: [] },
+        changedTasks: [
+          {
+            id: "t1",
+            projectId,
+            path: "raw/sources/stale.pdf",
+            kind: "created",
+            status: "done",
+            createdAt: 1,
+            updatedAt: 1,
+            retryCount: 0,
+            needsRerun: false,
+          },
+        ],
+      }
+    })
+
+    await rescanProjectFileSync(projectA)
+
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+  })
+
+  it("manual rescan refreshes the file tree when no files changed", async () => {
+    const { rescanProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+
+    await rescanProjectFileSync(project)
+
+    expect(mocks.listDirectory).toHaveBeenCalledWith("/tmp/a")
+  })
+
+  it("manual rescan respects auto ingest disabled", async () => {
+    const { rescanProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => ({
+      queue: { version: 1, tasks: [] },
+      changedTasks: [
+        {
+          id: "t1",
+          projectId,
+          path: "raw/sources/manual.pdf",
+          kind: "created",
+          status: "done",
+          createdAt: 1,
+          updatedAt: 1,
+          retryCount: 0,
+          needsRerun: false,
+        },
+      ],
+    }))
+
+    await rescanProjectFileSync(project, { autoIngest: false } as never)
 
     expect(mocks.enqueueBatch).not.toHaveBeenCalled()
   })

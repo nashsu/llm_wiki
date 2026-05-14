@@ -187,7 +187,7 @@ function PresetRow({
               : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
           }`}
           title={isActive ? t("settings.sections.llm.toggleOff") : t("settings.sections.llm.toggleOn")}
-          aria-label={isActive ? "Deactivate" : "Activate"}
+          aria-label={isActive ? t("settings.sections.llm.deactivate") : t("settings.sections.llm.activate")}
         >
           <span
             className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
@@ -202,7 +202,7 @@ function PresetRow({
         <div className="space-y-4 border-t bg-background/50 px-4 py-3">
           {preset.provider === "custom" && (
             <div className="space-y-2">
-              <Label>API Mode</Label>
+              <Label>{t("settings.sections.llm.apiMode")}</Label>
               <div className="flex flex-wrap gap-2">
                 {(
                   [
@@ -254,7 +254,7 @@ function PresetRow({
 
           {needsApiKey && (
             <div className="space-y-2">
-              <Label>API Key</Label>
+              <Label>{t("settings.apiKey")}</Label>
               <Input
                 type="password"
                 value={apiKey}
@@ -269,7 +269,7 @@ function PresetRow({
           )}
 
           <div className="space-y-2">
-            <Label>Model</Label>
+            <Label>{t("settings.model")}</Label>
             <ModelPicker
               value={model}
               suggestions={preset.suggestedModels ?? []}
@@ -279,7 +279,7 @@ function PresetRow({
           </div>
 
           <div className="space-y-2">
-            <Label>Context window</Label>
+            <Label>{t("settings.sections.llm.contextWindow")}</Label>
             <ContextSizeSelector
               value={context}
               onChange={(v) => onChange({ maxContextSize: v })}
@@ -303,19 +303,20 @@ function ReasoningControls({
   value: ReasoningConfig
   onChange: (value: ReasoningConfig) => void
 }) {
+  const { t } = useTranslation()
   const modes: { value: ReasoningMode; label: string }[] = [
-    { value: "auto", label: "Auto" },
-    { value: "off", label: "Off" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "max", label: "Max" },
-    { value: "custom", label: "Custom" },
+    { value: "auto", label: t("settings.sections.llm.reasoning.auto") },
+    { value: "off", label: t("settings.sections.llm.reasoning.off") },
+    { value: "low", label: t("settings.sections.llm.reasoning.low") },
+    { value: "medium", label: t("settings.sections.llm.reasoning.medium") },
+    { value: "high", label: t("settings.sections.llm.reasoning.high") },
+    { value: "max", label: t("settings.sections.llm.reasoning.max") },
+    { value: "custom", label: t("settings.sections.llm.reasoning.custom") },
   ]
 
   return (
     <div className="space-y-2">
-      <Label>Reasoning / thinking</Label>
+      <Label>{t("settings.sections.llm.reasoning.title")}</Label>
       <div className="flex flex-wrap gap-1.5">
         {modes.map((m) => {
           const active = value.mode === m.value
@@ -352,11 +353,13 @@ function ReasoningControls({
             }}
             placeholder="1024"
           />
-          <span className="text-xs text-muted-foreground">thinking budget tokens</span>
+          <span className="text-xs text-muted-foreground">
+            {t("settings.sections.llm.reasoning.budgetTokens")}
+          </span>
         </div>
       )}
       <p className="text-xs text-muted-foreground">
-        Structured tasks such as ingest may override this to Off to avoid reasoning-only responses.
+        {t("settings.sections.llm.reasoning.hint")}
       </p>
     </div>
   )
@@ -389,7 +392,7 @@ function EndpointField({ value, mode, placeholder, onChange }: EndpointFieldProp
 
   return (
     <div className="space-y-1.5">
-      <Label>Endpoint</Label>
+      <Label>{t("settings.sections.llm.endpoint")}</Label>
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -447,6 +450,7 @@ interface ModelPickerProps {
  * `suggestedModels` render the input alone.
  */
 function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerProps) {
+  const { t } = useTranslation()
   const hasSuggestions = suggestions.length > 0
   const isCustom = hasSuggestions && value.length > 0 && !suggestions.includes(value)
 
@@ -466,7 +470,7 @@ function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerP
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-background hover:bg-accent hover:text-accent-foreground"
                 }`}
-                title={`Use ${m}`}
+                title={t("settings.sections.llm.useModel", { model: m })}
               >
                 {m}
               </button>
@@ -480,9 +484,11 @@ function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerP
                 ? "border-primary/60 bg-primary/10 text-primary"
                 : "border-dashed border-muted-foreground/40 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             }`}
-            title="Type a custom model id"
+            title={t("settings.sections.llm.typeCustomModel")}
           >
-            {isCustom ? `Custom: ${value}` : "Custom…"}
+            {isCustom
+              ? t("settings.sections.llm.customModelBadge", { model: value })
+              : t("settings.sections.llm.customModel")}
           </button>
         </div>
       )}

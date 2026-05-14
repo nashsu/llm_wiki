@@ -30,10 +30,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-05-14",
     highlights: {
       en: [
-        "Source folder monitoring now has configurable file type and exclusion rules. Existing projects should review Settings → Source Watch after upgrading because automatic ingest now defaults to common document formats only.",
+        "Added configurable source folder monitoring, manual source-folder refresh, and Gemini native embeddings support.",
+        "Fixed source sync, embedding provider compatibility, and settings localization issues.",
       ],
       zh: [
-        "资料文件夹监控新增文件类型和排除规则配置。升级后建议到「设置 → 资料文件夹监控」检查配置；自动提取现在默认只纳入常见文档格式。",
+        "新增可配置的资料文件夹监控、手动刷新资料文件夹，以及 Gemini 原生向量嵌入支持。",
+        "修复资料同步、向量 provider 兼容性和设置页本地化相关问题。",
       ],
     },
   },

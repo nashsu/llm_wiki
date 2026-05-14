@@ -96,7 +96,7 @@ export function WebSearchSection() {
                   type="button"
                   onClick={() => setExpanded((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }))}
                   className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent"
-                  title={isExpanded ? "Collapse" : "Expand"}
+                  title={isExpanded ? t("settings.sections.webSearch.collapse") : t("settings.sections.webSearch.expand")}
                 >
                   {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                 </button>
@@ -110,16 +110,18 @@ export function WebSearchSection() {
                     <span className="truncate text-sm font-medium">{provider.label}</span>
                     {hasConfig && !isActive && (
                       <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        Configured
+                        {t("settings.sections.webSearch.configuredBadge")}
                       </span>
                     )}
                     {isActive && (
                       <span className="shrink-0 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                        Active
+                        {t("settings.sections.webSearch.activeBadge")}
                       </span>
                     )}
                     {savedId === provider.id && (
-                      <span className="shrink-0 text-[10px] text-emerald-600">Saved</span>
+                      <span className="shrink-0 text-[10px] text-emerald-600">
+                        {t("settings.sections.webSearch.savedBadge")}
+                      </span>
                     )}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -135,7 +137,7 @@ export function WebSearchSection() {
                       ? "border-primary bg-primary"
                       : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
                   }`}
-                  aria-label={isActive ? "Deactivate" : "Activate"}
+                  aria-label={isActive ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
                 >
                   <span
                     className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
@@ -149,7 +151,7 @@ export function WebSearchSection() {
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
                   {provider.needsApiKey ? (
                     <div className="space-y-2">
-                      <Label>API Key</Label>
+                      <Label>{t("settings.apiKey")}</Label>
                       <Input
                         type="password"
                         value={override?.apiKey ?? ""}
@@ -159,14 +161,14 @@ export function WebSearchSection() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <Label>Instance URL</Label>
+                      <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
                       <Input
                         value={override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""}
                         onChange={(e) => updateProvider("searxng", { searXngUrl: e.target.value })}
                         placeholder={provider.urlPlaceholder}
                       />
                       <p className="text-xs text-muted-foreground">
-                        The instance must allow JSON search responses (`format=json`).
+                        {t("settings.sections.webSearch.searxngJsonHint")}
                       </p>
                     </div>
                   )}
@@ -201,6 +203,7 @@ function SearXngCategoryPicker({
   value: string[]
   onChange: (value: string[]) => void
 }) {
+  const { t } = useTranslation()
   const selected = value.length > 0 ? value : ["general"]
 
   function toggle(category: string) {
@@ -212,7 +215,7 @@ function SearXngCategoryPicker({
 
   return (
     <div className="space-y-2">
-      <Label>Search categories</Label>
+      <Label>{t("settings.sections.webSearch.searchCategories")}</Label>
       <div className="flex flex-wrap gap-1.5">
         {SEARXNG_CATEGORY_OPTIONS.map((category) => (
           <button
@@ -231,7 +234,7 @@ function SearXngCategoryPicker({
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        Categories are sent as the SearXNG `categories` parameter.
+        {t("settings.sections.webSearch.searxngCategoriesHint")}
       </p>
     </div>
   )
@@ -244,11 +247,12 @@ function SerpApiEnginePicker({
   value: string
   onChange: (value: string) => void
 }) {
+  const { t } = useTranslation()
   const isCustom = value.length > 0 && !SERPAPI_ENGINE_OPTIONS.some((e) => e.value === value)
 
   return (
     <div className="space-y-2">
-      <Label>Search engine / category</Label>
+      <Label>{t("settings.sections.webSearch.searchEngine")}</Label>
       <div className="flex flex-wrap gap-1.5">
         {SERPAPI_ENGINE_OPTIONS.map((engine) => (
           <button
@@ -269,11 +273,11 @@ function SerpApiEnginePicker({
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Custom SerpApi engine, e.g. google_finance"
+        placeholder={t("settings.sections.webSearch.customSerpApiPlaceholder")}
       />
       {isCustom && (
         <p className="text-xs text-muted-foreground">
-          Custom engine will be sent as the SerpApi `engine` parameter.
+          {t("settings.sections.webSearch.customSerpApiHint")}
         </p>
       )}
     </div>

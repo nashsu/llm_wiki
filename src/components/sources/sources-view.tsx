@@ -3,13 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
-import { rescanProjectFiles } from "@/commands/file-sync"
+import { rescanProjectFileSync } from "@/lib/project-file-sync"
 import {
   deleteSourceFile,
   deleteSourceFolder,
@@ -33,6 +34,7 @@ export function SourcesView() {
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   /**
    * Path of the source-tree node currently in "click again to
@@ -77,15 +79,18 @@ export function SourcesView() {
   }, [loadSources, dataVersion])
 
   async function handleRefreshSources() {
-    if (!project) return
-    const pp = normalizePath(project.path)
+    if (!project || refreshing) return
+    setRefreshing(true)
     try {
-      await rescanProjectFiles(project.id, pp, useWikiStore.getState().sourceWatchConfig)
+      await rescanProjectFileSync(project, useWikiStore.getState().sourceWatchConfig)
+      setRefreshError(null)
     } catch (err) {
       console.warn("[sources] failed to rescan project files:", err)
       setRefreshError(String(err))
+    } finally {
+      await loadSources()
+      setRefreshing(false)
     }
-    await loadSources()
   }
 
   async function handleImport() {
@@ -252,13 +257,29 @@ export function SourcesView() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <TooltipProvider delay={300}>
+      <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" onClick={handleRefreshSources} title={t("sources.refresh")}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleRefreshSources}
+                  disabled={refreshing}
+                  aria-label={t("sources.refreshFolder")}
+                />
+              }
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="max-w-80 whitespace-normal leading-relaxed">
+              {t("sources.refreshFolderTooltip")}
+            </TooltipContent>
+          </Tooltip>
           <Button size="sm" onClick={handleImport} disabled={importing}>
             <Plus className="mr-1 h-4 w-4" />
             {importing ? t("sources.importing") : t("sources.import")}
@@ -310,10 +331,30 @@ export function SourcesView() {
         )}
       </ScrollArea>
 
-      <div className="border-t px-4 py-2 text-xs text-muted-foreground">
-        {t("sources.sourceCount", { count: countFiles(sources) })}
+      <div className="flex items-center justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
+        <span>{t("sources.sourceCount", { count: countFiles(sources) })}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRefreshSources}
+                disabled={!project || refreshing}
+                className="h-7 px-2 text-xs"
+              />
+            }
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? t("sources.refreshingFolder") : t("sources.refreshFolder")}
+          </TooltipTrigger>
+          <TooltipContent side="top" align="end" className="max-w-80 whitespace-normal leading-relaxed">
+            {t("sources.refreshFolderTooltip")}
+          </TooltipContent>
+        </Tooltip>
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   )
 }
 

@@ -110,6 +110,7 @@ function initialDraft(
     embeddingEndpoint: embed.endpoint,
     embeddingApiKey: embed.apiKey,
     embeddingModel: embed.model,
+    embeddingOutputDimensionality: embed.outputDimensionality,
     embeddingMaxChunkChars: embed.maxChunkChars,
     embeddingOverlapChunkChars: embed.overlapChunkChars,
     multimodalEnabled: multimodal.enabled,
@@ -263,6 +264,7 @@ export function SettingsView() {
       endpoint: draft.embeddingEndpoint,
       apiKey: draft.embeddingApiKey,
       model: draft.embeddingModel,
+      outputDimensionality: draft.embeddingOutputDimensionality,
       maxChunkChars: draft.embeddingMaxChunkChars,
       overlapChunkChars: draft.embeddingOverlapChunkChars,
     }

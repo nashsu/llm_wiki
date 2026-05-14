@@ -23,6 +23,8 @@ export interface SettingsDraft {
   embeddingEndpoint: string
   embeddingApiKey: string
   embeddingModel: string
+  /** Optional Gemini native output_dimensionality. Empty = provider default. */
+  embeddingOutputDimensionality: number | undefined
   /** Target characters per chunk. Empty = use chunker default (1000). */
   embeddingMaxChunkChars: number | undefined
   /** Overlap characters between adjacent chunks. Empty = default (200). */

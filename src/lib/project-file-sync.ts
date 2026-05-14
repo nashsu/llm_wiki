@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { readFile, listDirectory } from "@/commands/fs"
 import {
+  rescanProjectFiles,
   startProjectFileWatcher,
   stopProjectFileWatcher,
   type FileSyncPayload,
@@ -87,6 +88,26 @@ export async function stopProjectFileSync(): Promise<void> {
   }
 }
 
+export async function rescanProjectFileSync(
+  project: WikiProject,
+  sourceWatchConfig?: SourceWatchConfig,
+): Promise<void> {
+  const config = normalizeSourceWatchConfig(sourceWatchConfig ?? useWikiStore.getState().sourceWatchConfig)
+  activeSourceWatchConfig = config
+
+  const result = await rescanProjectFiles(project.id, normalizePath(project.path), config)
+  if (useWikiStore.getState().project?.id !== project.id) return
+  useFileSyncStore.getState().setTasks(result.queue.tasks)
+
+  if (useWikiStore.getState().project?.id !== project.id) return
+  if (result.changedTasks.length > 0) {
+    const paths = [...new Set(result.changedTasks.map((task) => task.path))]
+    await processFileChangeBatch(project, paths, result.changedTasks)
+  } else {
+    await refreshAfterFileChanges(project, [])
+  }
+}
+
 function scheduleRefreshAfterFileChanges(tasks: FileChangeTask[]): void {
   for (const task of tasks) {
     pendingRefreshPaths.add(task.path)
@@ -147,7 +168,7 @@ async function refreshAfterFileChanges(project: WikiProject, relativePaths: stri
 }
 
 async function enqueueRawSourceChanges(project: WikiProject, tasks: FileChangeTask[]): Promise<void> {
-  const config = normalizeSourceWatchConfig(useWikiStore.getState().sourceWatchConfig ?? activeSourceWatchConfig)
+  const config = normalizeSourceWatchConfig(activeSourceWatchConfig)
   if (!config.enabled || !config.autoIngest) return
 
   const candidates = tasks

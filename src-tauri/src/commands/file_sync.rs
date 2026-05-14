@@ -104,6 +104,13 @@ pub struct FileChangeQueue {
     tasks: Vec<FileChangeTask>,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChangeRescanResult {
+    queue: FileChangeQueue,
+    changed_tasks: Vec<FileChangeTask>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceWatchConfig {
@@ -324,16 +331,19 @@ pub fn rescan_project_files(
     project_id: String,
     project_path: String,
     source_watch_config: Option<SourceWatchConfig>,
-) -> Result<FileChangeQueue, String> {
+) -> Result<FileChangeRescanResult, String> {
     run_guarded("rescan_project_files", || {
         let root = PathBuf::from(project_path);
         let source_watch_config = normalize_source_watch_config(source_watch_config);
         ensure_sync_dir(&root)?;
         enqueue_rescan_changes(&root, &project_id, &source_watch_config)?;
-        process_queue(&app, &root, &project_id)?;
+        let changed_tasks = process_queue(&app, &root, &project_id)?;
         let queue = with_queue_lock(&root, || read_queue(&root))?;
         emit_queue(&app, &project_id, &queue);
-        Ok(queue)
+        Ok(FileChangeRescanResult {
+            queue,
+            changed_tasks,
+        })
     })
 }
 
@@ -746,7 +756,7 @@ fn upsert_task(
     });
 }
 
-fn process_queue(app: &AppHandle, root: &Path, project_id: &str) -> Result<(), String> {
+fn process_queue(app: &AppHandle, root: &Path, project_id: &str) -> Result<Vec<FileChangeTask>, String> {
     process_queue_inner(
         root,
         project_id,
@@ -760,8 +770,9 @@ fn process_queue_inner(
     project_id: &str,
     mut on_queue: impl FnMut(&FileChangeQueue),
     mut on_changed: impl FnMut(Vec<FileChangeTask>),
-) -> Result<(), String> {
+) -> Result<Vec<FileChangeTask>, String> {
     let mut changed_tasks = Vec::<FileChangeTask>::new();
+    let mut all_changed_tasks = Vec::<FileChangeTask>::new();
     let mut processed_since_emit = 0_usize;
     let mut emitted_processing = false;
     loop {
@@ -796,7 +807,7 @@ fn process_queue_inner(
             };
             on_changed(changed_tasks);
             on_queue(&queue);
-            return Ok(());
+            return Ok(all_changed_tasks);
         };
         if !emitted_processing {
             emitted_processing = true;
@@ -835,6 +846,7 @@ fn process_queue_inner(
                         }
                     }
                     current.updated_at = now_ms();
+                    all_changed_tasks.push(task.clone());
                     changed_tasks.push(task.clone());
                     processed_since_emit += 1;
                     if processed_since_emit >= QUEUE_EMIT_EVERY {

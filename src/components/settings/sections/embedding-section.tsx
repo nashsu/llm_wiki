@@ -23,6 +23,14 @@ type ReindexState =
   | { kind: "running"; done: number; total: number }
   | { kind: "done"; count: number }
 
+function parsePositiveInteger(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (trimmed === "") return undefined
+  const n = Number(trimmed)
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return Math.floor(n)
+}
+
 export function EmbeddingSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -113,6 +121,9 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               onChange={(e) => setDraft("embeddingEndpoint", e.target.value)}
               placeholder="http://127.0.0.1:1234/v1/embeddings"
             />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.embedding.endpointHint")}
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -130,8 +141,25 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
             <Input
               value={draft.embeddingModel}
               onChange={(e) => setDraft("embeddingModel", e.target.value)}
-              placeholder="e.g. text-embedding-qwen3-embedding-0.6b"
+              placeholder="e.g. text-embedding-qwen3-embedding-0.6b or gemini-embedding-001"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>{t("settings.sections.embedding.outputDimensionality")}</Label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={draft.embeddingOutputDimensionality ?? ""}
+              onChange={(e) => {
+                setDraft("embeddingOutputDimensionality", parsePositiveInteger(e.target.value))
+              }}
+              placeholder="768"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.embedding.outputDimensionalityHint")}
+            </p>
           </div>
 
           <div className="space-y-3 rounded-md border p-3">

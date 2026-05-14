@@ -36,6 +36,7 @@ vi.mock("@/commands/fs", () => ({
 
 import {
   searchByEmbedding,
+  fetchEmbedding,
   embedPage,
   embedAllPages,
   getLastEmbeddingError,
@@ -224,6 +225,389 @@ describe("searchByEmbedding — aggregation", () => {
     expect(out).toHaveLength(3)
     // Should be the three highest-scoring page ids.
     expect(out.map((p) => p.id)).toEqual(["page-0", "page-1", "page-2"])
+  })
+})
+
+describe("fetchEmbedding — provider wire formats", () => {
+  it("does not route OpenAI text-embedding models through Gemini", async () => {
+    mockHttpFetch.mockResolvedValueOnce(okResponse([0.1, 0.2]))
+
+    const out = await fetchEmbedding("hi", {
+      enabled: true,
+      endpoint: "https://api.openai.com/v1/embeddings",
+      apiKey: "sk-test",
+      model: "text-embedding-3-small",
+    })
+
+    expect(out).toEqual([0.1, 0.2])
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("https://api.openai.com/v1/embeddings")
+    expect((opts?.headers as Record<string, string>).Authorization).toBe("Bearer sk-test")
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBeUndefined()
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "text-embedding-3-small",
+      input: "hi",
+    })
+  })
+
+  it("does not route LM Studio text-embedding models through Gemini", async () => {
+    mockHttpFetch.mockResolvedValueOnce(okResponse([0.3, 0.4]))
+
+    const out = await fetchEmbedding("hi", {
+      enabled: true,
+      endpoint: "http://127.0.0.1:1234/v1/embeddings",
+      apiKey: "",
+      model: "text-embedding-qwen3-embedding-0.6b",
+    })
+
+    expect(out).toEqual([0.3, 0.4])
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("http://127.0.0.1:1234/v1/embeddings")
+    expect((opts?.headers as Record<string, string>).Authorization).toBeUndefined()
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBeUndefined()
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "text-embedding-qwen3-embedding-0.6b",
+      input: "hi",
+    })
+  })
+
+  it("supports Gemini native embedContent endpoint and response shape", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.1, 0.2, 0.3] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-001",
+    })
+
+    expect(out).toEqual([0.1, 0.2, 0.3])
+    expect(mockHttpFetch).toHaveBeenCalledTimes(1)
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent")
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBe("g-key")
+    expect((opts?.headers as Record<string, string>).Authorization).toBeUndefined()
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "models/gemini-embedding-001",
+      content: { parts: [{ text: "hello" }] },
+    })
+  })
+
+  it("accepts a full Gemini model embedContent endpoint", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [1, 2] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+      apiKey: "g-key",
+      model: "text-embedding-004",
+    })
+
+    expect(out).toEqual([1, 2])
+    expect(mockHttpFetch.mock.calls[0][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+    )
+  })
+
+  it("preserves non-key query parameters on pasted Gemini endpoints", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [1] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=url-key&other=foo",
+      apiKey: "header-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(mockHttpFetch.mock.calls[0][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?other=foo",
+    )
+  })
+
+  it("routes custom embedContent proxy endpoints through Gemini format", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.7] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://proxy.example.com/google/models/gemini-embedding-2:embedContent",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toEqual([0.7])
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("https://proxy.example.com/google/models/gemini-embedding-2:embedContent")
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBe("g-key")
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "models/gemini-embedding-2",
+      content: { parts: [{ text: "hello" }] },
+    })
+  })
+
+  it("trims trailing slashes before building Gemini embedContent endpoint", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.8] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta///",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(mockHttpFetch.mock.calls[0][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent",
+    )
+  })
+
+  it("sends Gemini output_dimensionality when configured", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.1, 0.2] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("What is the meaning of life?", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+      outputDimensionality: 768,
+    })
+
+    expect(out).toEqual([0.1, 0.2])
+    const [, opts] = mockHttpFetch.mock.calls[0]
+    expect(JSON.parse(String(opts?.body))).toEqual({
+      model: "models/gemini-embedding-2",
+      content: { parts: [{ text: "What is the meaning of life?" }] },
+      output_dimensionality: 768,
+    })
+  })
+
+  it("omits invalid Gemini output_dimensionality values", async () => {
+    const values = [0, -1, Number.NaN]
+    for (const value of values) {
+      mockHttpFetch.mockReset()
+      mockHttpFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ embedding: { values: [0.1] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+
+      await fetchEmbedding("hello", {
+        enabled: true,
+        endpoint: "https://generativelanguage.googleapis.com/v1beta",
+        apiKey: "g-key",
+        model: "gemini-embedding-2",
+        outputDimensionality: value,
+      })
+
+      expect(JSON.parse(String(mockHttpFetch.mock.calls[0][1]?.body))).toEqual({
+        model: "models/gemini-embedding-2",
+        content: { parts: [{ text: "hello" }] },
+      })
+    }
+  })
+
+  it("floors fractional Gemini output_dimensionality values", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.1] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+      outputDimensionality: 1.5,
+    })
+
+    expect(JSON.parse(String(mockHttpFetch.mock.calls[0][1]?.body))).toEqual({
+      model: "models/gemini-embedding-2",
+      content: { parts: [{ text: "hello" }] },
+      output_dimensionality: 1,
+    })
+  })
+
+  it("normalizes a pasted Gemini batch endpoint to single embedContent", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.4] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toEqual([0.4])
+    expect(mockHttpFetch.mock.calls[0][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent",
+    )
+  })
+
+  it("strips pasted Gemini key query parameters from the endpoint", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.5] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=url-key",
+      apiKey: "header-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toEqual([0.5])
+    const [url, opts] = mockHttpFetch.mock.calls[0]
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent")
+    expect((opts?.headers as Record<string, string>)["x-goog-api-key"]).toBe("header-key")
+  })
+
+  it("rejects empty Gemini embedding vectors", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toBeNull()
+    expect(getLastEmbeddingError()).toContain("missing embedding.values")
+  })
+
+  it("rejects Gemini embedding vectors with NaN or Infinity values", async () => {
+    const values = [[Number.NaN], [Number.POSITIVE_INFINITY]]
+    for (const vector of values) {
+      mockHttpFetch.mockReset()
+      mockHttpFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ embedding: { values: vector } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+
+      const out = await fetchEmbedding("hello", {
+        enabled: true,
+        endpoint: "https://generativelanguage.googleapis.com/v1beta",
+        apiKey: "g-key",
+        model: "gemini-embedding-2",
+      })
+
+      expect(out).toBeNull()
+      expect(getLastEmbeddingError()).toContain("missing embedding.values")
+    }
+  })
+
+  it("rejects Gemini embedding vectors with mixed value types", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [1, "x"] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toBeNull()
+    expect(getLastEmbeddingError()).toContain("missing embedding.values")
+  })
+
+  it("surfaces Gemini auth errors with HTTP status", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "API key not valid" } }), {
+        status: 403,
+        statusText: "Forbidden",
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "bad-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toBeNull()
+    expect(getLastEmbeddingError()).toContain("API 403 Forbidden")
+    expect(getLastEmbeddingError()).toContain("API key not valid")
+  })
+
+  it("auto-halves Gemini requests after an oversize error", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "input length exceeds context" } }), {
+          status: 400,
+          statusText: "Bad Request",
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ embedding: { values: [0.1] } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+
+    const out = await fetchEmbedding("a".repeat(200), {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "g-key",
+      model: "gemini-embedding-2",
+    })
+
+    expect(out).toEqual([0.1])
+    const firstBody = JSON.parse(String(mockHttpFetch.mock.calls[0][1]?.body))
+    const secondBody = JSON.parse(String(mockHttpFetch.mock.calls[1][1]?.body))
+    expect(firstBody.content.parts[0].text).toHaveLength(200)
+    expect(secondBody.content.parts[0].text).toHaveLength(100)
   })
 })
 
