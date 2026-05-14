@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { BookOpen, Plus, Trash2, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
@@ -29,6 +30,7 @@ function formatDate(timestamp: number): string {
 }
 
 function ConversationSidebar() {
+  const { t } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const messages = useChatStore((s) => s.messages)
@@ -54,14 +56,14 @@ function ConversationSidebar() {
           onClick={() => createConversation()}
         >
           <Plus className="h-3.5 w-3.5" />
-          New Chat
+          {t("chat.newChat")}
         </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
         {sorted.length === 0 ? (
           <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-            No conversations yet
+            {t("chat.noConversationsYet")}
           </p>
         ) : (
           sorted.map((conv) => {
@@ -105,7 +107,7 @@ function ConversationSidebar() {
                   {msgCount > 0 && (
                     <>
                       <span>·</span>
-                      <span>{msgCount} msgs</span>
+                      <span>{msgCount} {t("chat.msgCount")}</span>
                     </>
                   )}
                 </div>
@@ -119,6 +121,7 @@ function ConversationSidebar() {
 }
 
 export function ChatPanel() {
+  const { t } = useTranslation()
   useSourceFiles() // Keep source file cache warm
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -484,8 +487,8 @@ export function ChatPanel() {
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
               <MessageSquare className="mx-auto mb-3 h-8 w-8 opacity-30" />
-              <p className="text-sm">Start a new conversation</p>
-              <p className="mt-1 text-xs opacity-60">Click "New Chat" to begin</p>
+              <p className="text-sm">{t("chat.startNewConversation")}</p>
+              <p className="mt-1 text-xs opacity-60">{t("chat.clickNewChatToBegin")}</p>
             </div>
           </div>
         ) : (
@@ -522,7 +525,7 @@ export function ChatPanel() {
                   className="w-full gap-2"
                 >
                   <BookOpen className="h-4 w-4" />
-                  Write to Wiki
+                  {t("chat.writeToWiki")}
                 </Button>
               </div>
             )}
@@ -535,8 +538,8 @@ export function ChatPanel() {
           isStreaming={isStreaming}
           placeholder={
             mode === "ingest"
-              ? "Discuss the source or ask follow-up questions..."
-              : "Type a message..."
+              ? t("chat.ingestPlaceholder")
+              : t("chat.typeAMessage")
           }
         />
       </div>

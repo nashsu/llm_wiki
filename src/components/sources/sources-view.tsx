@@ -76,7 +76,7 @@ export function SourcesView() {
 
     const selected = await open({
       multiple: true,
-      title: "Import Source Files",
+      title: t("sources.importSourceFiles"),
       filters: [
         {
           name: "Documents",
@@ -127,7 +127,7 @@ export function SourcesView() {
 
     const selected = await open({
       directory: true,
-      title: "Import Source Folder",
+      title: t("sources.importSourceFolder"),
     })
 
     if (!selected || typeof selected !== "string") return
@@ -239,7 +239,7 @@ export function SourcesView() {
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">{t("sources.title")}</h2>
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" onClick={loadSources} title="Refresh">
+          <Button variant="ghost" size="icon" onClick={loadSources} title={t("sources.refresh")}>
             <RefreshCw className="h-4 w-4" />
           </Button>
           <Button size="sm" onClick={handleImport} disabled={importing}>
@@ -265,7 +265,7 @@ export function SourcesView() {
               </Button>
               <Button variant="outline" size="sm" onClick={handleImportFolder}>
                 <Plus className="mr-1 h-4 w-4" />
-                Folder
+                {t("sources.importFolder")}
               </Button>
             </div>
           </div>
@@ -367,6 +367,7 @@ function SourceTree({
   setPendingDeletePath: (path: string | null) => void
   ingestingPath: string | null
 }) {
+  const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [visibleLimit, setVisibleLimit] = useState(SOURCE_TREE_INITIAL_ROWS)
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
@@ -451,8 +452,8 @@ function SourceTree({
                   onClick={() => handleDeleteClick(node)}
                   hint={
                     isPendingDelete
-                      ? `Click again to delete folder ${node.name} and ALL its contents`
-                      : `Delete folder ${node.name} (recursive)`
+                      ? t("sources.deleteFolderConfirm", { name: node.name })
+                      : t("sources.deleteFolder", { name: node.name })
                   }
                 />
               </div>
@@ -477,7 +478,7 @@ function SourceTree({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              title="Ingest"
+              title={t("sources.ingest")}
               disabled={ingestingPath === node.path}
               onClick={() => onIngest(node)}
             >
@@ -488,8 +489,8 @@ function SourceTree({
               onClick={() => handleDeleteClick(node)}
               hint={
                 isPendingDelete
-                  ? `Click again to delete ${node.name}`
-                  : `Delete ${node.name}`
+                  ? t("sources.deleteFileConfirm", { name: node.name })
+                  : t("sources.deleteFile", { name: node.name })
               }
             />
           </div>
@@ -500,7 +501,7 @@ function SourceTree({
           ref={loadMoreRef}
           className="px-3 py-2 text-center text-[11px] text-muted-foreground"
         >
-          Loading more sources...
+          {t("sources.loadingMore")}
         </div>
       )}
     </>
@@ -526,6 +527,7 @@ function DeleteButton({
   onClick: () => void
   hint: string
 }) {
+  const { t } = useTranslation()
   if (isPending) {
     return (
       <Button
@@ -536,7 +538,7 @@ function DeleteButton({
         onClick={onClick}
       >
         <Trash2 className="mr-1 h-3.5 w-3.5" />
-        Confirm
+        {t("sources.confirm")}
       </Button>
     )
   }

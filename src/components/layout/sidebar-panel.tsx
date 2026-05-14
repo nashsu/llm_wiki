@@ -1,8 +1,10 @@
 import { useState } from "react"
+import { useTranslation } from "react-i18next"
 import { KnowledgeTree } from "./knowledge-tree"
 import { FileTree } from "./file-tree"
 
 export function SidebarPanel() {
+  const { t } = useTranslation()
   const [mode, setMode] = useState<"knowledge" | "files">("knowledge")
 
   return (
@@ -16,7 +18,7 @@ export function SidebarPanel() {
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          Knowledge
+          {t("sidebar.knowledge")}
         </button>
         <button
           onClick={() => setMode("files")}
@@ -26,7 +28,7 @@ export function SidebarPanel() {
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          Files
+          {t("sidebar.files")}
         </button>
       </div>
       <div className="flex-1 overflow-hidden">
