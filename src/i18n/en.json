@@ -491,5 +491,16 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
+  },
+  "research": {
+    "crawlProgress": "Crawling pages... {{done}}/{{total}}",
+    "crawlDone": "{{count}} pages crawled",
+    "crawlFailed": "Crawl failed",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "importSelected": "Import Selected ({{count}})",
+    "importingSources": "Importing {{count}} sources...",
+    "crawling": "Crawling",
+    "notCrawledYet": "Waiting to crawl"
   }
 }
