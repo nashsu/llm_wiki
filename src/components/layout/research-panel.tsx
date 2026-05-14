@@ -6,20 +6,22 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import {
   Search, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, X,
-  FileText, Send,
+  FileText, Send, Download, CheckSquare, Square, AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useResearchStore, type ResearchTask } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
-import { queueResearch } from "@/lib/deep-research"
+import { queueResearch, importSelectedSources } from "@/lib/deep-research"
 import { normalizePath } from "@/lib/path-utils"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { useTranslation } from "react-i18next"
 
 export function ResearchPanel() {
+  const { t } = useTranslation()
   const tasks = useResearchStore((s) => s.tasks)
   const removeTask = useResearchStore((s) => s.removeTask)
   const setPanelOpen = useResearchStore((s) => s.setPanelOpen)
@@ -28,7 +30,7 @@ export function ResearchPanel() {
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const [inputValue, setInputValue] = useState("")
 
-  const running = tasks.filter((t) => ["searching", "synthesizing", "saving"].includes(t.status))
+  const running = tasks.filter((t) => ["searching", "crawling", "synthesizing", "saving"].includes(t.status))
   const queued = tasks.filter((t) => t.status === "queued")
   const done = tasks.filter((t) => t.status === "done" || t.status === "error")
 
@@ -106,9 +108,8 @@ export function ResearchPanel() {
   )
 }
 
-/** Separate <think>/<thinking> blocks from main content */
+/** Separate <think/<thinking> blocks from main content */
 function separateThinking(text: string): { thinking: string; answer: string } {
-  // Match <think>...</think> or <thinking>...</thinking>
   const thinkRegex = /^<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/i
   const match = text.match(thinkRegex)
   if (match) {
@@ -215,16 +216,23 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
 }
 
 function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (id: string) => void }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(
     task.status === "synthesizing" || task.status === "searching"
   )
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const project = useWikiStore((s) => s.project)
+  const llmConfig = useWikiStore((s) => s.llmConfig)
+  const toggleUrlSelection = useResearchStore((s) => s.toggleUrlSelection)
+  const selectAllSuccessful = useResearchStore((s) => s.selectAllSuccessful)
+  const clearSelection = useResearchStore((s) => s.clearSelection)
+  const [importing, setImporting] = useState(false)
 
   const statusIcon = {
     queued: <div className="h-3 w-3 rounded-full border-2 border-muted-foreground" />,
     searching: <Loader2 className="h-3 w-3 animate-spin text-blue-500" />,
+    crawling: <Loader2 className="h-3 w-3 animate-spin text-cyan-500" />,
     synthesizing: <Loader2 className="h-3 w-3 animate-spin text-purple-500" />,
     saving: <Loader2 className="h-3 w-3 animate-spin text-orange-500" />,
     done: <CheckCircle2 className="h-3 w-3 text-emerald-500" />,
@@ -234,6 +242,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   const statusText = {
     queued: "Queued",
     searching: "Searching web...",
+    crawling: t("research.crawling") + "...",
     synthesizing: "Synthesizing...",
     saving: "Saving to wiki...",
     done: task.savedPath ? "Saved" : "Done",
@@ -251,6 +260,28 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
       // ignore
     }
   }
+
+  async function handleImport() {
+    if (!project) return
+    setImporting(true)
+    try {
+      await importSelectedSources(project.path, task.id, llmConfig)
+    } catch (err) {
+      console.error("Failed to import sources:", err)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const crawledByUrl = useMemo(() => {
+    const map = new Map<string, typeof task.crawledPages[0]>()
+    for (const p of task.crawledPages) map.set(p.url, p)
+    return map
+  }, [task.crawledPages])
+
+  const selectedCount = task.selectedUrls.size
+  const successfulCount = task.crawledPages.filter((p) => p.status === "success").length
+  const hasCrawlResults = task.crawledPages.length > 0
 
   return (
     <div className="rounded-lg border text-xs">
@@ -277,23 +308,103 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
             <p className="mb-2 text-destructive">{task.error}</p>
           )}
 
-          {/* Web results */}
+          {/* Crawl progress */}
+          {task.crawlProgress && task.crawlProgress.done < task.crawlProgress.total && (
+            <div className="mb-2 rounded bg-muted/50 px-2 py-1.5">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>{t("research.crawlProgress", task.crawlProgress)}</span>
+              </div>
+              <div className="mt-1 h-1.5 w-full rounded-full bg-muted">
+                <div
+                  className="h-1.5 rounded-full bg-cyan-500 transition-all"
+                  style={{ width: `${(task.crawlProgress.done / task.crawlProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Web results with checkboxes */}
           {task.webResults.length > 0 && (
             <div className="mb-2">
-              <div className="mb-1 font-medium text-muted-foreground">
-                Sources ({task.webResults.length})
-              </div>
-              <div className="flex flex-col gap-1">
-                {task.webResults.map((r, i) => (
-                  <div key={i} className="flex items-start gap-1.5 rounded bg-muted/50 px-2 py-1">
-                    <span className="shrink-0 font-mono text-muted-foreground">[{i + 1}]</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{r.title}</div>
-                      <div className="truncate text-muted-foreground">{r.source}</div>
-                    </div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="font-medium text-muted-foreground">
+                  Sources ({task.webResults.length}
+                  {hasCrawlResults ? ` · ${successfulCount} ${t("research.crawlDone", { count: successfulCount }).split(" ").slice(-1)}` : ""})
+                </span>
+                {hasCrawlResults && (
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => selectAllSuccessful(task.id)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      {t("research.selectAll")}
+                    </button>
+                    <span className="text-muted-foreground">·</span>
+                    <button
+                      onClick={() => clearSelection(task.id)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      {t("research.deselectAll")}
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
+              <div className="flex flex-col gap-0.5">
+                {task.webResults.map((r, i) => {
+                  const crawled = crawledByUrl.get(r.url)
+                  const isSelected = task.selectedUrls.has(r.url)
+                  const canSelect = crawled?.status === "success"
+
+                  return (
+                    <label
+                      key={i}
+                      className={`flex items-start gap-1.5 rounded px-2 py-1 ${
+                        canSelect ? "cursor-pointer hover:bg-accent/50" : "opacity-60"
+                      }`}
+                    >
+                      {hasCrawlResults ? (
+                        canSelect ? (
+                          isSelected ? (
+                            <CheckSquare className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
+                          ) : (
+                            <Square className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                          )
+                        ) : (
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
+                        )
+                      ) : null}
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => canSelect && toggleUrlSelection(task.id, r.url)}
+                        className="sr-only"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{r.title}</div>
+                        <div className="truncate text-muted-foreground">{r.source}</div>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+
+              {/* Import button */}
+              {hasCrawlResults && selectedCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-6 w-full text-[11px] gap-1"
+                  onClick={handleImport}
+                  disabled={importing}
+                >
+                  {importing ? (
+                    <><Loader2 className="h-3 w-3 animate-spin" /> {t("research.importingSources", { count: selectedCount })}</>
+                  ) : (
+                    <><Download className="h-3 w-3" /> {t("research.importSelected", { count: selectedCount })}</>
+                  )}
+                </Button>
+              )}
             </div>
           )}
 

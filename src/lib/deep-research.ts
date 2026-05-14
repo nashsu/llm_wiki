@@ -1,11 +1,14 @@
 import { webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
 import { autoIngest } from "./ingest"
-import { writeFile, readFile, listDirectory } from "@/commands/fs"
+import { writeFile, readFile, listDirectory, createDirectory } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
+import { crawlUrls } from "@/lib/web-crawler"
+import { getHttpFetch } from "@/lib/tauri-fetch"
+import { enqueueSourceIngest } from "@/lib/source-lifecycle"
 
 /**
  * Queue a deep research task. Automatically starts processing if under concurrency limit.
@@ -96,8 +99,23 @@ async function executeResearch(
       return
     }
 
-    // Step 2: LLM synthesis
-    store.updateTask(taskId, { status: "synthesizing" })
+    // Step 1.5: Crawl all result URLs (runs in parallel with LLM synthesis)
+    const httpFetch = await getHttpFetch()
+    const crawlPromise = crawlUrls(
+      webResults.map((r) => r.url),
+      httpFetch,
+      {
+        concurrency: 4,
+        onProgress: (done, total) => {
+          useResearchStore.getState().updateCrawlProgress(taskId, done, total)
+        },
+      },
+    ).then((pages) => {
+      useResearchStore.getState().setCrawledPages(taskId, pages)
+    })
+
+    // Step 2: LLM synthesis (runs in parallel with crawl)
+    store.updateTask(taskId, { status: "synthesizing", crawlProgress: { done: 0, total: webResults.length } })
 
     const searchContext = webResults
       .map((r, i) => `[${i + 1}] **${r.title}** (${r.source})\n${r.snippet}`)
@@ -156,6 +174,9 @@ async function executeResearch(
       },
     )
 
+    // Wait for crawl to finish before saving
+    await crawlPromise
+
     // Check if errored during streaming
     if (useResearchStore.getState().tasks.find((t) => t.id === taskId)?.status === "error") {
       onTaskFinished(pp, llmConfig, searchConfig)
@@ -174,7 +195,7 @@ async function executeResearch(
       .map((r, i) => `${i + 1}. [${r.title}](${r.url}) — ${r.source}`)
       .join("\n")
 
-    // Strip <think>/<thinking> blocks before saving
+    // Strip <think/<thinking> blocks before saving
     const cleanedSynthesis = accumulated
       .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
       .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "") // unclosed thinking block
@@ -229,6 +250,85 @@ async function executeResearch(
   }
 
   onTaskFinished(pp, llmConfig, searchConfig)
+}
+
+/**
+ * Import user-selected crawled pages as source files for ingest.
+ */
+export async function importSelectedSources(
+  projectPath: string,
+  taskId: string,
+  llmConfig: LlmConfig,
+): Promise<string[]> {
+  const task = useResearchStore.getState().tasks.find((t) => t.id === taskId)
+  if (!task) return []
+
+  const project = useWikiStore.getState().project
+  if (!project) return []
+
+  const pp = normalizePath(projectPath)
+  const selected = task.selectedUrls
+  if (selected.size === 0) return []
+
+  const pagesToImport = task.crawledPages.filter(
+    (p) => p.status === "success" && selected.has(p.url),
+  )
+  if (pagesToImport.length === 0) return []
+
+  const topicSlug = task.topic
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 50)
+  const sourcesDir = `${pp}/raw/sources/deep-research-${topicSlug}`
+
+  await createDirectory(sourcesDir)
+
+  const importedPaths: string[] = []
+
+  for (const page of pagesToImport) {
+    const urlSlug = page.url
+      .replace(/^https?:\/\//, "")
+      .replace(/[/?#:]/g, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80)
+      .toLowerCase()
+
+    const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="title" content="${escapeAttr(page.title)}">
+<meta name="source-url" content="${escapeAttr(page.url)}">
+<meta name="origin" content="deep-research">
+</head>
+<body>
+${page.content}
+</body></html>`
+
+    const filePath = `${sourcesDir}/${urlSlug}.html`
+    await writeFile(filePath, html)
+    importedPaths.push(filePath)
+  }
+
+  if (importedPaths.length > 0) {
+    await enqueueSourceIngest(
+      project,
+      importedPaths,
+      llmConfig,
+      { sourceRoot: sourcesDir, rootContext: `deep-research-${topicSlug}` },
+    )
+  }
+
+  // Clear selection after import
+  useResearchStore.getState().clearSelection(taskId)
+
+  return importedPaths
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
 function onTaskFinished(

@@ -280,5 +280,16 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
+  },
+  "research": {
+    "crawlProgress": "正在爬取页面... {{done}}/{{total}}",
+    "crawlDone": "已爬取 {{count}} 个页面",
+    "crawlFailed": "爬取失败",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "importSelected": "导入选中 ({{count}})",
+    "importingSources": "正在导入 {{count}} 个源文件...",
+    "crawling": "爬取中",
+    "notCrawledYet": "等待爬取"
   }
 }
