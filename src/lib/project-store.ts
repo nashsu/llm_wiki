@@ -1,6 +1,7 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig } from "@/stores/wiki-store"
+import { normalizePath } from "@/lib/path-utils"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -131,6 +132,35 @@ export async function saveProxyConfig(config: ProxyConfig): Promise<void> {
 export async function loadProxyConfig(): Promise<ProxyConfig | null> {
   const store = await getStore()
   return (await store.get<ProxyConfig>(PROXY_CONFIG_KEY)) ?? null
+}
+
+const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
+
+function scheduledImportKey(projectPath: string): string {
+  return `${SCHEDULED_IMPORT_KEY_PREFIX}${normalizePath(projectPath)}`
+}
+
+const SCHEDULED_IMPORT_GLOBAL_KEY = "scheduledImportConfig"
+
+export async function saveScheduledImportConfig(projectPath: string, config: ScheduledImportConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(scheduledImportKey(projectPath), config)
+  await store.save()
+}
+
+export async function loadScheduledImportConfig(projectPath: string): Promise<ScheduledImportConfig | null> {
+  const store = await getStore()
+  const perProject = await store.get<ScheduledImportConfig>(scheduledImportKey(projectPath))
+  if (perProject) return perProject
+  // Migrate from legacy global key (pre-0.4.8)
+  const legacy = await store.get<ScheduledImportConfig>(SCHEDULED_IMPORT_GLOBAL_KEY)
+  if (legacy) {
+    await store.set(scheduledImportKey(projectPath), legacy)
+    await store.delete(SCHEDULED_IMPORT_GLOBAL_KEY)
+    await store.save()
+    return legacy
+  }
+  return null
 }
 
 export async function removeFromRecentProjects(

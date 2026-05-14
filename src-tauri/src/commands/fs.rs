@@ -1348,6 +1348,45 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
 }
 
+/// Get the last modified timestamp of a file in milliseconds since Unix epoch.
+/// Returns 0 if the file doesn't exist or metadata can't be read.
+#[tauri::command]
+pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("get_file_modified_time", || {
+            let metadata = fs::metadata(&path)
+                .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
+            let modified = metadata
+                .modified()
+                .map_err(|e| format!("Failed to get modified time for '{}': {}", path, e))?;
+            let duration = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| format!("Time error for '{}': {}", path, e))?;
+            Ok(duration.as_millis() as u64)
+        })
+    })
+    .await
+    .map_err(|e| format!("get_file_modified_time blocking task join error: {e}"))?
+}
+
+/// Compute MD5 hash of a file. Returns the hex-encoded hash string.
+#[tauri::command]
+pub async fn get_file_md5(path: String) -> Result<String, String> {
+    use md5::{Digest, Md5};
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("get_file_md5", || {
+            let bytes = fs::read(&path)
+                .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
+            let mut hasher = Md5::new();
+            hasher.update(&bytes);
+            let result = hasher.finalize();
+            Ok(format!("{:x}", result))
+        })
+    })
+    .await
+    .map_err(|e| format!("get_file_md5 blocking task join error: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

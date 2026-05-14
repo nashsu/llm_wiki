@@ -73,7 +73,9 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
-        run: choco install protoc -y
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

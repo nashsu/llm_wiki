@@ -50,6 +50,11 @@ export interface SettingsDraft {
   proxyUrl: string
   proxyBypassLocal: boolean
 
+  // Scheduled Import
+  scheduledImportEnabled: boolean
+  scheduledImportPath: string
+  scheduledImportInterval: number // minutes
+
   // UI
   uiLanguage: string
 

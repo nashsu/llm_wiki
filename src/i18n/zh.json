@@ -169,6 +169,7 @@
       "multimodal": "图片描述",
       "webSearch": "网页搜索",
       "network": "网络",
+      "scheduledImport": "定时导入",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",
@@ -256,6 +257,21 @@
         "urlHelp": "完整 URL，必须带协议头。支持：http://、https://（当前版本不支持 SOCKS5）。",
         "bypassLocal": "本地地址不走代理（推荐）",
         "bypassLocalHelp": "对 localhost、127.0.0.0/8、10.0.0.0/8、172.16.0.0/12、192.168.0.0/16 以及 *.local 的请求会绕过代理。如果你用 Ollama / LM Studio 或局域网内的 LLM 服务，请保持开启。"
+      },
+      "scheduledImport": {
+        "title": "定时导入",
+        "description": "自动监控指定目录，按固定间隔导入新增或修改的文件。",
+        "enable": "启用定时导入",
+        "directory": "监控目录",
+        "directoryHelp": "相对于项目根目录的路径（如 'raw'、'docs/input'）。该目录中的文件将被自动导入。默认为 'raw'。",
+        "browse": "浏览",
+        "selectDirectory": "选择监控目录",
+        "interval": "扫描间隔（分钟）",
+        "intervalHelp": "检查变更的频率。最小值：1 分钟。",
+        "scanNow": "立即扫描",
+        "scanning": "扫描中...",
+        "lastScan": "上次扫描：{{time}}",
+        "never": "从未"
       },
       "output": {
         "title": "输出偏好",

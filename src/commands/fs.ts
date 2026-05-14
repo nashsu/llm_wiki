@@ -57,6 +57,14 @@ export async function fileExists(path: string): Promise<boolean> {
   return invoke<boolean>("file_exists", { path })
 }
 
+export async function getFileModifiedTime(path: string): Promise<number> {
+  return invoke<number>("get_file_modified_time", { path })
+}
+
+export async function getFileMd5(path: string): Promise<string> {
+  return invoke<string>("get_file_md5", { path })
+}
+
 /** Mirror of `commands::fs::FileBase64` (Rust side). */
 export interface FileBase64 {
   base64: string

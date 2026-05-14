@@ -88,6 +88,8 @@ pub fn run() {
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
+            commands::fs::get_file_modified_time,
+            commands::fs::get_file_md5,
             commands::fs::read_file_as_base64,
             commands::project::create_project,
             commands::project::open_project,

@@ -191,6 +191,7 @@
       "multimodal": "Image Captioning",
       "webSearch": "Web Search",
       "network": "Network",
+      "scheduledImport": "Scheduled Import",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",
@@ -278,6 +279,21 @@
         "urlHelp": "Full URL with scheme. Supported: http://, https://. (SOCKS5 not supported in this version.)",
         "bypassLocal": "Bypass proxy for local addresses (recommended)",
         "bypassLocalHelp": "Requests to localhost, 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, and *.local don't go through the proxy. Keep this on if you use Ollama / LM Studio / other local or LAN-deployed LLMs."
+      },
+      "scheduledImport": {
+        "title": "Scheduled Import",
+        "description": "Automatically monitor a directory and import new or modified files at regular intervals.",
+        "enable": "Enable scheduled import",
+        "directory": "Monitor Directory",
+        "directoryHelp": "Relative path from project root (e.g., 'raw', 'docs/input'). Files in this directory will be automatically imported. Defaults to 'raw'.",
+        "browse": "Browse",
+        "selectDirectory": "Select Directory to Monitor",
+        "interval": "Scan Interval (minutes)",
+        "intervalHelp": "How often to check for changes. Minimum: 1 minute.",
+        "scanNow": "Scan Now",
+        "scanning": "Scanning...",
+        "lastScan": "Last scan: {{time}}",
+        "never": "Never"
       },
       "output": {
         "title": "Output Preferences",
