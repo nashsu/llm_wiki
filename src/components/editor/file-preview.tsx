@@ -40,6 +40,8 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
       return <VideoPreview filePath={filePath} fileName={fileName} />
     case "audio":
       return <AudioPreview filePath={filePath} fileName={fileName} />
+    case "html":
+      return <HtmlPreview filePath={filePath} content={textContent} />
     case "pdf":
       return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
     case "code":
@@ -250,6 +252,35 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
           {body}
         </ReactMarkdown>
       </div>
+    </div>
+  )
+}
+
+function HtmlPreview({ filePath, content }: { filePath: string; content: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    const doc = iframe.contentDocument
+    if (!doc) return
+    doc.open()
+    doc.write(content)
+    doc.close()
+  }, [content])
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b px-6 py-2 text-xs text-muted-foreground">
+        {filePath}
+        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">HTML</span>
+      </div>
+      <iframe
+        ref={iframeRef}
+        sandbox="allow-same-origin"
+        className="flex-1 w-full border-0"
+        title="HTML Preview"
+      />
     </div>
   )
 }

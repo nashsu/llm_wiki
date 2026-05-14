@@ -2,6 +2,7 @@ export type FileCategory =
   | "markdown"
   | "text"
   | "code"
+  | "html"
   | "image"
   | "video"
   | "audio"
@@ -47,8 +48,8 @@ const EXT_MAP: Record<string, FileCategory> = {
   css: "code",
   scss: "code",
   less: "code",
-  html: "code",
-  htm: "code",
+  html: "html",
+  htm: "html",
   xml: "code",
   svg: "code",
   vue: "code",
@@ -127,7 +128,7 @@ export function getFileCategory(filePath: string): FileCategory {
 }
 
 export function isTextReadable(category: FileCategory): boolean {
-  return ["markdown", "text", "code", "data"].includes(category)
+  return ["markdown", "text", "code", "data", "html"].includes(category)
 }
 
 export function isBinary(category: FileCategory): boolean {
