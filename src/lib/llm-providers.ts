@@ -1,4 +1,9 @@
 import type { LlmConfig, ReasoningConfig } from "@/stores/wiki-store"
+import {
+  AZURE_OPENAI_API_VERSION,
+  buildAzureOpenAiUrl,
+  isAzureOpenAiEndpoint,
+} from "@/lib/llm-config-normalize"
 
 /**
  * One piece of a multimodal message body. Text + image is the only
@@ -246,9 +251,12 @@ function isKimiEndpoint(config: LlmConfig): boolean {
 }
 
 function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
-  if (config.provider !== "openai") return false
   const model = config.model.trim().toLowerCase()
-  return /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+  const strictModel =
+    /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+  if (!strictModel) return false
+  if (config.provider === "openai" || config.provider === "azure") return true
+  return config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)
 }
 
 function adaptOpenAiStrictCompletionBody(config: LlmConfig, body: Record<string, unknown>): void {
@@ -613,6 +621,23 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       }
     }
 
+    case "azure": {
+      return {
+        url: buildAzureOpenAiUrl(
+          customEndpoint,
+          model,
+          config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+        ),
+        headers: {
+          "Content-Type": JSON_CONTENT_TYPE,
+          "api-key": apiKey,
+        },
+        buildBody: (messages, overrides) =>
+          buildOpenAiCompatibleBody(config, messages, overrides),
+        parseStream: parseOpenAiLine,
+      }
+    }
+
     case "ollama": {
       // Defense-in-depth for the same reason as the custom branch: if a
       // user pasted the full path as their Ollama URL, don't tack on
@@ -689,23 +714,35 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       // a pasted "/chat/completions" tail. Don't double-append in that
       // case, or we'd POST to ".../chat/completions/chat/completions".
       const base = customEndpoint.replace(/\/+$/, "")
-      const url = /\/chat\/completions$/i.test(base)
-        ? base
-        : `${base}/chat/completions`
+      const url = isAzureOpenAiEndpoint(base)
+        ? buildAzureOpenAiUrl(
+            base,
+            model,
+            config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+          )
+        : /\/chat\/completions$/i.test(base)
+          ? base
+          : `${base}/chat/completions`
+      const azure = isAzureOpenAiEndpoint(url)
       return {
         url,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          ...(apiKey
+            ? azure
+              ? { "api-key": apiKey }
+              : { Authorization: `Bearer ${apiKey}` }
+            : {}),
           // Local OpenAI-compatible servers (LM Studio, llama.cpp,
           // vLLM, LocalAI) often share Ollama's CORS sensitivity.
           // Same rationale as the `ollama` branch above.
-          ...localLlmOriginHeader(),
+          ...(azure ? {} : localLlmOriginHeader()),
         },
-        buildBody: (messages, overrides) => ({
-          ...buildOpenAiCompatibleBody(config, messages, overrides),
-          model,
-        }),
+        buildBody: (messages, overrides) => {
+          const body = buildOpenAiCompatibleBody(config, messages, overrides)
+          if (!azure) body.model = model
+          return body
+        },
         parseStream: parseOpenAiLine,
       }
     }

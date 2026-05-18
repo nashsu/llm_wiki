@@ -1,4 +1,5 @@
 import type { LlmConfig } from "@/stores/wiki-store"
+import { isAzureOpenAiEndpoint } from "@/lib/llm-config-normalize"
 import { getProviderConfig, type RequestOverrides } from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
 import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
@@ -151,6 +152,21 @@ export async function streamChat(
       if (body) errorDetail += ` — ${body}`
     } catch {
       // ignore body read failure
+    }
+    if (
+      response.status === 404 &&
+      (config.provider === "azure" ||
+        (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
+    ) {
+      onError(
+        new Error(
+          `${errorDetail} — Azure 404 usually means the deployment name is wrong. ` +
+            `Set Model to your Azure deployment name (not the model SKU), ` +
+            `and Endpoint to https://<resource>.openai.azure.com ` +
+            `or .../openai/deployments/<deployment-name>.`,
+        ),
+      )
+      return
     }
     onError(new Error(errorDetail))
     return

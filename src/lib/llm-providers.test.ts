@@ -126,6 +126,75 @@ describe("Google buildBody — vision content", () => {
   })
 })
 
+describe("Azure OpenAI provider", () => {
+  it("uses Azure deployment URL and api-key auth", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      apiKey: "azure-key",
+      model: "my-gpt-4o-deployment",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+
+    expect(cfg.url).toBe(
+      "https://example-resource.openai.azure.com/openai/deployments/my-gpt-4o-deployment/chat/completions?api-version=2024-10-21",
+    )
+    expect(cfg.headers["api-key"]).toBe("azure-key")
+    expect(cfg.headers.Authorization).toBeUndefined()
+  })
+
+  it("omits model from the request body because the deployment is in the URL", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "deployment-a",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody([{ role: "user", content: "hi" }]) as Record<string, unknown>
+
+    expect(body.model).toBeUndefined()
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }])
+  })
+
+  it("uses the configured Azure API version", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "deployment-a",
+      customEndpoint: "https://example-resource.openai.azure.com",
+      azureApiVersion: "2025-01-01-preview",
+    }))
+
+    expect(cfg.url).toContain("api-version=2025-01-01-preview")
+  })
+
+  it("maps max_tokens to max_completion_tokens for Azure GPT-5 deployments", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "gpt-5-nano",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(4096)
+  })
+
+  it("omits unsupported non-default temperature for Azure GPT-5 deployments", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "gpt-5-nano",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.temperature).toBeUndefined()
+  })
+})
+
 describe("Ollama / custom (chat_completions) — vision content", () => {
   it("ollama uses OpenAI-shaped image_url block (works on /v1/chat/completions for vision-capable models)", () => {
     const cfg = mkConfig({

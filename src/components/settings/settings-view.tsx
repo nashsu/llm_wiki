@@ -103,6 +103,7 @@ function initialDraft(
     model: llm.model,
     ollamaUrl: llm.ollamaUrl,
     customEndpoint: llm.customEndpoint,
+    azureApiVersion: llm.azureApiVersion ?? "2024-10-21",
     maxContextSize: llm.maxContextSize ?? 204800,
     apiMode: llm.apiMode,
     reasoning: llm.reasoning,
@@ -120,6 +121,7 @@ function initialDraft(
     multimodalModel: multimodal.model,
     multimodalOllamaUrl: multimodal.ollamaUrl,
     multimodalCustomEndpoint: multimodal.customEndpoint,
+    multimodalAzureApiVersion: multimodal.azureApiVersion ?? "2024-10-21",
     multimodalApiMode: multimodal.apiMode,
     multimodalConcurrency: multimodal.concurrency,
     outputLanguage,
@@ -255,6 +257,7 @@ export function SettingsView() {
       model: draft.model,
       ollamaUrl: draft.ollamaUrl,
       customEndpoint: draft.customEndpoint,
+      azureApiVersion: draft.provider === "azure" ? draft.azureApiVersion.trim() : undefined,
       maxContextSize: draft.maxContextSize,
       apiMode: draft.provider === "custom" ? draft.apiMode : undefined,
       reasoning: draft.reasoning,
@@ -276,6 +279,7 @@ export function SettingsView() {
       model: draft.multimodalModel,
       ollamaUrl: draft.multimodalOllamaUrl,
       customEndpoint: draft.multimodalCustomEndpoint,
+      azureApiVersion: draft.multimodalProvider === "azure" ? draft.multimodalAzureApiVersion.trim() : undefined,
       apiMode: draft.multimodalProvider === "custom" ? draft.multimodalApiMode : undefined,
       // Clamp at save time so a hand-edited persisted store with a
       // ridiculous concurrency value (e.g. someone setting 1000 in

@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProviderOverride, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -44,6 +44,122 @@ const LLM_CONFIG_KEY = "llmConfig"
 const PROVIDER_CONFIGS_KEY = "providerConfigs"
 const ACTIVE_PRESET_KEY = "activePresetId"
 
+const PROVIDERS = new Set<LlmConfig["provider"]>([
+  "openai",
+  "anthropic",
+  "google",
+  "azure",
+  "ollama",
+  "custom",
+  "minimax",
+  "claude-code",
+  "codex-cli",
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function normalizeProvider(value: unknown): LlmConfig["provider"] {
+  return typeof value === "string" && PROVIDERS.has(value as LlmConfig["provider"])
+    ? (value as LlmConfig["provider"])
+    : "openai"
+}
+
+function normalizeReasoning(value: unknown): LlmConfig["reasoning"] {
+  if (!isRecord(value) || typeof value.mode !== "string") return { mode: "auto" }
+  const modes = new Set(["auto", "off", "low", "medium", "high", "max", "custom"])
+  if (!modes.has(value.mode)) return { mode: "auto" }
+  return {
+    mode: value.mode as NonNullable<LlmConfig["reasoning"]>["mode"],
+    ...(typeof value.budgetTokens === "number" && Number.isFinite(value.budgetTokens)
+      ? { budgetTokens: value.budgetTokens }
+      : {}),
+  }
+}
+
+function normalizeApiMode(value: unknown): LlmConfig["apiMode"] {
+  return value === "anthropic_messages" ? "anthropic_messages" : "chat_completions"
+}
+
+function normalizeLlmConfig(raw: unknown): LlmConfig | null {
+  if (!isRecord(raw)) return null
+  const provider = normalizeProvider(raw.provider)
+  return {
+    provider,
+    apiKey: stringValue(raw.apiKey),
+    model: stringValue(raw.model),
+    ollamaUrl: stringValue(raw.ollamaUrl, "http://localhost:11434"),
+    customEndpoint: stringValue(raw.customEndpoint),
+    azureApiVersion: provider === "azure" ? stringValue(raw.azureApiVersion, "2024-10-21") : undefined,
+    maxContextSize: numberValue(raw.maxContextSize, 204800),
+    apiMode: provider === "custom" ? normalizeApiMode(raw.apiMode) : undefined,
+    reasoning: normalizeReasoning(raw.reasoning),
+  }
+}
+
+function normalizeProviderOverride(raw: unknown): ProviderOverride {
+  if (!isRecord(raw)) return {}
+  return {
+    ...(typeof raw.apiKey === "string" ? { apiKey: raw.apiKey } : {}),
+    ...(typeof raw.model === "string" ? { model: raw.model } : {}),
+    ...(typeof raw.baseUrl === "string" ? { baseUrl: raw.baseUrl } : {}),
+    ...(typeof raw.azureApiVersion === "string" ? { azureApiVersion: raw.azureApiVersion } : {}),
+    ...(raw.apiMode === "anthropic_messages" || raw.apiMode === "chat_completions"
+      ? { apiMode: raw.apiMode }
+      : {}),
+    ...(typeof raw.maxContextSize === "number" && Number.isFinite(raw.maxContextSize)
+      ? { maxContextSize: raw.maxContextSize }
+      : {}),
+    reasoning: normalizeReasoning(raw.reasoning),
+  }
+}
+
+function normalizeProviderConfigs(raw: unknown): ProviderConfigs | null {
+  if (!isRecord(raw)) return null
+  const next: ProviderConfigs = {}
+  for (const [rawId, value] of Object.entries(raw)) {
+    const id = rawId === "azure-openai" ? "azure" : rawId
+    next[id] = { ...(next[id] ?? {}), ...normalizeProviderOverride(value) }
+  }
+  return next
+}
+
+function normalizeActivePresetId(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw !== "string") return null
+  return raw === "azure-openai" ? "azure" : raw
+}
+
+function normalizeMultimodalConfig(raw: unknown): MultimodalConfig | null {
+  if (!isRecord(raw)) return null
+  const provider = normalizeProvider(raw.provider)
+  return {
+    enabled: raw.enabled === true,
+    useMainLlm: raw.useMainLlm !== false,
+    provider,
+    apiKey: stringValue(raw.apiKey),
+    model: stringValue(raw.model),
+    ollamaUrl: stringValue(raw.ollamaUrl, "http://localhost:11434"),
+    customEndpoint: stringValue(raw.customEndpoint),
+    azureApiVersion: provider === "azure" ? stringValue(raw.azureApiVersion, "2024-10-21") : undefined,
+    apiMode: provider === "custom" ? normalizeApiMode(raw.apiMode) : undefined,
+    concurrency: Math.max(1, Math.min(16, numberValue(raw.concurrency, 4))),
+  }
+}
+
+function changed(raw: unknown, normalized: unknown): boolean {
+  return JSON.stringify(raw) !== JSON.stringify(normalized)
+}
+
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
   const store = await getStore()
   await store.set(LLM_CONFIG_KEY, config)
@@ -51,7 +167,12 @@ export async function saveLlmConfig(config: LlmConfig): Promise<void> {
 
 export async function loadLlmConfig(): Promise<LlmConfig | null> {
   const store = await getStore()
-  return (await store.get<LlmConfig>(LLM_CONFIG_KEY)) ?? null
+  const raw = await store.get<unknown>(LLM_CONFIG_KEY)
+  const normalized = normalizeLlmConfig(raw)
+  if (normalized && changed(raw, normalized)) {
+    await store.set(LLM_CONFIG_KEY, normalized)
+  }
+  return normalized
 }
 
 export async function saveProviderConfigs(configs: ProviderConfigs): Promise<void> {
@@ -61,7 +182,12 @@ export async function saveProviderConfigs(configs: ProviderConfigs): Promise<voi
 
 export async function loadProviderConfigs(): Promise<ProviderConfigs | null> {
   const store = await getStore()
-  return (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? null
+  const raw = await store.get<unknown>(PROVIDER_CONFIGS_KEY)
+  const normalized = normalizeProviderConfigs(raw)
+  if (normalized && changed(raw, normalized)) {
+    await store.set(PROVIDER_CONFIGS_KEY, normalized)
+  }
+  return normalized
 }
 
 export async function saveActivePresetId(id: string | null): Promise<void> {
@@ -71,7 +197,12 @@ export async function saveActivePresetId(id: string | null): Promise<void> {
 
 export async function loadActivePresetId(): Promise<string | null> {
   const store = await getStore()
-  return (await store.get<string | null>(ACTIVE_PRESET_KEY)) ?? null
+  const raw = await store.get<unknown>(ACTIVE_PRESET_KEY)
+  const normalized = normalizeActivePresetId(raw)
+  if (changed(raw, normalized)) {
+    await store.set(ACTIVE_PRESET_KEY, normalized)
+  }
+  return normalized
 }
 
 const SEARCH_API_KEY = "searchApiConfig"
@@ -107,7 +238,12 @@ export async function saveMultimodalConfig(config: MultimodalConfig): Promise<vo
 
 export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
   const store = await getStore()
-  return (await store.get<MultimodalConfig>(MULTIMODAL_KEY)) ?? null
+  const raw = await store.get<unknown>(MULTIMODAL_KEY)
+  const normalized = normalizeMultimodalConfig(raw)
+  if (normalized && changed(raw, normalized)) {
+    await store.set(MULTIMODAL_KEY, normalized)
+  }
+  return normalized
 }
 
 // IMPORTANT: Keep this key in sync with the Rust setup hook

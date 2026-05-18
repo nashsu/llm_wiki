@@ -15,6 +15,7 @@ const KNOWN_PROVIDERS_WITH_KEY: ReadonlySet<LlmProvider> = new Set([
   "openai",
   "anthropic",
   "google",
+  "azure",
   "minimax",
 ])
 
@@ -76,6 +77,12 @@ describe("hasUsableLlm", () => {
     ).toBe(false)
   })
 
+  it("returns false instead of throwing when a key-required provider has a missing legacy key field", () => {
+    expect(
+      hasUsableLlm({ provider: "azure", apiKey: undefined as unknown as string }),
+    ).toBe(false)
+  })
+
   it("PROVIDERS_WITHOUT_KEY covers the locally-running / CLI-auth providers", () => {
     expect(PROVIDERS_WITHOUT_KEY.has("ollama")).toBe(true)
     expect(PROVIDERS_WITHOUT_KEY.has("custom")).toBe(true)
@@ -87,6 +94,7 @@ describe("hasUsableLlm", () => {
     expect(PROVIDERS_WITHOUT_KEY.has("openai")).toBe(false)
     expect(PROVIDERS_WITHOUT_KEY.has("anthropic")).toBe(false)
     expect(PROVIDERS_WITHOUT_KEY.has("google")).toBe(false)
+    expect(PROVIDERS_WITHOUT_KEY.has("azure")).toBe(false)
     expect(PROVIDERS_WITHOUT_KEY.has("minimax")).toBe(false)
   })
 
@@ -99,6 +107,7 @@ describe("hasUsableLlm", () => {
       "openai",
       "anthropic",
       "google",
+      "azure",
       "ollama",
       "custom",
       "minimax",

@@ -12,6 +12,7 @@ export type Provider =
   | "openai"
   | "anthropic"
   | "google"
+  | "azure"
   | "ollama"
   | "custom"
   | "minimax"
@@ -39,6 +40,8 @@ export interface LlmPreset {
   baseUrlByMode?: Partial<Record<CustomApiMode, string>>
   /** Suggested default model; user can override. */
   defaultModel?: string
+  /** Azure OpenAI api-version query parameter. Azure deployments vary by resource. */
+  azureApiVersion?: string
   /**
    * Curated list of model ids the UI shows as clickable chips above the
    * Model input. The user can still type a custom value — the input stays
@@ -146,6 +149,16 @@ export const LLM_PRESETS: LlmPreset[] = [
       "gemini-1.5-flash",
     ],
     suggestedContextSize: 1000000,
+  },
+  {
+    id: "azure",
+    label: "Azure OpenAI",
+    hint: "Azure OpenAI resource endpoint; Model field is the deployment name",
+    provider: "azure",
+    baseUrl: "https://your-resource.openai.azure.com",
+    defaultModel: "your-deployment-name",
+    azureApiVersion: "2024-10-21",
+    suggestedContextSize: 128000,
   },
   {
     id: "deepseek",

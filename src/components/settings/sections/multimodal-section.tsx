@@ -13,6 +13,7 @@ const PROVIDER_OPTIONS: Array<{ value: SettingsDraft["multimodalProvider"]; labe
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google (Gemini)" },
+  { value: "azure", label: "Azure OpenAI" },
   { value: "ollama", label: "Ollama" },
 ]
 
@@ -174,18 +175,48 @@ export function MultimodalSection({ draft, setDraft }: Props) {
                 </div>
               )}
 
-              {draft.multimodalProvider === "custom" && (
+              {(draft.multimodalProvider === "custom" || draft.multimodalProvider === "azure") && (
                 <div className="space-y-2">
-                  <Label>{t("settings.sections.multimodal.customEndpoint", "Endpoint URL")}</Label>
+                  <Label>
+                    {draft.multimodalProvider === "azure"
+                      ? t("settings.sections.multimodal.azureEndpoint", "Azure endpoint")
+                      : t("settings.sections.multimodal.customEndpoint", "Endpoint URL")}
+                  </Label>
                   <Input
                     value={draft.multimodalCustomEndpoint}
                     onChange={(e) => setDraft("multimodalCustomEndpoint", e.target.value)}
-                    placeholder="http://localhost:1234/v1"
+                    placeholder={
+                      draft.multimodalProvider === "azure"
+                        ? "https://your-resource.openai.azure.com"
+                        : "http://localhost:1234/v1"
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {draft.multimodalProvider === "azure"
+                      ? t(
+                          "settings.sections.multimodal.azureEndpointHint",
+                          "Use your Azure OpenAI resource endpoint. The model field is the deployment name.",
+                        )
+                      : t(
+                          "settings.sections.multimodal.customEndpointHint",
+                          "OpenAI-compatible /v1 base. LM Studio, llama.cpp server, vLLM, LocalAI all work.",
+                        )}
+                  </p>
+                </div>
+              )}
+
+              {draft.multimodalProvider === "azure" && (
+                <div className="space-y-2">
+                  <Label>{t("settings.sections.multimodal.azureApiVersion", "Azure API version")}</Label>
+                  <Input
+                    value={draft.multimodalAzureApiVersion}
+                    onChange={(e) => setDraft("multimodalAzureApiVersion", e.target.value)}
+                    placeholder="2024-10-21"
                   />
                   <p className="text-xs text-muted-foreground">
                     {t(
-                      "settings.sections.multimodal.customEndpointHint",
-                      "OpenAI-compatible /v1 base. LM Studio, llama.cpp server, vLLM, LocalAI all work.",
+                      "settings.sections.multimodal.azureApiVersionHint",
+                      "Sent as the Azure OpenAI api-version query parameter.",
                     )}
                   </p>
                 </div>
@@ -205,7 +236,11 @@ export function MultimodalSection({ draft, setDraft }: Props) {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("settings.sections.multimodal.model", "Model")}</Label>
+                <Label>
+                  {draft.multimodalProvider === "azure"
+                    ? t("settings.sections.multimodal.azureDeployment", "Deployment name")
+                    : t("settings.sections.multimodal.model", "Model")}
+                </Label>
                 <Input
                   value={draft.multimodalModel}
                   onChange={(e) => setDraft("multimodalModel", e.target.value)}

@@ -44,6 +44,19 @@ export function resolveConfig(
     }
   }
 
+  if (preset.provider === "azure") {
+    return {
+      provider: "azure",
+      apiKey,
+      model,
+      ollamaUrl: fallback.ollamaUrl,
+      customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
+      azureApiVersion: ov.azureApiVersion ?? preset.azureApiVersion ?? "2024-10-21",
+      maxContextSize,
+      reasoning,
+    }
+  }
+
   if (preset.provider === "claude-code" || preset.provider === "codex-cli") {
     // Subprocess transport — no apiKey, no endpoint URL. Model id is
     // passed straight to the local CLI's model flag.
