@@ -2,6 +2,8 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { buildRetrievalGraph, calculateRelevance } from "./graph-relevance"
 import { normalizePath } from "@/lib/path-utils"
+import { parseFrontmatterArray } from "@/lib/sources-merge"
+import { resolveWikiSlugId, unwrapWikilink } from "@/lib/wiki-page-resolver"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -152,6 +154,15 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
+/** Frontmatter `related:` slugs — batched ingest often writes these without body wikilinks. */
+function extractRelatedTargets(content: string): string[] {
+  return parseFrontmatterArray(content, "related").map((raw) => unwrapWikilink(raw).slug)
+}
+
+function extractLinkTargets(content: string): string[] {
+  return [...extractWikilinks(content), ...extractRelatedTargets(content)]
+}
+
 function fileNameToId(fileName: string): string {
   return fileName.replace(/\.md$/, "")
 }
@@ -194,7 +205,7 @@ export async function buildWikiGraph(
       label: extractTitle(content, file.name),
       type: extractType(content),
       path: file.path,
-      links: extractWikilinks(content),
+      links: extractLinkTargets(content),
     })
   }
 
@@ -289,16 +300,5 @@ function resolveTarget(
   raw: string,
   nodeMap: Map<string, { id: string }>,
 ): string | null {
-  // Direct match
-  if (nodeMap.has(raw)) return raw
-
-  // Normalize: lowercase, replace spaces with hyphens and vice versa
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeMap.keys()) {
-    if (id.toLowerCase() === normalized) return id
-    if (id.toLowerCase() === raw.toLowerCase()) return id
-    if (id.toLowerCase().replace(/\s+/g, "-") === normalized) return id
-  }
-
-  return null
+  return resolveWikiSlugId(raw, nodeMap.keys())
 }

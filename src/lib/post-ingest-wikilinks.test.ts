@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { addDeterministicWikilinks } from "./post-ingest-wikilinks"
+import {
+  addDeterministicWikilinks,
+  canonicalizeRelatedFrontmatter,
+} from "./post-ingest-wikilinks"
 
 describe("addDeterministicWikilinks", () => {
   it("links by slug/title, keeps original display text when needed", () => {
@@ -103,5 +106,27 @@ describe("addDeterministicWikilinks", () => {
     )
 
     expect(out.added).toBe(2)
+  })
+})
+
+describe("canonicalizeRelatedFrontmatter", () => {
+  it("rewrites short related slugs to canonical page ids", () => {
+    const content = [
+      "---",
+      'type: entity',
+      'title: "Hadoop"',
+      'related: [hdfs, spark]',
+      "---",
+      "",
+      "Body.",
+    ].join("\n")
+
+    const out = canonicalizeRelatedFrontmatter(content, [
+      "hdfs",
+      "apache-spark",
+      "hadoop",
+    ])
+    expect(out).toContain('related: ["hdfs", "apache-spark"]')
+    expect(out).not.toContain('"spark"')
   })
 })

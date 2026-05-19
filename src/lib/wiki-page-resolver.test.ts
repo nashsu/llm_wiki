@@ -3,6 +3,7 @@ import type { FileNode } from "@/types/wiki"
 import {
   findInTreeByName,
   resolveRelatedSlug,
+  resolveWikiSlugId,
   resolveSourceName,
   unwrapWikilink,
 } from "./wiki-page-resolver"
@@ -103,6 +104,18 @@ describe("findInTreeByName", () => {
   })
 })
 
+describe("resolveWikiSlugId", () => {
+  it("resolves an unambiguous suffix match (spark → apache-spark)", () => {
+    expect(
+      resolveWikiSlugId("spark", ["apache-spark", "hadoop", "hdfs"]),
+    ).toBe("apache-spark")
+  })
+
+  it("returns null when suffix match is ambiguous", () => {
+    expect(resolveWikiSlugId("spark", ["apache-spark", "delta-spark"])).toBeNull()
+  })
+})
+
 describe("resolveRelatedSlug", () => {
   it("appends .md and finds entities by bare slug", () => {
     expect(resolveRelatedSlug(TREE, "foo", WIKI)).toBe(`${WIKI}/entities/foo.md`)
@@ -132,6 +145,17 @@ describe("resolveRelatedSlug", () => {
 
   it("returns null when slug doesn't exist", () => {
     expect(resolveRelatedSlug(TREE, "ghost", WIKI)).toBeNull()
+  })
+
+  it("resolves a short related slug via suffix match on disk", () => {
+    const tree: FileNode[] = [
+      {
+        name: "apache-spark.md",
+        path: `${WIKI}/entities/apache-spark.md`,
+        is_dir: false,
+      },
+    ]
+    expect(resolveRelatedSlug(tree, "spark", WIKI)).toBe(`${WIKI}/entities/apache-spark.md`)
   })
 
   it("returns null when path-like ref doesn't exist", () => {

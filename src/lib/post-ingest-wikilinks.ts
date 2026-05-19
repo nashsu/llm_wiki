@@ -1,6 +1,8 @@
 import { listDirectory, readFile, writeFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { parseFrontmatter } from "@/lib/frontmatter"
+import { parseFrontmatterArray, writeFrontmatterArray } from "@/lib/sources-merge"
+import { resolveWikiSlugId, unwrapWikilink } from "@/lib/wiki-page-resolver"
 import type { FileNode } from "@/types/wiki"
 
 const STRUCTURAL_PAGE_IDS = new Set(["index", "log", "overview", "purpose", "schema"])
@@ -34,6 +36,7 @@ export async function postLinkIngestedPages(
   const targets = await buildLinkTargetCatalog(pp)
   if (targets.length === 0) return { updatedPaths: [], totalAdded: 0 }
 
+  const knownSlugs = targets.map((t) => t.slug)
   const updatedPaths: string[] = []
   let totalAdded = 0
 
@@ -53,14 +56,34 @@ export async function postLinkIngestedPages(
       selfSlug,
       MAX_NEW_WIKILINKS_PER_PAGE,
     )
-    if (added <= 0 || linked === content) continue
+    const withRelated = canonicalizeRelatedFrontmatter(linked, knownSlugs)
+    if (added <= 0 && withRelated === content) continue
 
-    await writeFile(absPath, linked)
+    await writeFile(absPath, withRelated)
     updatedPaths.push(relPath)
     totalAdded += added
   }
 
   return { updatedPaths, totalAdded }
+}
+
+/** Rewrite `related:` slugs to ids that exist on disk (e.g. `spark` → `apache-spark`). */
+export function canonicalizeRelatedFrontmatter(
+  content: string,
+  knownSlugs: readonly string[],
+): string {
+  const related = parseFrontmatterArray(content, "related")
+  if (related.length === 0) return content
+
+  let changed = false
+  const canonical = related.map((raw) => {
+    const { slug } = unwrapWikilink(raw)
+    const resolved = resolveWikiSlugId(slug, knownSlugs) ?? slug
+    if (resolved !== slug) changed = true
+    return resolved
+  })
+  if (!changed) return content
+  return writeFrontmatterArray(content, "related", canonical)
 }
 
 export function addDeterministicWikilinks(

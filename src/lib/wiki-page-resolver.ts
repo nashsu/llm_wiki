@@ -64,22 +64,79 @@ export function findInTreeByName(
  * matches. Always restricts the lookup to `wiki/` to avoid pulling
  * in a same-named file from `raw/sources/`.
  */
+/**
+ * Match a wikilink / related slug against known page ids (filename
+ * without `.md`). Handles case, spaces-vs-hyphens, and a single
+ * unambiguous suffix match (`spark` → `apache-spark`).
+ */
+export function resolveWikiSlugId(
+  raw: string,
+  knownIds: Iterable<string>,
+): string | null {
+  const ref = raw.trim().replace(/\.md$/i, "")
+  if (!ref) return null
+
+  const ids = [...knownIds]
+  if (ids.includes(ref)) return ref
+
+  const normalized = ref.toLowerCase().replace(/\s+/g, "-")
+  const exactCi = ids.filter((id) => id.toLowerCase() === normalized)
+  if (exactCi.length === 1) return exactCi[0]
+
+  const hyphenNorm = ids.filter(
+    (id) => id.toLowerCase().replace(/\s+/g, "-") === normalized,
+  )
+  if (hyphenNorm.length === 1) return hyphenNorm[0]
+
+  const suffixMatches = ids.filter((id) => {
+    const lower = id.toLowerCase()
+    return lower === normalized || lower.endsWith(`-${normalized}`)
+  })
+  if (suffixMatches.length === 1) return suffixMatches[0]
+
+  return null
+}
+
+function collectWikiPageIds(tree: FileNode[], wikiRoot: string): string[] {
+  const ids: string[] = []
+  const walk = (nodes: FileNode[]) => {
+    for (const node of nodes) {
+      if (node.is_dir && node.children) {
+        walk(node.children)
+        continue
+      }
+      if (node.is_dir || !node.name.endsWith(".md")) continue
+      if (!node.path.includes(`${wikiRoot}/`)) continue
+      ids.push(node.name.replace(/\.md$/i, ""))
+    }
+  }
+  walk(tree)
+  return ids
+}
+
 export function resolveRelatedSlug(
   tree: FileNode[],
   ref: string,
   wikiRoot: string,
 ): string | null {
+  const { slug } = unwrapWikilink(ref)
+
   // Path-like → resolve relative to project root (one segment up
   // from wikiRoot).
-  if (ref.includes("/")) {
+  if (slug.includes("/")) {
     const projectRoot = wikiRoot.replace(/\/wiki$/, "")
-    const target = `${projectRoot}/${ref}`
+    const target = `${projectRoot}/${slug}`
     const found = findInTreeByPath(tree, target)
     return found && found.includes(`${wikiRoot}/`) ? found : null
   }
 
-  const filename = ref.endsWith(".md") ? ref : `${ref}.md`
-  return findInTreeByName(tree, filename, `${wikiRoot}/`)
+  const filename = slug.endsWith(".md") ? slug : `${slug}.md`
+  const exact = findInTreeByName(tree, filename, `${wikiRoot}/`)
+  if (exact) return exact
+
+  const resolved = resolveWikiSlugId(slug, collectWikiPageIds(tree, wikiRoot))
+  if (!resolved) return null
+  return findInTreeByName(tree, `${resolved}.md`, `${wikiRoot}/`)
 }
 
 /**
