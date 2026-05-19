@@ -288,6 +288,11 @@ const INGEST_ANALYSIS_RESPONSE_RESERVE = 16_000
 const INGEST_GENERATION_RESPONSE_RESERVE = 32_000
 const INGEST_MIN_CHUNK_CHARS = 10_000
 const INGEST_CHUNK_OVERLAP_CHARS = 500
+// Number of entity/concept pages requested per batched Generation call.
+// 20 pages × ~600 chars each ≈ 12k chars output, well inside the 8192
+// max_tokens (~32k chars) reserve. Larger batches force the model to
+// write thinner pages; smaller batches multiply LLM round-trips.
+const INGEST_ENTITY_BATCH_SIZE = 20
 
 /** Max source-content length a single Analysis call can consume. Longer
  *  documents are split into N chunks, each analyzed independently.
@@ -313,6 +318,49 @@ export function computeGenerationContentBudget(maxContextSize: number | undefine
     INGEST_MIN_CHUNK_CHARS,
     ctx - INGEST_PROMPT_OVERHEAD_CHARS - INGEST_GENERATION_RESPONSE_RESERVE,
   )
+}
+
+// Analysis types, parser, and prompt builder live in `./analysis`.
+// We re-export `AnalysisEntity` so existing imports from this file still
+// resolve. `ChunkedEntity` is the local pipeline shape — same as
+// `AnalysisEntity` plus a required `chunkIndex` so each entity remembers
+// which source chunk it came from (drives `analysisParts[i]` selection
+// when building batch context).
+import {
+  type AnalysisEntity,
+  type AnalysisPart,
+  parseAnalysisOutput,
+  buildAnalysisPrompt,
+} from "./analysis"
+
+export type { AnalysisEntity }
+export { buildAnalysisPrompt }
+
+type ChunkedEntity = AnalysisEntity & { chunkIndex: number }
+
+/** Deduplicate by case-insensitive name (first occurrence wins for
+ *  casing) and split into batches of `batchSize`. Used to feed the
+ *  per-batch Generation calls — each batch is one LLM round-trip.
+ *  Exported for tests. */
+export function dedupAndBatchEntities<T extends AnalysisEntity>(
+  items: T[],
+  batchSize: number,
+): T[][] {
+  if (batchSize <= 0) throw new Error(`batchSize must be > 0, got ${batchSize}`)
+  const seen = new Set<string>()
+  const deduped: T[] = []
+  for (const it of items) {
+    const key = it.name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(it)
+  }
+  if (deduped.length === 0) return []
+  const batches: T[][] = []
+  for (let i = 0; i < deduped.length; i += batchSize) {
+    batches.push(deduped.slice(i, i + batchSize))
+  }
+  return batches
 }
 
 /** Split content into ≤chunkSize pieces with a small overlap so entities
@@ -617,10 +665,11 @@ async function autoIngestImpl(
   }
 
   // ── Step 1: Analysis (one pass per chunk) ────────────────────
-  // Each chunk gets its own structured analysis. We concatenate the
-  // outputs with a header line per part so Generation can tell which
-  // section of the document each analysis covers.
-  const analysisParts: string[] = []
+  // Each chunk gets its own structured analysis. parseAnalysisOutput
+  // returns a typed AnalysisPart with `.entities` (parsed manifest) and
+  // `.prose` (manifest stripped). Downstream consumers always work with
+  // the typed fields, never the raw LLM text.
+  const parts: AnalysisPart[] = []
   const stride = Math.max(1, analysisChunkSize - INGEST_CHUNK_OVERLAP_CHARS)
 
   for (let i = 0; i < contentChunks.length; i++) {
@@ -647,7 +696,7 @@ async function autoIngestImpl(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
     )
 
     const stepActivity = useActivityStore.getState().items.find((it) => it.id === activityId)
@@ -655,25 +704,142 @@ async function autoIngestImpl(
       throw new Error(stepActivity.detail || "Analysis stream failed")
     }
 
-    if (isMultiChunk) {
-      const startChar = i * stride
-      const endChar = Math.min(startChar + analysisChunkSize, enrichedSourceContent.length)
-      analysisParts.push(
-        `## Stage 1 Analysis — Part ${i + 1}/${contentChunks.length} (chars ${startChar}–${endChar})\n\n${chunkAnalysis}`,
-      )
-    } else {
-      analysisParts.push(chunkAnalysis)
-    }
+    parts.push(parseAnalysisOutput(chunkAnalysis, i))
   }
 
-  const analysis = analysisParts.join("\n\n")
+  // Format prose for one part with the multi-chunk header (helps the
+  // downstream LLM identify which range of the source this part covers).
+  // For single-chunk documents the header would be noise, so skip it.
+  const formatPartProse = (part: AnalysisPart): string => {
+    if (!isMultiChunk) return part.prose
+    const startChar = part.chunkIndex * stride
+    const endChar = Math.min(startChar + analysisChunkSize, enrichedSourceContent.length)
+    return `## Stage 1 Analysis — Part ${part.chunkIndex + 1}/${contentChunks.length} (chars ${startChar}–${endChar})\n\n${part.prose}`
+  }
+
+  const analysis = parts.map(formatPartProse).join("\n\n")
+
+  // ── Step 1.5: Batched entity/concept generation ───────────────
+  //
+  // Long documents have far more entities than a single Generation
+  // call's response budget (~8192 tokens) can cover — the model
+  // silently drops most of them. So we use the per-chunk entity
+  // attribution recorded in `parts` to dispatch dedicated LLM calls
+  // (one per batch of ~20 names), each given only the prose context
+  // for the chunks its entities came from — GraphRAG-style per-text-unit
+  // attribution. Each batch writes its FILE blocks directly to disk,
+  // and the subsequent global Generation call (Step 2) only has to
+  // produce source-summary / index / log / overview.
+  //
+  // Fallback path: if NO part has a parseable manifest, we skip batching
+  // and let the legacy single-call Generation run instead. Tolerates
+  // model prompt-compliance drift without breaking the pipeline.
+  const anyManifest = parts.some(p => p.manifestFound)
+  const chunkedEntities: ChunkedEntity[] = parts.flatMap(p =>
+    p.entities.map(e => ({ ...e, chunkIndex: p.chunkIndex })),
+  )
+  const parsedEntities = anyManifest ? chunkedEntities : null
+  const useBatchedGeneration = parsedEntities !== null && parsedEntities.length > 0
+  const batchWrittenPaths: string[] = []
+  const batchWarnings: string[] = []
+  const batchHardFailures: string[] = []
+
+  if (useBatchedGeneration) {
+    const batches = dedupAndBatchEntities(parsedEntities!, INGEST_ENTITY_BATCH_SIZE)
+    console.log(
+      `[ingest] "${fileName}": manifest has ${parsedEntities!.length} entities/concepts → ${batches.length} batch call(s) of ≤${INGEST_ENTITY_BATCH_SIZE}`,
+    )
+
+    // Re-read the index between batches so later batches see pages
+    // written by earlier batches and can wikilink to them.
+    let runningIndex = index
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi]
+      activity.updateItem(activityId, {
+        detail: `Step 2a/2b: Writing entity batch ${bi + 1}/${batches.length} (${batch.length} pages)...`,
+      })
+
+      // Only pass the analysis parts that cover the chunks where this
+      // batch's entities were found. `parts[i].prose` is already
+      // manifest-stripped by parseAnalysisOutput — the typed contract
+      // makes it impossible to accidentally leak the ENTITIES block back
+      // into the model's context.
+      const batchPartIndices = [...new Set(batch.map(e => e.chunkIndex))]
+      const batchContext = batchPartIndices
+        .map(i => formatPartProse(parts[i]))
+        .join("\n\n---\n\n")
+
+      let batchOutput = ""
+      await streamChat(
+        llmConfig,
+        [
+          {
+            role: "system",
+            content: buildEntityBatchPrompt(schema, purpose, runningIndex, fileName, batch, ""),
+          },
+          {
+            role: "user",
+            content: [
+              `Source document: **${fileName}** (batch ${bi + 1} of ${batches.length}).`,
+              "",
+              "<context>",
+              "Use this analysis as background for writing the listed pages. Do not echo it.",
+              "",
+              batchContext,
+              "</context>",
+              "",
+              "Emit the FILE blocks now per `<output_contract>`. Begin with `---FILE:`.",
+            ].join("\n"),
+          },
+        ],
+        {
+          onToken: (token) => { batchOutput += token },
+          onDone: () => {},
+          onError: (err) => {
+            activity.updateItem(activityId, {
+              status: "error",
+              detail: `Entity batch ${bi + 1}/${batches.length} failed: ${err.message}`,
+            })
+          },
+        },
+        signal,
+        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+      )
+
+      const batchActivity = useActivityStore.getState().items.find((it) => it.id === activityId)
+      if (batchActivity?.status === "error") {
+        throw new Error(batchActivity.detail || "Entity batch stream failed")
+      }
+
+      const result = await writeFileBlocks(pp, batchOutput, llmConfig, fileName, signal)
+      batchWrittenPaths.push(...result.writtenPaths)
+      batchWarnings.push(...result.warnings)
+      batchHardFailures.push(...result.hardFailures)
+
+      // Refresh the index snapshot for the next batch. We deliberately
+      // re-read from disk (not just append to the in-memory string) so
+      // that if Step 2's index regeneration ever runs interleaved with
+      // batches in the future, we'd still see the on-disk truth.
+      runningIndex = await tryReadFile(`${pp}/wiki/index.md`)
+    }
+  } else if (parsedEntities === null) {
+    console.warn(
+      `[ingest] "${fileName}": entity manifest missing or unparseable — falling back to legacy single-call Generation. Entity coverage may be incomplete for long documents.`,
+    )
+  }
 
   // ── Step 2: Generation ────────────────────────────────────────
   // LLM takes the merged analysis + a source excerpt and produces
-  // wiki files + review items. The source excerpt is sized to fit
-  // whatever budget is left after the merged analysis, so total
-  // prompt stays inside the model's context regardless of chunk count.
-  activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
+  // the global pages (source summary / index / log / overview) plus
+  // — when batching was skipped — entity/concept pages too. The
+  // source excerpt is sized to fit whatever budget is left after
+  // the merged analysis, so total prompt stays inside the model's
+  // context regardless of chunk count.
+  activity.updateItem(activityId, {
+    detail: useBatchedGeneration
+      ? "Step 2b/2b: Generating source summary, index, overview..."
+      : "Step 2/2: Generating wiki pages...",
+  })
 
   const generationBudget = computeGenerationContentBudget(llmConfig.maxContextSize)
   const sourceBudgetForGen = Math.max(5_000, generationBudget - analysis.length)
@@ -682,12 +848,36 @@ async function autoIngestImpl(
       "\n\n[...truncated for generation; full content covered by multi-part analysis above...]"
     : enrichedSourceContent
 
+  // When batching ran, surface the freshly-written pages to the LLM so
+  // it can include them in the rebuilt index.md. Without this list the
+  // model only sees the pre-batch wiki state and emits an index that
+  // ignores everything the batches just wrote.
+  const indexForGen = useBatchedGeneration
+    ? await tryReadFile(`${pp}/wiki/index.md`)
+    : index
+  const newlyWrittenContentPages = useBatchedGeneration
+    ? batchWrittenPaths.filter(
+        (p) => p.startsWith("wiki/entities/") || p.startsWith("wiki/concepts/"),
+      )
+    : []
+
   let generation = ""
 
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, sourceForGeneration) },
+      {
+        role: "system",
+        content: buildGenerationPrompt(
+          schema,
+          purpose,
+          indexForGen,
+          fileName,
+          overview,
+          sourceForGeneration,
+          useBatchedGeneration, // skipContentPages
+        ),
+      },
       {
         role: "user",
         content: [
@@ -709,6 +899,14 @@ async function autoIngestImpl(
           "",
           sourceForGeneration,
           "",
+          ...(newlyWrittenContentPages.length > 0
+            ? [
+                "## Already-written entity/concept pages (include these in your index.md update)",
+                "",
+                ...newlyWrittenContentPages.map((p) => `- ${p}`),
+                "",
+              ]
+            : []),
           "---",
           "",
           `Now emit the FILE blocks for the wiki files derived from **${fileName}**.`,
@@ -735,13 +933,19 @@ async function autoIngestImpl(
 
   // ── Step 3: Write files ───────────────────────────────────────
   activity.updateItem(activityId, { detail: "Writing files..." })
-  const { writtenPaths, warnings: writeWarnings, hardFailures } = await writeFileBlocks(
+  const { writtenPaths: globalWritten, warnings: globalWarnings, hardFailures: globalHardFailures } = await writeFileBlocks(
     pp,
     generation,
     llmConfig,
     fileName,
     signal,
   )
+  // Merge the batched writes into the final result set so cache,
+  // activity panel, embeddings, and file-tree refresh all see one
+  // unified list regardless of which code path produced the page.
+  const writtenPaths = [...batchWrittenPaths, ...globalWritten]
+  const writeWarnings = [...batchWarnings, ...globalWarnings]
+  const hardFailures = [...batchHardFailures, ...globalHardFailures]
 
   // Surface parser / writer warnings to the activity panel so users
   // don't have to open devtools to find out a block was dropped.
@@ -1088,64 +1292,161 @@ function parseReviewBlocks(
   return items
 }
 
+// `buildAnalysisPrompt` lives in `./analysis` and is re-exported from
+// this file's import block at the top.
+
 /**
- * Step 1 prompt: AI reads the source and produces a structured analysis.
- * This is the "discussion" step — the AI reasons about the source before writing wiki pages.
+ * Per-batch entity/concept page generator. Long documents have too many
+ * entities to fit into a single Generation call's response budget — the
+ * model silently drops most of them. This prompt narrows the LLM's job
+ * to a fixed batch of named pages so it can give each one a proper write.
+ *
+ * Prompt structure uses XML tags for internal sections — `<task>`,
+ * `<output_contract>`, `<forbidden>`, `<inputs>`. This makes the
+ * instruction-vs-data boundary unambiguous and lets us reference
+ * sections by name without scanning prose.
+ *
+ * Crucially, `<forbidden>` lists page types written by the global
+ * Generation call (source summary, index, log, overview). Otherwise
+ * every batch would clobber index.md with its own partial view.
+ *
+ * FILE block delimiters stay `---FILE:` / `---END FILE---` rather than
+ * XML tags — page content can contain arbitrary markdown including
+ * `<file>`-looking strings, and the line-anchored special delimiter is
+ * collision-proof against that.
  */
-export function buildAnalysisPrompt(purpose: string, index: string, sourceContent: string = ""): string {
+export function buildEntityBatchPrompt(
+  schema: string,
+  purpose: string,
+  index: string,
+  sourceFileName: string,
+  batch: AnalysisEntity[],
+  sourceContent: string = "",
+): string {
+  const entityNames = batch.filter((b) => b.type === "entity").map((b) => b.name)
+  const conceptNames = batch.filter((b) => b.type === "concept").map((b) => b.name)
+  const formatList = (names: string[]) =>
+    names.length === 0 ? "(none in this batch)" : names.map((n) => `- ${n}`).join("\n")
+
   return [
-    "You are an expert research analyst. Read the source document and produce a structured analysis.",
-    "Do not output chain-of-thought, hidden reasoning, or a thinking transcript. Reason internally and write only the concise final analysis.",
+    "<role>",
+    "You are a wiki maintainer writing a focused batch of entity and concept pages.",
+    "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
+    "</role>",
     "",
+    "<task>",
+    "Write exactly one FILE block for each name in `<pages_to_write>`. Nothing more, nothing less.",
+    `Source file: **${sourceFileName}**. Every page's frontmatter \`sources\` field MUST include this filename.`,
+    "</task>",
+    "",
+    "<pages_to_write>",
+    "Entity pages (path: `wiki/entities/<kebab-case-name>.md`, frontmatter `type: entity`):",
+    formatList(entityNames),
+    "",
+    "Concept pages (path: `wiki/concepts/<kebab-case-name>.md`, frontmatter `type: concept`):",
+    formatList(conceptNames),
+    "</pages_to_write>",
+    "",
+    "<output_contract>",
+    "Your ENTIRE response is a sequence of FILE blocks and nothing else.",
+    "",
+    "FILE block template:",
+    "    ---FILE: wiki/entities/some-entity.md---",
+    "    (complete file content with YAML frontmatter)",
+    "    ---END FILE---",
+    "",
+    "Strict rules:",
+    "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
+    "2. Emit EXACTLY one FILE block per name in `<pages_to_write>` — no extras, no omissions.",
+    "3. No preamble, no commentary, no prose between or after FILE blocks.",
+    "4. Do not echo or restate the analysis provided in `<context>`.",
+    "5. Page body MUST be in the language specified by `<language_rule>`.",
+    "",
+    "If you start with anything other than `---FILE:`, the entire response will be discarded.",
+    "</output_contract>",
+    "",
+    "<forbidden>",
+    "Other pipeline steps handle these. Emitting them will overwrite work done elsewhere:",
+    "- DO NOT write `wiki/sources/*.md` (the source summary page).",
+    "- DO NOT write `wiki/index.md` (a final pass rebuilds it).",
+    "- DO NOT write `wiki/log.md`.",
+    "- DO NOT write `wiki/overview.md`.",
+    "- DO NOT emit REVIEW blocks (the final pass handles those).",
+    "- DO NOT write pages for entities/concepts NOT in `<pages_to_write>`, even if you think they're important — they'll be covered by another batch.",
+    "</forbidden>",
+    "",
+    "<frontmatter_rules>",
+    "Every page begins with a YAML frontmatter block. Format rules:",
+    "1. The VERY FIRST line of the file MUST be exactly `---` (three hyphens, nothing else).",
+    "   Do NOT wrap in a ```yaml fence. Do NOT prefix with a `frontmatter:` key.",
+    "2. Each frontmatter line is a `key: value` pair on its own line.",
+    "3. The frontmatter ends with another `---` line on its own.",
+    "4. The next line after the closing `---` is the start of the page body.",
+    "5. Arrays use YAML inline form `[a, b, c]`. Wikilinks belong in the BODY only —",
+    "   never write `related: [[a]], [[b]]` (invalid YAML); write `related: [a, b]` with bare slugs.",
+    "",
+    "Required fields and types:",
+    "  • type     — `entity` or `concept` (match the list in `<pages_to_write>`)",
+    "  • title    — string (quote it if it contains a colon)",
+    "  • created  — date in YYYY-MM-DD form (no quotes)",
+    "  • updated  — same as created",
+    "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
+    "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
+    "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
+    `  • sources  — array of source filenames; MUST include "${sourceFileName}".`,
+    "",
+    "Body rules:",
+    "- Use [[wikilink]] syntax in the BODY for cross-references between pages.",
+    "- Use kebab-case filenames (e.g., `activity-based-costing.md`, not `Activity Based Costing.md`).",
+    "- Build the page body from the analysis in `<context>` — write SUBSTANTIVE content, not stubs.",
+    "</frontmatter_rules>",
+    "",
+    "<language_rule>",
     languageRule(sourceContent),
+    "</language_rule>",
     "",
-    "Your analysis should cover:",
-    "",
-    "## Key Entities",
-    "List people, organizations, products, datasets, tools mentioned. For each:",
-    "- Name and type",
-    "- Role in the source (central vs. peripheral)",
-    "- Whether it likely already exists in the wiki (check the index)",
-    "",
-    "## Key Concepts",
-    "List theories, methods, techniques, phenomena. For each:",
-    "- Name and brief definition",
-    "- Why it matters in this source",
-    "- Whether it likely already exists in the wiki",
-    "",
-    "## Main Arguments & Findings",
-    "- What are the core claims or results?",
-    "- What evidence supports them?",
-    "- How strong is the evidence?",
-    "",
-    "## Connections to Existing Wiki",
-    "- What existing pages does this source relate to?",
-    "- Does it strengthen, challenge, or extend existing knowledge?",
-    "",
-    "## Contradictions & Tensions",
-    "- Does anything in this source conflict with existing wiki content?",
-    "- Are there internal tensions or caveats?",
-    "",
-    "## Recommendations",
-    "- What wiki pages should be created or updated?",
-    "- What should be emphasized vs. de-emphasized?",
-    "- Any open questions worth flagging for the user?",
-    "",
-    "Be thorough but concise. Focus on what's genuinely important.",
-    "",
-    "If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).",
-    "",
-    purpose ? `## Wiki Purpose (for context)\n${purpose}` : "",
-    index ? `## Current Wiki Index (for checking existing content)\n${index}` : "",
+    purpose ? `<wiki_purpose>\n${purpose}\n</wiki_purpose>` : "",
+    schema ? `<wiki_schema>\n${schema}\n</wiki_schema>` : "",
+    index ? `<current_wiki_index>\nUse to set \`related:\` and avoid duplicate slugs.\n\n${index}\n</current_wiki_index>` : "",
   ].filter(Boolean).join("\n")
 }
 
 /**
  * Step 2 prompt: AI takes its own analysis and generates wiki files + review items.
+ *
+ * When `skipContentPages` is true, the prompt instructs the model to skip
+ * entity/concept pages — those have already been written by the batched
+ * Generation pass (see `buildEntityBatchPrompt`). The model still produces
+ * source summary / index / log / overview, which fits comfortably in one
+ * response now that the content pages aren't competing for the token budget.
  */
-export function buildGenerationPrompt(schema: string, purpose: string, index: string, sourceFileName: string, overview?: string, sourceContent: string = ""): string {
+export function buildGenerationPrompt(schema: string, purpose: string, index: string, sourceFileName: string, overview?: string, sourceContent: string = "", skipContentPages: boolean = false): string {
   // Use original filename (without extension) as the source summary page name
   const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
+
+  // When content pages are already on disk from the batch pass, we tell the
+  // model "don't write those" and renumber the remaining items. We also lift
+  // index.md construction to mention the existing entity/concept pages it
+  // must surface — without that prompt nudge the model often emits an index
+  // that references only the source summary, ignoring the batched pages.
+  const whatToGenerate = skipContentPages
+    ? [
+        `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
+        "2. An updated wiki/index.md — add entries for the NEWLY-WRITTEN entity/concept pages (listed in the user message) AND preserve all existing entries.",
+        "3. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
+        "4. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+        "",
+        "## DO NOT write entity or concept pages",
+        "Entity pages (`wiki/entities/...`) and concept pages (`wiki/concepts/...`) are ALREADY written to disk by an earlier batched pass. If you emit FILE blocks for those paths, they will OVERWRITE good content with thinner summaries — do not write them under any circumstances.",
+      ]
+    : [
+        `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
+        "2. Entity pages in wiki/entities/ for key entities identified in the analysis",
+        "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
+        "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
+        "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
+        "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+      ]
 
   return [
     "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
@@ -1159,12 +1460,7 @@ export function buildGenerationPrompt(schema: string, purpose: string, index: st
     "",
     "## What to generate",
     "",
-    `1. A source summary page at **wiki/sources/${sourceBaseName}.md** (MUST use this exact path)`,
-    "2. Entity pages in wiki/entities/ for key entities identified in the analysis",
-    "3. Concept pages in wiki/concepts/ for key concepts identified in the analysis",
-    "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-    "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    ...whatToGenerate,
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
