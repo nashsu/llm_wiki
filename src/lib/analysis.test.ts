@@ -48,6 +48,18 @@ describe("parseAnalysisOutput", () => {
     expect(result.entities).toEqual([])
   })
 
+  it("returns manifestFound=true when block is valid JSON but not an array", () => {
+    // Model wrapped the payload in an object instead of an array. The block
+    // existed and was valid JSON, so manifestFound=true (not a missing manifest),
+    // but no items can be extracted.
+    const text = `<entities>\n{"name":"Foo","type":"entity"}\n</entities>\n\nprose`
+    const result = parseAnalysisOutput(text, 0)
+    expect(result.manifestFound).toBe(true)
+    expect(result.entities).toEqual([])
+    expect(result.prose).toBe("prose")
+    expect(result.prose).not.toContain("<entities>")
+  })
+
   it("tolerates whitespace and case inside the markers", () => {
     const text = `< entities >\n  [{"name":"Foo","type":"entity"}]\n  </ entities >`
     const result = parseAnalysisOutput(text, 0)

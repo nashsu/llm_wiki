@@ -97,8 +97,8 @@ export function parseAnalysisOutput(rawText: string, chunkIndex: number): Analys
     }
     try {
       const parsed = JSON.parse(payload)
+      anyParsed = true  // block was present and valid JSON, even if not an array
       if (!Array.isArray(parsed)) continue
-      anyParsed = true
       for (const raw of parsed) {
         if (!raw || typeof raw !== "object") continue
         const name = typeof raw.name === "string" ? raw.name.trim() : ""
@@ -154,6 +154,8 @@ export function buildAnalysisPrompt(
     "- Opening `<entities>` MUST be on its own line; closing `</entities>` MUST be on its own line.",
     "- The JSON array MUST be on a single line between them (no nested newlines).",
     "- Each item has exactly two fields: `name` (string, canonical display name) and `type` (either `\"entity\"` or `\"concept\"`).",
+    "  Use `\"entity\"` for concrete named things: people, organizations, products, datasets, tools, systems, places.",
+    "  Use `\"concept\"` for abstract ideas: theories, methods, techniques, algorithms, phenomena, principles.",
     "- Include EVERY entity and concept worth a dedicated wiki page — do not pre-filter. Listing 80+ items is expected for dense documents.",
     "- If the source genuinely has no entities/concepts, emit `<entities>\n[]\n</entities>`.",
     "</output_contract>",

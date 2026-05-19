@@ -336,7 +336,7 @@ import {
 export type { AnalysisEntity }
 export { buildAnalysisPrompt }
 
-type ChunkedEntity = AnalysisEntity & { chunkIndex: number }
+type ChunkedEntity = AnalysisEntity & { chunkIndices: number[] }
 
 /** Deduplicate by case-insensitive name (first occurrence wins for
  *  casing) and split into batches of `batchSize`. Used to feed the
@@ -735,9 +735,29 @@ async function autoIngestImpl(
   // and let the legacy single-call Generation run instead. Tolerates
   // model prompt-compliance drift without breaking the pipeline.
   const anyManifest = parts.some(p => p.manifestFound)
-  const chunkedEntities: ChunkedEntity[] = parts.flatMap(p =>
-    p.entities.map(e => ({ ...e, chunkIndex: p.chunkIndex })),
-  )
+  const failedChunks = parts.filter(p => !p.manifestFound)
+  if (anyManifest && failedChunks.length > 0) {
+    console.warn(
+      `[ingest] "${fileName}": ${failedChunks.length}/${parts.length} chunk(s) produced no parseable entity manifest (chunks ${failedChunks.map(p => p.chunkIndex + 1).join(", ")}). Entities from those chunks are excluded from batched generation.`,
+    )
+  }
+  // Merge all chunk indices for the same entity so batch context spans every
+  // chunk that mentions it, not just the first. First-occurrence name casing wins.
+  const entityByName = new Map<string, ChunkedEntity>()
+  for (const part of parts) {
+    for (const e of part.entities) {
+      const key = e.name.toLowerCase()
+      const existing = entityByName.get(key)
+      if (existing) {
+        if (!existing.chunkIndices.includes(part.chunkIndex)) {
+          existing.chunkIndices.push(part.chunkIndex)
+        }
+      } else {
+        entityByName.set(key, { ...e, chunkIndices: [part.chunkIndex] })
+      }
+    }
+  }
+  const chunkedEntities: ChunkedEntity[] = [...entityByName.values()]
   const parsedEntities = anyManifest ? chunkedEntities : null
   const useBatchedGeneration = parsedEntities !== null && parsedEntities.length > 0
   const batchWrittenPaths: string[] = []
@@ -764,7 +784,7 @@ async function autoIngestImpl(
       // manifest-stripped by parseAnalysisOutput — the typed contract
       // makes it impossible to accidentally leak the ENTITIES block back
       // into the model's context.
-      const batchPartIndices = [...new Set(batch.map(e => e.chunkIndex))]
+      const batchPartIndices = [...new Set(batch.flatMap(e => e.chunkIndices))]
       const batchContext = batchPartIndices
         .map(i => formatPartProse(parts[i]))
         .join("\n\n---\n\n")
@@ -775,7 +795,7 @@ async function autoIngestImpl(
         [
           {
             role: "system",
-            content: buildEntityBatchPrompt(schema, purpose, runningIndex, fileName, batch, ""),
+            content: buildEntityBatchPrompt(schema, purpose, runningIndex, fileName, batch, enrichedSourceContent),
           },
           {
             role: "user",
