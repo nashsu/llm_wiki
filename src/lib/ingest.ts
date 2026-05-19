@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -34,6 +35,33 @@ import {
   parseAnalysisOutput,
   type AnalysisEntity,
 } from "@/lib/analysis"
+
+// ── PDF chapter splitting ─────────────────────────────────────────────
+
+interface PdfChapter {
+  title: string
+  pageStart: number
+  pageEnd: number
+}
+
+async function extractPdfOutline(path: string): Promise<PdfChapter[]> {
+  return invoke<PdfChapter[]>("extract_pdf_outline_cmd", { path })
+}
+
+async function extractPdfChapterText(path: string, pageStart: number, pageEnd: number): Promise<string> {
+  return invoke<string>("extract_pdf_chapter_text_cmd", { path, pageStart, pageEnd })
+}
+
+function chapterSlug(index: number, title: string): string {
+  const clean = title
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 50)
+  return `ch${String(index + 1).padStart(2, "0")}-${clean || "chapter"}`
+}
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -350,6 +378,8 @@ interface IngestRunContext {
   llmConfig: LlmConfig
   signal?: AbortSignal
   folderContext?: string
+  /** True when this is a chapter-split PDF summary pass — entity batches are skipped. */
+  isChapterParent?: boolean
   wiki: {
     schema: string
     purpose: string
@@ -499,6 +529,18 @@ async function runBatchedEntityGeneration(
   activityId: string,
   analysis: string,
 ): Promise<BatchedEntityGenerationResult> {
+  // Skip entity batch generation for the parent PDF summary pass — entity
+  // pages are handled by the individual chapter ingest runs.
+  if (runCtx.isChapterParent) {
+    return {
+      useBatchedGeneration: true, // true = generation prompt skips content pages
+      batchWrittenPaths: [],
+      batchWarnings: [],
+      batchHardFailures: [],
+      contentPagesForPostPass: [],
+    }
+  }
+
   const analysisParsed = parseAnalysisOutput(analysis, 0)
   const parsedEntities = analysisParsed.manifestFound ? analysisParsed.entities : null
   const useBatchedGeneration = parsedEntities !== null && parsedEntities.length > 0
@@ -586,140 +628,26 @@ async function runBatchedEntityGeneration(
     )
   }
 
-  let contentPagesForPostPass = useBatchedGeneration
-    ? batchWrittenPaths.filter(
-        (p) => p.startsWith("wiki/entities/") || p.startsWith("wiki/concepts/"),
-      )
-    : []
+  let contentPagesForPostPass: string[] = []
 
-  // Manifest materialization: stub any analysis-listed entity/concept
-  // the batched LLM calls failed to emit, and queue missing-page reviews
-  // for dangling `related:` refs outside the manifest.
   if (useBatchedGeneration && parsedEntities && parsedEntities.length > 0) {
-    useActivityStore.getState().updateItem(activityId, {
-      detail: "Step 2a.4/2b: Materializing manifest pages...",
-    })
-    const materialize = await materializeManifestPages(
-      runCtx.projectPath,
+    const followUp = await runFollowUpPasses(
+      runCtx,
       parsedEntities,
-      runCtx.fileName,
-      contentPagesForPostPass,
-      runCtx.sourcePath,
+      analysis,
+      batchWrittenPaths,
+      {
+        onProgress: (detail) =>
+          useActivityStore.getState().updateItem(activityId, { detail }),
+        onError: (detail) =>
+          useActivityStore.getState().updateItem(activityId, { status: "error", detail }),
+        onReviews: (items) => useReviewStore.getState().addItems(items),
+      },
     )
-    if (materialize.stubPaths.length > 0) {
-      batchWrittenPaths.push(...materialize.stubPaths)
-      console.log(
-        `[ingest] "${runCtx.fileName}": materialized ${materialize.stubPaths.length} manifest stub page(s)`,
-      )
-    }
-    if (materialize.reviewItems.length > 0) {
-      useReviewStore.getState().addItems(materialize.reviewItems)
-      console.log(
-        `[ingest] "${runCtx.fileName}": queued ${materialize.reviewItems.length} missing-page review(s) for non-manifest related refs`,
-      )
-    }
-
-    // Catch-up runs AFTER materialization so stub pages exist on disk and
-    // findCatchupManifestEntities can target them for a full LLM rewrite.
-    const catchupTargets = await findCatchupManifestEntities(runCtx.projectPath, parsedEntities!)
-    if (catchupTargets.length > 0) {
-      const catchupBatches = dedupAndBatchEntities(catchupTargets, INGEST_CATCHUP_BATCH_SIZE)
-      console.log(
-        `[ingest] "${runCtx.fileName}": ${catchupTargets.length} manifest page(s) need catch-up after materialization → ${catchupBatches.length} catch-up batch(es) of ≤${INGEST_CATCHUP_BATCH_SIZE}`,
-      )
-      for (let ci = 0; ci < catchupBatches.length; ci++) {
-        const batch = catchupBatches[ci]
-        useActivityStore.getState().updateItem(activityId, {
-          detail: `Step 2a-catchup: Missed entities ${ci + 1}/${catchupBatches.length} (${batch.length} pages)...`,
-        })
-        const wikilinkTargets = await buildWikilinkCandidates(runCtx.projectPath, parsedEntities!, batch)
-
-        let batchOutput = ""
-        await streamChat(
-          runCtx.llmConfig,
-          [
-            {
-              role: "system",
-              content: buildEntityBatchPromptForRun(
-                runCtx,
-                wikilinkTargets,
-                batch,
-                "catchup",
-              ),
-            },
-            {
-              role: "user",
-              content: [
-                `Source document: **${runCtx.fileName}**`,
-                "",
-                `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries are missing or still stub pages. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
-                "",
-                "## Stage 1 Analysis (use as context for page content — do not echo)",
-                "",
-                analysis,
-                "",
-                "---",
-                "",
-                "Emit FILE blocks for the listed pages now. Begin with `---FILE:`.",
-              ].join("\n"),
-            },
-          ],
-          {
-            onToken: (token) => { batchOutput += token },
-            onDone: () => {},
-            onError: (err) => {
-              useActivityStore.getState().updateItem(activityId, {
-                status: "error",
-                detail: `Catch-up batch ${ci + 1}/${catchupBatches.length} failed: ${err.message}`,
-              })
-            },
-          },
-          runCtx.signal,
-          { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
-        )
-
-        const catchupActivity = useActivityStore.getState().items.find((it) => it.id === activityId)
-        if (catchupActivity?.status === "error") {
-          throw new Error(catchupActivity.detail || "Catch-up batch stream failed")
-        }
-
-        const result = await writeFileBlocks(
-          {
-            projectPath: runCtx.projectPath,
-            llmConfig: runCtx.llmConfig,
-            sourceFileName: runCtx.fileName,
-            signal: runCtx.signal,
-          },
-          batchOutput,
-          { mergeExisting: false },
-        )
-        batchWrittenPaths.push(...result.writtenPaths)
-        batchWarnings.push(...result.warnings)
-        batchHardFailures.push(...result.hardFailures)
-      }
-    }
-  }
-
-  // Include every entity/concept path touched this run (batch, stub, catch-up).
-  contentPagesForPostPass = useBatchedGeneration
-    ? batchWrittenPaths.filter(
-        (p) => p.startsWith("wiki/entities/") || p.startsWith("wiki/concepts/"),
-      )
-    : []
-
-  // After all entity/concept pages are on disk, run a deterministic
-  // post-pass to add missing wikilinks (no LLM call). This specifically
-  // fills cross-links that fell outside the per-batch top-N prompt list.
-  if (contentPagesForPostPass.length > 0) {
-    useActivityStore.getState().updateItem(activityId, {
-      detail: "Step 2a.5/2b: Post-linking generated pages...",
-    })
-    const postLink = await postLinkIngestedPages(runCtx.projectPath, contentPagesForPostPass)
-    if (postLink.totalAdded > 0) {
-      console.log(
-        `[ingest] "${runCtx.fileName}": post-pass added ${postLink.totalAdded} wikilinks across ${postLink.updatedPaths.length} page(s)`,
-      )
-    }
+    batchWrittenPaths.push(...followUp.writtenPaths)
+    batchWarnings.push(...followUp.warnings)
+    batchHardFailures.push(...followUp.hardFailures)
+    contentPagesForPostPass = followUp.contentPagesForPostPass
   }
 
   return {
@@ -729,6 +657,181 @@ async function runBatchedEntityGeneration(
     batchHardFailures,
     contentPagesForPostPass,
   }
+}
+
+/**
+ * Effects produced by the **Follow-up pass** module. Production wires
+ * these to the activity store and the review store; tests inject spies.
+ * Two adapters live behind this seam (production + tests), so it earns
+ * its keep per LANGUAGE.md's "two adapters = real seam" rule.
+ */
+export interface FollowUpEffects {
+  onProgress: (detail: string) => void
+  onError: (detail: string) => void
+  onReviews: (items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[]) => void
+}
+
+export interface FollowUpResult {
+  /** Stubs from Manifest coverage + pages written by Catch-up. */
+  writtenPaths: string[]
+  /**
+   * Final entity/concept path set for Link pass and the global-generation
+   * prompt. ADR 0001 line 29 invariant: this set is computed AFTER all
+   * catch-up writes have landed, never frozen pre-catch-up.
+   */
+  contentPagesForPostPass: string[]
+  warnings: string[]
+  hardFailures: string[]
+}
+
+/**
+ * The three **Follow-up pass** stages — Manifest coverage → Catch-up →
+ * Link pass — as one module (CONTEXT.md "Follow-up pass"). The ADR 0001
+ * DAG invariants (catch-up runs after materialization; the path set passed
+ * to Link pass is recomputed AFTER catch-up writes) live inside this
+ * function, not in caller ordering — callers cannot reach a state that
+ * violates them.
+ *
+ * Cross-cutting effects cross the seam through `effects`; this is the
+ * only way the module touches activity / review state.
+ *
+ * Pre-condition: caller has already confirmed batched generation is in
+ * use and `manifest.length > 0`. The empty-manifest case is a no-op for
+ * follow-up and is gated by the caller (no batches → no follow-up).
+ */
+export async function runFollowUpPasses(
+  runCtx: IngestRunContext,
+  manifest: AnalysisEntity[],
+  analysis: string,
+  primaryWritten: readonly string[],
+  effects: FollowUpEffects,
+): Promise<FollowUpResult> {
+  const writtenPaths: string[] = []
+  const warnings: string[] = []
+  const hardFailures: string[] = []
+
+  // ── Manifest coverage ────────────────────────────────────────
+  effects.onProgress("Step 2a.4/2b: Materializing manifest pages...")
+  const materialize = await materializeManifestPages(
+    runCtx.projectPath,
+    manifest,
+    runCtx.fileName,
+    primaryWritten.filter(isEntityOrConceptPath),
+    runCtx.sourcePath,
+  )
+  if (materialize.stubPaths.length > 0) {
+    writtenPaths.push(...materialize.stubPaths)
+    console.log(
+      `[ingest] "${runCtx.fileName}": materialized ${materialize.stubPaths.length} manifest stub page(s)`,
+    )
+  }
+  if (materialize.reviewItems.length > 0) {
+    effects.onReviews(materialize.reviewItems)
+    console.log(
+      `[ingest] "${runCtx.fileName}": queued ${materialize.reviewItems.length} missing-page review(s) for non-manifest related refs`,
+    )
+  }
+
+  // ── Catch-up ─────────────────────────────────────────────────
+  // Disk-walks for manifest entries that are missing or still stub pages
+  // (which Manifest coverage may have just created), and rewrites them
+  // with a full LLM pass. mergeExisting:false because stubs would otherwise
+  // contaminate the merged body.
+  const catchupTargets = await findCatchupManifestEntities(runCtx.projectPath, manifest)
+  if (catchupTargets.length > 0) {
+    const catchupBatches = dedupAndBatchEntities(catchupTargets, INGEST_CATCHUP_BATCH_SIZE)
+    console.log(
+      `[ingest] "${runCtx.fileName}": ${catchupTargets.length} manifest page(s) need catch-up after materialization → ${catchupBatches.length} catch-up batch(es) of ≤${INGEST_CATCHUP_BATCH_SIZE}`,
+    )
+    for (let ci = 0; ci < catchupBatches.length; ci++) {
+      const batch = catchupBatches[ci]
+      effects.onProgress(
+        `Step 2a-catchup: Missed entities ${ci + 1}/${catchupBatches.length} (${batch.length} pages)...`,
+      )
+      const wikilinkTargets = await buildWikilinkCandidates(runCtx.projectPath, manifest, batch)
+
+      let batchOutput = ""
+      let streamError: Error | null = null
+      await streamChat(
+        runCtx.llmConfig,
+        [
+          {
+            role: "system",
+            content: buildEntityBatchPromptForRun(runCtx, wikilinkTargets, batch, "catchup"),
+          },
+          {
+            role: "user",
+            content: [
+              `Source document: **${runCtx.fileName}**`,
+              "",
+              `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries are missing or still stub pages. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
+              "",
+              "## Stage 1 Analysis (use as context for page content — do not echo)",
+              "",
+              analysis,
+              "",
+              "---",
+              "",
+              "Emit FILE blocks for the listed pages now. Begin with `---FILE:`.",
+            ].join("\n"),
+          },
+        ],
+        {
+          onToken: (token) => { batchOutput += token },
+          onDone: () => {},
+          onError: (err) => {
+            streamError = err
+            effects.onError(
+              `Catch-up batch ${ci + 1}/${catchupBatches.length} failed: ${err.message}`,
+            )
+          },
+        },
+        runCtx.signal,
+        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+      )
+
+      if (streamError) throw streamError
+
+      const result = await writeFileBlocks(
+        {
+          projectPath: runCtx.projectPath,
+          llmConfig: runCtx.llmConfig,
+          sourceFileName: runCtx.fileName,
+          signal: runCtx.signal,
+        },
+        batchOutput,
+        { mergeExisting: false },
+      )
+      writtenPaths.push(...result.writtenPaths)
+      warnings.push(...result.warnings)
+      hardFailures.push(...result.hardFailures)
+    }
+  }
+
+  // ── Recompute path set (ADR 0001 invariant) ──────────────────
+  // The path set passed to Link pass MUST be recomputed here from every
+  // entity/concept path written this run — primary batches + stubs +
+  // catch-up. Freezing pre-catch-up was the original bug ADR 0001 closed.
+  const contentPagesForPostPass = [...primaryWritten, ...writtenPaths].filter(
+    isEntityOrConceptPath,
+  )
+
+  // ── Link pass ─────────────────────────────────────────────────
+  if (contentPagesForPostPass.length > 0) {
+    effects.onProgress("Step 2a.5/2b: Post-linking generated pages...")
+    const postLink = await postLinkIngestedPages(runCtx.projectPath, contentPagesForPostPass)
+    if (postLink.totalAdded > 0) {
+      console.log(
+        `[ingest] "${runCtx.fileName}": post-pass added ${postLink.totalAdded} wikilinks across ${postLink.updatedPaths.length} page(s)`,
+      )
+    }
+  }
+
+  return { writtenPaths, contentPagesForPostPass, warnings, hardFailures }
+}
+
+function isEntityOrConceptPath(p: string): boolean {
+  return p.startsWith("wiki/entities/") || p.startsWith("wiki/concepts/")
 }
 
 /** Deduplicate by case-insensitive name (first occurrence wins for
@@ -796,6 +899,84 @@ export async function autoIngest(
   return withProjectLock(normalizePath(projectPath), () =>
     autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext),
   )
+}
+
+/**
+ * If `sourcePath` is a PDF that is both larger than one analysis chunk
+ * and has a PDF outline, extract each top-level chapter to
+ * `raw/sources/<stem>/<chNN-slug>.md`, run an ingest on each, and
+ * return the combined list of written paths. Returns null when chapter
+ * splitting is not applicable.
+ *
+ * Callers MUST already hold the project lock. Chapter runs call
+ * `autoIngestImpl` directly (bypassing `autoIngest`) to avoid
+ * re-acquiring the non-reentrant lock.
+ */
+async function tryWriteAndIngestChapters(
+  pp: string,
+  sp: string,
+  sourceContent: string,
+  runCtx: IngestRunContext,
+  activityId: string,
+): Promise<string[] | null> {
+  if (!sp.toLowerCase().endsWith(".pdf")) return null
+
+  const sizeThreshold = computeAnalysisChunkSize(runCtx.llmConfig.maxContextSize)
+  if (sourceContent.length <= sizeThreshold) return null
+
+  let chapters: PdfChapter[]
+  try {
+    chapters = await extractPdfOutline(sp)
+  } catch (err) {
+    console.warn(`[ingest:chapter] outline extraction failed for "${runCtx.fileName}": ${err}`)
+    return null
+  }
+  if (chapters.length === 0) return null
+
+  console.log(`[ingest:chapter] "${runCtx.fileName}": splitting into ${chapters.length} chapter(s)`)
+  useActivityStore.getState().updateItem(activityId, {
+    detail: `Splitting into ${chapters.length} chapters...`,
+  })
+
+  const chapterDir = sp.replace(/\.[^.]+$/, "")
+  const allWrittenPaths: string[] = []
+
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i]
+    const slug = chapterSlug(i, ch.title)
+    const chapterPath = `${chapterDir}/${slug}.md`
+
+    useActivityStore.getState().updateItem(activityId, {
+      detail: `Extracting chapter ${i + 1}/${chapters.length}: ${ch.title}`,
+    })
+
+    let pageText: string
+    try {
+      pageText = await extractPdfChapterText(sp, ch.pageStart, ch.pageEnd)
+    } catch (err) {
+      console.warn(`[ingest:chapter] text extraction failed for chapter "${ch.title}": ${err}`)
+      continue
+    }
+
+    const chapterContent = `# ${ch.title}\n\n${pageText}`
+    await writeFile(chapterPath, chapterContent)
+
+    useActivityStore.getState().updateItem(activityId, {
+      detail: `Ingesting chapter ${i + 1}/${chapters.length}: ${ch.title}`,
+    })
+
+    // Call autoIngestImpl directly — we already hold the project lock.
+    const chapterPaths = await autoIngestImpl(
+      pp,
+      chapterPath,
+      runCtx.llmConfig,
+      runCtx.signal,
+      runCtx.folderContext,
+    )
+    allWrittenPaths.push(...chapterPaths)
+  }
+
+  return allWrittenPaths
 }
 
 async function autoIngestImpl(
@@ -921,6 +1102,17 @@ async function autoIngestImpl(
       filesWritten: cachedFiles,
     })
     return cachedFiles
+  }
+
+  // ── Chapter split: large structured PDF → one ingest per chapter ──
+  // Runs after the cache miss so it only fires when the PDF has changed
+  // or is being ingested for the first time. Each chapter file is
+  // independently cached, so unchanged chapters are skipped on re-runs.
+  const chapterWrittenPaths = await tryWriteAndIngestChapters(pp, sp, sourceContent, runCtx, activityId)
+  if (chapterWrittenPaths !== null) {
+    runCtx.isChapterParent = true
+    console.log(`[ingest:chapter] "${fileName}": ${chapterWrittenPaths.length} paths from chapter runs, continuing as summary-only pass`)
+    useActivityStore.getState().updateItem(activityId, { detail: "Generating source summary..." })
   }
 
   // ── Step 0.5: Extract embedded images ─────────────────────────
@@ -1105,6 +1297,12 @@ async function autoIngestImpl(
         content: [
           `Source document to process: **${runCtx.fileName}**`,
           "",
+          ...(runCtx.isChapterParent
+            ? [
+                "NOTE: This document has been split into chapters. Each chapter has been ingested separately and has its own entity/concept pages. Write ONLY the source summary page (wiki/sources/), the index.md update, the log entry, and the overview update — do NOT emit entity or concept pages.",
+                "",
+              ]
+            : []),
           isMultiChunk
             ? `The Stage 1 analysis below was produced in ${chunkCount} passes (one per content chunk). Each part covers a different range of the original document — synthesize across ALL parts when generating wiki pages.`
             : "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo its tables, bullet points, or prose. Your output must be FILE/REVIEW blocks as specified in the system prompt — nothing else.",
@@ -1254,8 +1452,14 @@ async function autoIngestImpl(
   // mismatch, path-traversal rejection, empty-path) are NOT failures
   // — they represent deterministic decisions and caching them is
   // safe.
-  if (writtenPaths.length > 0 && hardFailures.length === 0) {
-    await saveIngestCache(pp, fileName, sourceContent, writtenPaths)
+  // For chapter-split PDFs, include all chapter-run paths in the cache
+  // so a cache hit on the original PDF implies all chapters are processed.
+  const allPaths = chapterWrittenPaths !== null
+    ? [...writtenPaths, ...chapterWrittenPaths]
+    : writtenPaths
+
+  if (allPaths.length > 0 && hardFailures.length === 0) {
+    await saveIngestCache(pp, fileName, sourceContent, allPaths)
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${fileName}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
@@ -1284,17 +1488,21 @@ async function autoIngestImpl(
     }
   }
 
-  const detail = writtenPaths.length > 0
-    ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
+  const totalPaths = chapterWrittenPaths !== null
+    ? [...writtenPaths, ...chapterWrittenPaths]
+    : writtenPaths
+
+  const detail = totalPaths.length > 0
+    ? `${totalPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
     : "No files generated"
 
   activity.updateItem(activityId, {
-    status: writtenPaths.length > 0 ? "done" : "error",
+    status: totalPaths.length > 0 ? "done" : "error",
     detail,
-    filesWritten: writtenPaths,
+    filesWritten: totalPaths,
   })
 
-  return writtenPaths
+  return totalPaths
 }
 
 /**

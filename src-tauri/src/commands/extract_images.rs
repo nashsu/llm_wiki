@@ -910,6 +910,136 @@ pub async fn extract_and_save_office_images_cmd(
     .map_err(|e| format!("extract_and_save_office_images blocking task join error: {e}"))?
 }
 
+// ── PDF outline extraction ────────────────────────────────────────────
+
+/// One top-level bookmark entry with the page range it covers (0-indexed).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfChapter {
+    pub title: String,
+    /// First page of the chapter, 0-indexed.
+    pub page_start: u32,
+    /// Last page of the chapter, 0-indexed, inclusive.
+    pub page_end: u32,
+}
+
+/// Read the top-level PDF outline (bookmarks) and return one entry per
+/// direct child of the root. Returns an empty vec when the PDF has no
+/// outline or the outline has no top-level children with page destinations.
+pub fn extract_pdf_outline(path: &str) -> Result<Vec<PdfChapter>, String> {
+    use pdfium_render::prelude::*;
+
+    let _guard = crate::commands::fs::lock_pdfium();
+    let pdfium = crate::commands::fs::pdfium()?;
+    let doc = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|e| format!("Failed to open PDF '{path}': {e}"))?;
+
+    let page_count = doc.pages().len() as u32;
+    if page_count == 0 {
+        return Ok(vec![]);
+    }
+
+    let bookmarks = doc.bookmarks();
+    let root = match bookmarks.root() {
+        Some(r) => r,
+        None => return Ok(vec![]),
+    };
+
+    // Collect (title, page_index) for each top-level bookmark.
+    let mut entries: Vec<(String, u32)> = Vec::new();
+    let mut cursor = root.first_child();
+    while let Some(bm) = cursor {
+        let title = bm.title().unwrap_or_default();
+        let page_idx = bm
+            .destination()
+            .and_then(|d| d.page_index().ok())
+            .map(|i| i as u32)
+            .unwrap_or(0);
+        if !title.is_empty() {
+            entries.push((title, page_idx));
+        }
+        cursor = bm.next_sibling();
+    }
+
+    if entries.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // page_end for chapter i = page_start of chapter i+1 minus 1 (or last page).
+    let chapters = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (title, page_start))| {
+            let page_end = if i + 1 < entries.len() {
+                entries[i + 1].1.saturating_sub(1)
+            } else {
+                page_count - 1
+            };
+            PdfChapter { title: title.clone(), page_start: *page_start, page_end }
+        })
+        .collect();
+
+    Ok(chapters)
+}
+
+/// Extract the text of PDF pages in the inclusive 0-indexed range
+/// [page_start, page_end] as markdown with `## Page N` sub-headers.
+pub fn extract_pdf_chapter_text(path: &str, page_start: u32, page_end: u32) -> Result<String, String> {
+    use pdfium_render::prelude::*;
+
+    let _guard = crate::commands::fs::lock_pdfium();
+    let pdfium = crate::commands::fs::pdfium()?;
+    let doc = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|e| format!("Failed to open PDF '{path}': {e}"))?;
+
+    let mut out = String::new();
+
+    for (page_idx, page) in doc.pages().iter().enumerate() {
+        let idx = page_idx as u32;
+        if idx < page_start || idx > page_end {
+            continue;
+        }
+        let page_num = page_idx + 1;
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!("## Page {page_num}\n\n"));
+        let page_text = page
+            .text()
+            .map_err(|e| format!("Page {page_num} text failed in '{path}': {e}"))?;
+        out.push_str(&page_text.all());
+        out.push('\n');
+    }
+
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn extract_pdf_outline_cmd(path: String) -> Result<Vec<PdfChapter>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::panic_guard::run_guarded("extract_pdf_outline", || extract_pdf_outline(&path))
+    })
+    .await
+    .map_err(|e| format!("extract_pdf_outline blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn extract_pdf_chapter_text_cmd(
+    path: String,
+    page_start: u32,
+    page_end: u32,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::panic_guard::run_guarded("extract_pdf_chapter_text", || {
+            extract_pdf_chapter_text(&path, page_start, page_end)
+        })
+    })
+    .await
+    .map_err(|e| format!("extract_pdf_chapter_text blocking task join error: {e}"))?
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
