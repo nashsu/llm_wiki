@@ -94,11 +94,11 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] grid-rows-[auto_1fr_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t("project.createTitle")}</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-4 py-4">
+        <div className="flex flex-col gap-4 py-4 overflow-y-auto min-h-0">
           <div className="flex flex-col gap-2">
             <Label htmlFor="name">{t("project.name")}</Label>
             <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("project.namePlaceholder")} />
