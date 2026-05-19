@@ -272,6 +272,67 @@ export function languageRule(sourceContent: string = ""): string {
   return buildLanguageDirective(sourceContent)
 }
 
+// ── Content-budget constants for the analysis / generation pipeline ──
+//
+// `maxContextSize` is stored in characters (see wiki-store.ts), so the
+// arithmetic below is char-for-char with no token conversion.
+//
+// Overheads are conservative approximations of the system prompts + user
+// wrapper. Response reserves derive from the `max_tokens` arguments below
+// using a ~4 char/token estimate (16k for analysis at 4096 tokens, 32k
+// for generation at 8192 tokens). All three constants are deliberately
+// loose so a slightly-misaligned tokenizer doesn't push us over the
+// context wall.
+const INGEST_PROMPT_OVERHEAD_CHARS = 12_000
+const INGEST_ANALYSIS_RESPONSE_RESERVE = 16_000
+const INGEST_GENERATION_RESPONSE_RESERVE = 32_000
+const INGEST_MIN_CHUNK_CHARS = 10_000
+const INGEST_CHUNK_OVERLAP_CHARS = 500
+
+/** Max source-content length a single Analysis call can consume. Longer
+ *  documents are split into N chunks, each analyzed independently.
+ *  Exported for tests. */
+export function computeAnalysisChunkSize(maxContextSize: number | undefined): number {
+  const ctx = typeof maxContextSize === "number" && maxContextSize > 0
+    ? maxContextSize
+    : 200_000
+  return Math.max(
+    INGEST_MIN_CHUNK_CHARS,
+    ctx - INGEST_PROMPT_OVERHEAD_CHARS - INGEST_ANALYSIS_RESPONSE_RESERVE,
+  )
+}
+
+/** Total budget for {merged analysis + source excerpt} inside the
+ *  Generation call. Source budget shrinks as merged-analysis grows.
+ *  Exported for tests. */
+export function computeGenerationContentBudget(maxContextSize: number | undefined): number {
+  const ctx = typeof maxContextSize === "number" && maxContextSize > 0
+    ? maxContextSize
+    : 200_000
+  return Math.max(
+    INGEST_MIN_CHUNK_CHARS,
+    ctx - INGEST_PROMPT_OVERHEAD_CHARS - INGEST_GENERATION_RESPONSE_RESERVE,
+  )
+}
+
+/** Split content into ≤chunkSize pieces with a small overlap so entities
+ *  / sentences straddling a boundary survive into the adjacent chunk's
+ *  analysis. Returns the original content unchanged when it already fits.
+ *  Exported for tests. */
+export function chunkForAnalysis(content: string, chunkSize: number, overlap: number): string[] {
+  if (content.length <= chunkSize) return [content]
+  const stride = Math.max(1, chunkSize - overlap)
+  const chunks: string[] = []
+  let start = 0
+  while (start < content.length) {
+    const end = Math.min(start + chunkSize, content.length)
+    chunks.push(content.slice(start, end))
+    if (end === content.length) break
+    start += stride
+  }
+  return chunks
+}
+
 /**
  * Auto-ingest: reads source → LLM analyzes → LLM writes wiki pages, all in one go.
  * Used when importing new files.
@@ -529,68 +590,124 @@ async function autoIngestImpl(
     }
   }
 
-  const truncatedContent = enrichedSourceContent.length > 50000
-    ? enrichedSourceContent.slice(0, 50000) + "\n\n[...truncated...]"
-    : enrichedSourceContent
-
-  // ── Step 1: Analysis ──────────────────────────────────────────
-  // LLM reads the source and produces a structured analysis:
-  // key entities, concepts, main arguments, connections to existing wiki, contradictions
-  activity.updateItem(activityId, { detail: "Step 1/2: Analyzing source..." })
-
-  let analysis = ""
-
-  await streamChat(
-    llmConfig,
-    [
-      { role: "system", content: buildAnalysisPrompt(purpose, index, truncatedContent) },
-      { role: "user", content: `Analyze this source document:\n\n**File:** ${fileName}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${truncatedContent}` },
-    ],
-    {
-      onToken: (token) => { analysis += token },
-      onDone: () => {},
-      onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
-      },
-    },
-    signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+  // ── Content chunking ─────────────────────────────────────────
+  //
+  // Long documents (PDFs, papers, books) used to be silently truncated
+  // to a hard-coded 50,000 chars before either LLM call ever saw them
+  // — so an 80-page paper would only ever ingest its first ~25 pages.
+  // We now derive a per-call budget from the model's actual context
+  // size and feed Analysis one chunk at a time. Generation still runs
+  // once, with the merged analyses; its source excerpt shrinks
+  // dynamically so the whole prompt stays inside the context window.
+  //
+  // This is a pragmatic stopgap. The Phase 3 chunk-citation pipeline
+  // (modelled on WeKnora) will replace it with per-slug verbatim chunk
+  // quoting; that work is out of scope here.
+  const analysisChunkSize = computeAnalysisChunkSize(llmConfig.maxContextSize)
+  const contentChunks = chunkForAnalysis(
+    enrichedSourceContent,
+    analysisChunkSize,
+    INGEST_CHUNK_OVERLAP_CHARS,
   )
-
-  // A silent `return []` here would look like success to the queue
-  // runner and cause the task to be filter()'d out. Throw instead so
-  // processNext's catch-block path (retry / mark failed) engages.
-  const analysisActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
-  if (analysisActivity?.status === "error") {
-    throw new Error(analysisActivity.detail || "Analysis stream failed")
+  const isMultiChunk = contentChunks.length > 1
+  if (isMultiChunk) {
+    console.log(
+      `[ingest] "${fileName}": ${enrichedSourceContent.length} chars > ${analysisChunkSize} chunk size → ${contentChunks.length} analysis passes`,
+    )
   }
 
+  // ── Step 1: Analysis (one pass per chunk) ────────────────────
+  // Each chunk gets its own structured analysis. We concatenate the
+  // outputs with a header line per part so Generation can tell which
+  // section of the document each analysis covers.
+  const analysisParts: string[] = []
+  const stride = Math.max(1, analysisChunkSize - INGEST_CHUNK_OVERLAP_CHARS)
+
+  for (let i = 0; i < contentChunks.length; i++) {
+    const chunkContent = contentChunks[i]
+    const chunkLabel = isMultiChunk ? ` (part ${i + 1}/${contentChunks.length})` : ""
+    activity.updateItem(activityId, { detail: `Step 1/2: Analyzing source...${chunkLabel}` })
+
+    let chunkAnalysis = ""
+
+    await streamChat(
+      llmConfig,
+      [
+        { role: "system", content: buildAnalysisPrompt(purpose, index, chunkContent) },
+        {
+          role: "user",
+          content: `Analyze this source document${chunkLabel}:\n\n**File:** ${fileName}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${chunkContent}`,
+        },
+      ],
+      {
+        onToken: (token) => { chunkAnalysis += token },
+        onDone: () => {},
+        onError: (err) => {
+          activity.updateItem(activityId, { status: "error", detail: `Analysis failed${chunkLabel}: ${err.message}` })
+        },
+      },
+      signal,
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    )
+
+    const stepActivity = useActivityStore.getState().items.find((it) => it.id === activityId)
+    if (stepActivity?.status === "error") {
+      throw new Error(stepActivity.detail || "Analysis stream failed")
+    }
+
+    if (isMultiChunk) {
+      const startChar = i * stride
+      const endChar = Math.min(startChar + analysisChunkSize, enrichedSourceContent.length)
+      analysisParts.push(
+        `## Stage 1 Analysis — Part ${i + 1}/${contentChunks.length} (chars ${startChar}–${endChar})\n\n${chunkAnalysis}`,
+      )
+    } else {
+      analysisParts.push(chunkAnalysis)
+    }
+  }
+
+  const analysis = analysisParts.join("\n\n")
+
   // ── Step 2: Generation ────────────────────────────────────────
-  // LLM takes the analysis as context and produces wiki files + review items
+  // LLM takes the merged analysis + a source excerpt and produces
+  // wiki files + review items. The source excerpt is sized to fit
+  // whatever budget is left after the merged analysis, so total
+  // prompt stays inside the model's context regardless of chunk count.
   activity.updateItem(activityId, { detail: "Step 2/2: Generating wiki pages..." })
+
+  const generationBudget = computeGenerationContentBudget(llmConfig.maxContextSize)
+  const sourceBudgetForGen = Math.max(5_000, generationBudget - analysis.length)
+  const sourceForGeneration = enrichedSourceContent.length > sourceBudgetForGen
+    ? enrichedSourceContent.slice(0, sourceBudgetForGen) +
+      "\n\n[...truncated for generation; full content covered by multi-part analysis above...]"
+    : enrichedSourceContent
 
   let generation = ""
 
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, truncatedContent) },
+      { role: "system", content: buildGenerationPrompt(schema, purpose, index, fileName, overview, sourceForGeneration) },
       {
         role: "user",
         content: [
           `Source document to process: **${fileName}**`,
           "",
-          "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo",
-          "its tables, bullet points, or prose. Your output must be FILE/REVIEW",
-          "blocks as specified in the system prompt — nothing else.",
+          isMultiChunk
+            ? `The Stage 1 analysis below was produced in ${contentChunks.length} passes (one per content chunk). Each part covers a different range of the original document — synthesize across ALL parts when generating wiki pages.`
+            : "The Stage 1 analysis below is CONTEXT to inform your output. Do NOT echo its tables, bullet points, or prose. Your output must be FILE/REVIEW blocks as specified in the system prompt — nothing else.",
           "",
-          "## Stage 1 Analysis (context only — do not repeat)",
+          isMultiChunk
+            ? "## Stage 1 Analysis (multi-part — synthesize across all parts)"
+            : "## Stage 1 Analysis (context only — do not repeat)",
           "",
           analysis,
           "",
-          "## Original Source Content",
+          enrichedSourceContent.length > sourceForGeneration.length
+            ? "## Source Content (excerpt — full content already covered by the multi-part analysis above)"
+            : "## Original Source Content",
           "",
-          truncatedContent,
+          sourceForGeneration,
           "",
           "---",
           "",
