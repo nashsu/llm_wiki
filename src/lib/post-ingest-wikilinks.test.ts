@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   addDeterministicWikilinks,
   canonicalizeRelatedFrontmatter,
+  normalizePageReferencesOnWrite,
 } from "./post-ingest-wikilinks"
 
 describe("addDeterministicWikilinks", () => {
@@ -109,6 +110,22 @@ describe("addDeterministicWikilinks", () => {
   })
 })
 
+describe("normalizePageReferencesOnWrite", () => {
+  it("delegates to related canonicalization", () => {
+    const content = [
+      "---",
+      "related: [spark]",
+      "---",
+      "",
+      "Body.",
+    ].join("\n")
+    const known = ["apache-spark"]
+    expect(normalizePageReferencesOnWrite(content, known)).toBe(
+      canonicalizeRelatedFrontmatter(content, known),
+    )
+  })
+})
+
 describe("canonicalizeRelatedFrontmatter", () => {
   it("rewrites short related slugs to canonical page ids", () => {
     const content = [
@@ -128,5 +145,22 @@ describe("canonicalizeRelatedFrontmatter", () => {
     ])
     expect(out).toContain('related: ["hdfs", "apache-spark"]')
     expect(out).not.toContain('"spark"')
+  })
+
+  it("dedupes related when shorthand and canonical refer to the same page", () => {
+    const content = [
+      "---",
+      'type: entity',
+      'related: [apache-spark, spark]',
+      "---",
+      "",
+      "Body.",
+    ].join("\n")
+
+    const out = canonicalizeRelatedFrontmatter(content, [
+      "apache-spark",
+      "hadoop",
+    ])
+    expect(out).toContain('related: ["apache-spark"]')
   })
 })

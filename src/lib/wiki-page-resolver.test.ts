@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest"
 import type { FileNode } from "@/types/wiki"
 import {
+  canonicalizePageIds,
+  dedupePageIds,
   findInTreeByName,
+  listWikiPageIdsFromTree,
   resolveRelatedSlug,
   resolveWikiSlugId,
   resolveSourceName,
@@ -101,6 +104,44 @@ describe("findInTreeByName", () => {
 
   it("returns null when nothing matches", () => {
     expect(findInTreeByName(TREE, "missing.md", `${WIKI}/`)).toBeNull()
+  })
+})
+
+describe("dedupePageIds", () => {
+  it("keeps first-seen casing and drops case-insensitive duplicates", () => {
+    expect(dedupePageIds(["apache-spark", "Apache-Spark", "hdfs"])).toEqual([
+      "apache-spark",
+      "hdfs",
+    ])
+  })
+})
+
+describe("canonicalizePageIds", () => {
+  it("resolves shorthand and dedupes aliases to the same page id", () => {
+    expect(
+      canonicalizePageIds(["spark", "apache-spark", "hdfs"], [
+        "apache-spark",
+        "hadoop",
+        "hdfs",
+      ]),
+    ).toEqual(["apache-spark", "hdfs"])
+  })
+})
+
+describe("listWikiPageIdsFromTree", () => {
+  it("collects .md basenames under wiki/", () => {
+    expect(
+      listWikiPageIdsFromTree(
+        [
+          {
+            name: "apache-spark.md",
+            path: `${WIKI}/entities/apache-spark.md`,
+            is_dir: false,
+          },
+        ],
+        WIKI,
+      ),
+    ).toEqual(["apache-spark"])
   })
 })
 

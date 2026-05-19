@@ -1,3 +1,5 @@
+import { listDirectory } from "@/commands/fs"
+import { normalizePath } from "@/lib/path-utils"
 import type { FileNode } from "@/types/wiki"
 
 /**
@@ -97,7 +99,33 @@ export function resolveWikiSlugId(
   return null
 }
 
-function collectWikiPageIds(tree: FileNode[], wikiRoot: string): string[] {
+/** Case-insensitive dedupe; first-seen casing wins. */
+export function dedupePageIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of ids) {
+    const key = id.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(id)
+  }
+  return out
+}
+
+/** Resolve shorthand refs to canonical page ids and dedupe (for `related:` writes). */
+export function canonicalizePageIds(
+  rawRefs: readonly string[],
+  knownIds: Iterable<string>,
+): string[] {
+  const resolved = rawRefs.map((raw) => {
+    const { slug } = unwrapWikilink(raw)
+    return resolveWikiSlugId(slug, knownIds) ?? slug
+  })
+  return dedupePageIds(resolved)
+}
+
+/** All wiki page ids (filename without `.md`) under `wiki/`. */
+export function listWikiPageIdsFromTree(tree: FileNode[], wikiRoot: string): string[] {
   const ids: string[] = []
   const walk = (nodes: FileNode[]) => {
     for (const node of nodes) {
@@ -112,6 +140,17 @@ function collectWikiPageIds(tree: FileNode[], wikiRoot: string): string[] {
   }
   walk(tree)
   return ids
+}
+
+export async function listWikiPageIds(projectPath: string): Promise<string[]> {
+  const pp = normalizePath(projectPath)
+  const wikiRoot = `${pp}/wiki`
+  try {
+    const tree = await listDirectory(wikiRoot)
+    return listWikiPageIdsFromTree(tree, wikiRoot)
+  } catch {
+    return []
+  }
 }
 
 export function resolveRelatedSlug(
@@ -134,7 +173,7 @@ export function resolveRelatedSlug(
   const exact = findInTreeByName(tree, filename, `${wikiRoot}/`)
   if (exact) return exact
 
-  const resolved = resolveWikiSlugId(slug, collectWikiPageIds(tree, wikiRoot))
+  const resolved = resolveWikiSlugId(slug, listWikiPageIdsFromTree(tree, wikiRoot))
   if (!resolved) return null
   return findInTreeByName(tree, `${resolved}.md`, `${wikiRoot}/`)
 }

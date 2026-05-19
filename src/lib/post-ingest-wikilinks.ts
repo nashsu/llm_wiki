@@ -2,7 +2,7 @@ import { listDirectory, readFile, writeFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { parseFrontmatterArray, writeFrontmatterArray } from "@/lib/sources-merge"
-import { resolveWikiSlugId, unwrapWikilink } from "@/lib/wiki-page-resolver"
+import { canonicalizePageIds } from "@/lib/wiki-page-resolver"
 import type { FileNode } from "@/types/wiki"
 
 const STRUCTURAL_PAGE_IDS = new Set(["index", "log", "overview", "purpose", "schema"])
@@ -56,7 +56,7 @@ export async function postLinkIngestedPages(
       selfSlug,
       MAX_NEW_WIKILINKS_PER_PAGE,
     )
-    const withRelated = canonicalizeRelatedFrontmatter(linked, knownSlugs)
+    const withRelated = normalizePageReferencesOnWrite(linked, knownSlugs)
     if (added <= 0 && withRelated === content) continue
 
     await writeFile(absPath, withRelated)
@@ -67,6 +67,17 @@ export async function postLinkIngestedPages(
   return { updatedPaths, totalAdded }
 }
 
+/**
+ * Write-time normalization for entity/concept pages: resolve shorthand
+ * `related:` entries to canonical page ids and dedupe the array.
+ */
+export function normalizePageReferencesOnWrite(
+  content: string,
+  knownSlugs: readonly string[],
+): string {
+  return canonicalizeRelatedFrontmatter(content, knownSlugs)
+}
+
 /** Rewrite `related:` slugs to ids that exist on disk (e.g. `spark` → `apache-spark`). */
 export function canonicalizeRelatedFrontmatter(
   content: string,
@@ -75,14 +86,11 @@ export function canonicalizeRelatedFrontmatter(
   const related = parseFrontmatterArray(content, "related")
   if (related.length === 0) return content
 
-  let changed = false
-  const canonical = related.map((raw) => {
-    const { slug } = unwrapWikilink(raw)
-    const resolved = resolveWikiSlugId(slug, knownSlugs) ?? slug
-    if (resolved !== slug) changed = true
-    return resolved
-  })
-  if (!changed) return content
+  const canonical = canonicalizePageIds(related, knownSlugs)
+  const unchanged =
+    canonical.length === related.length &&
+    canonical.every((id, i) => id === related[i])
+  if (unchanged) return content
   return writeFrontmatterArray(content, "related", canonical)
 }
 

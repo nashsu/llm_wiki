@@ -114,8 +114,6 @@ function detectCommunities(
   return { assignments, communities }
 }
 
-const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
-
 function flattenMdFiles(nodes: FileNode[]): FileNode[] {
   const files: FileNode[] = []
   for (const node of nodes) {
@@ -144,6 +142,8 @@ function extractType(content: string): string {
   return "other"
 }
 
+const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
+
 function extractWikilinks(content: string): string[] {
   const links: string[] = []
   const regex = new RegExp(WIKILINK_REGEX.source, "g")
@@ -154,7 +154,6 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
-/** Frontmatter `related:` slugs — batched ingest often writes these without body wikilinks. */
 function extractRelatedTargets(content: string): string[] {
   return parseFrontmatterArray(content, "related").map((raw) => unwrapWikilink(raw).slug)
 }
@@ -228,11 +227,13 @@ export async function buildWikiGraph(
   const rawEdges: GraphEdge[] = []
 
   for (const [sourceId, nodeData] of nodeMap) {
+    const outbound = new Set<string>()
     for (const targetRaw of nodeData.links) {
-      // Normalize target: try matching by id (case-insensitive, hyphen/space)
-      const targetId = resolveTarget(targetRaw, nodeMap)
+      const targetId = resolveWikiSlugId(targetRaw, nodeMap.keys())
       if (targetId === null) continue
       if (targetId === sourceId) continue
+      if (outbound.has(targetId)) continue
+      outbound.add(targetId)
 
       rawEdges.push({ source: sourceId, target: targetId, weight: 1 })
 
@@ -294,11 +295,4 @@ export async function buildWikiGraph(
   }))
 
   return { nodes, edges, communities }
-}
-
-function resolveTarget(
-  raw: string,
-  nodeMap: Map<string, { id: string }>,
-): string | null {
-  return resolveWikiSlugId(raw, nodeMap.keys())
 }

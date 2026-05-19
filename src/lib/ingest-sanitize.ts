@@ -33,7 +33,15 @@
  *      — semantically what the model wanted (a list of wikilinks),
  *      but not valid YAML flow syntax.
  *
- * This sanitizer rewrites all three shapes into the standard
+ *   4. All frontmatter keys squeezed onto one line (no `---` fences),
+ *      e.g.
+ *
+ *          type: entity title: Foo tags: [a] related: [b] created: 2026-01-01
+ *
+ *      — invalid YAML; the read-time parser can't build FrontmatterPanel
+ *      fields and the body may render as raw text.
+ *
+ * This sanitizer rewrites all four shapes into the standard
  * `---\n…\n---\n` frontmatter form before write. It's deliberately
  * conservative: each pattern is anchored at the very start of the
  * document (or at top-level frontmatter scope), so a legitimate
@@ -64,7 +72,10 @@ export function sanitizeIngestedFileContent(content: string): string {
   // frontmatter block".
   cleaned = stripFrontmatterKeyPrefix(cleaned)
 
-  // (3) Repair `key: [[a]], [[b]], [[c]]` lines inside the
+  // (3) Split single-line / fenceless frontmatter into `---` blocks.
+  cleaned = repairInlineFrontmatter(cleaned)
+
+  // (4) Repair `key: [[a]], [[b]], [[c]]` lines inside the
   // frontmatter block so they're valid YAML. Body wikilinks are
   // left alone — those render fine via the wikilink → markdown
   // link transform applied at read time.
@@ -96,6 +107,93 @@ function stripFrontmatterKeyPrefix(content: string): string {
   const m = content.match(/^[ \t]*frontmatter\s*:\s*\r?\n(?=[ \t]*---\s*\r?\n)/)
   if (!m) return content
   return content.slice(m[0].length)
+}
+
+/** Keys the ingest pipeline may emit — used to split inline frontmatter. */
+const INLINE_FM_KEYS = [
+  "type",
+  "title",
+  "tags",
+  "related",
+  "created",
+  "updated",
+  "sources",
+  "description",
+  "origin",
+  "summary",
+  "status",
+] as const
+
+const INLINE_FM_KEY_RE = new RegExp(
+  `\\b(${INLINE_FM_KEYS.join("|")})\\s*:`,
+  "gi",
+)
+
+function countInlineFmKeys(line: string): number {
+  return [...line.matchAll(INLINE_FM_KEY_RE)].length
+}
+
+/**
+ * Rewrite fenceless, space-separated frontmatter (usually one long line
+ * starting with `type:`) into a standard `---` block. Requires at least
+ * two recognized keys on the opening line(s) so prose that mentions
+ * "type:" mid-sentence is left alone.
+ */
+function repairInlineFrontmatter(content: string): string {
+  if (/^---\s*\r?\n/.test(content)) return content
+
+  const lines = content.split(/\r?\n/)
+  const firstLine = lines[0] ?? ""
+  if (!/^\s*type\s*:/i.test(firstLine)) return content
+  if (countInlineFmKeys(firstLine) < 2) return content
+
+  let fmLineCount = 1
+  while (fmLineCount < lines.length) {
+    const line = lines[fmLineCount]
+    if (line.trim() === "" || /^\s*#/.test(line)) break
+    if (countInlineFmKeys(line) >= 2) {
+      fmLineCount++
+      continue
+    }
+    if (
+      /^\s*(?:type|title|tags|related|created|updated|sources|description|origin)\s*:/i.test(
+        line,
+      )
+    ) {
+      fmLineCount++
+      continue
+    }
+    break
+  }
+
+  const fmText = lines.slice(0, fmLineCount).join("\n")
+  const yamlLines = splitInlineFrontmatterToLines(fmText)
+  if (yamlLines.length < 2) return content
+
+  let bodyStart = fmLineCount
+  while (bodyStart < lines.length && lines[bodyStart].trim() === "") {
+    bodyStart++
+  }
+  const body = lines.slice(bodyStart).join("\n")
+
+  const fmBlock = `---\n${yamlLines.join("\n")}\n---\n`
+  if (!body) return fmBlock.endsWith("\n") ? fmBlock : `${fmBlock}\n`
+  return `${fmBlock}\n${body}`
+}
+
+function splitInlineFrontmatterToLines(text: string): string[] {
+  const out: string[] = []
+  for (const line of text.split("\n")) {
+    const matches = [...line.matchAll(INLINE_FM_KEY_RE)]
+    for (let i = 0; i < matches.length; i++) {
+      const key = matches[i][1].toLowerCase()
+      const valueStart = matches[i].index! + matches[i][0].length
+      const valueEnd = i + 1 < matches.length ? matches[i + 1].index! : line.length
+      const value = line.slice(valueStart, valueEnd).trim()
+      out.push(`${key}: ${value}`)
+    }
+  }
+  return out
 }
 
 /**

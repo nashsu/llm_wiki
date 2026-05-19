@@ -1,15 +1,6 @@
 import { describe, expect, it } from "vitest"
-
-// buildWikiGraph hits fs — test link extraction via the same helpers the graph uses.
-// We import indirectly by duplicating the private helpers' contract through a
-// minimal inline check on the exported graph builder's inputs.
-
 import { parseFrontmatterArray } from "@/lib/sources-merge"
-import { unwrapWikilink } from "@/lib/wiki-page-resolver"
-
-function extractRelatedTargets(content: string): string[] {
-  return parseFrontmatterArray(content, "related").map((raw) => unwrapWikilink(raw).slug)
-}
+import { resolveWikiSlugId, unwrapWikilink } from "@/lib/wiki-page-resolver"
 
 const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
 
@@ -23,21 +14,27 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
+function extractRelatedTargets(content: string): string[] {
+  return parseFrontmatterArray(content, "related").map((raw) => unwrapWikilink(raw).slug)
+}
+
 describe("wiki graph link targets", () => {
-  it("includes frontmatter related slugs alongside body wikilinks", () => {
+  it("reads related and body wikilinks as written on disk", () => {
     const content = [
       "---",
       'type: entity',
       'title: "Hadoop"',
-      'related: [hdfs, spark]',
+      'related: [hdfs, apache-spark]',
       "---",
       "",
       "See also [[apache-spark]].",
     ].join("\n")
 
     const targets = [...extractWikilinks(content), ...extractRelatedTargets(content)]
-    expect(targets).toContain("apache-spark")
-    expect(targets).toContain("hdfs")
-    expect(targets).toContain("spark")
+    expect(targets).toEqual(["apache-spark", "hdfs", "apache-spark"])
+  })
+
+  it("resolves shorthand targets when building edges", () => {
+    expect(resolveWikiSlugId("spark", ["apache-spark", "hdfs"])).toBe("apache-spark")
   })
 })

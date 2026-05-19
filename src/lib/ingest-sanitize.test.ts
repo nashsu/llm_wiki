@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest"
+import { parseFrontmatter } from "./frontmatter"
 import { sanitizeIngestedFileContent } from "./ingest-sanitize"
 
 describe("sanitizeIngestedFileContent", () => {
@@ -79,7 +80,40 @@ describe("sanitizeIngestedFileContent", () => {
     expect(sanitizeIngestedFileContent(input)).toBe(input)
   })
 
-  it("composes all three repairs on a real-corpus-shaped input", () => {
+  it("splits fenceless single-line frontmatter into a --- block", () => {
+    const input = [
+      "type: entity title: NYU 深度学习自然语言处理讲义笔记 tags: [lecture-notes, nyu, center-for-data-science] related: [arxiv, new-york-university, center-for-data-science, yoav-goldberg] created: 2026-05-19 updated: 2026-05-19 sources: [\"1511.07916v1.pdf\"]",
+      "",
+      "# NYU 深度学习",
+      "",
+      "Body paragraph.",
+    ].join("\n")
+
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toMatch(/^---\n/)
+    expect(out).toContain("type: entity\n")
+    expect(out).toContain('title: NYU 深度学习自然语言处理讲义笔记\n')
+    expect(out).toContain("tags: [lecture-notes, nyu, center-for-data-science]\n")
+    expect(out).toContain("\n---\n\n# NYU 深度学习")
+
+    const parsed = parseFrontmatter(out)
+    expect(parsed.frontmatter?.type).toBe("entity")
+    expect(parsed.frontmatter?.title).toBe("NYU 深度学习自然语言处理讲义笔记")
+    expect(parsed.frontmatter?.related).toEqual([
+      "arxiv",
+      "new-york-university",
+      "center-for-data-science",
+      "yoav-goldberg",
+    ])
+    expect(parsed.body).toContain("# NYU 深度学习")
+  })
+
+  it("does not rewrite a normal prose line that happens to mention type:", () => {
+    const input = "The type: of error was unclear.\n\nMore text."
+    expect(sanitizeIngestedFileContent(input)).toBe(input)
+  })
+
+  it("composes fence, frontmatter-key, wikilink-list, and inline repairs", () => {
     const input =
       "```yaml\nfrontmatter:\n---\ntype: entity\nrelated: [[a]], [[b]]\n---\n\n# Body\n```"
     const out = sanitizeIngestedFileContent(input)

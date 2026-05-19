@@ -12,7 +12,11 @@ import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { ensureSourcesInContent } from "@/lib/sources-merge"
-import { postLinkIngestedPages } from "@/lib/post-ingest-wikilinks"
+import {
+  normalizePageReferencesOnWrite,
+  postLinkIngestedPages,
+} from "@/lib/post-ingest-wikilinks"
+import { listWikiPageIds } from "@/lib/wiki-page-resolver"
 import {
   findCatchupManifestEntities,
   isManifestStubContent,
@@ -1352,6 +1356,7 @@ async function writeFileBlocks(
   const hardFailures: string[] = []
 
   const targetLang = useWikiStore.getState().outputLanguage
+  const knownPageIds = await listWikiPageIds(ctx.projectPath)
 
   for (const { path: relativePath, content: rawContent } of blocks) {
     // Sanitize at the boundary — strip stray code-fence wrappers,
@@ -1421,6 +1426,7 @@ async function writeFileBlocks(
           let toWrite = content
           if (isEntityOrSource) {
             toWrite = ensureSourcesInContent(toWrite, ctx.sourceFileName)
+            toWrite = normalizePageReferencesOnWrite(toWrite, knownPageIds)
           }
           await writeFile(fullPath, toWrite)
         } else {
@@ -1452,6 +1458,7 @@ async function writeFileBlocks(
         )
         if (isEntityOrSource) {
           toWrite = ensureSourcesInContent(toWrite, ctx.sourceFileName)
+          toWrite = normalizePageReferencesOnWrite(toWrite, knownPageIds)
         }
         await writeFile(fullPath, toWrite)
         }
