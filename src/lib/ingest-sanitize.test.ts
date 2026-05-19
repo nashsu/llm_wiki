@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest"
 import { parseFrontmatter } from "./frontmatter"
-import { sanitizeIngestedFileContent } from "./ingest-sanitize"
+import {
+  coalesceFragmentedSources,
+  sanitizeIngestedFileContent,
+} from "./ingest-sanitize"
 
 describe("sanitizeIngestedFileContent", () => {
   it("returns clean content unchanged", () => {
@@ -120,5 +123,67 @@ describe("sanitizeIngestedFileContent", () => {
     expect(out).toBe(
       `---\ntype: entity\nrelated: ["[[a]]", "[[b]]"]\n---\n\n# Body`,
     )
+  })
+
+  it("coalesces comma-split unquoted sources and re-quotes the filename", () => {
+    const filename =
+      "Designing Data-Intensive Applications The Big Ideas Behind Reliable, Scalable, and Maintainable Systems by Martin Kleppmann (z-lib.org).pdf"
+    const input = `---\ntype: entity\ntitle: Kafka\nsources: [${filename}]\n---\n\nbody`
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toContain(`sources: ["${filename}"]`)
+    const parsed = parseFrontmatter(out)
+    expect(parsed.frontmatter?.sources).toEqual([filename])
+  })
+
+  it("repairs sources line with closing --- glued on the same line", () => {
+    const input =
+      '---\ntype: entity\ntitle: Foo\nsources: ["paper.pdf"]]---\n\n# Body'
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toContain('sources: ["paper.pdf"]\n---')
+    expect(parseFrontmatter(out).frontmatter?.title).toBe("Foo")
+  })
+
+  it("repairs Milkdown escaped fences and brackets", () => {
+    const input = [
+      "\\---",
+      "type: entity",
+      "tags: \\[distributed-database, cloud\\]",
+      "sources: [\"paper.pdf\"]",
+      "\\---",
+      "",
+      "<br />",
+      "Body text.",
+    ].join("\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toMatch(/^---\n/)
+    expect(out).toContain("tags: [distributed-database, cloud]")
+    expect(out).not.toContain("<br")
+    expect(out).toContain("Body text.")
+  })
+
+  it("strips standalone <br /> lines from the body", () => {
+    const input = "---\ntype: entity\n---\n\n<br />\n\nParagraph."
+    expect(sanitizeIngestedFileContent(input)).toBe(
+      "---\ntype: entity\n---\n\nParagraph.",
+    )
+  })
+})
+
+describe("coalesceFragmentedSources", () => {
+  it("keeps a single entry unchanged", () => {
+    expect(coalesceFragmentedSources(["a.pdf"])).toEqual(["a.pdf"])
+  })
+
+  it("drops substring fragments when the full filename is present", () => {
+    const full =
+      "Designing Data-Intensive Applications The Big Ideas Behind Reliable, Scalable, and Maintainable Systems by Martin Kleppmann (z-lib.org).pdf"
+    expect(
+      coalesceFragmentedSources([
+        "Designing Data-Intensive Applications The Big Ideas Behind Reliable",
+        "Scalable",
+        "and Maintainable Systems by Martin Kleppmann (z-lib.org).pdf",
+        full,
+      ]),
+    ).toEqual([full])
   })
 })

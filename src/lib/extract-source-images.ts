@@ -15,6 +15,11 @@
  */
 import { invoke } from "@tauri-apps/api/core"
 import { getFileName, normalizePath } from "@/lib/path-utils"
+import {
+  loadExtractManifest,
+  saveExtractManifest,
+  sourceFileNameFromPath,
+} from "@/lib/extract-manifest"
 
 /** Mirrors `commands::extract_images::SavedImage` on the Rust side. */
 export interface SavedImage {
@@ -100,6 +105,30 @@ export async function extractAndSaveSourceImages(
     )
     return []
   }
+}
+
+/**
+ * Return prior extraction metadata when the source is unchanged and
+ * image files still exist; otherwise run pdfium/zip extraction once
+ * and persist the manifest for later ingest / cache-hit passes.
+ */
+export async function loadOrExtractSourceImages(
+  projectPath: string,
+  sourcePath: string,
+  sourceContent: string,
+): Promise<SavedImage[]> {
+  const fileName = sourceFileNameFromPath(sourcePath)
+  const cached = await loadExtractManifest(projectPath, fileName, sourceContent)
+  if (cached !== null) {
+    console.log(
+      `[ingest:images] manifest hit for "${fileName}" — ${cached.length} image(s), skipping extraction`,
+    )
+    return cached
+  }
+
+  const images = await extractAndSaveSourceImages(projectPath, sourcePath)
+  await saveExtractManifest(projectPath, fileName, sourceContent, images)
+  return images
 }
 
 /**

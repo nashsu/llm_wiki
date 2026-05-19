@@ -63,7 +63,7 @@ function splitYamlInlineArray(body: string): string[] {
 }
 
 export function parseFrontmatterArray(content: string, fieldName: string): string[] {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!fmMatch) return []
   const fm = fmMatch[1]
   // Anchor to start of line + exact field name + colon. The negative
@@ -118,7 +118,7 @@ export function writeFrontmatterArray(
   fieldName: string,
   values: string[],
 ): string {
-  const fmMatch = content.match(/^(---\n)([\s\S]*?)(\n---)/)
+  const fmMatch = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/)
   if (!fmMatch) return content
 
   const [, openDelim, fmBody, closeDelim] = fmMatch
@@ -185,7 +185,7 @@ export function mergeArrayFieldsIntoContent(
   fields: readonly string[],
 ): string {
   if (!existingContent) return newContent
-  if (!/^---\n/.test(existingContent)) return newContent
+  if (!/^---\r?\n/.test(existingContent)) return newContent
 
   let result = newContent
   let changed = false
@@ -250,7 +250,7 @@ export function ensureSourcesInContent(
   requiredSource: string,
 ): string {
   const required = requiredSource.trim()
-  if (!required || !/^---\n/.test(content)) return content
+  if (!required || !/^---\r?\n/.test(content)) return content
 
   const merged = mergeSourcesLists(parseSources(content), [required])
   const current = parseSources(content)

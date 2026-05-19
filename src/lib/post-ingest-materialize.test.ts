@@ -171,6 +171,39 @@ describe("materializeManifestPages", () => {
     })
   })
 
+  it("treats unique-suffix shorthand as resolved and does not queue a review", async () => {
+    // Per ADR 0002, the missing-page check must use the same resolution
+    // policy as graph/post-link: `spark` resolves uniquely to `apache-spark`
+    // (manifest entry), so no review should fire.
+    mockReadFile.mockResolvedValue(
+      [
+        "---",
+        "title: Matei Zaharia",
+        "related: [spark, totally-unknown-thing]",
+        "---",
+        "",
+        "Body",
+      ].join("\n"),
+    )
+
+    const result = await materializeManifestPages(
+      "/p",
+      MANIFEST,
+      "paper.pdf",
+      ["wiki/entities/matei-zaharia.md"],
+      "raw/sources/paper.pdf",
+    )
+
+    // `spark` resolves to manifest's `apache-spark` → no review.
+    expect(result.reviewItems.some((r) => r.title.includes("spark"))).toBe(false)
+    // Truly unresolvable ref still surfaces.
+    expect(result.reviewItems).toHaveLength(1)
+    expect(result.reviewItems[0]).toMatchObject({
+      type: "missing-page",
+      title: "Missing page: totally-unknown-thing",
+    })
+  })
+
   it("unions current source into frontmatter when manifest page already exists", async () => {
     mockListDirectory.mockImplementation(async (path: string) => {
       if (path.endsWith("/wiki/entities")) {

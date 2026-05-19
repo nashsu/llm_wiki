@@ -1,3 +1,5 @@
+import { parseSources, writeSources } from "@/lib/sources-merge"
+
 /**
  * Clean up an LLM-generated wiki page body before it hits disk.
  *
@@ -41,7 +43,16 @@
  *      — invalid YAML; the read-time parser can't build FrontmatterPanel
  *      fields and the body may render as raw text.
  *
- * This sanitizer rewrites all four shapes into the standard
+ *   5. `sources:` filenames with commas but no YAML quotes — the array is
+ *      split into bogus fragments (`Reliable`, `Scalable`, …).
+ *
+ *   6. Closing `---` glued onto the last frontmatter line
+ *      (`sources: ["file.pdf"]]---`).
+ *
+ *   7. Milkdown WYSIWYG round-trip artifacts: `\---`, escaped `\[ \]`
+ *      in frontmatter, and standalone `<br />` lines in the body.
+ *
+ * This sanitizer rewrites all of the above into the standard
  * `---\n…\n---\n` frontmatter form before write. It's deliberately
  * conservative: each pattern is anchored at the very start of the
  * document (or at top-level frontmatter scope), so a legitimate
@@ -52,10 +63,16 @@
  * already-written corrupt files render correctly. Sanitizing on
  * write means newly-generated files never need that fallback,
  * which means re-ingesting an old file once cleans it up
- * permanently.
+ * permanently. Also used when the in-app editor saves a page.
  */
 export function sanitizeIngestedFileContent(content: string): string {
   let cleaned = content
+
+  // (0) Milkdown / manual-edit artifacts (before frontmatter parsing).
+  cleaned = repairMilkdownArtifacts(cleaned)
+
+  // (0b) Closing fence glued to a frontmatter value line.
+  cleaned = repairGluedClosingFence(cleaned)
 
   // (1) Strip an outer code fence wrapping the whole document.
   // We only act when the FIRST non-empty line is an opening fence
@@ -81,7 +98,97 @@ export function sanitizeIngestedFileContent(content: string): string {
   // link transform applied at read time.
   cleaned = repairWikilinkListsInFrontmatter(cleaned)
 
+  // (5) Coalesce comma-split `sources:` fragments and re-quote entries.
+  cleaned = repairSourcesInContent(cleaned)
+
   return cleaned
+}
+
+/** Escaped `---` lines and standalone `<br />` rows (Milkdown empty paragraphs). */
+function repairMilkdownArtifacts(content: string): string {
+  let c = content.replace(/^\\---\s*$/gm, "---")
+  c = c.replace(/^\s*<br\s*\/?>\s*$/gim, "")
+  c = c.replace(/\n{4,}/g, "\n\n\n")
+  return repairEscapedBracketsInFrontmatter(c)
+}
+
+function repairEscapedBracketsInFrontmatter(content: string): string {
+  const fmRe = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(\r?\n|$)/
+  const m = content.match(fmRe)
+  if (!m) return content
+  const repaired = m[1].replace(/\\([\[\]])/g, "$1")
+  if (repaired === m[1]) return content
+  return (
+    content.slice(0, m.index! + 4) +
+    repaired +
+    content.slice(m.index! + 4 + m[1].length)
+  )
+}
+
+/** `sources: ["x.pdf"]]---` → value line + `---` on its own line. */
+function repairGluedClosingFence(content: string): string {
+  let c = content.replace(
+    /^(\s*sources\s*:\s*\[[^\]]*\])\s*\]+\s*---\s*$/gim,
+    "$1\n---",
+  )
+  c = c.replace(
+    /^(\s*(?:type|title|tags|related|sources|created|updated|description|origin|summary|status)\s*:\s*.+?)---\s*$/gim,
+    "$1\n---",
+  )
+  return c
+}
+
+/**
+ * Drop `sources` entries that are comma-split fragments of a longer filename
+ * already present (or reconstructable by rejoining with ", ").
+ */
+export function coalesceFragmentedSources(sources: string[]): string[] {
+  const trimmed = sources.map((s) => s.trim()).filter(Boolean)
+  if (trimmed.length <= 1) return trimmed
+
+  const afterSubstringDrop = trimmed.filter((s, i) => {
+    const low = s.toLowerCase()
+    return !trimmed.some(
+      (t, j) => j !== i && t.length > s.length && t.toLowerCase().includes(low),
+    )
+  })
+
+  if (afterSubstringDrop.length <= 1) return afterSubstringDrop
+
+  const longest = [...afterSubstringDrop].sort((a, b) => b.length - a.length)[0]!
+  const joinedAll = trimmed.join(", ")
+  if (
+    trimmed.length >= 2 &&
+    /\.(pdf|md|markdown|txt|docx?|html?|epub)$/i.test(longest) &&
+    joinedAll.length >= longest.length * 0.9
+  ) {
+    return [longest]
+  }
+
+  const reconstructed = trimmed.join(", ")
+  if (
+    trimmed.length >= 2 &&
+    /\.(pdf|md|markdown|txt|docx?|html?|epub)$/i.test(reconstructed) &&
+    reconstructed.length > Math.max(...trimmed.map((s) => s.length))
+  ) {
+    return [reconstructed]
+  }
+
+  return afterSubstringDrop
+}
+
+function repairSourcesInContent(content: string): string {
+  if (!/^---\s*\r?\n/.test(content)) return content
+  const sources = parseSources(content)
+  if (sources.length === 0) return content
+  const coalesced = coalesceFragmentedSources(sources)
+  if (
+    coalesced.length === sources.length &&
+    coalesced.every((s, i) => s === sources[i])
+  ) {
+    return content
+  }
+  return writeSources(content, coalesced)
 }
 
 /** Top-level fence wrapper. Removes the open + close fence lines. */

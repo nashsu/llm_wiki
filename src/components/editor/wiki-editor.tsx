@@ -11,6 +11,7 @@ import "@milkdown/theme-nord/style.css"
 import "katex/dist/katex.min.css"
 import { Pencil, Eye } from "lucide-react"
 import { parseFrontmatter } from "@/lib/frontmatter"
+import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { WikiReader } from "@/components/editor/wiki-reader"
 
@@ -94,7 +95,8 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
   const processedBody = useMemo(() => wrapBareMathBlocks(body), [body])
 
   const handleSave = useMemo(
-    () => (markdown: string) => onSave(rawBlock + markdown),
+    () => (markdown: string) =>
+      onSave(sanitizeIngestedFileContent(rawBlock + markdown)),
     [onSave, rawBlock],
   )
 

@@ -10,6 +10,13 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 import type { FileNode } from "@/types/wiki"
 import { makeQuerySlug } from "@/lib/wiki-filename"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import {
+  loadCheckpoint,
+  newCheckpoint,
+  saveCheckpoint,
+  clearCheckpoint,
+  type IngestCheckpoint,
+} from "@/lib/ingest-checkpoint"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { ensureSourcesInContent } from "@/lib/sources-merge"
@@ -25,7 +32,7 @@ import {
 } from "@/lib/post-ingest-materialize"
 import { withProjectLock } from "@/lib/project-mutex"
 import {
-  extractAndSaveSourceImages,
+  loadOrExtractSourceImages,
   buildImageMarkdownSection,
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
@@ -342,6 +349,8 @@ const INGEST_ENTITY_BATCH_SIZE = 20
 // Catch-up pass: smaller batches after primary writes to recover manifest
 // pages the model omitted from the first pass.
 const INGEST_CATCHUP_BATCH_SIZE = 5
+/** Tail catch-up passes for entities still stub after a batch LLM call. */
+const MAX_CATCHUP_RETRY_ROUNDS = 2
 // Maximum slug candidates surfaced to the model per entity batch.
 const WIKILINK_CANDIDATE_LIMIT = 30
 
@@ -390,6 +399,12 @@ interface IngestRunContext {
     raw: string
     enriched: string
   }
+  /**
+   * Progress record for this run. Helpers mutate it as stages complete and
+   * call `saveCheckpoint` to persist; on retry the loader rehydrates it so
+   * the LLM-heavy stages skip work that already landed on disk.
+   */
+  checkpoint?: IngestCheckpoint
 }
 
 interface IngestWriteContext {
@@ -443,6 +458,28 @@ async function runChunkedAnalysis(
   runCtx: IngestRunContext,
   activityId: string,
 ): Promise<ChunkedAnalysisResult> {
+  // Checkpoint short-circuit: if a previous run already produced the
+  // merged analysis, reuse it verbatim. Stage 1 is the longest cacheable
+  // unit (5–10 LLM passes for a book-sized source), so skipping it on
+  // retry is the single biggest resume win.
+  if (
+    runCtx.checkpoint?.analysis !== undefined &&
+    runCtx.checkpoint.chunkCount !== undefined &&
+    runCtx.checkpoint.isMultiChunk !== undefined
+  ) {
+    console.log(
+      `[ingest] "${runCtx.fileName}": Stage 1 restored from checkpoint (${runCtx.checkpoint.chunkCount} chunk(s), ${runCtx.checkpoint.analysis.length} chars)`,
+    )
+    useActivityStore.getState().updateItem(activityId, {
+      detail: `Step 1/2: Analysis restored from checkpoint`,
+    })
+    return {
+      analysis: runCtx.checkpoint.analysis,
+      chunkCount: runCtx.checkpoint.chunkCount,
+      isMultiChunk: runCtx.checkpoint.isMultiChunk,
+    }
+  }
+
   const analysisChunkSize = computeAnalysisChunkSize(runCtx.llmConfig.maxContextSize)
   const contentChunks = chunkForAnalysis(
     runCtx.source.enriched,
@@ -509,11 +546,27 @@ async function runChunkedAnalysis(
     }
   }
 
-  return {
+  const result: ChunkedAnalysisResult = {
     analysis: analysisParts.join("\n\n"),
     chunkCount: contentChunks.length,
     isMultiChunk,
   }
+
+  // Persist Stage 1 result so a Stage 2 failure doesn't force us to
+  // re-run the analysis on retry. Stage 1 is treated as atomic — we
+  // only checkpoint when the merged output is complete; partial chunk
+  // progress is discarded if the run dies mid-Stage-1.
+  if (runCtx.checkpoint) {
+    runCtx.checkpoint = {
+      ...runCtx.checkpoint,
+      analysis: result.analysis,
+      chunkCount: result.chunkCount,
+      isMultiChunk: result.isMultiChunk,
+    }
+    await saveCheckpoint(runCtx.projectPath, runCtx.fileName, runCtx.checkpoint)
+  }
+
+  return result
 }
 
 interface BatchedEntityGenerationResult {
@@ -554,7 +607,32 @@ async function runBatchedEntityGeneration(
       `[ingest] "${runCtx.fileName}": manifest has ${parsedEntities!.length} entities/concepts → ${batches.length} batch call(s) of ≤${INGEST_ENTITY_BATCH_SIZE}`,
     )
 
+    // Restore prior progress: paths already produced by completed batches
+    // count toward the run's returned writtenPaths, and the index set
+    // tells us which batches to skip below.
+    const completedSet = new Set<number>(runCtx.checkpoint?.completedMainBatches ?? [])
+    if (runCtx.checkpoint?.mainWrittenPaths) {
+      batchWrittenPaths.push(...runCtx.checkpoint.mainWrittenPaths)
+    }
+    if (runCtx.checkpoint && completedSet.size > 0) {
+      console.log(
+        `[ingest] "${runCtx.fileName}": resuming main batches — ${completedSet.size}/${batches.length} already complete from checkpoint`,
+      )
+    }
+
+    // Pin the total once so a malformed re-parse can't shift indices mid-run.
+    if (runCtx.checkpoint) {
+      runCtx.checkpoint = {
+        ...runCtx.checkpoint,
+        mainBatchesTotal: batches.length,
+        completedMainBatches: Array.from(completedSet).sort((a, b) => a - b),
+        mainWrittenPaths: [...batchWrittenPaths],
+      }
+      await saveCheckpoint(runCtx.projectPath, runCtx.fileName, runCtx.checkpoint)
+    }
+
     for (let bi = 0; bi < batches.length; bi++) {
+      if (completedSet.has(bi)) continue
       const batch = batches[bi]
       useActivityStore.getState().updateItem(activityId, {
         detail: `Step 2a/2b: Writing entity batch ${bi + 1}/${batches.length} (${batch.length} pages)...`,
@@ -620,6 +698,19 @@ async function runBatchedEntityGeneration(
       batchWrittenPaths.push(...result.writtenPaths)
       batchWarnings.push(...result.warnings)
       batchHardFailures.push(...result.hardFailures)
+
+      // Mark this batch durable. A crash before this save reruns the batch
+      // on retry, which is correct (idempotent — `mergePageContent` re-folds
+      // identical content). A crash after the save skips the batch on retry.
+      if (runCtx.checkpoint) {
+        completedSet.add(bi)
+        runCtx.checkpoint = {
+          ...runCtx.checkpoint,
+          completedMainBatches: Array.from(completedSet).sort((a, b) => a - b),
+          mainWrittenPaths: [...batchWrittenPaths],
+        }
+        await saveCheckpoint(runCtx.projectPath, runCtx.fileName, runCtx.checkpoint)
+      }
     }
 
   } else if (parsedEntities === null) {
@@ -671,6 +762,22 @@ export interface FollowUpEffects {
   onReviews: (items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[]) => void
 }
 
+/** Dedupe by case-insensitive manifest name (first occurrence wins). */
+export function mergeCatchupRetryEntities(
+  existing: AnalysisEntity[] | undefined,
+  added: AnalysisEntity[],
+): AnalysisEntity[] {
+  const seen = new Set<string>()
+  const out: AnalysisEntity[] = []
+  for (const e of [...(existing ?? []), ...added]) {
+    const key = e.name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(e)
+  }
+  return out
+}
+
 export interface FollowUpResult {
   /** Stubs from Manifest coverage + pages written by Catch-up. */
   writtenPaths: string[]
@@ -699,6 +806,163 @@ export interface FollowUpResult {
  * use and `manifest.length > 0`. The empty-manifest case is a no-op for
  * follow-up and is gated by the caller (no batches → no follow-up).
  */
+
+interface CatchupBatchRunResult {
+  writtenPaths: string[]
+  warnings: string[]
+  hardFailures: string[]
+  stillNeedingRetry: AnalysisEntity[]
+}
+
+/** Run one catch-up LLM batch and write FILE blocks (overwrite stubs). */
+async function runCatchupLlmBatch(
+  runCtx: IngestRunContext,
+  manifest: AnalysisEntity[],
+  analysis: string,
+  batch: AnalysisEntity[],
+  progressLabel: string,
+  effects: FollowUpEffects,
+): Promise<CatchupBatchRunResult> {
+  const wikilinkTargets = await buildWikilinkCandidates(runCtx.projectPath, manifest, batch)
+
+  let batchOutput = ""
+  let streamError: Error | null = null
+  await streamChat(
+    runCtx.llmConfig,
+    [
+      {
+        role: "system",
+        content: buildEntityBatchPromptForRun(runCtx, wikilinkTargets, batch, "catchup"),
+      },
+      {
+        role: "user",
+        content: [
+          `Source document: **${runCtx.fileName}**`,
+          "",
+          progressLabel,
+          "",
+          "## Stage 1 Analysis (use as context for page content — do not echo)",
+          "",
+          analysis,
+          "",
+          "---",
+          "",
+          "Emit FILE blocks for the listed pages now. Begin with `---FILE:`.",
+        ].join("\n"),
+      },
+    ],
+    {
+      onToken: (token) => { batchOutput += token },
+      onDone: () => {},
+      onError: (err) => {
+        streamError = err
+        effects.onError(err.message)
+      },
+    },
+    runCtx.signal,
+    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+  )
+
+  if (streamError) throw streamError
+
+  const result = await writeFileBlocks(
+    {
+      projectPath: runCtx.projectPath,
+      llmConfig: runCtx.llmConfig,
+      sourceFileName: runCtx.fileName,
+      signal: runCtx.signal,
+    },
+    batchOutput,
+    { mergeExisting: false },
+  )
+
+  const stillNeedingRetry = await findCatchupManifestEntities(runCtx.projectPath, batch)
+  if (stillNeedingRetry.length > 0) {
+    console.log(
+      `[ingest] "${runCtx.fileName}": ${stillNeedingRetry.length} page(s) still stub after catch-up batch — queued for retry`,
+    )
+  }
+
+  return {
+    writtenPaths: result.writtenPaths,
+    warnings: result.warnings,
+    hardFailures: result.hardFailures,
+    stillNeedingRetry,
+  }
+}
+
+async function persistCatchupCheckpoint(
+  runCtx: IngestRunContext,
+  patch: Partial<IngestCheckpoint>,
+  writtenPaths: string[],
+): Promise<void> {
+  if (!runCtx.checkpoint) return
+  runCtx.checkpoint = {
+    ...runCtx.checkpoint,
+    ...patch,
+    catchupWrittenPaths: [...writtenPaths],
+  }
+  await saveCheckpoint(runCtx.projectPath, runCtx.fileName, runCtx.checkpoint)
+}
+
+/** Drain `pendingCatchupRetries` in ≤MAX_CATCHUP_RETRY_ROUNDS tail passes (D1). */
+async function drainCatchupRetryQueue(
+  runCtx: IngestRunContext,
+  manifest: AnalysisEntity[],
+  analysis: string,
+  effects: FollowUpEffects,
+  writtenPaths: string[],
+  warnings: string[],
+  hardFailures: string[],
+): Promise<void> {
+  if (!runCtx.checkpoint) return
+
+  let pending = runCtx.checkpoint.pendingCatchupRetries ?? []
+  let roundsDone = runCtx.checkpoint.catchupRetryRoundsDone ?? 0
+
+  while (pending.length > 0 && roundsDone < MAX_CATCHUP_RETRY_ROUNDS) {
+    roundsDone++
+    const retryBatches = dedupAndBatchEntities(pending, INGEST_CATCHUP_BATCH_SIZE)
+    console.log(
+      `[ingest] "${runCtx.fileName}": catch-up retry round ${roundsDone}/${MAX_CATCHUP_RETRY_ROUNDS} — ${pending.length} page(s) → ${retryBatches.length} batch(es)`,
+    )
+
+    const failedThisRound: AnalysisEntity[] = []
+    for (let ri = 0; ri < retryBatches.length; ri++) {
+      const batch = retryBatches[ri]
+      effects.onProgress(
+        `Step 2a-catchup retry ${roundsDone}/${MAX_CATCHUP_RETRY_ROUNDS}: batch ${ri + 1}/${retryBatches.length} (${batch.length} pages)...`,
+      )
+      const result = await runCatchupLlmBatch(
+        runCtx,
+        manifest,
+        analysis,
+        batch,
+        `CATCH-UP RETRY round ${roundsDone}, batch ${ri + 1} of ${retryBatches.length}: emit a complete FILE block for every name in the system prompt — no omissions.`,
+        effects,
+      )
+      writtenPaths.push(...result.writtenPaths)
+      warnings.push(...result.warnings)
+      hardFailures.push(...result.hardFailures)
+      failedThisRound.push(...result.stillNeedingRetry)
+    }
+
+    pending = mergeCatchupRetryEntities([], failedThisRound)
+    runCtx.checkpoint.pendingCatchupRetries = pending
+    runCtx.checkpoint.catchupRetryRoundsDone = roundsDone
+    await persistCatchupCheckpoint(runCtx, {}, writtenPaths)
+  }
+
+  if (pending.length > 0) {
+    const msg = `${pending.length} manifest page(s) still stub after ${roundsDone} catch-up retry round(s) — fix manually or re-ingest.`
+    console.warn(`[ingest] "${runCtx.fileName}": ${msg}`)
+    warnings.push(msg)
+  } else if (runCtx.checkpoint.pendingCatchupRetries?.length) {
+    runCtx.checkpoint.pendingCatchupRetries = []
+    await persistCatchupCheckpoint(runCtx, { pendingCatchupRetries: [] }, writtenPaths)
+  }
+}
+
 export async function runFollowUpPasses(
   runCtx: IngestRunContext,
   manifest: AnalysisEntity[],
@@ -737,75 +1001,105 @@ export async function runFollowUpPasses(
   // (which Manifest coverage may have just created), and rewrites them
   // with a full LLM pass. mergeExisting:false because stubs would otherwise
   // contaminate the merged body.
-  const catchupTargets = await findCatchupManifestEntities(runCtx.projectPath, manifest)
+  //
+  // Resume rule: once a run has scanned and pinned `catchupTargets` to the
+  // checkpoint, subsequent retries reuse that list rather than re-scanning.
+  // The disk shifts under us between runs (some catch-up pages from prior
+  // attempts already landed), so a re-scan would return a strict subset and
+  // batch indices would no longer align with `completedCatchupBatches`.
+  let catchupTargets: AnalysisEntity[]
+  if (runCtx.checkpoint?.catchupTargets !== undefined) {
+    catchupTargets = runCtx.checkpoint.catchupTargets
+    if (catchupTargets.length > 0) {
+      console.log(
+        `[ingest] "${runCtx.fileName}": resuming catch-up — ${catchupTargets.length} target(s) restored from checkpoint (skipping disk re-scan)`,
+      )
+    }
+  } else {
+    catchupTargets = await findCatchupManifestEntities(runCtx.projectPath, manifest)
+    if (runCtx.checkpoint) {
+      runCtx.checkpoint = {
+        ...runCtx.checkpoint,
+        catchupTargets,
+        completedCatchupBatches: runCtx.checkpoint.completedCatchupBatches ?? [],
+        catchupWrittenPaths: runCtx.checkpoint.catchupWrittenPaths ?? [],
+        pendingCatchupRetries: runCtx.checkpoint.pendingCatchupRetries ?? [],
+        catchupRetryRoundsDone: runCtx.checkpoint.catchupRetryRoundsDone ?? 0,
+      }
+      await saveCheckpoint(runCtx.projectPath, runCtx.fileName, runCtx.checkpoint)
+    }
+  }
+
+  // Replay catch-up writes from prior runs into this run's tally so the
+  // returned writtenPaths is complete after a resume.
+  if (runCtx.checkpoint?.catchupWrittenPaths) {
+    writtenPaths.push(...runCtx.checkpoint.catchupWrittenPaths)
+  }
+
   if (catchupTargets.length > 0) {
     const catchupBatches = dedupAndBatchEntities(catchupTargets, INGEST_CATCHUP_BATCH_SIZE)
+    const completedCatchupSet = new Set<number>(runCtx.checkpoint?.completedCatchupBatches ?? [])
     console.log(
-      `[ingest] "${runCtx.fileName}": ${catchupTargets.length} manifest page(s) need catch-up after materialization → ${catchupBatches.length} catch-up batch(es) of ≤${INGEST_CATCHUP_BATCH_SIZE}`,
+      `[ingest] "${runCtx.fileName}": ${catchupTargets.length} manifest page(s) need catch-up after materialization → ${catchupBatches.length} catch-up batch(es) of ≤${INGEST_CATCHUP_BATCH_SIZE}${completedCatchupSet.size > 0 ? ` (${completedCatchupSet.size} already complete)` : ""}`,
     )
     for (let ci = 0; ci < catchupBatches.length; ci++) {
+      if (completedCatchupSet.has(ci)) continue
       const batch = catchupBatches[ci]
       effects.onProgress(
         `Step 2a-catchup: Missed entities ${ci + 1}/${catchupBatches.length} (${batch.length} pages)...`,
       )
-      const wikilinkTargets = await buildWikilinkCandidates(runCtx.projectPath, manifest, batch)
 
-      let batchOutput = ""
-      let streamError: Error | null = null
-      await streamChat(
-        runCtx.llmConfig,
-        [
-          {
-            role: "system",
-            content: buildEntityBatchPromptForRun(runCtx, wikilinkTargets, batch, "catchup"),
-          },
-          {
-            role: "user",
-            content: [
-              `Source document: **${runCtx.fileName}**`,
-              "",
-              `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries are missing or still stub pages. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
-              "",
-              "## Stage 1 Analysis (use as context for page content — do not echo)",
-              "",
-              analysis,
-              "",
-              "---",
-              "",
-              "Emit FILE blocks for the listed pages now. Begin with `---FILE:`.",
-            ].join("\n"),
-          },
-        ],
-        {
-          onToken: (token) => { batchOutput += token },
-          onDone: () => {},
-          onError: (err) => {
-            streamError = err
-            effects.onError(
-              `Catch-up batch ${ci + 1}/${catchupBatches.length} failed: ${err.message}`,
-            )
-          },
-        },
-        runCtx.signal,
-        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
-      )
-
-      if (streamError) throw streamError
-
-      const result = await writeFileBlocks(
-        {
-          projectPath: runCtx.projectPath,
-          llmConfig: runCtx.llmConfig,
-          sourceFileName: runCtx.fileName,
-          signal: runCtx.signal,
-        },
-        batchOutput,
-        { mergeExisting: false },
+      const result = await runCatchupLlmBatch(
+        runCtx,
+        manifest,
+        analysis,
+        batch,
+        `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries are missing or still stub pages. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
+        effects,
       )
       writtenPaths.push(...result.writtenPaths)
       warnings.push(...result.warnings)
       hardFailures.push(...result.hardFailures)
+
+      if (runCtx.checkpoint && result.stillNeedingRetry.length > 0) {
+        runCtx.checkpoint.pendingCatchupRetries = mergeCatchupRetryEntities(
+          runCtx.checkpoint.pendingCatchupRetries,
+          result.stillNeedingRetry,
+        )
+      }
+
+      if (runCtx.checkpoint) {
+        completedCatchupSet.add(ci)
+        await persistCatchupCheckpoint(
+          runCtx,
+          {
+            completedCatchupBatches: Array.from(completedCatchupSet).sort((a, b) => a - b),
+          },
+          writtenPaths,
+        )
+      }
     }
+
+    await drainCatchupRetryQueue(
+      runCtx,
+      manifest,
+      analysis,
+      effects,
+      writtenPaths,
+      warnings,
+      hardFailures,
+    )
+  } else if ((runCtx.checkpoint?.pendingCatchupRetries?.length ?? 0) > 0) {
+    // Primary catch-up batches were already complete on resume; drain tail queue.
+    await drainCatchupRetryQueue(
+      runCtx,
+      manifest,
+      analysis,
+      effects,
+      writtenPaths,
+      warnings,
+      hardFailures,
+    )
   }
 
   // ── Recompute path set (ADR 0001 invariant) ──────────────────
@@ -1019,20 +1313,15 @@ async function autoIngestImpl(
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
-  // Image cascade still runs on cache hits. Reason: a user may have
-  // ingested this source on a previous app version that didn't extract
-  // images yet, or the media dir may have been deleted out from under
-  // us. `extractAndSaveSourceImages` + injection are both idempotent
-  // (deterministic output paths, marker-bracketed replacement), so
-  // re-running them costs only the extraction time and converges the
-  // source-summary page on the current pipeline's contract regardless
-  // of when the file was first ingested.
+  // Cache hits may still run caption + source-summary injection when
+  // multimodal is on, but image bytes come from `.llm-wiki/extract-manifest-*.json`
+  // when the source hash and media files are unchanged (no pdfium re-scan).
   const cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
   console.log(`[ingest:diag] cache check for "${fileName}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
     try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
-      const savedImages = await extractAndSaveSourceImages(pp, sp)
+      const savedImages = await loadOrExtractSourceImages(pp, sp, sourceContent)
       console.log(`[ingest:diag] cache-hit branch: got ${savedImages.length} image(s)`)
       if (savedImages.length > 0) {
         // Caption first (populates the cache), THEN inject — the
@@ -1104,6 +1393,23 @@ async function autoIngestImpl(
     return cachedFiles
   }
 
+  // ── Checkpoint: resume Stage 1 / batch progress from prior runs ──
+  // Loaded only on cache miss — a cache hit means a complete prior run
+  // already exists, so there's nothing to resume. `loadCheckpoint`
+  // returns null when the source content has changed since the
+  // checkpoint was written, falling through to a fresh `newCheckpoint`.
+  const existingCheckpoint = await loadCheckpoint(pp, fileName, sourceContent)
+  runCtx.checkpoint = existingCheckpoint ?? (await newCheckpoint(sourceContent))
+  if (existingCheckpoint) {
+    const stage1 = existingCheckpoint.analysis ? "Stage 1✓" : "Stage 1·"
+    const mainDone = existingCheckpoint.completedMainBatches?.length ?? 0
+    const mainTotal = existingCheckpoint.mainBatchesTotal ?? 0
+    const catchDone = existingCheckpoint.completedCatchupBatches?.length ?? 0
+    console.log(
+      `[ingest] "${fileName}": checkpoint loaded — ${stage1}, main ${mainDone}/${mainTotal}, catch-up batches done: ${catchDone}`,
+    )
+  }
+
   // ── Chapter split: large structured PDF → one ingest per chapter ──
   // Runs after the cache miss so it only fires when the PDF has changed
   // or is being ingested for the first time. Each chapter file is
@@ -1130,11 +1436,11 @@ async function autoIngestImpl(
   // sourceContent injection because the captioned alt-text gives
   // the LLM something meaningful to work with.
   //
-  // Failure here is never fatal — extractAndSaveSourceImages logs
+  // Failure here is never fatal — loadOrExtractSourceImages logs
   // and returns [] on any error.
   activity.updateItem(activityId, { detail: "Extracting embedded images..." })
   console.log(`[ingest:diag] full-pipeline branch: starting image extraction for ${sp}`)
-  const savedImages = await extractAndSaveSourceImages(pp, sp)
+  const savedImages = await loadOrExtractSourceImages(pp, sp, sourceContent)
   console.log(`[ingest:diag] full-pipeline branch: got ${savedImages.length} image(s)`)
   if (savedImages.length > 0) {
     console.log(
@@ -1460,10 +1766,16 @@ async function autoIngestImpl(
 
   if (allPaths.length > 0 && hardFailures.length === 0) {
     await saveIngestCache(pp, fileName, sourceContent, allPaths)
+    // Run completed cleanly — drop the resume record so a future
+    // re-ingest (e.g. after the source is edited) starts fresh and
+    // doesn't try to short-circuit Stage 1 from stale checkpoint data.
+    await clearCheckpoint(pp, fileName)
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${fileName}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
     )
+    // Keep the checkpoint: the user / queue may retry, and the
+    // batches that DID succeed should still be skippable on resume.
   }
 
   // ── Step 6: Generate embeddings (if enabled) ───────────────
@@ -2390,28 +2702,22 @@ export async function startIngest(
   store.clearMessages()
   store.setStreaming(false)
 
-  // Extract embedded images upfront — independent of the LLM call
-  // that follows. Done eagerly here (rather than in
-  // `executeIngestWrites`) so the images are on disk before the user
-  // even sees the analysis stream, and the cost is only paid once
-  // per source: a follow-up `executeIngestWrites` will reuse the
-  // already-extracted set rather than re-running pdfium.
-  // Failure-tolerant — `extractAndSaveSourceImages` returns [] on
-  // any error and logs internally; we never want image extraction
-  // to break the ingest chat flow.
-  void extractAndSaveSourceImages(pp, sp).catch((err) => {
-    console.warn(
-      `[startIngest:images] eager extraction failed for "${getFileName(sp)}":`,
-      err instanceof Error ? err.message : err,
-    )
-  })
-
   const [sourceContent, schema, purpose, index] = await Promise.all([
     tryReadFile(sp),
     tryReadFile(`${pp}/wiki/schema.md`),
     tryReadFile(`${pp}/wiki/purpose.md`),
     tryReadFile(`${pp}/wiki/index.md`),
   ])
+
+  // Extract embedded images upfront — independent of the LLM call
+  // that follows. Manifest-backed so `executeIngestWrites` does not
+  // re-scan the PDF when this pass already ran.
+  void loadOrExtractSourceImages(pp, sp, sourceContent).catch((err) => {
+    console.warn(
+      `[startIngest:images] eager extraction failed for "${getFileName(sp)}":`,
+      err instanceof Error ? err.message : err,
+    )
+  })
 
   const fileName = getFileName(sp)
 
@@ -2586,11 +2892,9 @@ export async function executeIngestWrites(
   // page. `startIngest` already kicked off extraction in parallel
   // with the chat stream — by now the images are sitting in
   // `wiki/media/<slug>/`, but no markdown references them yet. We
-  // re-run extraction here to get back the SavedImage metadata
-  // (rel_path, page) needed to build the markdown section. The Rust
-  // command is idempotent (deterministic file paths, overwrite-safe
-  // writes), so repeating it is cheap on the second call where every
-  // file already exists.
+  // load SavedImage metadata (rel_path, page) for the markdown section.
+  // `loadOrExtractSourceImages` reuses the extract manifest when
+  // `startIngest` already extracted for this source hash.
   //
   // Read the source path from the chat store — `startIngest` set it
   // there at the beginning of the flow, and we don't have it as a
@@ -2605,7 +2909,8 @@ export async function executeIngestWrites(
   const mmCfgWrites = useWikiStore.getState().multimodalConfig
   if (ingestSource && mmCfgWrites.enabled) {
     try {
-      const savedImages = await extractAndSaveSourceImages(pp, ingestSource)
+      const writeSourceContent = await tryReadFile(ingestSource)
+      const savedImages = await loadOrExtractSourceImages(pp, ingestSource, writeSourceContent)
       if (savedImages.length > 0) {
         const fileName = getFileName(ingestSource)
         await injectImagesIntoSourceSummary(pp, fileName, savedImages)

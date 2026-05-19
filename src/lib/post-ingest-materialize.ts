@@ -3,7 +3,7 @@ import { parseFrontmatter } from "@/lib/frontmatter"
 import { normalizePath } from "@/lib/path-utils"
 import { ensureSourcesInContent } from "@/lib/sources-merge"
 import { makeQuerySlug } from "@/lib/wiki-filename"
-import { unwrapWikilink } from "@/lib/wiki-page-resolver"
+import { resolveWikiSlugId, unwrapWikilink } from "@/lib/wiki-page-resolver"
 import type { ReviewItem } from "@/stores/review-store"
 import type { FileNode } from "@/types/wiki"
 
@@ -206,7 +206,11 @@ async function collectDanglingRelatedReviews(
   existingSlugs: Set<string>,
   sourcePath?: string,
 ): Promise<Omit<ReviewItem, "id" | "resolved" | "createdAt">[]> {
-  const manifestSlugs = new Set(manifestBySlug.keys())
+  // Per ADR 0002, treat Related and Wikilink as the same kind of page reference
+  // and use the unified resolver: anything `resolveWikiSlugId` can map to a
+  // unique page (including unique-suffix shorthand like `spark` → `apache-spark`)
+  // is resolved and must not be reviewed as missing.
+  const knownSlugs = new Set<string>([...manifestBySlug.keys(), ...existingSlugs])
   const seenTitles = new Set<string>()
   const items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[] = []
 
@@ -225,8 +229,7 @@ async function collectDanglingRelatedReviews(
       const { slug } = unwrapWikilink(raw)
       const normalized = slug.trim().toLowerCase()
       if (!normalized || normalized === selfSlug) continue
-      if (manifestSlugs.has(normalized)) continue
-      if (existingSlugs.has(normalized)) continue
+      if (resolveWikiSlugId(slug, knownSlugs) !== null) continue
 
       const title = `Missing page: ${slug}`
       const titleKey = title.toLowerCase()
