@@ -46,7 +46,14 @@
 
 ## What is this?
 
-LLM Wiki is a cross-platform desktop application that turns your documents into an organized, interlinked knowledge base — automatically. Instead of traditional RAG (retrieve-and-answer from scratch every time), the LLM **incrementally builds and maintains a persistent wiki** from your sources. Knowledge is compiled once and kept current, not re-derived on every query.
+LLM Wiki is a cross-platform desktop application that turns your documents into an enumerable, navigable **concept index** — automatically. It is not a compile-once answer cache.
+
+Two kinds of synthesis happen here, and they work differently:
+
+- **Source-intrinsic synthesis** — patterns, tensions, and comparisons the sources themselves assert. Pre-compilable: the wiki captures this at ingest time.
+- **Query-intrinsic synthesis** — framing a trade-off for your specific scenario. Not pre-compilable: query intent is unknowable at ingest.
+
+The wiki's job is to give the chat layer **grounding and gap-awareness**. Unlike a chunk store, you can ask "is there a page named X?" and get a definitive answer. The chat layer does query-time composition; the wiki makes that composition auditable, navigable, and gap-aware.
 
 This project is based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — a methodology for building personal knowledge bases using LLMs. We implemented the core ideas as a full desktop application with significant enhancements.
 
