@@ -77,11 +77,3 @@ export function reconcileWikiIndexContent(
     changed: added.length > 0,
   }
 }
-
-/** @deprecated Import from `@/lib/catalog-index` — kept for older import paths. */
-export async function reconcileWikiIndexProject(
-  projectPath: string,
-): Promise<{ added: number; paths: string[] }> {
-  const { reconcileWikiIndexProject: reconcile } = await import("@/lib/catalog-index")
-  return reconcile(projectPath)
-}

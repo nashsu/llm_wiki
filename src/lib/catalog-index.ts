@@ -150,11 +150,3 @@ export async function reconcileCatalogIndexProject(
   )
   return { kind: "reconcile", added: added.length, paths }
 }
-
-/** @deprecated Use `reconcileCatalogIndexProject` — kept for existing import sites. */
-export async function reconcileWikiIndexProject(
-  projectPath: string,
-): Promise<{ added: number; paths: string[] }> {
-  const result = await reconcileCatalogIndexProject(projectPath)
-  return { added: result.added, paths: result.paths }
-}
