@@ -19,6 +19,7 @@ import {
   type IngestCheckpoint,
 } from "@/lib/ingest-checkpoint"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
+import { updateCatalogIndex } from "@/lib/catalog-index"
 import {
   INDEX_ENTRY_FORMAT_SPEC,
   LOG_ENTRY_FORMAT_SPEC,
@@ -1292,8 +1293,7 @@ async function tryWriteAndIngestChapters(
 
   if (allWrittenPaths.length > 0) {
     try {
-      const { reconcileWikiIndexProject } = await import("@/lib/index-reconcile")
-      await reconcileWikiIndexProject(pp)
+      await updateCatalogIndex(pp, { kind: "reconcile" })
     } catch (err) {
       console.warn(
         "[ingest:chapter] index reconcile failed:",
@@ -1910,8 +1910,7 @@ async function autoIngestImpl(
 
   if (totalPaths.length > 0 && !options.deferIndexReconcile && !signal?.aborted) {
     try {
-      const { reconcileWikiIndexProject } = await import("@/lib/index-reconcile")
-      await reconcileWikiIndexProject(pp)
+      await updateCatalogIndex(pp, { kind: "reconcile" })
     } catch (err) {
       console.warn(
         "[ingest] index reconcile failed:",
@@ -2056,8 +2055,8 @@ async function writeFileBlocks(
           warnings.push(msg)
           continue
         }
-        await writeFile(fullPath, content)
-        writtenPaths.push(relativePath)
+        await updateCatalogIndex(ctx.projectPath, { kind: "replace", content })
+        writtenPaths.push(WIKI_INDEX_PATH)
         continue
       } else if (
         relativePath.endsWith("/overview.md") ||
@@ -3061,6 +3060,16 @@ export async function executeIngestWrites(
         })
         await writeFile(logPath, appendWikiLogContent(existing, entry))
         writtenPaths.push(WIKI_LOG_PATH)
+      } else if (
+        relativePath.endsWith("/index.md") ||
+        relativePath === "wiki/index.md"
+      ) {
+        if (!isCanonicalWikiIndexPath(relativePath)) {
+          console.warn(`[ingest] Ignored index FILE at "${relativePath}" — use ${WIKI_INDEX_PATH}`)
+          continue
+        }
+        await updateCatalogIndex(pp, { kind: "replace", content })
+        writtenPaths.push(WIKI_INDEX_PATH)
       } else {
         await writeFile(fullPath, content)
         writtenPaths.push(relativePath)
@@ -3071,6 +3080,8 @@ export async function executeIngestWrites(
   }
 
   if (writtenPaths.length > 0) {
+    await updateCatalogIndex(pp, { kind: "reconcile" })
+
     const fileList = writtenPaths.map((p) => `- ${p}`).join("\n")
     getStore().addMessage("system", `Files written to wiki:\n${fileList}`)
   } else {

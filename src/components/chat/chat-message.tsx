@@ -18,12 +18,10 @@ import type { FileNode } from "@/types/wiki"
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
 import { makeQueryFileName } from "@/lib/wiki-filename"
+import { updateCatalogIndex } from "@/lib/catalog-index"
 import {
-  WIKI_INDEX_PATH,
   WIKI_LOG_PATH,
-  appendIndexEntry,
   appendWikiLogContent,
-  formatIndexEntry,
   formatLogEntry,
 } from "@/lib/wiki-structural"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
@@ -199,17 +197,14 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
 
       await writeFile(filePath, frontmatter + cleanContent)
 
-      const indexPath = `${pp}/${WIKI_INDEX_PATH}`
-      let indexContent = ""
-      try {
-        indexContent = await readFile(indexPath)
-      } catch {
-        indexContent = "# Wiki Index\n"
-      }
       const linkTarget = `queries/${fileName.replace(/\.md$/, "")}`
-      const entry = formatIndexEntry(linkTarget, "Saved from chat", { displayTitle: title })
-      indexContent = appendIndexEntry(indexContent, "Queries", entry)
-      await writeFile(indexPath, indexContent)
+      await updateCatalogIndex(pp, {
+        kind: "append",
+        section: "Queries",
+        linkTarget,
+        description: "Saved from chat",
+        displayTitle: title,
+      })
 
       const logPath = `${pp}/${WIKI_LOG_PATH}`
       let logContent = ""

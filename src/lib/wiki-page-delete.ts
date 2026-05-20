@@ -21,10 +21,10 @@
  */
 import { deleteFile, listDirectory, readFile, writeFile } from "@/commands/fs"
 import { getFileStem, normalizePath } from "@/lib/path-utils"
+import { removeCatalogEntriesContent } from "@/lib/catalog-index"
 import { removePageEmbedding } from "@/lib/embedding"
 import {
   buildDeletedKeys,
-  cleanIndexListing,
   extractFrontmatterTitle,
   normalizeWikiRefKey,
   stripDeletedWikilinks,
@@ -213,7 +213,7 @@ export async function cascadeDeleteWikiPagesWithRefs(
 
     let updated = content
     if (file.path === indexAbs || file.name === "index.md") {
-      updated = cleanIndexListing(updated, deletedKeys)
+      updated = removeCatalogEntriesContent(updated, deletedKeys)
     }
     updated = stripDeletedWikilinks(updated, deletedKeys)
 

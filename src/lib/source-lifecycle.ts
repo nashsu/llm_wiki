@@ -20,11 +20,11 @@ import {
   writeSources,
 } from "@/lib/sources-merge"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
+import { removeCatalogEntriesContent } from "@/lib/catalog-index"
 import { appendWikiLogContent, formatLogEntry } from "@/lib/wiki-structural"
 import { removePageEmbedding } from "@/lib/embedding"
 import {
   buildDeletedKeys,
-  cleanIndexListing,
   normalizeWikiRefKey,
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
@@ -332,7 +332,7 @@ export async function cleanupDeletedWikiPages(
 
     let updated = content
     if (file.path === `${pp}/wiki/index.md` || file.name === "index.md") {
-      updated = cleanIndexListing(updated, deletedKeys)
+      updated = removeCatalogEntriesContent(updated, deletedKeys)
     }
     updated = stripDeletedWikilinks(updated, deletedKeys)
 

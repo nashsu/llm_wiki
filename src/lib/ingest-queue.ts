@@ -461,8 +461,8 @@ async function onQueueDrained(projectId: string, projectPath: string): Promise<v
   processedSinceDrain = false
 
   try {
-    const { reconcileWikiIndexProject } = await import("@/lib/index-reconcile")
-    await reconcileWikiIndexProject(projectPath)
+    const { updateCatalogIndex } = await import("@/lib/catalog-index")
+    await updateCatalogIndex(projectPath, { kind: "reconcile" })
   } catch (err) {
     console.error("[Ingest Queue] index reconcile failed:", err)
   }

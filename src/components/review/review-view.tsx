@@ -17,14 +17,11 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { sectionForCatalogPage, updateCatalogIndex } from "@/lib/catalog-index"
 import {
-  WIKI_INDEX_PATH,
   WIKI_LOG_PATH,
-  appendIndexEntry,
   appendWikiLogContent,
-  formatIndexEntry,
   formatLogEntry,
-  indexSectionForPageType,
 } from "@/lib/wiki-structural"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
@@ -88,13 +85,13 @@ export function ReviewView() {
         const frontmatter = `---\ntype: query\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\n---\n\n`
         await writeFile(filePath, frontmatter + cleanContent)
 
-        const indexPath = `${pp}/${WIKI_INDEX_PATH}`
-        let indexContent = ""
-        try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-        const entry = formatIndexEntry(`queries/${slug}-${date}`, "Saved from review", {
+        await updateCatalogIndex(pp, {
+          kind: "append",
+          section: "Queries",
+          linkTarget: `queries/${slug}-${date}`,
+          description: "Saved from review",
           displayTitle: title,
         })
-        await writeFile(indexPath, appendIndexEntry(indexContent, "Queries", entry))
 
         const logPath = `${pp}/${WIKI_LOG_PATH}`
         let logContent = ""
@@ -193,14 +190,13 @@ export function ReviewView() {
           const body = `# ${title}\n\n${item.description}\n`
           await writeFile(filePath, frontmatter + body)
 
-          const indexPath = `${pp}/${WIKI_INDEX_PATH}`
-          let indexContent = ""
-          try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-          const section = indexSectionForPageType(pageType)
-          const entry = formatIndexEntry(`${dir}/${slug}-${date}`, `Created from review`, {
+          await updateCatalogIndex(pp, {
+            kind: "append",
+            section: sectionForCatalogPage(`${dir}/${slug}-${date}`, pageType),
+            linkTarget: `${dir}/${slug}-${date}`,
+            description: "Created from review",
             displayTitle: title,
           })
-          await writeFile(indexPath, appendIndexEntry(indexContent, section, entry))
 
           const logPath = `${pp}/${WIKI_LOG_PATH}`
           let logContent = ""

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { flushMicrotasks } from "@/test-helpers/deferred"
+import { flushMicrotasks, waitFor } from "@/test-helpers/deferred"
 
 // Mock autoIngest so tests control success/failure timing.
 vi.mock("./ingest", () => ({
@@ -14,10 +14,13 @@ vi.mock("@/commands/fs", () => ({
   deleteFile: vi.fn(),
 }))
 
-// Mock sweep-reviews since the queue drain dynamically imports it. The
-// sweep itself has its own test file; here we just confirm it's triggered.
-vi.mock("./sweep-reviews", () => ({
+// Queue drain uses dynamic `import("@/lib/...")` — mock paths must match.
+vi.mock("@/lib/sweep-reviews", () => ({
   sweepResolvedReviews: vi.fn().mockResolvedValue(0),
+}))
+
+vi.mock("@/lib/catalog-index", () => ({
+  updateCatalogIndex: vi.fn().mockResolvedValue({ kind: "reconcile", added: 0, paths: [] }),
 }))
 
 // Mock embedding so cleanupWrittenFiles' cascade-delete to LanceDB is
@@ -65,13 +68,15 @@ import {
 } from "./ingest-queue"
 import { autoIngest } from "./ingest"
 import { readFile, writeFile } from "@/commands/fs"
-import { sweepResolvedReviews } from "./sweep-reviews"
+import { sweepResolvedReviews } from "@/lib/sweep-reviews"
+import { updateCatalogIndex } from "@/lib/catalog-index"
 import { useWikiStore } from "@/stores/wiki-store"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
 const mockSweep = vi.mocked(sweepResolvedReviews)
+const mockReconcile = vi.mocked(updateCatalogIndex)
 
 /** Simulate the app having opened `TEST_ID` at `TEST_PATH` so the queue
  *  module's `currentProjectId` / `currentProjectPath` are set. Most
@@ -88,6 +93,8 @@ beforeEach(async () => {
   mockWriteFile.mockReset()
   mockSweep.mockReset()
   mockSweep.mockResolvedValue(0)
+  mockReconcile.mockReset()
+  mockReconcile.mockResolvedValue({ kind: "reconcile", added: 0, paths: [] })
   removePageEmbeddingMock.mockReset()
 
   // Default: persisted queue file doesn't exist
@@ -303,10 +310,11 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
 
     await enqueueIngest(TEST_ID, "ok.md")
-    await flushMicrotasks(30)
+    await waitFor(() => mockSweep.mock.calls.length > 0)
 
     expect(mockSweep).toHaveBeenCalledOnce()
     expect(mockSweep).toHaveBeenCalledWith("/project", expect.any(AbortSignal))
+    expect(mockReconcile).toHaveBeenCalledWith("/project", { kind: "reconcile" })
   })
 
   it("does NOT trigger sweep when no task has been processed since the last drain", async () => {
@@ -314,7 +322,7 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     // (We simulate an idle condition by enqueueing, processing, draining once)
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
     await enqueueIngest(TEST_ID, "a.md")
-    await flushMicrotasks(20)
+    await waitFor(() => mockSweep.mock.calls.length >= 1)
     expect(mockSweep).toHaveBeenCalledTimes(1)
 
     // Now the queue is empty. Calling cancelTask on a nonexistent id is a

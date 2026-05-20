@@ -45,7 +45,7 @@ The final LLM stage of an **Ingest run**, after all **follow-up passes**, writin
 _Avoid_: Step 2, generation pass
 
 **Manual save**:
-Writing **pages** from an interactive chat turn (`Save to Wiki`) — not an **Ingest run**; no **entity manifest** or **follow-up pass** guarantees.
+Writing **pages** from an interactive chat turn (`Save to Wiki`) — not an **Ingest run**; no **entity manifest** or **follow-up pass** guarantees. After **pages** are written, the app runs **catalog reconcile** on `wiki/index.md` (adds missing lines only; does not fix incorrect LLM index lines). The LLM may still emit a full `wiki/index.md` block; reconcile runs afterward.
 _Avoid_: chat ingest (informal only), partial ingest
 
 **Page**:
