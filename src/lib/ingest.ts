@@ -33,6 +33,8 @@ import {
   normalizeLogAppendContent,
 } from "@/lib/wiki-structural"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
+import { runDedupPass } from "@/lib/dedup-runner"
+import { canonicalizeContentPage } from "@/lib/wiki-content-page"
 import { ensureSourcesInContent } from "@/lib/sources-merge"
 import {
   normalizePageReferencesOnWrite,
@@ -41,7 +43,6 @@ import {
 import { listWikiPageIds } from "@/lib/wiki-page-resolver"
 import {
   findCatchupManifestEntities,
-  isManifestStubContent,
   materializeManifestPages,
 } from "@/lib/post-ingest-materialize"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -363,7 +364,7 @@ const INGEST_ENTITY_BATCH_SIZE = 20
 // Catch-up pass: smaller batches after primary writes to recover manifest
 // pages the model omitted from the first pass.
 const INGEST_CATCHUP_BATCH_SIZE = 5
-/** Tail catch-up passes for entities still stub after a batch LLM call. */
+/** Tail catch-up passes for entities still missing after a batch LLM call. */
 const MAX_CATCHUP_RETRY_ROUNDS = 2
 // Maximum slug candidates surfaced to the model per entity batch.
 const WIKILINK_CANDIDATE_LIMIT = 30
@@ -793,7 +794,7 @@ export function mergeCatchupRetryEntities(
 }
 
 export interface FollowUpResult {
-  /** Stubs from Manifest coverage + pages written by Catch-up. */
+  /** Pages written by Catch-up and later follow-up passes. */
   writtenPaths: string[]
   /**
    * Final entity/concept path set for Link pass and the global-generation
@@ -828,7 +829,7 @@ interface CatchupBatchRunResult {
   stillNeedingRetry: AnalysisEntity[]
 }
 
-/** Run one catch-up LLM batch and write FILE blocks (overwrite stubs). */
+/** Run one catch-up LLM batch and write FILE blocks for missing pages. */
 async function runCatchupLlmBatch(
   runCtx: IngestRunContext,
   manifest: AnalysisEntity[],
@@ -893,7 +894,7 @@ async function runCatchupLlmBatch(
   const stillNeedingRetry = await findCatchupManifestEntities(runCtx.projectPath, batch)
   if (stillNeedingRetry.length > 0) {
     console.log(
-      `[ingest] "${runCtx.fileName}": ${stillNeedingRetry.length} page(s) still stub after catch-up batch — queued for retry`,
+      `[ingest] "${runCtx.fileName}": ${stillNeedingRetry.length} page(s) still missing after catch-up batch — queued for retry`,
     )
   }
 
@@ -968,7 +969,7 @@ async function drainCatchupRetryQueue(
   }
 
   if (pending.length > 0) {
-    const msg = `${pending.length} manifest page(s) still stub after ${roundsDone} catch-up retry round(s) — fix manually or re-ingest.`
+    const msg = `${pending.length} manifest page(s) still missing after ${roundsDone} catch-up retry round(s) — fix manually or re-ingest.`
     console.warn(`[ingest] "${runCtx.fileName}": ${msg}`)
     warnings.push(msg)
   } else if (runCtx.checkpoint.pendingCatchupRetries?.length) {
@@ -997,12 +998,6 @@ export async function runFollowUpPasses(
     primaryWritten.filter(isEntityOrConceptPath),
     runCtx.sourcePath,
   )
-  if (materialize.stubPaths.length > 0) {
-    writtenPaths.push(...materialize.stubPaths)
-    console.log(
-      `[ingest] "${runCtx.fileName}": materialized ${materialize.stubPaths.length} manifest stub page(s)`,
-    )
-  }
   if (materialize.reviewItems.length > 0) {
     effects.onReviews(materialize.reviewItems)
     console.log(
@@ -1011,10 +1006,9 @@ export async function runFollowUpPasses(
   }
 
   // ── Catch-up ─────────────────────────────────────────────────
-  // Disk-walks for manifest entries that are missing or still stub pages
-  // (which Manifest coverage may have just created), and rewrites them
-  // with a full LLM pass. mergeExisting:false because stubs would otherwise
-  // contaminate the merged body.
+  // Disk-walks for manifest entries with no page on disk — the
+  // creation queue (ADR 0004) — and generates them with a full LLM
+  // pass. mergeExisting:false: these are fresh pages, not merges.
   //
   // Resume rule: once a run has scanned and pinned `catchupTargets` to the
   // checkpoint, subsequent retries reuse that list rather than re-scanning.
@@ -1068,7 +1062,7 @@ export async function runFollowUpPasses(
         manifest,
         analysis,
         batch,
-        `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries are missing or still stub pages. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
+        `CATCH-UP batch ${ci + 1} of ${catchupBatches.length}: these manifest entries have no page yet. Emit a complete FILE block for every name listed in the system prompt — no omissions.`,
         effects,
       )
       writtenPaths.push(...result.writtenPaths)
@@ -1118,11 +1112,44 @@ export async function runFollowUpPasses(
 
   // ── Recompute path set (ADR 0001 invariant) ──────────────────
   // The path set passed to Link pass MUST be recomputed here from every
-  // entity/concept path written this run — primary batches + stubs +
-  // catch-up. Freezing pre-catch-up was the original bug ADR 0001 closed.
-  const contentPagesForPostPass = [...primaryWritten, ...writtenPaths].filter(
-    isEntityOrConceptPath,
-  )
+  // entity/concept path written this run — primary batches + catch-up.
+  // Freezing pre-catch-up was the original bug ADR 0001 closed.
+  let contentPagesForPostPass = [
+    ...new Set([...primaryWritten, ...writtenPaths].filter(isEntityOrConceptPath)),
+  ]
+
+  // ── Dedup pass (ADR 0005) — after Catch-up, before Link pass ──
+  // Merge duplicate pages and route contradictory groups to Reviews,
+  // before Link pass so it never links to a page about to be merged.
+  if (contentPagesForPostPass.length > 0) {
+    effects.onProgress("Step 2b-dedup: Merging duplicate pages...")
+    const dedup = await runDedupPass(
+      runCtx.projectPath,
+      contentPagesForPostPass,
+      runCtx.llmConfig,
+      useWikiStore.getState().embeddingConfig,
+      { signal: runCtx.signal },
+    )
+    warnings.push(...dedup.warnings)
+    if (dedup.reviews.length > 0) effects.onReviews(dedup.reviews)
+    if (dedup.merged.length > 0) {
+      const mergedAway = new Set(dedup.merged.flatMap((m) => m.deletedPaths))
+      // Merged-away pages must leave both the run's written set and
+      // the Link pass set; the canonical survivors take their place.
+      for (let i = writtenPaths.length - 1; i >= 0; i--) {
+        if (mergedAway.has(writtenPaths[i])) writtenPaths.splice(i, 1)
+      }
+      contentPagesForPostPass = [
+        ...new Set([
+          ...contentPagesForPostPass.filter((p) => !mergedAway.has(p)),
+          ...dedup.merged.map((m) => m.canonicalPath).filter(isEntityOrConceptPath),
+        ]),
+      ]
+      console.log(
+        `[ingest] "${runCtx.fileName}": dedup merged ${dedup.merged.length} group(s), removed ${mergedAway.size} page(s)`,
+      )
+    }
+  }
 
   // ── Link pass ─────────────────────────────────────────────────
   if (contentPagesForPostPass.length > 0) {
@@ -1334,7 +1361,7 @@ async function autoIngestImpl(
     if (statCached !== null) {
       console.log(`[ingest:diag] stat pre-check hit for "${fileName}" — skipping source read`)
       activity.updateItem(activityId, {
-        status: "complete",
+        status: "done",
         detail: `Skipped (unchanged) — ${statCached.length} files from previous ingest`,
         filesWritten: statCached,
       })
@@ -1370,7 +1397,8 @@ async function autoIngestImpl(
   // multimodal is on, but image bytes come from `.llm-wiki/extract-manifest-*.json`
   // when the source hash and media files are unchanged (no pdfium re-scan).
   // When `pendingCatchupRetries` is non-empty we fall through to a catch-up-only
-  // resume instead of returning early — otherwise stub pages never get compensated.
+  // resume instead of returning early — otherwise missing manifest pages
+  // never get generated.
   const cachedFiles = await checkIngestCache(pp, fileName, sourceContent)
   console.log(`[ingest:diag] cache check for "${fileName}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null && pendingCatchupResume === 0) {
@@ -2074,18 +2102,31 @@ async function writeFileBlocks(
         // content pages).
         await writeFile(fullPath, content)
       } else {
-        const existing = await tryReadFile(fullPath)
-        // Grill #8A: primary batches merge multi-source pages, but never
-        // merge into a materialization stub — that would block catch-up and
-        // leave stub text in the body. Catch-up uses mergeExisting:false.
-        const overwriteStub = existing !== null && isManifestStubContent(existing)
-        if (!mergeExisting || overwriteStub) {
+        // ADR 0003 Tier A chokepoint: re-derive the page id from the
+        // title and re-serialize frontmatter canonically before any
+        // existing-page lookup or merge, so MapReduce / map-reduce /
+        // mapreduce all resolve to one path.
+        const canonical = canonicalizeContentPage(relativePath, content)
+        const canonRelPath = canonical.relativePath
+        const canonFullPath = `${ctx.projectPath}/${canonRelPath}`
+        content = canonical.content
+        // ADR 0003 Tier A: never write an entity/concept page with an
+        // empty body. Skipping leaves it missing on disk, so Catch-up
+        // regenerates it — that retry path needs no extra machinery.
+        if (canonical.isContentPage && canonical.bodyEmpty) {
+          const msg = `Skipped "${canonRelPath}" — generated page has an empty body; left for Catch-up.`
+          console.warn(`[ingest] ${msg}`)
+          warnings.push(msg)
+          continue
+        }
+        const existing = await tryReadFile(canonFullPath)
+        if (!mergeExisting) {
           let toWrite = content
           if (isEntityOrSource) {
             toWrite = ensureSourcesInContent(toWrite, ctx.sourceFileName)
             toWrite = normalizePageReferencesOnWrite(toWrite, knownPageIds)
           }
-          await writeFile(fullPath, toWrite)
+          await writeFile(canonFullPath, toWrite)
         } else {
         // Content pages (entities / concepts / queries / synthesis /
         // comparisons / sources summaries): if a page with this
@@ -2108,17 +2149,19 @@ async function writeFileBlocks(
           buildPageMerger(ctx.llmConfig),
           {
             sourceFileName: ctx.sourceFileName,
-            pagePath: relativePath,
+            pagePath: canonRelPath,
             signal: ctx.signal,
-            backup: (oldContent) => backupExistingPage(ctx.projectPath, relativePath, oldContent),
+            backup: (oldContent) => backupExistingPage(ctx.projectPath, canonRelPath, oldContent),
           },
         )
         if (isEntityOrSource) {
           toWrite = ensureSourcesInContent(toWrite, ctx.sourceFileName)
           toWrite = normalizePageReferencesOnWrite(toWrite, knownPageIds)
         }
-        await writeFile(fullPath, toWrite)
+        await writeFile(canonFullPath, toWrite)
         }
+        writtenPaths.push(canonRelPath)
+        continue
       }
       writtenPaths.push(relativePath)
     } catch (err) {

@@ -50,7 +50,7 @@ export interface IngestCheckpoint {
   catchupWrittenPaths?: string[]
 
   // ── Catch-up retry queue (entity-level, not full re-ingest) ──
-  // Pages still stub/missing after a catch-up batch are merged here.
+  // Pages still missing after a catch-up batch are merged here.
   // Drained after all pinned catch-up batches (≤2 rounds by default).
   pendingCatchupRetries?: AnalysisEntity[]
   catchupRetryRoundsDone?: number

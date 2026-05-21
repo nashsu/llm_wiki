@@ -21,24 +21,24 @@ The machine-readable list of entities and concepts the analysis stage commits to
 _Avoid_: entity list, ENTITIES block (implementation)
 
 **Follow-up pass**:
-A mandatory stage after primary entity batches in an **Ingest run**, in fixed order: **Manifest coverage** → **Catch-up** → **Link pass**.
+A mandatory stage after primary entity batches in an **Ingest run**, in fixed order: **Manifest coverage** → **Catch-up** → **Dedup pass** → **Link pass**.
 _Avoid_: post-ingest (implementation folder name; use **follow-up pass** in domain speech)
 
 **Manifest coverage**:
-A deterministic **follow-up pass** that ensures every **entity manifest** entry has a **page** (creating a **stub page** if needed), unions **source** provenance on existing **pages**, and queues **reviews** for **unresolved page references** outside the manifest.
+A deterministic **follow-up pass** that ensures every **entity manifest** entry either has a **page** or is enqueued for creation, unions **source** provenance on existing **pages**, and queues **reviews** for **unresolved page references** outside the manifest.
 _Avoid_: materialize, materialization
 
 **Catch-up**:
-An LLM **follow-up pass** that rewrites **pages** still missing or still **stub pages** after **Manifest coverage**.
+An LLM **follow-up pass** that creates **pages** still missing after **Manifest coverage** by draining the creation queue.
 _Avoid_: catch-up batch (implementation)
 
-**Link pass**:
-A deterministic **follow-up pass** that **resolves** **page references** in **Related** and adds **wikilinks** in body text for **pages** touched by this run.
-_Avoid_: post-link, post-linking
+**Dedup pass**:
+A **follow-up pass** after **Catch-up** that resolves concept identity: it merges duplicate **pages** and **resolves** **page references** the deterministic resolver could not place, using a three-stage check (**dedup key** bucket → vector recall → LLM judgement). See [ADR 0005](docs/adr/0005-dedup-pass.md).
+_Avoid_: merge pass, dedupe pass
 
-**Stub page**:
-A placeholder **page** created by **Manifest coverage** for a manifest entry not yet fully written; **Catch-up** should replace it with real content.
-_Avoid_: stub file, manifest stub
+**Link pass**:
+A deterministic **follow-up pass** that applies the **Dedup pass**'s reference resolutions, **resolves** remaining shorthand **page references** in **Related**, and adds **wikilinks** in body text for **pages** touched by this run.
+_Avoid_: post-link, post-linking
 
 **Global generation**:
 The final LLM stage of an **Ingest run**, after all **follow-up passes**, writing structural **pages** for this **source** (source summary, index, log, overview — not batched entity/concept pages).
@@ -53,8 +53,12 @@ A markdown file under `wiki/` that represents one piece of knowledge (entity, co
 _Avoid_: node, document (unless talking about the original PDF/markdown source file)
 
 **Page id**:
-The canonical identifier for a page — the filename without `.md` (e.g. `apache-spark` for `wiki/entities/apache-spark.md`).
+The canonical identifier for a page — the filename without `.md` (e.g. `apache-spark` for `wiki/entities/apache-spark.md`). Always produced by `pageId(name)`: hyphenated, lower-cased, with heuristic word-boundary splitting.
 _Avoid_: slug (in conversation OK; in glossary prefer **page id**), filename
+
+**Dedup key**:
+A page's **page id** with all non-alphanumeric characters stripped and lower-cased (`map-reduce` and `mapreduce` both → `mapreduce`). The bucket key the **Dedup pass** uses to find orthographic duplicates — never used to name files.
+_Avoid_: normalized slug, canonical key
 
 **Page reference**:
 A directed link from one page to another, identified by the target **page id**.
@@ -83,9 +87,10 @@ _Avoid_: warning, lint issue
 ## Relationships
 
 - One **Ingest run** processes exactly one **source**
-- **Ingest run** stage order (when batched entity generation applies): analysis → primary entity batches → **Manifest coverage** → **Catch-up** → **Link pass** → **Global generation** (follow-up order and placement before **Global generation** are invariant)
+- **Ingest run** stage order (when batched entity generation applies): analysis → primary entity batches → **Manifest coverage** → **Catch-up** → **Dedup pass** → **Link pass** → **Global generation** (follow-up order and placement before **Global generation** are invariant)
 - A **Manual save** is not an **Ingest run**
-- Every **entity manifest** entry should end as a non-stub **page** after a successful **Ingest run** (via primary batches, **Catch-up**, or at minimum a **stub page**)
+- A referenced concept is in exactly one of three states: **created** (a **page** with real content exists), **queued** (an **entity manifest** entry of the current **Ingest run**, not yet written), or **backlog** (referenced but in no manifest, and the **Dedup pass** confirmed no existing page) — never a placeholder page; see [ADR 0004](docs/adr/0004-remove-stub-pages.md)
+- An **Ingest run** creates pages only for its **entity manifest** entries; it does not follow **page references** to create further pages — non-manifest references go to the **Dedup pass**, which either resolves them to an existing **page** or sends the concept to **backlog**
 - A **Page** has zero or more outgoing **page references** (expressed as **Related** and/or **Wikilink**)
 - Every **page reference** should eventually target exactly one **page id**; until then it is **unresolved**
 - **Reference resolution** (policy): after ingest, rewrite shorthand targets to **page id** when the match is unique; leave **unresolved** references unchanged and queue a **Review**; the knowledge graph draws only **resolved page references**

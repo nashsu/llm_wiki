@@ -190,6 +190,34 @@ function normalize(parsed: unknown): Record<string, FrontmatterValue> | null {
   return out
 }
 
+/**
+ * Canonical wiki-page serializer — ADR 0003 Tier A.
+ *
+ * Every page write goes through this so frontmatter shape is
+ * uniform regardless of caller. It replaces the hand-rolled string
+ * templates (the Save-to-Wiki button and similar) that drifted
+ * into the WIKI-FRONTMATTER-* defects:
+ *   - exact `---` delimiters, never `--- ` with trailing space;
+ *   - the payload is js-yaml-dumped, so list-item form is uniform
+ *     instead of a mix of bare slugs / `slug|name` / Title Case;
+ *   - body trimmed of trailing whitespace with a single closing
+ *     newline.
+ *
+ * Field order in the output follows the key order of `frontmatter`
+ * — callers build the object in the order they want on disk.
+ */
+export function serializeWikiPage(
+  frontmatter: Record<string, FrontmatterValue>,
+  body: string,
+): string {
+  const payload = yaml.dump(frontmatter, {
+    schema: yaml.JSON_SCHEMA,
+    lineWidth: -1, // never wrap — wrapped YAML lines reparse poorly
+    quotingType: '"',
+  })
+  return `---\n${payload}---\n\n${body.replace(/\s+$/g, "")}\n`
+}
+
 function stringifyScalar(v: unknown): string {
   if (v === null || v === undefined) return ""
   if (typeof v === "string") return v

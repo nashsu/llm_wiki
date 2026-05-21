@@ -16,6 +16,12 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory } from "@/commands/fs"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
+import {
+  buildDeletedKeys,
+  normalizeWikiRefKey,
+  stripDeletedWikilinks,
+} from "@/lib/wiki-cleanup"
+import { parseFrontmatterArray, writeFrontmatterArray } from "@/lib/sources-merge"
 import { normalizePath } from "@/lib/path-utils"
 import { hasConfiguredSearchProvider } from "@/lib/web-search"
 import { sectionForCatalogPage, updateCatalogIndex } from "@/lib/catalog-index"
@@ -54,7 +60,7 @@ export function ReviewView() {
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
-        const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
+        const topic = item.title.replace(/^(Save to Wiki|Create|Research|Missing page)[:\s]*/i, "").trim() || item.description.split("\n")[0]
         queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries)
         resolveItem(id, "Queued for research")
       } else {
@@ -220,6 +226,33 @@ export function ReviewView() {
       } else {
         resolveItem(id, action)
       }
+    } else if (action === "Skip" && project) {
+      // ADR 0004 decision 5: an explicit Skip on a backlog
+      // (missing-page) Review downgrades the dangling reference to
+      // plain text — the one place the pipeline removes a [[ref]].
+      const item = items.find((i) => i.id === id)
+      if (item?.type === "missing-page" && item.affectedPages?.length) {
+        const slug = item.title.replace(/^Missing page:\s*/i, "").trim()
+        const keys = buildDeletedKeys([{ slug, title: slug }])
+        for (const rel of item.affectedPages) {
+          try {
+            const abs = `${pp}/${rel}`
+            const content = await readFile(abs)
+            let updated = stripDeletedWikilinks(content, keys)
+            const related = parseFrontmatterArray(updated, "related")
+            const filtered = related.filter((s) => !keys.has(normalizeWikiRefKey(s)))
+            if (filtered.length !== related.length) {
+              updated = writeFrontmatterArray(updated, "related", filtered)
+            }
+            if (updated !== content) await writeFile(abs, updated)
+          } catch (err) {
+            console.warn(`[review] Skip: failed to downgrade ref in ${rel}:`, err)
+          }
+        }
+        const tree = await listDirectory(pp)
+        setFileTree(tree)
+      }
+      resolveItem(id, "Skipped")
     } else {
       resolveItem(id, action)
     }

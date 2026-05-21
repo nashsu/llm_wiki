@@ -155,6 +155,23 @@ describe("resolveWikiSlugId", () => {
   it("returns null when suffix match is ambiguous", () => {
     expect(resolveWikiSlugId("spark", ["apache-spark", "delta-spark"])).toBeNull()
   })
+
+  it("resolves an unambiguous prefix match (gossip → gossip-protocol)", () => {
+    expect(
+      resolveWikiSlugId("gossip", ["gossip-protocol", "raft", "paxos"]),
+    ).toBe("gossip-protocol")
+  })
+
+  it("returns null when prefix match is ambiguous", () => {
+    expect(
+      resolveWikiSlugId("raft", ["raft-consensus", "raft-implementation"]),
+    ).toBeNull()
+  })
+
+  it("does not prefix-match across a non-hyphen boundary", () => {
+    // `map` must not resolve to `mapreduce` — only `map-*` counts.
+    expect(resolveWikiSlugId("map", ["mapreduce"])).toBeNull()
+  })
 })
 
 describe("resolveRelatedSlug", () => {

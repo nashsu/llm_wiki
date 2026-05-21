@@ -16,7 +16,7 @@ A **page reference** (target **page id**) may be expressed as **Related** or **W
 
 ### 2. Reference resolution policy (hybrid)
 
-- **Link pass** (and equivalent normalization): rewrite shorthand targets to canonical **page id** when exactly one page matches (e.g. unique suffix: `spark` → `apache-spark`).
+- **Link pass** (and equivalent normalization): rewrite shorthand targets to canonical **page id** when exactly one page matches — by unique suffix (`spark` → `apache-spark`) or unique prefix (`gossip` → `gossip-protocol`).
 - If ambiguous or missing: leave **unresolved**, queue a **Review** where appropriate; do not invent edges or navigation targets.
 - **Knowledge graph**: draw edges only for **resolved page references**; count both **Related** and body **wikilinks** as sources of references.
 

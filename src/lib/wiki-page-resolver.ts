@@ -69,7 +69,12 @@ export function findInTreeByName(
 /**
  * Match a wikilink / related slug against known page ids (filename
  * without `.md`). Handles case, spaces-vs-hyphens, and a single
- * unambiguous suffix match (`spark` → `apache-spark`).
+ * unambiguous suffix (`spark` → `apache-spark`) or prefix
+ * (`gossip` → `gossip-protocol`) match.
+ *
+ * Suffix and prefix matches are heuristic; both require the match to
+ * be unique, so an ambiguous shorthand stays unresolved rather than
+ * resolving to the wrong page.
  */
 export function resolveWikiSlugId(
   raw: string,
@@ -95,6 +100,12 @@ export function resolveWikiSlugId(
     return lower === normalized || lower.endsWith(`-${normalized}`)
   })
   if (suffixMatches.length === 1) return suffixMatches[0]
+
+  const prefixMatches = ids.filter((id) => {
+    const lower = id.toLowerCase()
+    return lower === normalized || lower.startsWith(`${normalized}-`)
+  })
+  if (prefixMatches.length === 1) return prefixMatches[0]
 
   return null
 }

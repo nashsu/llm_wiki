@@ -18,6 +18,7 @@ import type { FileNode } from "@/types/wiki"
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
 import { makeQueryFileName } from "@/lib/wiki-filename"
+import { serializeWikiPage } from "@/lib/frontmatter"
 import { updateCatalogIndex } from "@/lib/catalog-index"
 import {
   WIKI_LOG_PATH,
@@ -185,17 +186,14 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
 
-      const frontmatter = [
-        "---",
-        `type: query`,
-        `title: "${title.replace(/"/g, '\\"')}"`,
-        `created: ${date}`,
-        `tags: []`,
-        "---",
-        "",
-      ].join("\n")
+      // Query pages keep their timestamped filename (makeQueryFileName)
+      // but share the canonical frontmatter serializer — ADR 0003 Tier A.
+      const fileContent = serializeWikiPage(
+        { type: "query", title, created: date, tags: [] },
+        cleanContent,
+      )
 
-      await writeFile(filePath, frontmatter + cleanContent)
+      await writeFile(filePath, fileContent)
 
       const linkTarget = `queries/${fileName.replace(/\.md$/, "")}`
       await updateCatalogIndex(pp, {

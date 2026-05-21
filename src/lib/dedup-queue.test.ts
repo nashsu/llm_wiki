@@ -46,7 +46,7 @@ const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
 
 function makeGroup(slugs: string[]): DuplicateGroup {
-  return { slugs, confidence: "high", reason: "test" }
+  return { slugs, canonicalSlug: slugs[0], confidence: "high", reason: "test", contradictory: false }
 }
 
 async function activate(id: string = TEST_ID): Promise<void> {
@@ -290,7 +290,7 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
       {
         id: "dedup-old",
         projectId: TEST_ID,
-        group: { slugs: ["a", "b"], confidence: "high", reason: "x" },
+        group: { slugs: ["a", "b"], canonicalSlug: "a", confidence: "high", reason: "x", contradictory: false },
         canonicalSlug: "a",
         status: "processing",
         addedAt: 1,

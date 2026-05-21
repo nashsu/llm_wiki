@@ -1,10 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import {
-  buildManifestStub,
   dedupeManifestBySlug,
   findCatchupManifestEntities,
-  isManifestStubContent,
-  MANIFEST_STUB_MARKER,
   materializeManifestPages,
 } from "./post-ingest-materialize"
 import type { ManifestEntity } from "./post-ingest-materialize"
@@ -27,57 +24,42 @@ const MANIFEST: ManifestEntity[] = [
   { name: "Apache Spark", type: "concept" },
 ]
 
-beforeEach(() => {
-  vi.clearAllMocks()
+/** Mock the entities/concepts folders to contain exactly `names`. */
+function diskHas(...names: string[]) {
   mockListDirectory.mockImplementation(async (path: string) => {
-    if (path.endsWith("/wiki/entities")) {
-      return [
-        {
-          name: "matei-zaharia.md",
-          path: "/p/wiki/entities/matei-zaharia.md",
-          is_dir: false,
-        },
-      ] as never
-    }
-    if (path.endsWith("/wiki/concepts")) {
-      return [] as never
-    }
+    const pick = (folder: string) =>
+      names
+        .filter((n) => n.startsWith(folder + "/"))
+        .map((n) => {
+          const file = n.slice(folder.length + 1)
+          return { name: file, path: `/p/wiki/${folder}/${file}`, is_dir: false }
+        })
+    if (path.endsWith("/wiki/entities")) return pick("entities") as never
+    if (path.endsWith("/wiki/concepts")) return pick("concepts") as never
     throw new Error(`unexpected list: ${path}`)
   })
-})
+}
 
-describe("isManifestStubContent", () => {
-  it("detects auto-generated stub marker", () => {
-    expect(isManifestStubContent(buildManifestStub({ name: "X", type: "entity" }, "a.pdf", "2026-01-01"))).toBe(true)
-    expect(isManifestStubContent(`---\ntitle: X\n---\n\n# X\n\nReal content.`)).toBe(false)
-    expect(isManifestStubContent(MANIFEST_STUB_MARKER)).toBe(true)
-  })
+beforeEach(() => {
+  vi.clearAllMocks()
+  diskHas("entities/matei-zaharia.md")
 })
 
 describe("findCatchupManifestEntities", () => {
-  it("includes missing pages and existing stubs", async () => {
-    mockReadFile.mockImplementation(async (path: string) => {
-      if (path.endsWith("/ion-stoica.md")) {
-        return buildManifestStub({ name: "Ion Stoica", type: "entity" }, "p.pdf", "2026-01-01")
-      }
-      throw new Error("missing")
-    })
-
+  it("returns manifest entries with no page on disk", async () => {
     const targets = await findCatchupManifestEntities("/p", [
       { name: "Ion Stoica", type: "entity" },
       { name: "Matei Zaharia", type: "entity" },
     ])
-
-    expect(targets.map((t) => t.name).sort()).toEqual(["Ion Stoica", "Matei Zaharia"])
+    // matei-zaharia exists on disk; ion-stoica does not.
+    expect(targets.map((t) => t.name)).toEqual(["Ion Stoica"])
   })
 
-  it("excludes pages with real content", async () => {
-    mockReadFile.mockResolvedValue("---\ntitle: Ion Stoica\n---\n\n# Ion Stoica\n\nFull biography here.")
-
+  it("excludes entries whose page exists on disk", async () => {
+    diskHas("entities/ion-stoica.md")
     const targets = await findCatchupManifestEntities("/p", [
       { name: "Ion Stoica", type: "entity" },
     ])
-
     expect(targets).toEqual([])
   })
 })
@@ -94,51 +76,24 @@ describe("dedupeManifestBySlug", () => {
   })
 })
 
-describe("buildManifestStub", () => {
-  it("writes entity stub with source attribution", () => {
-    const stub = buildManifestStub(
-      { name: "Ion Stoica", type: "entity" },
-      "paper.pdf",
-      "2026-05-19",
-    )
-    expect(stub).toContain('type: entity')
-    expect(stub).toContain('title: "Ion Stoica"')
-    expect(stub).toContain('sources: ["paper.pdf"]')
-    expect(stub).toContain("# Ion Stoica")
-  })
-})
-
 describe("materializeManifestPages", () => {
-  it("writes at most one stub per slug when manifest has duplicate slugs", async () => {
+  it("does NOT create pages for missing manifest entries (ADR 0004)", async () => {
+    // Ion Stoica / Apache Spark are not on disk — no stub is written.
     mockReadFile.mockResolvedValue("---\nrelated: []\n---\n")
 
-    await materializeManifestPages(
-      "/p",
-      [
-        { name: "Ion Stoica", type: "entity" },
-        { name: "ion stoica", type: "entity" },
-      ],
-      "paper.pdf",
-      [],
-    )
+    await materializeManifestPages("/p", MANIFEST, "paper.pdf", [])
 
+    // Only the existing matei-zaharia page is touched (source union).
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockWriteFile).toHaveBeenCalledWith(
-      "/p/wiki/entities/ion-stoica.md",
+      "/p/wiki/entities/matei-zaharia.md",
       expect.any(String),
     )
   })
 
-  it("stubs manifest pages missing from disk", async () => {
+  it("leaves missing manifest entries for Catch-up, not a review", async () => {
     mockReadFile.mockResolvedValue(
-      [
-        "---",
-        "title: Matei Zaharia",
-        "related: [ion-stoica, databricks]",
-        "---",
-        "",
-        "Body",
-      ].join("\n"),
+      ["---", "title: Matei Zaharia", "related: [ion-stoica, databricks]", "---", "", "Body"].join("\n"),
     )
 
     const result = await materializeManifestPages(
@@ -149,20 +104,9 @@ describe("materializeManifestPages", () => {
       "raw/sources/paper.pdf",
     )
 
-    expect(result.stubPaths).toEqual([
-      "wiki/entities/ion-stoica.md",
-      "wiki/concepts/apache-spark.md",
-    ])
-    // ion-stoica + apache-spark stubs, plus source union on existing matei-zaharia
-    expect(mockWriteFile).toHaveBeenCalledTimes(3)
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      "/p/wiki/entities/ion-stoica.md",
-      expect.stringContaining('title: "Ion Stoica"'),
-    )
-
-    // manifest-backed slug is stubbed, not reviewed
+    // ion-stoica is a manifest entry → owned by Catch-up, never reviewed.
     expect(result.reviewItems.some((r) => r.title.includes("ion-stoica"))).toBe(false)
-    // non-manifest dangling ref becomes a review
+    // A non-manifest dangling ref still becomes a review.
     expect(result.reviewItems).toHaveLength(1)
     expect(result.reviewItems[0]).toMatchObject({
       type: "missing-page",
@@ -172,18 +116,11 @@ describe("materializeManifestPages", () => {
   })
 
   it("treats unique-suffix shorthand as resolved and does not queue a review", async () => {
-    // Per ADR 0002, the missing-page check must use the same resolution
-    // policy as graph/post-link: `spark` resolves uniquely to `apache-spark`
-    // (manifest entry), so no review should fire.
+    // Per ADR 0002, the missing-page check uses the same resolution
+    // policy as graph/post-link: `spark` resolves uniquely to
+    // `apache-spark` (manifest entry), so no review should fire.
     mockReadFile.mockResolvedValue(
-      [
-        "---",
-        "title: Matei Zaharia",
-        "related: [spark, totally-unknown-thing]",
-        "---",
-        "",
-        "Body",
-      ].join("\n"),
+      ["---", "title: Matei Zaharia", "related: [spark, totally-unknown-thing]", "---", "", "Body"].join("\n"),
     )
 
     const result = await materializeManifestPages(
@@ -194,9 +131,7 @@ describe("materializeManifestPages", () => {
       "raw/sources/paper.pdf",
     )
 
-    // `spark` resolves to manifest's `apache-spark` → no review.
     expect(result.reviewItems.some((r) => r.title.includes("spark"))).toBe(false)
-    // Truly unresolvable ref still surfaces.
     expect(result.reviewItems).toHaveLength(1)
     expect(result.reviewItems[0]).toMatchObject({
       type: "missing-page",
@@ -204,24 +139,12 @@ describe("materializeManifestPages", () => {
     })
   })
 
-  it("unions current source into frontmatter when manifest page already exists", async () => {
-    mockListDirectory.mockImplementation(async (path: string) => {
-      if (path.endsWith("/wiki/entities")) {
-        return [
-          {
-            name: "ion-stoica.md",
-            path: "/p/wiki/entities/ion-stoica.md",
-            is_dir: false,
-          },
-        ] as never
-      }
-      if (path.endsWith("/wiki/concepts")) return [] as never
-      throw new Error(`unexpected list: ${path}`)
-    })
+  it("unions the current source into an existing manifest page", async () => {
+    diskHas("entities/ion-stoica.md")
     mockReadFile.mockResolvedValue(
       [
         "---",
-        'type: entity',
+        "type: entity",
         'title: "Ion Stoica"',
         'sources: ["old-paper.pdf"]',
         "tags: []",
@@ -234,14 +157,8 @@ describe("materializeManifestPages", () => {
       ].join("\n"),
     )
 
-    const result = await materializeManifestPages(
-      "/p",
-      [{ name: "Ion Stoica", type: "entity" }],
-      "new-paper.pdf",
-      [],
-    )
+    await materializeManifestPages("/p", [{ name: "Ion Stoica", type: "entity" }], "new-paper.pdf", [])
 
-    expect(result.stubPaths).toEqual([])
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockWriteFile).toHaveBeenCalledWith(
       "/p/wiki/entities/ion-stoica.md",
@@ -249,26 +166,16 @@ describe("materializeManifestPages", () => {
     )
   })
 
-  it("returns no stubs when every manifest page already exists", async () => {
-    mockListDirectory.mockImplementation(async (path: string) => {
-      if (path.endsWith("/wiki/entities")) {
-        return [
-          { name: "ion-stoica.md", path: "/p/wiki/entities/ion-stoica.md", is_dir: false },
-          { name: "matei-zaharia.md", path: "/p/wiki/entities/matei-zaharia.md", is_dir: false },
-        ] as never
-      }
-      if (path.endsWith("/wiki/concepts")) {
-        return [
-          { name: "apache-spark.md", path: "/p/wiki/concepts/apache-spark.md", is_dir: false },
-        ] as never
-      }
-      throw new Error(path)
-    })
+  it("unions source onto every existing manifest page", async () => {
+    diskHas(
+      "entities/ion-stoica.md",
+      "entities/matei-zaharia.md",
+      "concepts/apache-spark.md",
+    )
     mockReadFile.mockResolvedValue("---\nrelated: []\n---\n")
 
     const result = await materializeManifestPages("/p", MANIFEST, "paper.pdf", [])
 
-    expect(result.stubPaths).toEqual([])
     expect(mockWriteFile).toHaveBeenCalledTimes(3)
     for (const path of [
       "/p/wiki/entities/ion-stoica.md",

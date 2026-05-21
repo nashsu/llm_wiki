@@ -13,24 +13,17 @@ export interface ManifestEntity {
 }
 
 export interface ManifestMaterializeResult {
-  stubPaths: string[]
   reviewItems: Omit<ReviewItem, "id" | "resolved" | "createdAt">[]
 }
 
-/** Marker in auto-generated stub bodies — used to detect pages catch-up should replace. */
-export const MANIFEST_STUB_MARKER =
-  "_Stub page — batched ingest did not emit this file"
-
-export function isManifestStubContent(content: string): boolean {
-  return content.includes(MANIFEST_STUB_MARKER)
-}
-
 /**
- * After batched entity generation, ensure every manifest entry has a
- * wiki page and surface non-manifest dangling `related:` refs as reviews.
+ * Manifest coverage (ADR 0001 / ADR 0004): union this ingest's source
+ * provenance onto manifest pages already on disk, and surface
+ * non-manifest dangling `related:` refs as reviews.
  *
- * Policy (option A): auto-stub only manifest entities; anything else
- * referenced in `related:` but missing on disk becomes a missing-page review.
+ * It does NOT create pages. Manifest entries without a page are left
+ * for Catch-up to generate — that set is the creation queue. Stub
+ * placeholder pages were removed in ADR 0004.
  */
 export async function materializeManifestPages(
   projectPath: string,
@@ -44,35 +37,20 @@ export async function materializeManifestPages(
   const dedupedManifest = Array.from(manifestBySlug.values())
   const existingSlugs = await collectContentSlugs(pp)
 
-  const stubPaths: string[] = []
-  const date = new Date().toISOString().slice(0, 10)
-
   for (const entity of dedupedManifest) {
     const slug = entityKey(entity)
+    if (!existingSlugs.has(slug)) continue
+    // Page on disk: union this ingest's source into frontmatter so
+    // source-delete can find provenance.
     const relPath = contentPagePath(entity, slug)
-
-    // Page already on disk (real content or a prior stub): union this
-    // ingest's source into frontmatter so source-delete can find provenance.
-    if (existingSlugs.has(slug)) {
-      try {
-        const existing = await readFile(`${pp}/${relPath}`)
-        const compensated = ensureSourcesInContent(existing, sourceFileName)
-        if (compensated !== existing) {
-          await writeFile(`${pp}/${relPath}`, compensated)
-        }
-      } catch {
-        // Non-fatal — page may have been deleted between list and read.
-      }
-      continue
-    }
-
-    const absPath = `${pp}/${relPath}`
     try {
-      await writeFile(absPath, buildManifestStub(entity, sourceFileName, date))
-      existingSlugs.add(slug)
-      stubPaths.push(relPath)
+      const existing = await readFile(`${pp}/${relPath}`)
+      const compensated = ensureSourcesInContent(existing, sourceFileName)
+      if (compensated !== existing) {
+        await writeFile(`${pp}/${relPath}`, compensated)
+      }
     } catch {
-      // Non-fatal — ingest continues; unresolved related may become reviews.
+      // Non-fatal — page may have been deleted between list and read.
     }
   }
 
@@ -84,7 +62,7 @@ export async function materializeManifestPages(
     sourcePath,
   )
 
-  return { stubPaths, reviewItems }
+  return { reviewItems }
 }
 
 /** First manifest row wins when multiple names collapse to the same slug. */
@@ -100,29 +78,15 @@ export function findMissingManifestEntities(
 }
 
 /**
- * Manifest entries that need a catch-up LLM pass: no page yet, or only a
- * materialization stub from a prior/partial ingest.
+ * Manifest entries that need a catch-up LLM pass — those with no page
+ * on disk. This is the creation queue Catch-up drains (ADR 0004).
  */
 export async function findCatchupManifestEntities(
   projectPath: string,
   manifest: ManifestEntity[],
 ): Promise<ManifestEntity[]> {
-  const pp = normalizePath(projectPath)
-  const targets: ManifestEntity[] = []
-
-  for (const entity of dedupeManifestBySlug(manifest)) {
-    const relPath = contentPagePath(entity, entityKey(entity))
-    let content = ""
-    try {
-      content = await readFile(`${pp}/${relPath}`)
-    } catch {
-      targets.push(entity)
-      continue
-    }
-    if (isManifestStubContent(content)) targets.push(entity)
-  }
-
-  return targets
+  const existingSlugs = await collectContentSlugs(normalizePath(projectPath))
+  return findMissingManifestEntities(manifest, existingSlugs)
 }
 
 export async function listContentSlugs(projectPath: string): Promise<Set<string>> {
@@ -149,30 +113,6 @@ function entityKey(entity: ManifestEntity): string {
 function contentPagePath(entity: ManifestEntity, slug: string): string {
   const folder = entity.type === "concept" ? "concepts" : "entities"
   return `wiki/${folder}/${slug}.md`
-}
-
-export function buildManifestStub(
-  entity: ManifestEntity,
-  sourceFileName: string,
-  date: string,
-): string {
-  const title = entity.name.replace(/"/g, '\\"')
-  return [
-    "---",
-    `type: ${entity.type}`,
-    `title: "${title}"`,
-    `created: ${date}`,
-    `updated: ${date}`,
-    `sources: ["${sourceFileName}"]`,
-    "tags: []",
-    "related: []",
-    "---",
-    "",
-    `# ${entity.name}`,
-    "",
-    `${MANIFEST_STUB_MARKER}; fill in from the source or re-ingest._`,
-    "",
-  ].join("\n")
 }
 
 async function collectContentSlugs(projectPath: string): Promise<Set<string>> {
@@ -243,8 +183,12 @@ async function collectDanglingRelatedReviews(
           `Referenced in \`related:\` on ${relPath} but not in the ingest manifest and no wiki page exists.`,
         sourcePath,
         affectedPages: [relPath],
+        // ADR 0004 decision 5: a backlog Review has no one-click
+        // "Create Page" (that produced ungrounded missing-page-*
+        // placeholders). It resolves via grounded research, or Skip
+        // — which downgrades the dangling reference to plain text.
         options: [
-          { label: "Create Page", action: "Create Page" },
+          { label: "Research and build", action: "__deep_research__" },
           { label: "Skip", action: "Skip" },
         ],
       })

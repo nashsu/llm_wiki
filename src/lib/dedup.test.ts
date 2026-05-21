@@ -68,12 +68,40 @@ describe("parseDetectorResponse", () => {
   it("parses a clean JSON response", () => {
     const raw = JSON.stringify({
       groups: [
-        { slugs: ["a", "b"], reason: "same thing", confidence: "high" },
+        {
+          slugs: ["a", "b"],
+          canonicalSlug: "a",
+          reason: "same thing",
+          confidence: "high",
+          contradictory: false,
+        },
       ],
     })
     expect(parseDetectorResponse(raw)).toEqual([
-      { slugs: ["a", "b"], reason: "same thing", confidence: "high" },
+      {
+        slugs: ["a", "b"],
+        canonicalSlug: "a",
+        reason: "same thing",
+        confidence: "high",
+        contradictory: false,
+      },
     ])
+  })
+
+  it("falls back canonicalSlug to the first slug when omitted or invalid", () => {
+    const omitted = '{"groups": [{"slugs": ["a","b"], "reason": "x", "confidence": "high"}]}'
+    expect(parseDetectorResponse(omitted)[0].canonicalSlug).toBe("a")
+    const invalid =
+      '{"groups": [{"slugs": ["a","b"], "canonicalSlug": "not-in-group", "reason": "x", "confidence": "high"}]}'
+    expect(parseDetectorResponse(invalid)[0].canonicalSlug).toBe("a")
+  })
+
+  it("parses the contradictory flag, defaulting to false", () => {
+    const flagged =
+      '{"groups": [{"slugs": ["a","b"], "reason": "x", "confidence": "low", "contradictory": true}]}'
+    expect(parseDetectorResponse(flagged)[0].contradictory).toBe(true)
+    const omitted = '{"groups": [{"slugs": ["a","b"], "reason": "x", "confidence": "high"}]}'
+    expect(parseDetectorResponse(omitted)[0].contradictory).toBe(false)
   })
 
   it("strips ```json code fences if the LLM wrapped its output", () => {

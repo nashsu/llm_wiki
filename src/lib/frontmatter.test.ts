@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseFrontmatter } from "./frontmatter"
+import { parseFrontmatter, serializeWikiPage } from "./frontmatter"
 
 describe("parseFrontmatter", () => {
   it("returns null + full body when content has no frontmatter", () => {
@@ -212,5 +212,43 @@ describe("parseFrontmatter", () => {
       "[[digital-twin-wastewater]]",
     ])
     expect(r.body).toBe("# Body")
+  })
+})
+
+describe("serializeWikiPage", () => {
+  it("opens with an exact `---` line — no trailing whitespace", () => {
+    const out = serializeWikiPage({ type: "concept", title: "Foo" }, "# Body")
+    const firstLine = out.split("\n")[0]
+    expect(firstLine).toBe("---")
+  })
+
+  it("round-trips through parseFrontmatter", () => {
+    const fm = {
+      type: "concept",
+      title: "Map Reduce",
+      created: "2026-05-21",
+      related: ["mapreduce", "hadoop"],
+      tags: [],
+    }
+    const r = parseFrontmatter(serializeWikiPage(fm, "# Body\n\ntext"))
+    expect(r.frontmatter).toEqual(fm)
+    // The serializer guarantees exactly one trailing newline.
+    expect(r.body).toBe("# Body\n\ntext\n")
+  })
+
+  it("trims trailing body whitespace and ends with a single newline", () => {
+    const out = serializeWikiPage({ type: "entity", title: "X" }, "# Body\n\n\n  ")
+    expect(out.endsWith("# Body\n")).toBe(true)
+  })
+
+  it("renders empty arrays as `[]`, not a dangling key", () => {
+    const out = serializeWikiPage({ type: "entity", title: "X", related: [] }, "b")
+    expect(out).toContain("related: []")
+  })
+
+  it("quotes values that would otherwise break YAML (colons, quotes)", () => {
+    const fm = { type: "concept", title: 'CAP: "the" theorem' }
+    const r = parseFrontmatter(serializeWikiPage(fm, "b"))
+    expect(r.frontmatter?.title).toBe('CAP: "the" theorem')
   })
 })

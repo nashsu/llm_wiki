@@ -57,9 +57,16 @@ export interface EntitySummary {
 export interface DuplicateGroup {
   /** Two or more slugs from the input list. */
   slugs: string[]
+  /** The slug to keep — always one of `slugs`. The LLM's canonical
+   *  pick (ADR 0005); the others merge into it. */
+  canonicalSlug: string
   /** Why the model believes these are duplicates. Short prose. */
   reason: string
   confidence: "high" | "medium" | "low"
+  /** True when the pages give factually conflicting definitions —
+   *  the Dedup pass routes these to a Review instead of auto-merging
+   *  (ADR 0005 decision 5). */
+  contradictory: boolean
 }
 
 export interface MergeRequest {
@@ -182,8 +189,10 @@ Output ONLY valid JSON. No prose, no markdown fences, no explanation outside the
   "groups": [
     {
       "slugs": ["slug-a", "slug-b"],
+      "canonicalSlug": "slug-a",
       "reason": "Both refer to X; first is English, second is Chinese.",
-      "confidence": "high"
+      "confidence": "high",
+      "contradictory": false
     }
   ]
 }
@@ -195,7 +204,9 @@ Rules:
 - "low" = uncertain; user should review carefully.
 - Never invent slugs that aren't in the input.
 - If no duplicates exist, output {"groups": []}.
-- Pages of different \`type\` (e.g. an entity and a concept) usually should NOT be grouped — only group across types when they're unambiguously the same thing.`
+- Pages of different \`type\` (e.g. an entity and a concept) usually should NOT be grouped — only group across types when they're unambiguously the same thing.
+- "canonicalSlug" MUST be one of the group's slugs — the one whose name is clearest and most standard. That page is kept; the others merge into it.
+- "contradictory" is true only when the pages state factually conflicting definitions of the topic. Differences in wording, length, or level of detail are NOT contradictions — set false for those.`
 
 /**
  * Run the LLM duplicate-detector. The caller hands in summaries
@@ -225,7 +236,12 @@ export async function detectDuplicateGroups(
   )
 
   return parsed
-    .map((g) => ({ ...g, slugs: g.slugs.filter((s) => validSlugs.has(s)) }))
+    .map((g) => {
+      const slugs = g.slugs.filter((s) => validSlugs.has(s))
+      // The canonical may have been filtered out — re-anchor it.
+      const canonicalSlug = slugs.includes(g.canonicalSlug) ? g.canonicalSlug : slugs[0]
+      return { ...g, slugs, canonicalSlug }
+    })
     .filter((g) => g.slugs.length >= 2)
     .filter((g) => !notDupSet.has(normalizeGroupKey(g.slugs)))
 }
@@ -273,7 +289,13 @@ export function parseDetectorResponse(raw: string): DuplicateGroup[] {
       obj.confidence === "high" || obj.confidence === "medium"
         ? obj.confidence
         : "low"
-    out.push({ slugs, reason, confidence })
+    // canonicalSlug must be one of the group's slugs; fall back to
+    // the first slug when the model omitted or mis-named it.
+    const canonicalSlug =
+      typeof obj.canonicalSlug === "string" && slugs.includes(obj.canonicalSlug)
+        ? obj.canonicalSlug
+        : slugs[0]
+    out.push({ slugs, canonicalSlug, reason, confidence, contradictory: obj.contradictory === true })
   }
   return out
 }

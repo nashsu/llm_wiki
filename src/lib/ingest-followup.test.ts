@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { mergeCatchupRetryEntities, runFollowUpPasses } from "./ingest"
 import type { LlmConfig } from "@/stores/wiki-store"
-import {
-  buildManifestStub,
-  MANIFEST_STUB_MARKER,
-} from "./post-ingest-materialize"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { IngestCheckpoint } from "@/lib/ingest-checkpoint"
 
@@ -82,15 +78,6 @@ const PAGE_WITH_DANGLING_REF = [
   "",
 ].join("\n")
 
-function wikiTreeFixture() {
-  return {
-    entities: [
-      { name: "ion-stoica.md", path: "/p/wiki/entities/ion-stoica.md", is_dir: false },
-    ] as const,
-    concepts: [] as const,
-  }
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   useWikiStore.getState().setOutputLanguage("auto")
@@ -102,7 +89,9 @@ beforeEach(() => {
       ] as never
     }
     if (path.endsWith("/wiki/concepts")) return [] as never
-    if (path.endsWith("/wiki")) {
+    if (path.endsWith("/wiki") || path === "/p") {
+      // `/p` is the project root the Dedup pass walks via
+      // loadAllEntitySummaries; `walkMd` filters by path prefix.
       return [
         {
           name: "entities",
@@ -183,41 +172,40 @@ describe("runFollowUpPasses — catch-up", () => {
     "---END FILE---",
   ].join("\n")
 
+  // Mutable in-memory disk: findCatchupManifestEntities now checks
+  // disk presence (ADR 0004), so pages must appear as catch-up writes
+  // them rather than being pre-seeded as stubs.
+  let disk: Map<string, string>
+
+  function entriesIn(folder: string) {
+    return [...disk.keys()]
+      .filter((p) => p.startsWith(`/p/wiki/${folder}/`))
+      .map((p) => ({ name: p.slice(p.lastIndexOf("/") + 1), path: p, is_dir: false }))
+  }
+
   beforeEach(() => {
-    const tree = wikiTreeFixture()
+    disk = new Map()
     mockListDirectory.mockImplementation(async (path: string) => {
-      if (path.endsWith("/wiki/entities")) return [...tree.entities] as never
-      if (path.endsWith("/wiki/concepts")) return [...tree.concepts] as never
-      if (path.endsWith("/wiki")) {
+      if (path.endsWith("/wiki/entities")) return entriesIn("entities") as never
+      if (path.endsWith("/wiki/concepts")) return entriesIn("concepts") as never
+      if (path.endsWith("/wiki") || path === "/p") {
+        // `/p` is the project root the Dedup pass walks; `walkMd`
+        // filters by path prefix so the nested tree is fine.
         return [
-          {
-            name: "entities",
-            path: "/p/wiki/entities",
-            is_dir: true,
-            children: [...tree.entities],
-          },
-          {
-            name: "concepts",
-            path: "/p/wiki/concepts",
-            is_dir: true,
-            children: [...tree.concepts],
-          },
+          { name: "entities", path: "/p/wiki/entities", is_dir: true, children: entriesIn("entities") },
+          { name: "concepts", path: "/p/wiki/concepts", is_dir: true, children: entriesIn("concepts") },
         ] as never
       }
       throw new Error(`unexpected listDirectory: ${path}`)
     })
-
-    const ionStub = buildManifestStub(
-      { name: "Ion Stoica", type: "entity" },
-      "paper.pdf",
-      "2026-05-19",
-    )
-
     mockReadFile.mockImplementation(async (filePath: string) => {
-      if (filePath.endsWith("/ion-stoica.md")) return ionStub
-      throw new Error(`unexpected readFile: ${filePath}`)
+      const c = disk.get(filePath)
+      if (c === undefined) throw new Error(`unexpected readFile: ${filePath}`)
+      return c
     })
-
+    mockWriteFile.mockImplementation(async (filePath: string, content: string) => {
+      disk.set(filePath, content)
+    })
     mockStreamChat.mockImplementation(async (_cfg, messages, cb) => {
       const system = (messages[0] as { content: string }).content
       expect(system).toContain("CATCH-UP PASS")
@@ -226,7 +214,7 @@ describe("runFollowUpPasses — catch-up", () => {
     })
   })
 
-  it("materializes stubs, streams catch-up LLM, overwrites stub with full page", async () => {
+  it("generates a missing manifest entry via the catch-up LLM", async () => {
     const onProgress = vi.fn()
 
     const result = await runFollowUpPasses(
@@ -244,18 +232,18 @@ describe("runFollowUpPasses — catch-up", () => {
 
     expect(result.writtenPaths).toContain("wiki/entities/ion-stoica.md")
     expect(result.contentPagesForPostPass).toContain("wiki/entities/ion-stoica.md")
-
-    const ionWrites = mockWriteFile.mock.calls.filter((c) =>
-      String(c[0]).endsWith("/ion-stoica.md"),
+    expect(disk.get("/p/wiki/entities/ion-stoica.md")).toContain(
+      "Full biography from catch-up pass.",
     )
-    expect(ionWrites.length).toBeGreaterThanOrEqual(1)
-    const lastWrite = String(ionWrites[ionWrites.length - 1][1])
-    expect(lastWrite).toContain("Full biography from catch-up pass.")
-    expect(lastWrite).not.toContain(MANIFEST_STUB_MARKER)
   })
 
   it("skips completed catch-up batches on checkpoint resume", async () => {
     mockStreamChat.mockClear()
+    // The page was written by the prior run (replayed via catchupWrittenPaths).
+    disk.set(
+      "/p/wiki/entities/ion-stoica.md",
+      '---\ntype: entity\ntitle: "Ion Stoica"\n---\n\n# Ion Stoica\n\nBio.\n',
+    )
 
     const result = await runFollowUpPasses(
       {
@@ -278,31 +266,13 @@ describe("runFollowUpPasses — catch-up", () => {
     expect(result.contentPagesForPostPass).toContain("wiki/entities/ion-stoica.md")
   })
 
-  it("queues stub pages and drains retry pass after primary catch-up batch", async () => {
-    const ionStub = buildManifestStub(
-      { name: "Ion Stoica", type: "entity" },
-      "paper.pdf",
-      "2026-05-19",
-    )
-    const stubLlmOutput = [
-      "---FILE: wiki/entities/ion-stoica.md---",
-      ionStub,
-      "---END FILE---",
-    ].join("\n")
-
-    let diskContent = ionStub
-    mockReadFile.mockImplementation(async (filePath: string) => {
-      if (filePath.endsWith("/ion-stoica.md")) return diskContent
-      throw new Error(`unexpected readFile: ${filePath}`)
-    })
-    mockWriteFile.mockImplementation(async (filePath: string, content: string) => {
-      if (filePath.endsWith("/ion-stoica.md")) diskContent = content
-    })
-
+  it("retries catch-up when a batch fails to emit the page", async () => {
     let streamCalls = 0
     mockStreamChat.mockImplementation(async (_cfg, _messages, cb) => {
       streamCalls++
-      cb.onToken(streamCalls === 1 ? stubLlmOutput : CATCHUP_FILE_OUTPUT)
+      // First batch emits no FILE block → ion-stoica stays missing on
+      // disk → queued for the retry pass.
+      cb.onToken(streamCalls === 1 ? "(no file blocks emitted)" : CATCHUP_FILE_OUTPUT)
       cb.onDone()
     })
 
@@ -322,26 +292,14 @@ describe("runFollowUpPasses — catch-up", () => {
     expect(onProgress.mock.calls.map((c) => c[0])).toContain(
       "Step 2a-catchup retry 1/2: batch 1/1 (1 pages)...",
     )
-    expect(diskContent).toContain("Full biography from catch-up pass.")
-    expect(diskContent).not.toContain(MANIFEST_STUB_MARKER)
-    expect(result.warnings.some((w) => w.includes("still stub after"))).toBe(false)
+    expect(disk.get("/p/wiki/entities/ion-stoica.md")).toContain(
+      "Full biography from catch-up pass.",
+    )
+    expect(result.warnings.some((w) => w.includes("still missing after"))).toBe(false)
   })
 
   it("runs tail retry on resume when primary catch-up batches are already complete", async () => {
     mockStreamChat.mockClear()
-    const ionStub = buildManifestStub(
-      { name: "Ion Stoica", type: "entity" },
-      "paper.pdf",
-      "2026-05-19",
-    )
-    let diskContent = ionStub
-    mockReadFile.mockImplementation(async (filePath: string) => {
-      if (filePath.endsWith("/ion-stoica.md")) return diskContent
-      throw new Error(`unexpected readFile: ${filePath}`)
-    })
-    mockWriteFile.mockImplementation(async (filePath: string, content: string) => {
-      if (filePath.endsWith("/ion-stoica.md")) diskContent = content
-    })
     mockStreamChat.mockImplementation(async (_cfg, _messages, cb) => {
       cb.onToken(CATCHUP_FILE_OUTPUT)
       cb.onDone()
@@ -365,7 +323,9 @@ describe("runFollowUpPasses — catch-up", () => {
     )
 
     expect(mockStreamChat).toHaveBeenCalledTimes(1)
-    expect(diskContent).not.toContain(MANIFEST_STUB_MARKER)
+    expect(disk.get("/p/wiki/entities/ion-stoica.md")).toContain(
+      "Full biography from catch-up pass.",
+    )
   })
 })
 
