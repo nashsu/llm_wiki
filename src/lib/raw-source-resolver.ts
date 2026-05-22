@@ -5,8 +5,8 @@
  *   `<project>/wiki/media/<slug>/img-N.<ext>`
  * — emitted either ABSOLUTE (from the unified Rust extractor that
  * runs at `read_file` time) or WIKI-RELATIVE
- * (`media/<slug>/img-N.png`, from the post-write safety-net section
- * in `wiki/sources/<slug>.md`). The slug equals the basename of
+ * (`media/<slug>/img-N.png`, or `../media/<slug>/img-N.png` from
+ * `wiki/sources/<slug>.md`). The slug equals the basename of
  * the original raw source file (we wrote it that way at extraction
  * time in `extract_pdf_markdown` / fs.rs's raw-sources-layout
  * heuristic), so finding the raw file is a stem match against
@@ -30,9 +30,10 @@ export async function findRawSourceForImage(
   imageUrl: string,
   projectPath: string,
 ): Promise<string | null> {
-  // Image URLs reach us in TWO shapes:
+  // Image URLs reach us in THREE shapes:
   //   1. ABSOLUTE: `/Users/.../wiki/media/<slug>/img-N.png`
   //   2. WIKI-RELATIVE: `media/<slug>/img-N.png`
+  //   3. SOURCE-RELATIVE: `../media/<slug>/img-N.png`
   // Match `media/<slug>/` either at the URL start or after any `/`.
   const m = imageUrl.replace(/\\/g, "/").match(/(?:^|\/)media\/([^/]+)\//)
   if (!m) return null
@@ -82,6 +83,8 @@ export function imageUrlToAbsolute(
     /^[a-zA-Z]:/.test(imageUrl) ||
     imageUrl.startsWith("\\\\")
   if (isAbsolute) return imageUrl
-  const cleaned = imageUrl.replace(/^\.\//, "")
+  const cleaned = imageUrl
+    .replace(/^\.\//, "")
+    .replace(/^(\.\.\/)+(?=media\/)/, "")
   return `${projectPath.replace(/\/+$/, "")}/wiki/${cleaned}`
 }

@@ -49,6 +49,12 @@ describe("resolveMarkdownImageSrc", () => {
     ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/rope-paper/img-1.png")
   })
 
+  it("normalizes source-summary relative media paths under <project>/wiki/", () => {
+    expect(
+      resolveMarkdownImageSrc("../media/rope-paper/img-1.png", PROJECT),
+    ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/rope-paper/img-1.png")
+  })
+
   it("strips a leading ./ for cleanliness", () => {
     expect(
       resolveMarkdownImageSrc("./media/foo/img-2.png", PROJECT),

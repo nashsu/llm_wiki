@@ -18,8 +18,10 @@
  *     `convertFileSrc` directly — the path is the filesystem
  *     absolute path.
  *   - **Anything else is treated as relative to the project's
- *     `wiki/` root.** Generated content uses this form
- *     (`media/foo/img-1.png`); user-written content can use it too.
+ *     `wiki/` root.** Generated content commonly uses this form
+ *     (`media/foo/img-1.png`). Source-summary pages under
+ *     `wiki/sources/` may also use `../media/foo/img-1.png`; that is
+ *     normalized back to `media/foo/img-1.png` for webview loading.
  *
  * The resolver returns a string that React's <img src=...> can load:
  * the appropriate `convertFileSrc(...)` URL or the original src
@@ -53,8 +55,13 @@ export function resolveMarkdownImageSrc(
   if (isAbsolute) return convertFileSrc(rawSrc)
 
   // Strip a leading `./` for cleanliness; treat `media/foo.png` and
-  // `./media/foo.png` identically.
-  const cleaned = rawSrc.replace(/^\.\//, "")
+  // `./media/foo.png` identically. Source-summary pages use
+  // `../media/...` so external Markdown editors resolve images from
+  // `wiki/sources/`; in the app we normalize that back to wiki-root
+  // media because this resolver intentionally has no page-path context.
+  const cleaned = rawSrc
+    .replace(/^\.\//, "")
+    .replace(/^(\.\.\/)+(?=media\/)/, "")
 
   // Resolve as wiki-root-relative. The markdown lives somewhere
   // under wiki/ but we ignore its location — image references in
