@@ -56,6 +56,7 @@ import {
   buildAnalysisPrompt,
   parseAnalysisOutput,
   type AnalysisEntity,
+  type RelatedWikiPage,
 } from "@/lib/analysis"
 
 // ── PDF chapter splitting ─────────────────────────────────────────────
@@ -508,6 +509,38 @@ async function runChunkedAnalysis(
     )
   }
 
+  // ── Retrieve related wiki pages for cross-document context ───
+  // Vector-search existing pages using the source document's opening
+  // as a query. The top hits are injected into every Analysis chunk
+  // so the model can reason across documents — noting which entities
+  // already exist, where the source extends or contradicts the wiki.
+  // Skipped silently when embedding is not configured.
+  const relatedPages: RelatedWikiPage[] = []
+  const embCfgForAnalysis = useWikiStore.getState().embeddingConfig
+  if (embCfgForAnalysis.enabled && embCfgForAnalysis.model) {
+    try {
+      const { searchByEmbedding } = await import("@/lib/embedding")
+      const querySnippet = runCtx.source.enriched.slice(0, 2000)
+      const hits = await searchByEmbedding(runCtx.projectPath, querySnippet, embCfgForAnalysis, 3)
+      for (const hit of hits) {
+        const pagePath = `${normalizePath(runCtx.projectPath)}/wiki/${hit.id}.md`
+        try {
+          const content = await readFile(pagePath)
+          relatedPages.push({ id: hit.id, content: content.slice(0, 3000) })
+        } catch {
+          // page unreadable — skip
+        }
+      }
+      if (relatedPages.length > 0) {
+        console.log(
+          `[ingest] "${runCtx.fileName}": ${relatedPages.length} related wiki page(s) injected into Analysis`,
+        )
+      }
+    } catch {
+      // embedding unavailable — proceed without related pages
+    }
+  }
+
   // ── Step 1: Analysis (one pass per chunk) ────────────────────
   // Each chunk gets its own structured analysis. We concatenate the
   // outputs with a header line per part so Generation can tell which
@@ -525,7 +558,7 @@ async function runChunkedAnalysis(
     await streamChat(
       runCtx.llmConfig,
       [
-        { role: "system", content: buildAnalysisPrompt(runCtx.wiki.purpose, runCtx.wiki.index, chunkContent) },
+        { role: "system", content: buildAnalysisPrompt(runCtx.wiki.purpose, runCtx.wiki.index, chunkContent, relatedPages) },
         {
           role: "user",
           content: `Analyze this source document${chunkLabel}:\n\n**File:** ${runCtx.fileName}${runCtx.folderContext ? `\n**Folder context:** ${runCtx.folderContext}` : ""}\n\n---\n\n${chunkContent}`,

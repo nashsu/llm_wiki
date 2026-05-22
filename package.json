@@ -11,6 +11,7 @@
     "test": "npm run test:mocks && npm run test:llm",
     "test:mocks": "vitest run --exclude='**/*.real-llm.test.ts'",
     "test:llm": "vitest run real-llm --no-file-parallelism --reporter=verbose",
+    "audit:wiki": "npx vite-node eval/audit-wiki-defects.ts",
     "tauri": "tauri"
   },
   "dependencies": {

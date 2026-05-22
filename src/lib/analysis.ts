@@ -42,6 +42,14 @@ export interface AnalysisEntity {
   type: "entity" | "concept"
 }
 
+/** An existing wiki page retrieved as cross-document context for Analysis. */
+export interface RelatedWikiPage {
+  /** Slug relative to wiki/ e.g. "entities/lstm" */
+  id: string
+  /** Page content, possibly truncated */
+  content: string
+}
+
 /** The structured contract returned by `parseAnalysisOutput`. One per
  *  source chunk. Downstream consumers (batch driver, batch context,
  *  generation context) consume the typed fields directly — they never
@@ -133,6 +141,7 @@ export function buildAnalysisPrompt(
   purpose: string,
   index: string,
   sourceContent: string = "",
+  relatedPages: RelatedWikiPage[] = [],
 ): string {
   return [
     "<role>",
@@ -203,6 +212,19 @@ export function buildAnalysisPrompt(
     "",
     purpose ? `<wiki_purpose>\n${purpose}\n</wiki_purpose>` : "",
     index ? `<current_wiki_index>\n${index}\n</current_wiki_index>` : "",
+    relatedPages.length > 0
+      ? [
+          "<related_wiki_pages>",
+          "The following existing wiki pages were retrieved as potentially related to the source document.",
+          "Use them to understand what the wiki already knows about this topic:",
+          "- If an entity or concept in the source matches an existing page, note the matching slug in your prose analysis.",
+          "- If the source adds to, contradicts, or confirms what an existing page says, call that out explicitly under 'Connections to Existing Wiki'.",
+          "- Do NOT omit entities from the <entities> manifest just because a related page already exists — list all entities so downstream generation can decide whether to merge or create.",
+          "",
+          ...relatedPages.map((p) => `--- wiki/${p.id}.md ---\n${p.content}`),
+          "</related_wiki_pages>",
+        ].join("\n")
+      : "",
   ]
     .filter(Boolean)
     .join("\n")
