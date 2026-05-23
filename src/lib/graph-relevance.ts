@@ -184,26 +184,27 @@ export async function buildRetrievalGraph(
     fileName: string
   }> = []
 
-  for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
-    let content = ""
-    try {
-      content = await readFile(file.path)
-    } catch {
-      continue
-    }
-
-    const fm = extractFrontmatter(content)
-    rawNodes.push({
-      id,
-      title: fm.title || file.name.replace(/\.md$/, "").replace(/-/g, " "),
-      type: fm.type,
-      path: file.path,
-      sources: fm.sources,
-      rawLinks: extractWikilinks(content),
-      fileName: file.name,
-    })
-  }
+  const results = await Promise.all(
+    mdFiles.map(async (file) => {
+      const id = fileNameToId(file.name)
+      try {
+        const content = await readFile(file.path)
+        const fm = extractFrontmatter(content)
+        return {
+          id,
+          title: fm.title || file.name.replace(/\.md$/, "").replace(/-/g, " "),
+          type: fm.type,
+          path: file.path,
+          sources: fm.sources,
+          rawLinks: extractWikilinks(content),
+          fileName: file.name,
+        }
+      } catch {
+        return null
+      }
+    }),
+  )
+  rawNodes.push(...results.filter((r): r is NonNullable<typeof r> => r !== null))
 
   const nodeIds = new Set(rawNodes.map((n) => n.id))
 

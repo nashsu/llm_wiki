@@ -1,28 +1,50 @@
+import { Suspense, lazy } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { ChatPanel } from "@/components/chat/chat-panel"
-import { SettingsView } from "@/components/settings/settings-view"
-import { SourcesView } from "@/components/sources/sources-view"
-import { ReviewView } from "@/components/review/review-view"
-import { LintView } from "@/components/lint/lint-view"
-import { SearchView } from "@/components/search/search-view"
-import { GraphView } from "@/components/graph/graph-view"
+
+const SettingsView = lazy(() =>
+  import("@/components/settings/settings-view").then((m) => ({ default: m.SettingsView })),
+)
+const SourcesView = lazy(() =>
+  import("@/components/sources/sources-view").then((m) => ({ default: m.SourcesView })),
+)
+const ReviewView = lazy(() =>
+  import("@/components/review/review-view").then((m) => ({ default: m.ReviewView })),
+)
+const LintView = lazy(() =>
+  import("@/components/lint/lint-view").then((m) => ({ default: m.LintView })),
+)
+const SearchView = lazy(() =>
+  import("@/components/search/search-view").then((m) => ({ default: m.SearchView })),
+)
+const GraphView = lazy(() =>
+  import("@/components/graph/graph-view").then((m) => ({ default: m.GraphView })),
+)
+
+function ViewSpinner() {
+  return (
+    <div className="flex h-full items-center justify-center text-muted-foreground">
+      <span className="text-sm animate-pulse">Loading...</span>
+    </div>
+  )
+}
 
 export function ContentArea() {
   const activeView = useWikiStore((s) => s.activeView)
 
   switch (activeView) {
     case "settings":
-      return <SettingsView />
+      return <Suspense fallback={<ViewSpinner />}><SettingsView /></Suspense>
     case "sources":
-      return <SourcesView />
+      return <Suspense fallback={<ViewSpinner />}><SourcesView /></Suspense>
     case "review":
-      return <ReviewView />
+      return <Suspense fallback={<ViewSpinner />}><ReviewView /></Suspense>
     case "lint":
-      return <LintView />
+      return <Suspense fallback={<ViewSpinner />}><LintView /></Suspense>
     case "search":
-      return <SearchView />
+      return <Suspense fallback={<ViewSpinner />}><SearchView /></Suspense>
     case "graph":
-      return <GraphView />
+      return <Suspense fallback={<ViewSpinner />}><GraphView /></Suspense>
     default:
       return <ChatPanel />
   }

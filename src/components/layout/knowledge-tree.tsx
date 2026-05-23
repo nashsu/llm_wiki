@@ -51,23 +51,24 @@ export function KnowledgeTree() {
       const wikiTree = await listDirectory(`${pp}/wiki`)
       const mdFiles = flattenMdFiles(wikiTree)
 
-      const pageInfos: WikiPageInfo[] = []
-      for (const file of mdFiles) {
-        // Skip index.md and log.md
-        if (file.name === "index.md" || file.name === "log.md") continue
-        try {
-          const content = await readFile(file.path)
-          const info = parsePageInfo(file.path, file.name, content)
-          pageInfos.push(info)
-        } catch {
-          pageInfos.push({
-            path: file.path,
-            title: file.name.replace(".md", "").replace(/-/g, " "),
-            type: "other",
-            tags: [],
-          })
-        }
-      }
+      const pageInfos: WikiPageInfo[] = (
+        await Promise.all(
+          mdFiles.map(async (file) => {
+            if (file.name === "index.md" || file.name === "log.md") return null
+            try {
+              const content = await readFile(file.path)
+              return parsePageInfo(file.path, file.name, content)
+            } catch {
+              return {
+                path: file.path,
+                title: file.name.replace(".md", "").replace(/-/g, " "),
+                type: "other" as const,
+                tags: [],
+              }
+            }
+          }),
+        )
+      ).filter((p): p is WikiPageInfo => p !== null)
 
       setPages(pageInfos)
     } catch {

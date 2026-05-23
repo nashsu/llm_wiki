@@ -26,15 +26,13 @@ interface ResearchState {
   getNextQueued: () => ResearchTask | undefined
 }
 
-let counter = 0
-
 export const useResearchStore = create<ResearchState>((set, get) => ({
   tasks: [],
   panelOpen: false,
   maxConcurrent: 3,
 
   addTask: (topic) => {
-    const id = `research-${++counter}`
+    const id = `research-${crypto.randomUUID().slice(0, 8)}`
     set((state) => ({
       tasks: [
         ...state.tasks,

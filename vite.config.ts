@@ -44,6 +44,19 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/mermaid")) return "vendor_mermaid"
+          if (id.includes("node_modules/graphology") || id.includes("node_modules/sigma")) return "vendor_graph"
+          if (id.includes("node_modules/@milkdown") || id.includes("node_modules/prosemirror")) return "vendor_editor"
+          if (id.includes("node_modules/react-markdown") || id.includes("node_modules/rehype-katex") || id.includes("node_modules/katex")) return "vendor_markdown"
+        },
+      },
+    },
+  },
+
   test: {
     environment: "node",
     // Loads .env.test.local into process.env for real-LLM tests.

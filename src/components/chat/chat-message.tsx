@@ -11,8 +11,7 @@ import {
 } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
-import { lastQueryPages } from "@/components/chat/chat-panel"
-import type { DisplayMessage } from "@/stores/chat-store"
+import { useChatStore, type DisplayMessage } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
@@ -25,25 +24,23 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
-// Module-level cache of source file names
-let cachedSourceFiles: string[] = []
-
 export function useSourceFiles() {
   const project = useWikiStore((s) => s.project)
+  const [files, setFiles] = useState<string[]>([])
 
   useEffect(() => {
     if (!project) return
     const pp = normalizePath(project.path)
     listDirectory(`${pp}/raw/sources`)
       .then((tree) => {
-        cachedSourceFiles = flattenNames(tree)
+        setFiles(flattenNames(tree))
       })
       .catch(() => {
-        cachedSourceFiles = []
+        setFiles([])
       })
   }, [project])
 
-  return cachedSourceFiles
+  return files
 }
 
 function flattenNames(nodes: FileNode[]): string[] {
@@ -548,6 +545,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
  * Maps page numbers back to the pages that were sent to the LLM.
  */
 function extractCitedPages(text: string): CitedPage[] {
+  const lastQueryPages = useChatStore.getState().lastQueryPages
   const citedMatch = text.match(/<!--\s*cited:\s*(.+?)\s*-->/)
   if (citedMatch && lastQueryPages.length > 0) {
     const numbers = citedMatch[1]

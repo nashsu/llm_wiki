@@ -88,7 +88,7 @@ pub fn start_clip_server() {
 
             for mut request in server.incoming_requests() {
                 let cors_headers = vec![
-                    Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+                    Header::from_bytes("Access-Control-Allow-Origin", "http://127.0.0.1").unwrap(),
                     Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                         .unwrap(),
                     Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),

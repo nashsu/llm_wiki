@@ -162,8 +162,8 @@ function App() {
           lastCheckedAt: Date.now(),
           dismissedVersion: useUpdateStore.getState().dismissedVersion,
         })
-      } catch {
-        // Silent — Settings → About lets the user retry manually.
+      } catch (e) {
+        console.warn("[update check failed]", e)
       }
     }, 1500)
     return () => {
@@ -247,12 +247,12 @@ function App() {
           try {
             const proj = await openProject(lastProject.path)
             await handleProjectOpened(proj)
-          } catch {
-            // Last project no longer valid
+          } catch (e) {
+            console.warn("[last project restore failed]", e)
           }
         }
-      } catch {
-        // ignore init errors
+      } catch (e) {
+        console.warn("[app init failed]", e)
       } finally {
         setLoading(false)
       }
@@ -316,8 +316,8 @@ function App() {
           lastScan: null,
         })
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn("[source watch config load failed]", e)
     }
     // Start scheduled import if enabled
     const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
@@ -369,10 +369,9 @@ function App() {
       if (savedReview.length > 0) {
         useReviewStore.getState().setItems(savedReview)
       }
-    } catch {
-      // ignore, start fresh
+    } catch (e) {
+      console.warn("[review items load failed]", e)
     }
-    // Load persisted chat history
     try {
       const savedChat = await loadChatHistory(proj.path)
       if (savedChat.conversations.length > 0) {
@@ -384,8 +383,8 @@ function App() {
           useChatStore.getState().setActiveConversation(sorted[0].id)
         }
       }
-    } catch {
-      // ignore, start fresh
+    } catch (e) {
+      console.warn("[chat history load failed]", e)
     }
   }
 

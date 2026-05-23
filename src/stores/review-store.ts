@@ -30,8 +30,6 @@ interface ReviewState {
   clearResolved: () => void
 }
 
-let counter = 0
-
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
 
@@ -41,7 +39,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         ...state.items,
         {
           ...item,
-          id: `review-${++counter}`,
+          id: `review-${crypto.randomUUID().slice(0, 8)}`,
           resolved: false,
           createdAt: Date.now(),
         },
@@ -84,7 +82,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
         } else {
           const newItem = {
             ...incoming,
-            id: `review-${++counter}`,
+            id: `review-${crypto.randomUUID().slice(0, 8)}`,
             resolved: false,
             createdAt: Date.now(),
           }

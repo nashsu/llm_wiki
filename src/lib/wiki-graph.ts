@@ -179,23 +179,25 @@ export async function buildWikiGraph(
     { id: string; label: string; type: string; path: string; links: string[] }
   >()
 
-  for (const file of mdFiles) {
-    const id = fileNameToId(file.name)
-    let content = ""
-    try {
-      content = await readFile(file.path)
-    } catch {
-      // Skip unreadable files
-      continue
-    }
-
-    nodeMap.set(id, {
-      id,
-      label: extractTitle(content, file.name),
-      type: extractType(content),
-      path: file.path,
-      links: extractWikilinks(content),
-    })
+  const entries = await Promise.all(
+    mdFiles.map(async (file) => {
+      const id = fileNameToId(file.name)
+      try {
+        const content = await readFile(file.path)
+        return {
+          id,
+          label: extractTitle(content, file.name),
+          type: extractType(content),
+          path: file.path,
+          links: extractWikilinks(content),
+        }
+      } catch {
+        return null
+      }
+    }),
+  )
+  for (const entry of entries) {
+    if (entry) nodeMap.set(entry.id, entry)
   }
 
   // Filter out query nodes (research results, saved chat answers) — they are

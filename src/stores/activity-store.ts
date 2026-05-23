@@ -18,13 +18,11 @@ interface ActivityState {
   clearDone: () => void
 }
 
-let counter = 0
-
 export const useActivityStore = create<ActivityState>((set) => ({
   items: [],
 
   addItem: (item) => {
-    const id = `activity-${++counter}`
+    const id = `activity-${crypto.randomUUID().slice(0, 8)}`
     set((state) => ({
       items: [
         { ...item, id, createdAt: Date.now() },

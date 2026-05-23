@@ -14,6 +14,11 @@ export interface MessageReference {
   path: string
 }
 
+export interface QueryPage {
+  title: string
+  path: string
+}
+
 export interface DisplayMessage {
   id: string
   role: "user" | "assistant" | "system"
@@ -32,6 +37,7 @@ interface ChatState {
   mode: "chat" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
+  lastQueryPages: QueryPage[]
 
   // Conversation management
   createConversation: () => string
@@ -50,17 +56,15 @@ interface ChatState {
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
   setMaxHistoryMessages: (n: number) => void
+  setLastQueryPages: (pages: QueryPage[]) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
   getActiveMessages: () => DisplayMessage[]
 }
 
-let messageCounter = 0
-
 function nextId(): string {
-  messageCounter += 1
-  return String(messageCounter)
+  return crypto.randomUUID()
 }
 
 function generateConversationId(): string {
@@ -76,6 +80,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
+  lastQueryPages: [],
 
   createConversation: () => {
     const id = generateConversationId()
@@ -206,6 +211,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   setMaxHistoryMessages: (maxHistoryMessages) => set({ maxHistoryMessages }),
+
+  setLastQueryPages: (lastQueryPages) => set({ lastQueryPages }),
 
   removeLastAssistantMessage: () =>
     set((state) => {

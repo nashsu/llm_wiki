@@ -1,5 +1,6 @@
 import { Children, isValidElement, useEffect, useRef, useState, type ReactNode } from "react"
 import { X, ZoomIn } from "lucide-react"
+import DOMPurify from "dompurify"
 
 interface MermaidDiagramProps {
   code: string
@@ -48,7 +49,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
         const { svg: rendered } = await mermaid.render(id, code)
         if (!cancelled) {
-          setSvg(rendered)
+          setSvg(DOMPurify.sanitize(rendered, { USE_PROFILES: { svg: true } }))
           setError(null)
         }
       } catch (err) {

@@ -22,7 +22,7 @@ describe("review-store addItem", () => {
     useReviewStore.getState().addItem(makeInput())
     const items = useReviewStore.getState().items
     expect(items).toHaveLength(1)
-    expect(items[0].id).toMatch(/^review-\d+$/)
+    expect(items[0].id).toMatch(/^review-[0-9a-f-]+$/)
     expect(items[0].resolved).toBe(false)
     expect(items[0].createdAt).toBeTypeOf("number")
   })

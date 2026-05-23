@@ -16,9 +16,6 @@ import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 
-// Store the page mapping from the last query so SourceFilesBar can show which pages were cited
-export let lastQueryPages: { title: string; path: string }[] = []
-
 function formatDate(timestamp: number): string {
   const d = new Date(timestamp)
   const now = new Date()
@@ -347,8 +344,9 @@ export function ChatPanel() {
         // (after history so it's the last system instruction the LLM sees).
         langReminder = buildLanguageReminder(text)
 
-        lastQueryPages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
-        queryRefs = [...lastQueryPages]
+        const pages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
+        useChatStore.getState().setLastQueryPages(pages)
+        queryRefs = [...pages]
       }
 
       // ── Conversation history with count limit ────────────────
@@ -442,12 +440,7 @@ export function ChatPanel() {
     if (!lastUserMsg) return
     // Remove the last assistant reply, then re-send
     removeLastAssistantMessage()
-    // Small delay to let state update
-    await new Promise((r) => setTimeout(r, 50))
-    // Trigger send with the same text (handleSend will add a new user message,
-    // so also remove the original to avoid duplication)
-    // Actually: just call handleSend — but it adds a user message. To avoid dupe,
-    // we remove the last user message too and let handleSend re-add it.
+    // Zustand set() is synchronous — no delay needed
     const store = useChatStore.getState()
     const updatedActive = store.getActiveMessages()
     const lastUser = [...updatedActive].reverse().find((m) => m.role === "user")
