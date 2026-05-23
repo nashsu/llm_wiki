@@ -70,7 +70,29 @@ export function sanitizeIngestedFileContent(content: string): string {
   // link transform applied at read time.
   cleaned = repairWikilinkListsInFrontmatter(cleaned)
 
+  // (4) If the LLM omitted the opening `---` but produced a closing one,
+  //     prepend the missing delimiter. Matches content like:
+  //       type: entity\ntitle: Foo\n---\nbody
+  cleaned = ensureOpeningFrontmatterDash(cleaned)
+
   return cleaned
+}
+
+/**
+ * Ensure frontmatter has an opening `---`. Some LLMs emit:
+ *     type: entity\n---\nbody
+ * instead of:
+ *     ---\ntype: entity\n---\nbody
+ * Only prepends if content starts with a YAML key (word:) and has a
+ * closing `---` on its own line before the body.
+ */
+function ensureOpeningFrontmatterDash(content: string): string {
+  if (content.startsWith("---")) return content
+  // Look for a closing `---` on its own line within the first ~50 lines
+  const lineRe = /^---[ \t]*\r?\n/
+  if (!/^\s*[A-Za-z_][\w-]*\s*:/.test(content)) return content
+  if (!lineRe.test(content.slice(content.indexOf("\n") + 1))) return content
+  return "---\n" + content
 }
 
 /** Top-level fence wrapper. Removes the open + close fence lines. */

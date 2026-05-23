@@ -8,7 +8,7 @@ import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { normalizePath, getFileName, isAbsolutePath } from "@/lib/path-utils"
-import { getQueue, getQueueSummary, retryTask, cancelTask, cancelAllTasks, type IngestTask } from "@/lib/ingest-queue"
+import { getQueue, getQueueSummary, retryTask, retryAllFailed, cancelTask, cancelAllTasks, type IngestTask } from "@/lib/ingest-queue"
 import {
   ignoreFileChangeTask,
   rescanProjectFiles,
@@ -217,6 +217,15 @@ export function ActivityPanel() {
                 <span className="flex-1 text-right">
                   {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total} complete
                 </span>
+                {queueSummary.failed > 0 && (
+                  <button
+                    onClick={() => retryAllFailed()}
+                    className="rounded px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
+                    title="Retry all failed tasks"
+                  >
+                    Retry all
+                  </button>
+                )}
                 {queueSummary.pending + queueSummary.processing >= 2 && (
                   <button
                     onClick={handleCancelAll}

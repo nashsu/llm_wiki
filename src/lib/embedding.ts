@@ -87,7 +87,8 @@ export async function fetchEmbedding(
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
   const endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
   const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (cfg.apiKey) {
+  const isLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])/i.test(endpoint)
+  if (cfg.apiKey && !isLocal) {
     if (isGoogleNative) {
       headers["x-goog-api-key"] = cfg.apiKey
     } else {

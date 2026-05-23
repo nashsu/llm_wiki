@@ -237,6 +237,26 @@ export async function retryTask(taskId: string): Promise<void> {
 }
 
 /**
+ * Retry all failed tasks in the current project's queue.
+ * Returns the number of tasks retried.
+ */
+export async function retryAllFailed(): Promise<number> {
+  let count = 0
+  for (const task of queue) {
+    if (task.projectId === currentProjectId && task.status === "failed") {
+      task.status = "pending"
+      task.error = null
+      count++
+    }
+  }
+  if (count > 0) {
+    await saveQueue(currentProjectPath)
+    processNext(currentProjectId)
+  }
+  return count
+}
+
+/**
  * Cancel a pending or processing task.
  * If processing, aborts the LLM call and cleans up generated files.
  */
