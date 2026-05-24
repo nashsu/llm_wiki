@@ -187,6 +187,7 @@
       "scheduledImport": "Scheduled Import",
       "apiServer": "API Server",
       "git": "Git",
+      "export": "Export",
       "output": "Output",
       "promptTemplate": "Prompt Templates",
       "interface": "Interface",
@@ -458,6 +459,18 @@
         "autoCommit": "Auto-commit on ingest",
         "autoCommitHint": "Automatically commit changes after each file ingest. The commit message includes the ingested filename.",
         "recentCommits": "Recent Commits"
+      },
+      "export": {
+        "title": "Export Wiki",
+        "description": "Export your wiki as a static website or PDF document.",
+        "selectOutputDir": "Select Output Directory",
+        "markdownTitle": "Static Markdown Site",
+        "markdownDescription": "Export all wiki pages as a self-contained Markdown site with navigation and resolved links.",
+        "markdownSuccess": "Markdown site exported successfully!",
+        "pdfTitle": "PDF Export",
+        "pdfDescription": "Export wiki pages as PDF using the browser print dialog.",
+        "pdfSuccess": "PDF export dialog opened.",
+        "exportButton": "Export"
       },
       "output": {
         "title": "Output Preferences",

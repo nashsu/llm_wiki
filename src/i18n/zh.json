@@ -187,6 +187,7 @@
       "scheduledImport": "定时导入",
       "apiServer": "API 服务",
       "git": "Git",
+      "export": "导出",
       "output": "输出偏好",
       "promptTemplate": "提示词模板",
       "interface": "界面",
@@ -458,6 +459,18 @@
         "autoCommit": "导入后自动提交",
         "autoCommitHint": "每次文件导入后自动提交变更。提交消息包含导入的文件名。",
         "recentCommits": "最近提交"
+      },
+      "export": {
+        "title": "导出 Wiki",
+        "description": "将 Wiki 导出为静态网站或 PDF 文档。",
+        "selectOutputDir": "选择输出目录",
+        "markdownTitle": "静态 Markdown 站点",
+        "markdownDescription": "将所有 Wiki 页面导出为包含导航和解析链接的自包含 Markdown 站点。",
+        "markdownSuccess": "Markdown 站点导出成功！",
+        "pdfTitle": "PDF 导出",
+        "pdfDescription": "通过浏览器打印对话框将 Wiki 页面导出为 PDF。",
+        "pdfSuccess": "PDF 导出对话框已打开。",
+        "exportButton": "导出"
       },
       "output": {
         "title": "输出偏好",

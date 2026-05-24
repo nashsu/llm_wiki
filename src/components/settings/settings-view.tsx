@@ -16,6 +16,7 @@ import {
   FileText,
   Layers,
   GitBranch,
+  Download,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -43,6 +44,7 @@ import { AboutSection } from "./sections/about-section"
 import { PromptTemplateSection } from "./sections/prompt-template-section"
 import { WorkflowSection } from "./sections/workflow-section"
 import { GitSection } from "./sections/git-section"
+import { ExportSection } from "./sections/export-section"
 
 type CategoryId =
   | "workflow"
@@ -55,6 +57,7 @@ type CategoryId =
   | "scheduled-import"
   | "api-server"
   | "git"
+  | "export"
   | "output"
   | "prompt-template"
   | "interface"
@@ -82,6 +85,7 @@ const CATEGORIES: Category[] = [
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
   { id: "git", labelKey: "settings.categories.git", icon: GitBranch },
+  { id: "export", labelKey: "settings.categories.export", icon: Download },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "prompt-template", labelKey: "settings.categories.promptTemplate", icon: FileText },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
@@ -438,6 +442,8 @@ export function SettingsView() {
         return <ApiServerSection draft={draft} setDraft={setDraft} />
       case "git":
         return <GitSection />
+      case "export":
+        return <ExportSection />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "prompt-template":
@@ -513,7 +519,7 @@ export function SettingsView() {
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
             - "about" has no draft-bound fields */}
-        {active !== "about" && active !== "llm" && active !== "prompt-template" && active !== "workflow" && active !== "git" && (
+        {active !== "about" && active !== "llm" && active !== "prompt-template" && active !== "workflow" && active !== "git" && active !== "export" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">
