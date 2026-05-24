@@ -148,10 +148,10 @@ export const useReviewStore = create<ReviewState>((set) => ({
       items: state.items.filter((item) => !item.resolved),
     })),
 
-  getSortedItems: () => {
-    const items = useReviewStore.getState().items
+  getSortedItems: (): ReviewItem[] => {
+    const items: ReviewItem[] = useReviewStore.getState().items
     return items
-      .filter((item) => !item.resolved)
-      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+      .filter((item: ReviewItem) => !item.resolved)
+      .sort((a: ReviewItem, b: ReviewItem) => (b.priority ?? 0) - (a.priority ?? 0))
   },
 }))

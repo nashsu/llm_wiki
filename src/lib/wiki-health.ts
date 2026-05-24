@@ -33,9 +33,9 @@ async function collectWikiPages(wikiPath: string): Promise<string[]> {
     const nodes = await listDirectory(wikiPath)
     if (!Array.isArray(nodes)) return pages
     for (const node of nodes) {
-      if (node.type === "file" && node.name.endsWith(".md")) {
+      if (!node.is_dir && node.name.endsWith(".md")) {
         pages.push(`${wikiPath}/${node.name}`)
-      } else if (node.type === "directory") {
+      } else if (node.is_dir) {
         const subPages = await collectWikiPages(`${wikiPath}/${node.name}`)
         pages.push(...subPages)
       }
