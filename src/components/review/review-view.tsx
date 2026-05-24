@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -27,7 +27,14 @@ const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label
 }
 
 export function ReviewView() {
-  const items = useReviewStore((s) => s.items)
+  const allItems = useReviewStore((s) => s.items)
+  // Sort pending items by priority (highest first)
+  const items = useMemo(() =>
+    allItems
+      .filter((item) => !item.resolved)
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
+    [allItems],
+  )
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
   const clearResolved = useReviewStore((s) => s.clearResolved)
@@ -220,19 +227,18 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [project, items, resolveItem, setFileTree])
+  }, [project, allItems, resolveItem, setFileTree])
 
-  const pending = items.filter((i) => !i.resolved)
-  const resolved = items.filter((i) => i.resolved)
+  const resolved = allItems.filter((i) => i.resolved)
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
           Review
-          {pending.length > 0 && (
+          {items.length > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-              {pending.length}
+              {items.length}
             </span>
           )}
         </h2>
@@ -252,7 +258,7 @@ export function ReviewView() {
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
-            {pending.map((item) => (
+            {items.map((item) => (
               <ReviewCard
                 key={item.id}
                 item={item}
@@ -260,7 +266,7 @@ export function ReviewView() {
                 onDismiss={dismissItem}
               />
             ))}
-            {resolved.length > 0 && pending.length > 0 && (
+            {resolved.length > 0 && items.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
                 — Resolved —
               </div>

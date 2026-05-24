@@ -1,7 +1,8 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
-import { buildRetrievalGraph, calculateRelevance } from "./graph-relevance"
+import { buildRetrievalGraph, calculateRelevance, clearGraphCache } from "./graph-relevance"
 import { normalizePath } from "@/lib/path-utils"
+import { saveSnapshot, type GraphSnapshot } from "./graph-snapshot"
 import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 
@@ -275,6 +276,20 @@ export async function buildWikiGraph(
 
   const { assignments, communities } = detectCommunities(prelimNodes, edges)
 
+  // Enrich the retrieval graph cache with community assignments so that
+  // subsequent calls to buildRetrievalGraph (e.g. from chat-panel) will
+  // pick up community data without recomputing it.
+  if (assignments.size > 0) {
+    try {
+      const { useWikiStore } = await import("@/stores/wiki-store")
+      const dv = useWikiStore.getState().dataVersion
+      clearGraphCache()
+      await buildRetrievalGraph(normalizePath(projectPath), dv, assignments)
+    } catch {
+      // ignore — community enrichment is best-effort
+    }
+  }
+
   const nodes: GraphNode[] = Array.from(nodeMap.values()).map((n) => ({
     id: n.id,
     label: n.label,
@@ -283,6 +298,24 @@ export async function buildWikiGraph(
     linkCount: linkCounts.get(n.id) ?? 0,
     community: assignments.get(n.id) ?? 0,
   }))
+
+  // Save snapshot in background (non-blocking)
+  const snapshot: GraphSnapshot = {
+    timestamp: Date.now(),
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    communityCount: communities.length,
+    topNodes: [...nodes]
+      .sort((a, b) => b.linkCount - a.linkCount)
+      .slice(0, 10)
+      .map((n) => ({ id: n.id, label: n.label, linkCount: n.linkCount })),
+    communityDistribution: communities.map((c) => ({
+      id: c.id,
+      nodeCount: c.nodeCount,
+      cohesion: c.cohesion,
+    })),
+  }
+  saveSnapshot(projectPath, snapshot).catch(() => {})
 
   return { nodes, edges, communities }
 }

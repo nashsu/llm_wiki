@@ -15,6 +15,7 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
+import { resolveSystemPrompt } from "@/lib/prompt-templates"
 
 function formatDate(timestamp: number): string {
   const d = new Date(timestamp)
@@ -308,10 +309,19 @@ export function ChatPanel() {
 
         const outLang = getOutputLanguage(text)
 
+        // Resolve the active prompt template's system prompt, falling back
+        // to the default hardcoded persona line.
+        const { activePromptTemplate, customPromptTemplates } = useWikiStore.getState()
+        const personaLine = resolveSystemPrompt(
+          activePromptTemplate,
+          customPromptTemplates,
+          "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
+        )
+
         systemMessages.push({
           role: "system",
           content: [
-            "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
+            personaLine,
             "",
             "## Rules",
             "- Answer based ONLY on the numbered wiki pages provided below.",

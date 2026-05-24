@@ -285,6 +285,52 @@ export async function loadSourceWatchConfig(projectId?: string): Promise<SourceW
   return normalizeSourceWatchConfig({ enabled: legacyEnabled })
 }
 
+// ── Search history persistence ────────────────────────────────────────────
+// Per-project search history. Keyed by project path so switching projects
+// carries its own history.
+
+const SEARCH_HISTORY_KEY_PREFIX = "searchHistory:"
+
+function searchHistoryKey(projectPath: string): string {
+  return `${SEARCH_HISTORY_KEY_PREFIX}${normalizePath(projectPath)}`
+}
+
+export async function saveSearchHistory(projectPath: string, history: string[]): Promise<void> {
+  const store = await getStore()
+  await store.set(searchHistoryKey(projectPath), history)
+}
+
+export async function loadSearchHistory(projectPath: string): Promise<string[]> {
+  const store = await getStore()
+  return (await store.get<string[]>(searchHistoryKey(projectPath))) ?? []
+}
+
+// ── Search feedback persistence ────────────────────────────────────────────
+
+export interface SearchFeedbackEntry {
+  query: string
+  resultPath: string
+  relevant: boolean
+  timestamp: number
+}
+
+const SEARCH_FEEDBACK_KEY_PREFIX = "searchFeedback:"
+
+function searchFeedbackKey(projectPath: string): string {
+  return `${SEARCH_FEEDBACK_KEY_PREFIX}${normalizePath(projectPath)}`
+}
+
+export async function saveSearchFeedback(projectPath: string, feedback: SearchFeedbackEntry[]): Promise<void> {
+  const store = await getStore()
+  // Keep only last 500 entries
+  await store.set(searchFeedbackKey(projectPath), feedback.slice(-500))
+}
+
+export async function loadSearchFeedback(projectPath: string): Promise<SearchFeedbackEntry[]> {
+  const store = await getStore()
+  return (await store.get<SearchFeedbackEntry[]>(searchFeedbackKey(projectPath))) ?? []
+}
+
 // ── Update-check persistence ──────────────────────────────────────────────
 // Small slice of state the UI-layer update store hydrates from on boot.
 // Only fields that should persist across launches: the user's "enable
@@ -312,4 +358,45 @@ export async function loadUpdateCheckState(): Promise<PersistedUpdateCheckState 
   return (
     (await store.get<PersistedUpdateCheckState>(UPDATE_CHECK_STATE_KEY)) ?? null
   )
+}
+
+// ── Prompt template persistence ────────────────────────────────────────────
+
+const PROMPT_TEMPLATE_KEY = "activePromptTemplate"
+const CUSTOM_PROMPT_TEMPLATES_KEY = "customPromptTemplates"
+
+export async function savePromptConfig(
+  activeId: string | null,
+  customTemplates: Record<string, string>,
+): Promise<void> {
+  const store = await getStore()
+  await store.set(PROMPT_TEMPLATE_KEY, activeId)
+  await store.set(CUSTOM_PROMPT_TEMPLATES_KEY, customTemplates)
+  await store.save()
+}
+
+export async function loadPromptConfig(): Promise<{
+  activeId: string | null
+  customTemplates: Record<string, string>
+}> {
+  const store = await getStore()
+  const activeId = (await store.get<string | null>(PROMPT_TEMPLATE_KEY)) ?? null
+  const customTemplates =
+    (await store.get<Record<string, string>>(CUSTOM_PROMPT_TEMPLATES_KEY)) ?? {}
+  return { activeId, customTemplates }
+}
+
+// ── Workflow preset persistence ────────────────────────────────────────────
+
+const WORKFLOW_PRESET_KEY = "activeWorkflowPreset"
+
+export async function saveWorkflowPreset(id: string | null): Promise<void> {
+  const store = await getStore()
+  await store.set(WORKFLOW_PRESET_KEY, id)
+  await store.save()
+}
+
+export async function loadWorkflowPreset(): Promise<string | null> {
+  const store = await getStore()
+  return (await store.get<string | null>(WORKFLOW_PRESET_KEY)) ?? null
 }

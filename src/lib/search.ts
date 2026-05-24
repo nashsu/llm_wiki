@@ -75,8 +75,18 @@ export async function searchWiki(
     embeddingConfig: embCfg,
   })
 
-  return response.results.map((result) => ({
+  const boostPaths = useWikiStore.getState().getSearchBoostPaths(query)
+
+  const results = response.results.map((result) => ({
     ...result,
     path: `${pp}/${normalizePath(result.path).replace(/^\/+/, "")}`,
+    // Boost score for pages previously marked as relevant by the user
+    score: boostPaths.has(`${pp}/${normalizePath(result.path).replace(/^\/+/, "")}`)
+      ? result.score + 2
+      : result.score,
   }))
+
+  // Re-sort after boost application
+  results.sort((a, b) => b.score - a.score)
+  return results
 }

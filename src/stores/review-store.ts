@@ -1,6 +1,35 @@
 import { create } from "zustand"
 import { normalizeReviewTitle } from "@/lib/review-utils"
 
+/** Compute priority score for a review item based on type and metadata */
+function computePriority(item: Omit<ReviewItem, "id" | "resolved" | "createdAt" | "priority">): number {
+  let base: number
+  switch (item.type) {
+    case "contradiction":
+      base = 90
+      break
+    case "missing-page":
+      base = 50
+      break
+    case "duplicate":
+      base = 40
+      break
+    case "confirm":
+      base = 30
+      break
+    case "suggestion":
+      base = 20
+      break
+    default:
+      base = 10
+  }
+  // Bonus for more affected pages (wider impact)
+  base += Math.min((item.affectedPages?.length ?? 0) * 5, 20)
+  // Bonus for having search queries (actionable)
+  base += Math.min((item.searchQueries?.length ?? 0) * 3, 15)
+  return base
+}
+
 export interface ReviewOption {
   label: string
   action: string // identifier for the action
@@ -18,16 +47,20 @@ export interface ReviewItem {
   resolved: boolean
   resolvedAction?: string
   createdAt: number
+  /** Computed priority score: higher = more urgent */
+  priority?: number
 }
 
 interface ReviewState {
   items: ReviewItem[]
-  addItem: (item: Omit<ReviewItem, "id" | "resolved" | "createdAt">) => void
-  addItems: (items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[]) => void
+  addItem: (item: Omit<ReviewItem, "id" | "resolved" | "createdAt" | "priority">) => void
+  addItems: (items: Omit<ReviewItem, "id" | "resolved" | "createdAt" | "priority">[]) => void
   setItems: (items: ReviewItem[]) => void
   resolveItem: (id: string, action: string) => void
   dismissItem: (id: string) => void
   clearResolved: () => void
+  /** Get pending items sorted by priority (highest first) */
+  getSortedItems: () => ReviewItem[]
 }
 
 export const useReviewStore = create<ReviewState>((set) => ({
@@ -42,6 +75,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
           id: `review-${crypto.randomUUID().slice(0, 8)}`,
           resolved: false,
           createdAt: Date.now(),
+          priority: computePriority(item),
         },
       ],
     })),
@@ -85,6 +119,7 @@ export const useReviewStore = create<ReviewState>((set) => ({
             id: `review-${crypto.randomUUID().slice(0, 8)}`,
             resolved: false,
             createdAt: Date.now(),
+            priority: computePriority(incoming),
           }
           result.push(newItem)
           pendingIndex.set(k, result.length - 1)
@@ -112,4 +147,11 @@ export const useReviewStore = create<ReviewState>((set) => ({
     set((state) => ({
       items: state.items.filter((item) => !item.resolved),
     })),
+
+  getSortedItems: () => {
+    const items = useReviewStore.getState().items
+    return items
+      .filter((item) => !item.resolved)
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+  },
 }))

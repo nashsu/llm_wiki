@@ -273,6 +273,42 @@ export function languageRule(sourceContent: string = ""): string {
 }
 
 /**
+ * Quality gate: validate that the analysis produced by Step 1 is
+ * substantive enough to feed into the generation step. Low-quality
+ * analysis (empty, error messages, missing structural elements)
+ * would amplify errors in generation, so we catch it early and
+ * retry once with slightly higher temperature before giving up.
+ */
+function validateAnalysis(analysis: string): { valid: boolean; reason?: string } {
+  // Check: not empty or whitespace-only
+  if (!analysis || analysis.trim().length <= 50) {
+    return { valid: false, reason: "Analysis is empty or too short (<= 50 chars)" }
+  }
+
+  // Check: not obviously an error message
+  const trimmedStart = analysis.trimStart()
+  if (/^Error/i.test(trimmedStart) || /^I cannot/i.test(trimmedStart)) {
+    return { valid: false, reason: "Analysis looks like an error or refusal message" }
+  }
+
+  // Check: contains at least one entity-like pattern (lines with
+  // "Entity" or "Concept" headings, or bullet points with names)
+  const hasEntities = /#{1,4}\s+(Key\s+)?(Entities?|Concepts?)/i.test(analysis)
+    || /^[-*]\s+.+/m.test(analysis)
+  if (!hasEntities) {
+    return { valid: false, reason: "Analysis lacks entity/concept patterns or bullet points" }
+  }
+
+  // Check: contains at least one section header pattern (## or numbered)
+  const hasSections = /^#{1,4}\s+/m.test(analysis) || /^\d+\.\s+/m.test(analysis)
+  if (!hasSections) {
+    return { valid: false, reason: "Analysis lacks section headers" }
+  }
+
+  return { valid: true }
+}
+
+/**
  * Auto-ingest: reads source → LLM analyzes → LLM writes wiki pages, all in one go.
  * Used when importing new files.
  *
@@ -307,6 +343,7 @@ async function autoIngestImpl(
   const sp = normalizePath(sourcePath)
   const activity = useActivityStore.getState()
   const fileName = getFileName(sp)
+  let analysisRetried = false
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -563,6 +600,42 @@ async function autoIngestImpl(
   const analysisActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (analysisActivity?.status === "error") {
     throw new Error(analysisActivity.detail || "Analysis stream failed")
+  }
+
+  // Quality gate: validate analysis before generation
+  const analysisValidation = validateAnalysis(analysis)
+  if (!analysisValidation.valid) {
+    console.warn(`[ingest:quality] Analysis validation failed: ${analysisValidation.reason}`)
+    if (!analysisRetried) {
+      analysisRetried = true
+      activity.updateItem(activityId, { detail: "Retrying analysis (quality gate)..." })
+      analysis = ""
+      await streamChat(
+        llmConfig,
+        [
+          { role: "system", content: buildAnalysisPrompt(purpose, index, truncatedContent) },
+          { role: "user", content: `Analyze this source document:\n\n**File:** ${fileName}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${truncatedContent}` },
+        ],
+        {
+          onToken: (token) => { analysis += token },
+          onDone: () => {},
+          onError: (err) => {
+            activity.updateItem(activityId, { status: "error", detail: `Analysis retry failed: ${err.message}` })
+          },
+        },
+        signal,
+        { temperature: 0.3, reasoning: { mode: "off" }, max_tokens: 4096 },
+      )
+      const retryActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
+      if (retryActivity?.status === "error") {
+        throw new Error(retryActivity.detail || "Analysis retry failed")
+      }
+      // Second validation after retry — warn but don't block
+      const retryValidation = validateAnalysis(analysis)
+      if (!retryValidation.valid) {
+        console.warn(`[ingest:quality] Analysis still invalid after retry: ${retryValidation.reason} — proceeding with generation anyway`)
+      }
+    }
   }
 
   // ── Step 2: Generation ────────────────────────────────────────

@@ -4,7 +4,7 @@ import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@reac
 import "@react-sigma/core/lib/style.css"
 import type { SigmaNodeEventPayload } from "sigma/types"
 import forceAtlas2 from "graphology-layout-forceatlas2"
-import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
+import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff, History } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,7 @@ import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { normalizePath } from "@/lib/path-utils"
 import { applyGraphFilters, DEFAULT_GRAPH_FILTERS, hasActiveGraphFilters, type GraphFilterState } from "@/lib/graph-filters"
 import { applyGraphSearch } from "@/lib/graph-search"
+import { listSnapshots, type GraphSnapshot } from "@/lib/graph-snapshot"
 import { useTranslation } from "react-i18next"
 
 const NODE_TYPE_COLORS: Record<string, string> = {
@@ -346,6 +347,8 @@ export function GraphView() {
   // i18n node type labels (populated after mount to support language switching)
   const [nodeTypeLabels, setNodeTypeLabels] = useState<Record<string, string>>({})
   const graphSearchInputRef = useRef<HTMLInputElement>(null)
+  const [showTimeline, setShowTimeline] = useState(false)
+  const [snapshots, setSnapshots] = useState<GraphSnapshot[]>([])
 
   // Research confirmation dialog
   const [researchDialog, setResearchDialog] = useState<{
@@ -372,6 +375,16 @@ export function GraphView() {
       setError(message)
     } finally {
       setLoading(false)
+    }
+  }, [project])
+
+  const loadSnapshots = useCallback(async () => {
+    if (!project) return
+    try {
+      const result = await listSnapshots(normalizePath(project.path))
+      setSnapshots(result.reverse())
+    } catch {
+      setSnapshots([])
     }
   }, [project])
 
@@ -703,6 +716,20 @@ export function GraphView() {
               </span>
             </Button>
           )}
+          <Button
+            variant={showTimeline ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => {
+              const next = !showTimeline
+              setShowTimeline(next)
+              if (next) loadSnapshots()
+            }}
+            className="text-xs gap-1 h-7"
+            title={t("graph.timeline")}
+          >
+            <History className="h-3 w-3" />
+            {t("graph.timeline")}
+          </Button>
           <Button variant="ghost" size="sm" onClick={loadGraph} className="text-xs gap-1 h-7">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
@@ -1148,6 +1175,59 @@ export function GraphView() {
                     })}
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Timeline Side Panel */}
+        {showTimeline && (
+          <div className="w-72 shrink-0 border-l bg-background overflow-y-auto">
+            <div className="px-4 py-3 border-b">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">{t("graph.timeline")}</span>
+                </div>
+                <button
+                  className="p-1 rounded hover:bg-muted text-muted-foreground"
+                  onClick={() => setShowTimeline(false)}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="p-3 flex flex-col gap-2">
+              {snapshots.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">{t("graph.noSnapshots")}</p>
+              ) : (
+                snapshots.map((snap, i) => {
+                  const date = new Date(snap.timestamp)
+                  const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                  const timeStr = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-lg border p-3 text-xs hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="font-medium text-foreground mb-1">{dateStr} {timeStr}</div>
+                      <div className="flex items-center gap-3 text-muted-foreground">
+                        <span>{t("graph.snapshotPages", { count: snap.nodeCount })}</span>
+                        <span>{t("graph.snapshotLinks", { count: snap.edgeCount })}</span>
+                        <span>{t("graph.snapshotCommunities", { count: snap.communityCount })}</span>
+                      </div>
+                      {snap.topNodes.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {snap.topNodes.slice(0, 5).map((n) => (
+                            <span key={n.id} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              {n.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
           </div>

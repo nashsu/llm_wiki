@@ -15,10 +15,14 @@ export interface IngestTask {
   projectId: string
   sourcePath: string  // relative to project: "raw/sources/folder/file.pdf"
   folderContext: string  // e.g. "AI-Research > papers" or ""
-  status: "pending" | "processing" | "done" | "failed"
+  status: "pending" | "processing" | "done" | "failed" | "permanently_failed"
   addedAt: number
   error: string | null
   retryCount: number
+  lastRetryAt?: number
+  /** Group ID for batch analysis: files in the same directory share a group
+   *  and are analyzed together by the LLM for cross-file connections. */
+  groupId?: string
 }
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -222,6 +226,71 @@ export async function enqueueBatch(
 }
 
 /**
+ * Enqueue files with group IDs for batch analysis. Files sharing a groupId
+ * will be analyzed together in one LLM call so the model can identify
+ * cross-file connections. Each group is capped at 5 files; larger groups
+ * are split into sub-groups.
+ */
+export async function enqueueBatchWithGroup(
+  projectId: string,
+  files: Array<{ sourcePath: string; folderContext: string; groupId?: string }>,
+): Promise<string[]> {
+  if (!currentProjectId || currentProjectId !== projectId) {
+    throw new Error(
+      `enqueueBatchWithGroup: project ${projectId} is not the active project (current: ${currentProjectId || "<none>"})`,
+    )
+  }
+
+  const MAX_GROUP_SIZE = 5
+  const groupMap = new Map<string, Array<{ sourcePath: string; folderContext: string }>>()
+
+  for (const file of files) {
+    if (file.groupId) {
+      if (!groupMap.has(file.groupId)) groupMap.set(file.groupId, [])
+      groupMap.get(file.groupId)!.push(file)
+    } else {
+      // No group — treat each file as its own group
+      const soloGroup = `solo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      groupMap.set(soloGroup, [file])
+    }
+  }
+
+  const ids: string[] = []
+  for (const [baseGroupId, groupFiles] of groupMap) {
+    // Split large groups into sub-groups of max 5
+    for (let i = 0; i < groupFiles.length; i += MAX_GROUP_SIZE) {
+      const chunk = groupFiles.slice(i, i + MAX_GROUP_SIZE)
+      const subGroupId = groupFiles.length <= MAX_GROUP_SIZE
+        ? baseGroupId
+        : `${baseGroupId}-part${Math.floor(i / MAX_GROUP_SIZE) + 1}`
+
+      for (const file of chunk) {
+        const id = generateId()
+        const normalizedSourcePath = normalizeSourcePathForQueue(file.sourcePath)
+        queue.push({
+          id,
+          projectId,
+          sourcePath: normalizedSourcePath,
+          folderContext: file.folderContext,
+          status: "pending",
+          addedAt: Date.now(),
+          error: null,
+          retryCount: 0,
+          groupId: subGroupId,
+        })
+        ids.push(id)
+      }
+    }
+  }
+
+  await saveQueue(currentProjectPath)
+  console.log(`[Ingest Queue] Enqueued ${files.length} files in ${groupMap.size} group(s)`)
+  processNext(currentProjectId)
+
+  return ids
+}
+
+/**
  * Retry a failed task. Only valid for tasks in the active project's
  * queue.
  */
@@ -237,21 +306,40 @@ export async function retryTask(taskId: string): Promise<void> {
 }
 
 /**
- * Retry all failed tasks in the current project's queue.
- * Returns the number of tasks retried.
+ * Retry all failed tasks in the current project's queue with staggered
+ * exponential backoff. Tasks that have already exhausted MAX_RETRIES
+ * automatic attempts are left as `permanently_failed` and require
+ * explicit `retryTask()` to re-queue.
+ *
+ * Returns the number of tasks retried (excluding permanently failed).
  */
 export async function retryAllFailed(): Promise<number> {
   let count = 0
+  const now = Date.now()
   for (const task of queue) {
-    if (task.projectId === currentProjectId && task.status === "failed") {
-      task.status = "pending"
-      task.error = null
-      count++
+    if (task.projectId !== currentProjectId) continue
+    if (task.status !== "failed" && task.status !== "permanently_failed") continue
+
+    if (task.status === "permanently_failed") {
+      // Allow manual retry of permanently_failed tasks (resets counter)
+      task.retryCount = 0
     }
+
+    task.status = "pending"
+    task.error = null
+    task.lastRetryAt = now
+    count++
   }
   if (count > 0) {
     await saveQueue(currentProjectPath)
-    processNext(currentProjectId)
+    // Stagger processing to avoid hammering the LLM API — each task
+    // gets a small delay before it's picked up.
+    const staggerMs = 500
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => {
+        if (currentProjectId) processNext(currentProjectId)
+      }, i * staggerMs)
+    }
   }
   return count
 }
@@ -336,11 +424,12 @@ export function getQueue(): readonly IngestTask[] {
 /**
  * Get queue summary.
  */
-export function getQueueSummary(): { pending: number; processing: number; failed: number; total: number } {
+export function getQueueSummary(): { pending: number; processing: number; failed: number; permanentlyFailed: number; total: number } {
   return {
     pending: queue.filter((t) => t.status === "pending").length,
     processing: queue.filter((t) => t.status === "processing").length,
-    failed: queue.filter((t) => t.status === "failed").length,
+    failed: queue.filter((t) => t.status === "failed" || t.status === "permanently_failed").length,
+    permanentlyFailed: queue.filter((t) => t.status === "permanently_failed").length,
     total: queue.length,
   }
 }
@@ -549,13 +638,32 @@ async function processNext(projectId: string): Promise<void> {
     ? normalizePath(next.sourcePath)
     : `${pp}/${next.sourcePath}`
 
-  console.log(`[Ingest Queue] Processing: ${next.sourcePath} (${queue.filter((t) => t.projectId === projectId && t.status === "pending").length} remaining)`)
+  // Build enriched folder context for grouped files (batch analysis).
+  // When a task belongs to a group, include peer filenames so the LLM
+  // can identify cross-file connections during analysis.
+  let enrichedFolderContext = next.folderContext || ""
+  if (next.groupId) {
+    const peerTasks = queue.filter((t) =>
+      t.projectId === projectId &&
+      t.groupId === next.groupId &&
+      t.id !== next.id
+    )
+    if (peerTasks.length > 0) {
+      const peerNames = peerTasks.map((t) => {
+        const parts = t.sourcePath.split("/")
+        return parts[parts.length - 1]
+      })
+      enrichedFolderContext += `\nRelated files in this batch: ${peerNames.join(", ")}`
+    }
+  }
+
+  console.log(`[Ingest Queue] Processing: ${next.sourcePath} (${queue.filter((t) => t.projectId === projectId && t.status === "pending").length} remaining)${next.groupId ? ` [group: ${next.groupId}]` : ""}`)
 
   currentAbortController = new AbortController()
   lastWrittenFiles = []
 
   try {
-    const writtenFiles = await autoIngest(pp, fullSourcePath, llmConfig, currentAbortController.signal, next.folderContext)
+    const writtenFiles = await autoIngest(pp, fullSourcePath, llmConfig, currentAbortController.signal, enrichedFolderContext || next.folderContext)
     // Stale-context guard: project switched during the long LLM call.
     // Bail without mutating queue or writing to disk — pauseQueue has
     // already persisted the correct state to the old project's file,
@@ -587,11 +695,14 @@ async function processNext(projectId: string): Promise<void> {
     next.error = message
 
     if (next.retryCount >= MAX_RETRIES) {
-      next.status = "failed"
-      console.log(`[Ingest Queue] Failed (${next.retryCount}x): ${next.sourcePath} — ${message}`)
+      next.status = "permanently_failed"
+      console.log(`[Ingest Queue] Permanently failed (${next.retryCount}x): ${next.sourcePath} — ${message}`)
     } else {
       next.status = "pending" // will retry
-      console.log(`[Ingest Queue] Error (retry ${next.retryCount}/${MAX_RETRIES}): ${next.sourcePath} — ${message}`)
+      // Exponential backoff: 2s, 4s, 8s...
+      const backoffMs = Math.pow(2, next.retryCount) * 1000
+      console.log(`[Ingest Queue] Error (retry ${next.retryCount}/${MAX_RETRIES}, backoff ${backoffMs}ms): ${next.sourcePath} — ${message}`)
+      await new Promise((r) => setTimeout(r, backoffMs))
     }
 
     await saveQueue(pp)

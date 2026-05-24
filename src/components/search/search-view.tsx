@@ -1,5 +1,5 @@
-import { useState, useCallback, useMemo, useEffect } from "react"
-import { Search, FileText, ImageIcon, X, ArrowUpRight } from "lucide-react"
+import { useState, useCallback, useMemo, useEffect, useRef } from "react"
+import { Search, FileText, ImageIcon, X, ArrowUpRight, Clock, Trash2, ThumbsUp, ThumbsDown } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
 import { searchWiki, tokenizeQuery, type SearchResult, type ImageRef } from "@/lib/search"
@@ -31,6 +31,7 @@ export function SearchView() {
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
+  const searchHistory = useWikiStore((s) => s.searchHistory)
 
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SearchResult[]>([])
@@ -41,6 +42,9 @@ export function SearchView() {
   // the lightbox, and search-view-local state means the modal
   // closes naturally when the user navigates away from search.
   const [lightbox, setLightbox] = useState<ImageHit | null>(null)
+  // Search history dropdown: shown when input focused and empty
+  const [showHistory, setShowHistory] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const doSearch = useCallback(
     async (q: string) => {
@@ -50,6 +54,9 @@ export function SearchView() {
       }
       setSearching(true)
       setHasSearched(true)
+      setShowHistory(false)
+      // Record search in history
+      useWikiStore.getState().addSearchHistory(q.trim())
       try {
         const found = await searchWiki(normalizePath(project.path), q)
         setResults(found)
@@ -62,6 +69,20 @@ export function SearchView() {
     },
     [project],
   )
+
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return
+    function handleClick(e: MouseEvent) {
+      if (inputRef.current && !inputRef.current.parentElement?.contains(e.target as Node)) {
+        setShowHistory(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showHistory])
+
+  const recentHistory = useMemo(() => searchHistory.slice(0, 5), [searchHistory])
 
   // Flatten + dedupe images across results. Two results referencing
   // the same image (e.g. the source-summary AND a concept page that
@@ -188,9 +209,18 @@ export function SearchView() {
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
+            ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setShowHistory(false)
+            }}
+            onFocus={() => {
+              if (!query.trim() && recentHistory.length > 0) {
+                setShowHistory(true)
+              }
+            }}
             onKeyDown={(e) => {
               if (isImeComposing(e)) return
               if (e.key === "Enter") doSearch(query)
@@ -199,6 +229,42 @@ export function SearchView() {
             autoFocus
             className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
+          {/* Search history dropdown */}
+          {showHistory && recentHistory.length > 0 && (
+            <div className="absolute left-0 right-0 top-full z-10 mt-1 rounded-md border bg-popover shadow-md">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b">
+                <span className="text-[11px] font-medium text-muted-foreground">Recent searches</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    useWikiStore.getState().clearSearchHistory()
+                    setShowHistory(false)
+                  }}
+                  className="text-[11px] text-muted-foreground hover:text-foreground"
+                  title="Clear search history"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+              {recentHistory.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent text-left"
+                  onMouseDown={(e) => {
+                    // Use onMouseDown to fire before blur closes the dropdown
+                    e.preventDefault()
+                    setQuery(item)
+                    setShowHistory(false)
+                    doSearch(item)
+                  }}
+                >
+                  <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{item}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -511,12 +577,21 @@ function SearchResultCard({
   onClick: () => void
 }) {
   const shortPath = result.path.split("/wiki/").pop() ?? result.path
+  const addSearchFeedback = useWikiStore((s) => s.addSearchFeedback)
+  const [feedbackGiven, setFeedbackGiven] = useState<"up" | "down" | null>(null)
+
+  const handleFeedback = (relevant: boolean, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (feedbackGiven) return
+    setFeedbackGiven(relevant ? "up" : "down")
+    addSearchFeedback(query, result.path, relevant)
+  }
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-lg border p-3 text-left text-sm hover:bg-accent transition-colors"
+      className="group/card w-full rounded-lg border p-3 text-left text-sm hover:bg-accent transition-colors"
     >
       <div className="flex items-start gap-2 mb-1.5">
         <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -525,6 +600,27 @@ function SearchResultCard({
             <HighlightedText text={result.title} query={query} />
           </div>
           <div className="text-[11px] text-muted-foreground truncate">{shortPath}</div>
+        </div>
+        {/* Feedback buttons — visible on hover */}
+        <div className="shrink-0 flex gap-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={(e) => handleFeedback(true, e)}
+            className={`p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 ${feedbackGiven === "up" ? "text-green-600 opacity-100" : "text-muted-foreground"}`}
+            title="Relevant"
+            aria-label="Mark as relevant"
+          >
+            <ThumbsUp className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleFeedback(false, e)}
+            className={`p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 ${feedbackGiven === "down" ? "text-red-500 opacity-100" : "text-muted-foreground"}`}
+            title="Not relevant"
+            aria-label="Mark as not relevant"
+          >
+            <ThumbsDown className="h-3 w-3" />
+          </button>
         </div>
       </div>
       <p className="text-xs text-muted-foreground line-clamp-2">

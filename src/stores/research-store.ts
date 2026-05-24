@@ -13,8 +13,19 @@ export interface ResearchTask {
   createdAt: number
 }
 
+export interface RecurringResearchTask {
+  id: string
+  topic: string
+  intervalMs: number
+  lastRunAt: number | null
+  lastResultSummary: string | null
+  enabled: boolean
+  searchQueries?: string[]
+}
+
 interface ResearchState {
   tasks: ResearchTask[]
+  recurringTasks: RecurringResearchTask[]
   panelOpen: boolean
   maxConcurrent: number
 
@@ -24,10 +35,15 @@ interface ResearchState {
   setPanelOpen: (open: boolean) => void
   getRunningCount: () => number
   getNextQueued: () => ResearchTask | undefined
+  addRecurringTask: (topic: string, intervalMs: number, searchQueries?: string[]) => string
+  removeRecurringTask: (id: string) => void
+  toggleRecurringTask: (id: string) => void
+  updateRecurringTaskLastRun: (id: string, summary: string) => void
 }
 
 export const useResearchStore = create<ResearchState>((set, get) => ({
   tasks: [],
+  recurringTasks: [],
   panelOpen: false,
   maxConcurrent: 3,
 
@@ -75,4 +91,34 @@ export const useResearchStore = create<ResearchState>((set, get) => ({
     const { tasks } = get()
     return tasks.find((t) => t.status === "queued")
   },
+
+  addRecurringTask: (topic, intervalMs, searchQueries?) => {
+    const id = `recurring-${crypto.randomUUID().slice(0, 8)}`
+    set((state) => ({
+      recurringTasks: [
+        ...state.recurringTasks,
+        { id, topic, intervalMs, lastRunAt: null, lastResultSummary: null, enabled: true, searchQueries },
+      ],
+    }))
+    return id
+  },
+
+  removeRecurringTask: (id) =>
+    set((state) => ({
+      recurringTasks: state.recurringTasks.filter((t) => t.id !== id),
+    })),
+
+  toggleRecurringTask: (id) =>
+    set((state) => ({
+      recurringTasks: state.recurringTasks.map((t) =>
+        t.id === id ? { ...t, enabled: !t.enabled } : t
+      ),
+    })),
+
+  updateRecurringTaskLastRun: (id, summary) =>
+    set((state) => ({
+      recurringTasks: state.recurringTasks.map((t) =>
+        t.id === id ? { ...t, lastRunAt: Date.now(), lastResultSummary: summary } : t
+      ),
+    })),
 }))

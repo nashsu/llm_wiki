@@ -177,6 +177,7 @@
     "language": "语言",
     "languageHint": "界面语言（Wiki 内容语言以原始资料为准）",
     "categories": {
+      "workflow": "工作流",
       "llm": "LLM 模型",
       "embedding": "向量嵌入",
       "multimodal": "图片描述",
@@ -185,13 +186,36 @@
       "sourceWatch": "资料文件夹监控",
       "scheduledImport": "定时导入",
       "apiServer": "API 服务",
+      "git": "Git",
       "output": "输出偏好",
+      "promptTemplate": "提示词模板",
       "interface": "界面",
       "maintenance": "维护",
       "changelog": "更新日志",
       "about": "关于"
     },
     "sections": {
+      "workflow": {
+        "title": "工作流预设",
+        "description": "选择一个工作流预设，快速配置应用以适应你的主要使用场景。每个预设会调整提示词模板、分析深度和默认页面类型。",
+        "depthLabel": "深度",
+        "pageTypeLabel": "页面类型",
+        "activeHint": "当前工作流预设已应用。你可以随时在其他设置中单独调整各项配置。",
+        "presets": {
+          "academicResearch": {
+            "label": "学术研究",
+            "description": "专注于文献综述、实体提取和长文综合。使用严谨的学术提示词模板，启用完整分析深度。"
+          },
+          "dailyNotes": {
+            "label": "日常笔记",
+            "description": "快速记录，尽量减少 LLM 使用。使用简洁提示词模板，分析深度更轻。"
+          },
+          "teamKnowledgeBase": {
+            "label": "团队知识库",
+            "description": "适合协作知识管理的均衡默认配置。启用所有页面类型，分析深度适中。"
+          }
+        }
+      },
       "llm": {
         "title": "LLM 模型",
         "description": "每个厂商一条独立配置。打开开关即切换为当前活跃 provider；其他的会自动关闭。配置改动即时保存,每个厂商的 API Key 独立存储,切换之间不丢失。",
@@ -405,6 +429,36 @@
         "endpointRescanNote": "使用你的资料文件夹监控配置触发后端重新扫描。",
         "endpointChatNote": "尚未实现（返回 501）。"
       },
+      "git": {
+        "title": "Git 协作",
+        "description": "用 git 追踪 wiki 变更。推送到远程仓库实现备份和跨设备协作。",
+        "noProject": "请先打开一个项目。",
+        "initRepo": "初始化仓库",
+        "initHint": "在项目目录中初始化 git 仓库。将自动创建 .gitignore 以排除缓存和临时文件。",
+        "initButton": "初始化 Git 仓库",
+        "statusTitle": "仓库状态",
+        "refresh": "刷新",
+        "branch": "分支",
+        "staged": "已暂存",
+        "modified": "已修改",
+        "untracked": "未追踪",
+        "noRemote": "未配置远程仓库。请在下方设置远程 URL 以启用推送/拉取。",
+        "remoteTitle": "远程仓库",
+        "remoteHint": "设置 origin URL 为 GitHub、GitLab 或任何兼容 git 的远程仓库。推送/拉取将使用此 URL。",
+        "setRemote": "设置",
+        "remoteSet": "远程 URL 已设置",
+        "saving": "保存中...",
+        "actionsTitle": "操作",
+        "commitPlaceholder": "提交消息（可选）",
+        "commitButton": "提交全部",
+        "pushButton": "推送",
+        "pushing": "推送中...",
+        "pullButton": "拉取",
+        "pulling": "拉取中...",
+        "autoCommit": "导入后自动提交",
+        "autoCommitHint": "每次文件导入后自动提交变更。提交消息包含导入的文件名。",
+        "recentCommits": "最近提交"
+      },
       "output": {
         "title": "输出偏好",
         "description": "影响生成内容的语言、对话历史长度等参数。",
@@ -413,6 +467,25 @@
         "historyLength": "对话历史长度",
         "historyHint": "每次请求发给 AI 的历史消息条数。多 = 上下文更完整但更费 token。",
         "historyCurrent": "当前 {{count}} 条消息（约 {{turns}} 轮对话）"
+      },
+      "promptTemplate": {
+        "title": "提示词模板",
+        "description": "选择或自定义聊天交互中使用的系统提示词。",
+        "activeTemplate": "活跃模板",
+        "none": "无（默认行为）",
+        "builtinGroup": "内置模板",
+        "customGroup": "自定义模板",
+        "customPrefix": "自定义: ",
+        "activeHint": "选择模板以覆盖默认的聊天系统提示词。模板定义了 AI 助手的行为方式。",
+        "systemPrompt": "系统提示词预览",
+        "editHint": "预览并编辑系统提示词。使用\"另存为自定义\"按钮保存你的编辑。",
+        "saveAsLabel": "将当前编辑另存为自定义模板",
+        "templateNamePlaceholder": "模板名称...",
+        "saveAsCustom": "另存为自定义",
+        "apply": "应用",
+        "resetToDefault": "重置为默认",
+        "customTemplates": "已保存的自定义模板",
+        "delete": "删除"
       },
       "interface": {
         "title": "界面",
@@ -542,12 +615,43 @@
       "overview": "概述",
       "comparison": "比较",
       "other": "其他"
-    }
+    },
+    "timeline": "历史",
+    "noSnapshots": "暂无快照。构建关系图后将自动创建。",
+    "snapshotPages": "{{count}} 个页面",
+    "snapshotLinks": "{{count}} 条链接",
+    "snapshotCommunities": "{{count}} 个社区"
   },
   "time": {
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
+  },
+  "onboarding": {
+    "previous": "上一步",
+    "next": "下一步",
+    "skip": "跳过引导",
+    "getStarted": "开始使用",
+    "welcome": {
+      "title": "欢迎使用 LLM Wiki",
+      "description": "AI 驱动的个人知识库。让我们快速了解一下核心功能。"
+    },
+    "import": {
+      "title": "导入文档",
+      "description": "将 PDF、Markdown 文件或整个文件夹拖入来源面板。LLM Wiki 会自动分析并整理为互联的 wiki 页面。"
+    },
+    "graph": {
+      "title": "探索知识图谱",
+      "description": "查看知识之间的关联。图谱视图揭示了整个 wiki 中概念、实体和研究主题之间的关系。"
+    },
+    "search": {
+      "title": "智能搜索",
+      "description": "通过关键词和语义搜索查询所有页面。点赞/点踩反馈帮助持续改进搜索结果。"
+    },
+    "chat": {
+      "title": "与 Wiki 对话",
+      "description": "就您的知识库提问，获取基于您自己文档并附带引用的回答。"
+    }
   }
 }

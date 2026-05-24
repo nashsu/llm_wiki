@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
+import { saveSearchHistory, loadSearchHistory as loadSearchHistoryFromStore, saveSearchFeedback, loadSearchFeedback as loadSearchFeedbackFromStore, type SearchFeedbackEntry } from "@/lib/project-store"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -269,6 +270,8 @@ interface WikiState {
   sourceWatchConfig: SourceWatchConfig
   apiConfig: ApiConfig
   dataVersion: number
+  searchHistory: string[]
+  searchFeedback: SearchFeedbackEntry[]
 
   setProject: (project: WikiProject | null) => void
   setFileTree: (tree: FileNode[]) => void
@@ -288,10 +291,22 @@ interface WikiState {
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setApiConfig: (config: ApiConfig) => void
+  activePromptTemplate: string | null
+  customPromptTemplates: Record<string, string>
+  setActivePromptTemplate: (id: string | null) => void
+  setCustomPromptTemplates: (templates: Record<string, string>) => void
+  activeWorkflowPreset: string | null
+  setActiveWorkflowPreset: (id: string | null) => void
   bumpDataVersion: () => void
+  addSearchHistory: (query: string) => void
+  clearSearchHistory: () => void
+  loadProjectSearchHistory: (projectPath: string) => Promise<void>
+  addSearchFeedback: (query: string, resultPath: string, relevant: boolean) => void
+  getSearchBoostPaths: (query: string) => Set<string>
+  loadProjectSearchFeedback: (projectPath: string) => Promise<void>
 }
 
-export const useWikiStore = create<WikiState>((set) => ({
+export const useWikiStore = create<WikiState>((set, get) => ({
   project: null,
   fileTree: [],
   selectedFile: null,
@@ -381,6 +396,13 @@ export const useWikiStore = create<WikiState>((set) => ({
     token: "",
   },
 
+  searchHistory: [],
+  searchFeedback: [],
+
+  activePromptTemplate: null,
+  customPromptTemplates: {},
+  activeWorkflowPreset: null,
+
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
@@ -392,7 +414,102 @@ export const useWikiStore = create<WikiState>((set) => ({
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
+  setActivePromptTemplate: (activePromptTemplate) => set({ activePromptTemplate }),
+  setCustomPromptTemplates: (customPromptTemplates) => set({ customPromptTemplates }),
+  setActiveWorkflowPreset: (activeWorkflowPreset) => {
+    set({ activeWorkflowPreset })
+    if (activeWorkflowPreset) {
+      import("@/lib/workflow-presets").then(({ getWorkflowPreset }) => {
+        const preset = getWorkflowPreset(activeWorkflowPreset)
+        if (preset?.activePromptTemplate) {
+          set({ activePromptTemplate: preset.activePromptTemplate })
+          // Persist the prompt template change
+          const { customPromptTemplates } = get()
+          import("@/lib/project-store").then(({ savePromptConfig }) => {
+            savePromptConfig(preset.activePromptTemplate, customPromptTemplates).catch((err) =>
+              console.warn("[workflowPreset] prompt config save failed:", err),
+            )
+          })
+        }
+      })
+    }
+    import("@/lib/project-store").then(({ saveWorkflowPreset }) => {
+      saveWorkflowPreset(activeWorkflowPreset).catch((err) =>
+        console.warn("[workflowPreset] save failed:", err),
+      )
+    })
+  },
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
+  addSearchHistory: (query) => {
+    const trimmed = query.trim()
+    if (!trimmed) return
+    const current = get().searchHistory
+    // Skip if same as most recent entry
+    if (current.length > 0 && current[0] === trimmed) return
+    const updated = [trimmed, ...current.filter((q) => q !== trimmed)].slice(0, 50)
+    set({ searchHistory: updated })
+    // Persist in background — don't await
+    const project = get().project
+    if (project) {
+      saveSearchHistory(project.path, updated).catch((err) =>
+        console.warn("[searchHistory] save failed:", err),
+      )
+    }
+  },
+  clearSearchHistory: () => {
+    set({ searchHistory: [] })
+    const project = get().project
+    if (project) {
+      saveSearchHistory(project.path, []).catch((err) =>
+        console.warn("[searchHistory] clear failed:", err),
+      )
+    }
+  },
+  loadProjectSearchHistory: async (projectPath) => {
+    try {
+      const history = await loadSearchHistoryFromStore(projectPath)
+      set({ searchHistory: Array.isArray(history) ? history : [] })
+    } catch (err) {
+      console.warn("[searchHistory] load failed:", err)
+      set({ searchHistory: [] })
+    }
+  },
+  addSearchFeedback: (query, resultPath, relevant) => {
+    const entry: SearchFeedbackEntry = {
+      query: query.trim(),
+      resultPath,
+      relevant,
+      timestamp: Date.now(),
+    }
+    const updated = [...get().searchFeedback, entry]
+    set({ searchFeedback: updated })
+    const project = get().project
+    if (project) {
+      saveSearchFeedback(project.path, updated).catch((err) =>
+        console.warn("[searchFeedback] save failed:", err),
+      )
+    }
+  },
+  getSearchBoostPaths: (query) => {
+    const trimmed = query.trim().toLowerCase()
+    const feedback = get().searchFeedback
+    const boostPaths = new Set<string>()
+    for (const entry of feedback) {
+      if (entry.query.toLowerCase() === trimmed && entry.relevant) {
+        boostPaths.add(entry.resultPath)
+      }
+    }
+    return boostPaths
+  },
+  loadProjectSearchFeedback: async (projectPath) => {
+    try {
+      const feedback = await loadSearchFeedbackFromStore(projectPath)
+      set({ searchFeedback: Array.isArray(feedback) ? feedback : [] })
+    } catch (err) {
+      console.warn("[searchFeedback] load failed:", err)
+      set({ searchFeedback: [] })
+    }
+  },
 }))
 
 export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }

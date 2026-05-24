@@ -13,6 +13,9 @@ import {
   Clock,
   FolderSync,
   Server,
+  FileText,
+  Layers,
+  GitBranch,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -37,8 +40,12 @@ import { ApiServerSection } from "./sections/api-server-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
+import { PromptTemplateSection } from "./sections/prompt-template-section"
+import { WorkflowSection } from "./sections/workflow-section"
+import { GitSection } from "./sections/git-section"
 
 type CategoryId =
+  | "workflow"
   | "llm"
   | "embedding"
   | "multimodal"
@@ -47,7 +54,9 @@ type CategoryId =
   | "source-watch"
   | "scheduled-import"
   | "api-server"
+  | "git"
   | "output"
+  | "prompt-template"
   | "interface"
   | "maintenance"
   | "changelog"
@@ -63,6 +72,7 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  { id: "workflow", labelKey: "settings.categories.workflow", icon: Layers },
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
@@ -71,7 +81,9 @@ const CATEGORIES: Category[] = [
   { id: "source-watch", labelKey: "settings.categories.sourceWatch", icon: FolderSync },
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
+  { id: "git", labelKey: "settings.categories.git", icon: GitBranch },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
+  { id: "prompt-template", labelKey: "settings.categories.promptTemplate", icon: FileText },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
@@ -403,6 +415,8 @@ export function SettingsView() {
 
   const body = useMemo(() => {
     switch (active) {
+      case "workflow":
+        return <WorkflowSection />
       case "llm":
         // The LLM section manages its own store state (per-provider
         // configs + active preset) and persists directly — it bypasses
@@ -422,8 +436,12 @@ export function SettingsView() {
         return <ScheduledImportSection draft={draft} setDraft={setDraft} />
       case "api-server":
         return <ApiServerSection draft={draft} setDraft={setDraft} />
+      case "git":
+        return <GitSection />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
+      case "prompt-template":
+        return <PromptTemplateSection />
       case "interface":
         return <InterfaceSection draft={draft} setDraft={setDraft} />
       case "maintenance":
@@ -495,7 +513,7 @@ export function SettingsView() {
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
             - "about" has no draft-bound fields */}
-        {active !== "about" && active !== "llm" && (
+        {active !== "about" && active !== "llm" && active !== "prompt-template" && active !== "workflow" && active !== "git" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className="text-xs text-muted-foreground">

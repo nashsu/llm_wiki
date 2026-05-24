@@ -14,6 +14,7 @@ export interface RetrievalNode {
   readonly sources: readonly string[]
   readonly outLinks: ReadonlySet<string>
   readonly inLinks: ReadonlySet<string>
+  readonly community?: number
 }
 
 export interface RetrievalGraph {
@@ -27,11 +28,14 @@ export interface RetrievalGraph {
 
 const WIKILINK_REGEX = /\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]/g
 
+const MIN_RELEVANCE = 0.3
+
 const WEIGHTS = {
   directLink: 3.0,
   sourceOverlap: 4.0,
   commonNeighbor: 1.5,
   typeAffinity: 1.0,
+  sameCommunity: 1.2,
 } as const
 
 const TYPE_AFFINITY: Record<string, Record<string, number>> = {
@@ -148,6 +152,15 @@ function getNodeDegree(node: RetrievalNode): number {
   return node.outLinks.size + node.inLinks.size
 }
 
+function getAverageDegree(graph: RetrievalGraph): number {
+  if (graph.nodes.size === 0) return 0
+  let totalDegree = 0
+  for (const node of graph.nodes.values()) {
+    totalDegree += node.outLinks.size + node.inLinks.size
+  }
+  return totalDegree / graph.nodes.size
+}
+
 // ---------------------------------------------------------------------------
 // Core API
 // ---------------------------------------------------------------------------
@@ -155,6 +168,7 @@ function getNodeDegree(node: RetrievalNode): number {
 export async function buildRetrievalGraph(
   projectPath: string,
   dataVersion: number = 0,
+  communities?: Map<string, number>,
 ): Promise<RetrievalGraph> {
   // Return cached if version matches
   if (cachedGraph !== null && cachedGraph.dataVersion === dataVersion) {
@@ -229,6 +243,7 @@ export async function buildRetrievalGraph(
   // Build immutable nodes map
   const nodes = new Map<string, RetrievalNode>()
   for (const raw of rawNodes) {
+    const community = communities?.get(raw.id)
     nodes.set(raw.id, {
       id: raw.id,
       title: raw.title,
@@ -237,6 +252,7 @@ export async function buildRetrievalGraph(
       sources: Object.freeze([...raw.sources]),
       outLinks: Object.freeze(outLinksMap.get(raw.id) ?? new Set<string>()),
       inLinks: Object.freeze(inLinksMap.get(raw.id) ?? new Set<string>()),
+      ...(community !== undefined ? { community } : {}),
     })
   }
 
@@ -284,7 +300,13 @@ export function calculateRelevance(
   const affinityMap = TYPE_AFFINITY[nodeA.type]
   const typeAffinityScore = (affinityMap?.[nodeB.type] ?? 0.5) * WEIGHTS.typeAffinity
 
-  return directLinkScore + sourceOverlapScore + commonNeighborScore + typeAffinityScore
+  // Signal 5: Same community bonus (weight 1.2)
+  let communityScore = 0
+  if (nodeA.community !== undefined && nodeB.community !== undefined) {
+    communityScore = nodeA.community === nodeB.community ? WEIGHTS.sameCommunity : 0
+  }
+
+  return directLinkScore + sourceOverlapScore + commonNeighborScore + typeAffinityScore + communityScore
 }
 
 export function getRelatedNodes(
@@ -295,11 +317,28 @@ export function getRelatedNodes(
   const sourceNode = graph.nodes.get(nodeId)
   if (!sourceNode) return []
 
+  const avgDegree = getAverageDegree(graph)
+  // Dense graph (>10 avg degree): restrict to 1-hop neighbors only
+  // Sparse graph (≤5 avg degree): full 2-hop scoring
+  // Medium (5-10): 1-hop with lower threshold
+  const denseMode = avgDegree > 10
+  const sparseMode = avgDegree <= 5
+
   const scored: Array<{ node: RetrievalNode; relevance: number }> = []
+
   for (const [id, node] of graph.nodes) {
     if (id === nodeId) continue
+
+    // In dense mode, only consider direct neighbors or source-overlapping nodes
+    if (denseMode) {
+      const hasDirectLink = sourceNode.outLinks.has(id) || sourceNode.inLinks.has(id)
+      const hasSourceOverlap = node.sources.some(s => sourceNode.sources.includes(s))
+      if (!hasDirectLink && !hasSourceOverlap) continue
+    }
+
     const relevance = calculateRelevance(sourceNode, node, graph)
-    if (relevance > 0) {
+    const threshold = sparseMode ? 0 : MIN_RELEVANCE
+    if (relevance >= threshold) {
       scored.push({ node, relevance })
     }
   }

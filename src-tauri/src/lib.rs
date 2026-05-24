@@ -145,6 +145,13 @@ pub fn run() {
             commands::file_sync::get_file_change_queue,
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,
+            commands::git::git_init,
+            commands::git::git_status,
+            commands::git::git_commit,
+            commands::git::git_push,
+            commands::git::git_pull,
+            commands::git::git_log,
+            commands::git::git_set_remote,
             set_proxy_env,
         ])
         .on_window_event(|window, event| {

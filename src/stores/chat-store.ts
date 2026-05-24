@@ -1,6 +1,61 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
+import type { LlmConfig } from "@/stores/wiki-store"
+import { useWikiStore } from "@/stores/wiki-store"
 import i18n from "@/i18n"
+
+// ---------------------------------------------------------------------------
+// Conversation-summary compression
+// ---------------------------------------------------------------------------
+const summaryCache = new Map<string, { messageCount: number; summary: string }>()
+
+/**
+ * Use the configured LLM to compress old messages into a short summary.
+ * Best-effort — failures log a warning and fall back to a generic string.
+ */
+async function summarizeHistory(
+  messages: Array<{ role: string; content: string }>,
+  llmConfig: LlmConfig,
+  conversationId: string,
+): Promise<string> {
+  // Return cached summary if message count hasn't changed
+  const cached = summaryCache.get(conversationId)
+  if (cached && cached.messageCount === messages.length) return cached.summary
+
+  const conversationText = messages
+    .map((m) => `${m.role}: ${m.content.slice(0, 200)}`)
+    .join("\n")
+
+  const { streamChat } = await import("@/lib/llm-client")
+  let summary = ""
+
+  await streamChat(
+    llmConfig,
+    [
+      {
+        role: "system",
+        content:
+          "Summarize this conversation in 2-3 sentences, preserving key facts, decisions, and topics discussed. Be concise.",
+      },
+      { role: "user", content: conversationText },
+    ],
+    {
+      onToken: (token) => {
+        summary += token
+      },
+      onDone: () => {},
+      onError: (err) => {
+        console.warn("[chat] summary failed:", err.message)
+      },
+    },
+    undefined,
+    { temperature: 0, max_tokens: 256 },
+  )
+
+  const result = summary || "Previous conversation summarized."
+  summaryCache.set(conversationId, { messageCount: messages.length, summary: result })
+  return result
+}
 
 export interface Conversation {
   id: string
@@ -38,6 +93,7 @@ interface ChatState {
   ingestSource: string | null
   maxHistoryMessages: number
   lastQueryPages: QueryPage[]
+  conversationSummaries: Record<string, string>
 
   // Conversation management
   createConversation: () => string
@@ -58,9 +114,25 @@ interface ChatState {
   setMaxHistoryMessages: (n: number) => void
   setLastQueryPages: (pages: QueryPage[]) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
+  compressHistory: () => Promise<void>
 
   // Helpers
   getActiveMessages: () => DisplayMessage[]
+}
+
+/**
+ * Remove invalid citation markers from content.
+ * Valid citations are [N] where N is within the range of referenced pages.
+ * Invalid ones are converted to plain text (brackets removed).
+ */
+function validateCitations(content: string, pageCount: number): string {
+  if (pageCount <= 0) return content
+  return content.replace(/\[(\d+)\]/g, (match, numStr) => {
+    const num = parseInt(numStr, 10)
+    if (num >= 1 && num <= pageCount) return match
+    // Invalid citation — remove brackets
+    return numStr
+  })
 }
 
 function nextId(): string {
@@ -81,6 +153,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   ingestSource: null,
   maxHistoryMessages: 10,
   lastQueryPages: [],
+  conversationSummaries: {},
 
   createConversation: () => {
     const id = generateConversationId()
@@ -168,9 +241,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: state.streamingContent + token,
     })),
 
-  finalizeStream: (content, references) =>
+  finalizeStream: (content, references) => {
     set((state) => {
-      const { activeConversationId, conversations } = state
+      const { activeConversationId, conversations, lastQueryPages } = state
       if (!activeConversationId) {
         return {
           isStreaming: false,
@@ -178,10 +251,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       }
 
+      const validatedContent = validateCitations(content, lastQueryPages.length)
+
       const newMessage: DisplayMessage = {
         id: nextId(),
         role: "assistant" as const,
-        content,
+        content: validatedContent,
         timestamp: Date.now(),
         conversationId: activeConversationId,
         references,
@@ -197,7 +272,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             : c
         ),
       }
-    }),
+    })
+    // Trigger summary compression in the background (best-effort)
+    get().compressHistory()
+  },
 
   setMode: (mode) => set({ mode }),
 
@@ -228,10 +306,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }),
 
+  compressHistory: async () => {
+    const state = get()
+    const activeId = state.activeConversationId
+    if (!activeId) return
+
+    const msgs = state.messages.filter((m) => m.conversationId === activeId)
+    const max = state.maxHistoryMessages
+    if (msgs.length <= max * 2) return
+
+    const oldMsgs = msgs.slice(0, msgs.length - max)
+    const llmConfig = useWikiStore.getState().llmConfig
+
+    try {
+      const summary = await summarizeHistory(oldMsgs, llmConfig, activeId)
+      set({ conversationSummaries: { ...state.conversationSummaries, [activeId]: summary } })
+    } catch {
+      // Best-effort — failures are non-fatal
+    }
+  },
+
   getActiveMessages: () => {
-    const { messages, activeConversationId } = get()
+    const { messages, activeConversationId, maxHistoryMessages, conversationSummaries } = get()
     if (!activeConversationId) return []
-    return messages.filter((m) => m.conversationId === activeConversationId)
+    const msgs = messages.filter((m) => m.conversationId === activeConversationId)
+    const max = maxHistoryMessages
+    const recent = msgs.slice(-max)
+    const summary = conversationSummaries[activeConversationId]
+    if (summary && msgs.length > max) {
+      return [
+        {
+          id: "__summary__",
+          role: "system" as const,
+          content: `[Previous conversation summary]: ${summary}`,
+          timestamp: recent[0]?.timestamp ?? Date.now(),
+          conversationId: activeConversationId,
+        },
+        ...recent,
+      ]
+    }
+    return recent
   },
 }))
 

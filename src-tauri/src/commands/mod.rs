@@ -3,6 +3,7 @@ pub mod codex_cli;
 pub mod extract_images;
 pub mod file_sync;
 pub mod fs;
+pub mod git;
 pub mod project;
 pub mod search;
 pub mod vectorstore;

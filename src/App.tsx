@@ -5,13 +5,14 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadPromptConfig, loadWorkflowPreset } from "@/lib/project-store"
 import { loadReviewItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
+import { OnboardingGuide } from "@/components/onboarding/onboarding-guide"
 import type { WikiProject } from "@/types/wiki"
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   // Set up auto-save and clip watcher once on mount
   useEffect(() => {
@@ -238,6 +240,27 @@ function App() {
             token: typeof savedApi.token === "string" ? savedApi.token : "",
           })
         }
+        // Prompt template config (active template + custom templates)
+        try {
+          const promptConfig = await loadPromptConfig()
+          if (promptConfig.activeId) {
+            useWikiStore.getState().setActivePromptTemplate(promptConfig.activeId)
+          }
+          if (Object.keys(promptConfig.customTemplates).length > 0) {
+            useWikiStore.getState().setCustomPromptTemplates(promptConfig.customTemplates)
+          }
+        } catch (e) {
+          console.warn("[prompt config load failed]", e)
+        }
+        // Workflow preset (applies prompt template side-effect)
+        try {
+          const workflowPreset = await loadWorkflowPreset()
+          if (workflowPreset) {
+            useWikiStore.getState().setActiveWorkflowPreset(workflowPreset)
+          }
+        } catch (e) {
+          console.warn("[workflow preset load failed]", e)
+        }
         const savedLang = await loadLanguage()
         if (savedLang) {
           await i18n.changeLanguage(savedLang)
@@ -269,12 +292,20 @@ function App() {
     await resetProjectState()
 
     setProject(proj)
+    // Show onboarding guide for first-time users (no recent projects)
+    const recents = await getRecentProjects()
+    if (recents.length <= 1) {
+      setShowOnboarding(true)
+    }
     const projectOutputLang = await loadOutputLanguage(proj.id)
     useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
     setSelectedFile(null)
     setActiveView("wiki")
     // Bump data version so any cached graphs/views invalidate
     useWikiStore.getState().bumpDataVersion()
+    // Load per-project search history and feedback
+    await useWikiStore.getState().loadProjectSearchHistory(proj.path)
+    await useWikiStore.getState().loadProjectSearchFeedback(proj.path)
     await saveLastProject(proj)
 
     // Restore ingest queue (resume interrupted tasks). Keyed by the
@@ -341,6 +372,17 @@ function App() {
         stopProjectFileSync().catch(() => {})
       }
     }).catch((err) => console.error("Failed to configure project file sync:", err))
+
+    // Start periodic wiki health checks
+    import("@/lib/wiki-health").then(({ startHealthChecks }) => {
+      startHealthChecks(proj.path)
+    }).catch((err) => console.error("Failed to start health checks:", err))
+
+    // Start recurring research scheduler (checks for due tasks every hour)
+    import("@/lib/recurring-research").then(({ startRecurringResearch }) => {
+      startRecurringResearch(proj.path)
+    }).catch((err) => console.error("Failed to start recurring research:", err))
+
     // Notify local clip server of the current project + all recent projects
     fetch("http://127.0.0.1:19827/project", {
       method: "POST",
@@ -418,6 +460,16 @@ function App() {
       stopScheduledImport()
     }).catch(() => {})
 
+    // Stop health checks
+    import("@/lib/wiki-health").then(({ stopHealthChecks }) => {
+      stopHealthChecks()
+    }).catch(() => {})
+
+    // Stop recurring research scheduler
+    import("@/lib/recurring-research").then(({ stopRecurringResearch }) => {
+      stopRecurringResearch()
+    }).catch(() => {})
+
     // Save current project's scheduled import config before clearing
     const currentProject = useWikiStore.getState().project
     if (currentProject) {
@@ -467,6 +519,7 @@ function App() {
         onOpenChange={setShowCreateDialog}
         onCreated={handleProjectOpened}
       />
+      <OnboardingGuide open={showOnboarding} onClose={() => setShowOnboarding(false)} />
     </>
   )
 }

@@ -177,6 +177,7 @@
     "language": "Language",
     "languageHint": "Interface language (wiki content follows source material language)",
     "categories": {
+      "workflow": "Workflow",
       "llm": "LLM Models",
       "embedding": "Embeddings",
       "multimodal": "Image Captioning",
@@ -185,13 +186,36 @@
       "sourceWatch": "Source Watch",
       "scheduledImport": "Scheduled Import",
       "apiServer": "API Server",
+      "git": "Git",
       "output": "Output",
+      "promptTemplate": "Prompt Templates",
       "interface": "Interface",
       "maintenance": "Maintenance",
       "changelog": "Changelog",
       "about": "About"
     },
     "sections": {
+      "workflow": {
+        "title": "Workflow Presets",
+        "description": "Choose a workflow preset to quickly configure the app for your primary use case. Each preset adjusts the prompt template, analysis depth, and default page type.",
+        "depthLabel": "Depth",
+        "pageTypeLabel": "Page type",
+        "activeHint": "The active workflow preset is applied. You can change individual settings in other sections at any time.",
+        "presets": {
+          "academicResearch": {
+            "label": "Academic Research",
+            "description": "Deep literature review, entity extraction, and long-form synthesis. Uses a rigorous academic prompt template with full analysis depth."
+          },
+          "dailyNotes": {
+            "label": "Daily Notes",
+            "description": "Quick capture with minimal LLM usage. Concise prompt template and lighter analysis for fast turnaround."
+          },
+          "teamKnowledgeBase": {
+            "label": "Team Knowledge Base",
+            "description": "Balanced defaults for collaborative knowledge management. All page types enabled with a balanced analysis depth."
+          }
+        }
+      },
       "llm": {
         "title": "LLM Models",
         "description": "One row per vendor. Toggling one on automatically turns off the others. Changes save instantly; each vendor's API key is stored independently so switching doesn't lose data.",
@@ -405,6 +429,36 @@
         "endpointRescanNote": "Triggers a backend rescan using your Source Watch config.",
         "endpointChatNote": "Not implemented yet (returns 501)."
       },
+      "git": {
+        "title": "Git Collaboration",
+        "description": "Track wiki changes with git. Push to a remote repository for backup and collaboration across devices.",
+        "noProject": "Open a project first.",
+        "initRepo": "Initialize Repository",
+        "initHint": "Initialize a git repository in the project directory. A .gitignore will be created automatically to exclude cache and temporary files.",
+        "initButton": "Initialize Git Repo",
+        "statusTitle": "Repository Status",
+        "refresh": "Refresh",
+        "branch": "Branch",
+        "staged": "Staged",
+        "modified": "Modified",
+        "untracked": "Untracked",
+        "noRemote": "No remote configured. Set a remote URL below to enable push/pull.",
+        "remoteTitle": "Remote Repository",
+        "remoteHint": "Set the origin URL to a GitHub, GitLab, or any git-compatible remote. Push/pull will use this URL.",
+        "setRemote": "Set",
+        "remoteSet": "Remote URL set",
+        "saving": "Saving...",
+        "actionsTitle": "Actions",
+        "commitPlaceholder": "Commit message (optional)",
+        "commitButton": "Commit All",
+        "pushButton": "Push",
+        "pushing": "Pushing...",
+        "pullButton": "Pull",
+        "pulling": "Pulling...",
+        "autoCommit": "Auto-commit on ingest",
+        "autoCommitHint": "Automatically commit changes after each file ingest. The commit message includes the ingested filename.",
+        "recentCommits": "Recent Commits"
+      },
       "output": {
         "title": "Output Preferences",
         "description": "Controls for generated content — language, conversation history length.",
@@ -413,6 +467,25 @@
         "historyLength": "Conversation History Length",
         "historyHint": "Number of prior messages sent to the AI on each request. More = richer context but more tokens.",
         "historyCurrent": "Currently {{count}} messages (about {{turns}} turns)"
+      },
+      "promptTemplate": {
+        "title": "Prompt Templates",
+        "description": "Choose or customize the system prompt used for chat interactions with your wiki.",
+        "activeTemplate": "Active Template",
+        "none": "None (default behavior)",
+        "builtinGroup": "Built-in Templates",
+        "customGroup": "Custom Templates",
+        "customPrefix": "Custom: ",
+        "activeHint": "Select a template to override the default chat system prompt. The template defines how the AI assistant behaves.",
+        "systemPrompt": "System Prompt Preview",
+        "editHint": "Preview and edit the system prompt. Use the Save as Custom button to save your edits.",
+        "saveAsLabel": "Save Current Edit as Custom Template",
+        "templateNamePlaceholder": "Template name...",
+        "saveAsCustom": "Save as Custom",
+        "apply": "Apply",
+        "resetToDefault": "Reset to Default",
+        "customTemplates": "Saved Custom Templates",
+        "delete": "Delete"
       },
       "interface": {
         "title": "Interface",
@@ -542,12 +615,43 @@
       "overview": "Overview",
       "comparison": "Comparison",
       "other": "Other"
-    }
+    },
+    "timeline": "History",
+    "noSnapshots": "No snapshots yet. Build the graph to create one.",
+    "snapshotPages": "{{count}} pages",
+    "snapshotLinks": "{{count}} links",
+    "snapshotCommunities": "{{count}} communities"
   },
   "time": {
     "justNow": "just now",
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
+  },
+  "onboarding": {
+    "previous": "Back",
+    "next": "Next",
+    "skip": "Skip tour",
+    "getStarted": "Get started",
+    "welcome": {
+      "title": "Welcome to LLM Wiki",
+      "description": "Your personal knowledge base powered by AI. Let's take a quick tour of the key features."
+    },
+    "import": {
+      "title": "Import Your Documents",
+      "description": "Drag PDFs, Markdown files, or entire folders into the Sources panel. LLM Wiki will analyze and organize them into interconnected wiki pages."
+    },
+    "graph": {
+      "title": "Explore the Knowledge Graph",
+      "description": "See how your ideas connect. The graph view reveals relationships between concepts, entities, and research topics across your entire wiki."
+    },
+    "search": {
+      "title": "Smart Search",
+      "description": "Search across all your pages with keyword and semantic search. Thumbs up/down feedback helps improve results over time."
+    },
+    "chat": {
+      "title": "Chat with Your Wiki",
+      "description": "Ask questions about your knowledge base and get answers grounded in your own documents with proper citations."
+    }
   }
 }
