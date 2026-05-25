@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import { rescanProjectFileSync } from "@/lib/project-file-sync"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import {
   deleteSourceFile,
   deleteSourceFolder,
@@ -31,6 +32,7 @@ export function SourcesView() {
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
+  const { alert } = useAppDialog()
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
@@ -198,7 +200,10 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete source:", err)
-      window.alert(`Failed to delete: ${err}`)
+      await alert({
+        title: "Delete Failed",
+        message: `Failed to delete: ${err}`,
+      })
     }
   }
 
@@ -233,7 +238,10 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete folder:", err)
-      window.alert(`Failed to delete folder: ${err}`)
+      await alert({
+        title: "Delete Folder Failed",
+        message: `Failed to delete folder: ${err}`,
+      })
     }
   }
 
