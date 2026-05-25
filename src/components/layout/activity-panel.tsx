@@ -24,6 +24,7 @@ import {
   type FileChangeTask,
 } from "@/commands/file-sync"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   sources: BookOpen,
@@ -74,6 +75,7 @@ export function ActivityPanel() {
   const fileSyncTasks = useFileSyncStore((s) => s.tasks)
   const setFileSyncTasks = useFileSyncStore((s) => s.setTasks)
   const fileSyncError = useFileSyncStore((s) => s.lastError)
+  const { confirm } = useAppDialog()
   const [expanded, setExpanded] = useState(false)
   const [queueTasks, setQueueTasks] = useState<IngestTask[]>([])
   const prevRunningRef = useRef(0)
@@ -121,17 +123,22 @@ export function ActivityPanel() {
     cancelTask(taskId)
   }, [project])
 
-  const handleCancelAll = useCallback(() => {
+  const handleCancelAll = useCallback(async () => {
     if (!project) return
     const activeCount = queueSummary.pending + queueSummary.processing
     if (activeCount === 0) return
-    if (!window.confirm(
-      `Cancel all ${activeCount} queued/processing task${activeCount > 1 ? "s" : ""}? ` +
-      `Partial files from the in-progress task will be removed. ` +
-      `Failed tasks will be kept so you can retry them.`,
-    )) return
+    const confirmed = await confirm({
+      title: "Cancel Active Tasks",
+      message:
+        `Cancel all ${activeCount} queued/processing task${activeCount > 1 ? "s" : ""}? ` +
+        `Partial files from the in-progress task will be removed. ` +
+        `Failed tasks will be kept so you can retry them.`,
+      confirmLabel: "Cancel Tasks",
+      confirmVariant: "destructive",
+    })
+    if (!confirmed) return
     cancelAllTasks()
-  }, [project, queueSummary.pending, queueSummary.processing])
+  }, [confirm, project, queueSummary.pending, queueSummary.processing])
 
   const handleFileSyncRescan = useCallback(() => {
     if (!project) return
