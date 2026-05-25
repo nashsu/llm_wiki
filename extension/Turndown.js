@@ -739,7 +739,7 @@
    * Appends strings as each rule requires and trims the output
    * @private
    * @param {String} output The conversion output
-   * @returns A trimmed version of the ouput
+   * @returns A trimmed version of the output
    * @type String
    */
 
