@@ -12,6 +12,8 @@ import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
+import { AppDialogHost } from "@/components/ui/app-dialog-host"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import type { WikiProject } from "@/types/wiki"
 
 function App() {
@@ -22,6 +24,7 @@ function App() {
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
+  const { alert } = useAppDialog()
 
   // Set up auto-save and clip watcher once on mount
   useEffect(() => {
@@ -394,7 +397,10 @@ function App() {
       const validated = await openProject(proj.path)
       await handleProjectOpened(validated)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      await alert({
+        title: "Failed to Open Project",
+        message: `Failed to open project: ${err}`,
+      })
     }
   }
 
@@ -409,7 +415,10 @@ function App() {
       const proj = await openProject(selected)
       await handleProjectOpened(proj)
     } catch (err) {
-      window.alert(`Failed to open project: ${err}`)
+      await alert({
+        title: "Failed to Open Project",
+        message: `Failed to open project: ${err}`,
+      })
     }
   }
 
@@ -437,9 +446,12 @@ function App() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
-        Loading...
-      </div>
+      <>
+        <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
+          Loading...
+        </div>
+        <AppDialogHost />
+      </>
     )
   }
 
@@ -456,6 +468,7 @@ function App() {
           onOpenChange={setShowCreateDialog}
           onCreated={handleProjectOpened}
         />
+        <AppDialogHost />
       </>
     )
   }
@@ -468,6 +481,7 @@ function App() {
         onOpenChange={setShowCreateDialog}
         onCreated={handleProjectOpened}
       />
+      <AppDialogHost />
     </>
   )
 }
