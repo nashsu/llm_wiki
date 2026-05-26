@@ -135,6 +135,38 @@ async function fixBrokenLink(
 		}
 		const brokenTarget = linkMatch[1];
 
+		// Collect available wiki page paths for link matching
+		activity.updateItem(activityId, { detail: "Scanning wiki pages..." });
+		let pageList = "";
+		try {
+			const tree = await listDirectory(pp);
+			const pages: string[] = [];
+			(function collect(
+				nodes: readonly {
+					name: string;
+					path: string;
+					children?: readonly {
+						name: string;
+						path: string;
+						children?: unknown[];
+					}[];
+				}[],
+			) {
+				for (const node of nodes) {
+					if (node.path.endsWith(".md") && node.path.includes("/wiki/")) {
+						pages.push(
+							node.path.replace(/.*\/wiki\//, "").replace(/\.md$/, ""),
+						);
+					}
+					if (node.children)
+						collect(node.children as Parameters<typeof collect>[0]);
+				}
+			})(tree);
+			pageList = pages.join("\n");
+		} catch {
+			pageList = "";
+		}
+
 		activity.updateItem(activityId, { detail: "Asking LLM to fix..." });
 
 		const prompt = [
@@ -144,10 +176,13 @@ async function fixBrokenLink(
 			"",
 			"Broken link: [[{target}]]",
 			"",
-			"Choose the best fix:",
-			"1. If the link text is a typo or close to an existing page, fix it to the correct wikilink.",
-			"2. If the concept is genuinely missing, create a brief mention inline and remove the wikilink.",
-			"3. If the link is irrelevant, remove it.",
+			pageList
+				? `## Available wiki pages (use these to fix the link):\n\n${pageList}\n`
+				: "",
+			"Fix strategy (in order of preference):",
+			"1. BEST: If a page with a similar name exists, fix the wikilink to point to it (e.g. [[page-path|Display Text]]).",
+			"2. OK: If the concept is genuinely missing and no similar page exists, create a brief mention inline and remove the wikilink.",
+			"3. LAST RESORT: If the link is irrelevant, remove it.",
 			"",
 			"Output the FULL corrected page below. Do NOT wrap in code fences.",
 			"",
