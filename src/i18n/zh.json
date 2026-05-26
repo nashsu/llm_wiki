@@ -172,7 +172,10 @@
       "semantic": "语义问题"
     },
     "issues": "{{count}} 个问题",
-    "issues_plural": "{{count}} 个问题"
+    "issues_plural": "{{count}} 个问题",
+    "autoFix": "自动修复",
+    "fixAll": "全部修复",
+    "fixingAll": "正在修复..."
   },
   "review": {
     "title": "待审阅",
