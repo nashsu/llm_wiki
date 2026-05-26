@@ -39,8 +39,7 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
     let today = Local::now().format("%Y-%m-%d").to_string();
 
     // schema.md
-    let schema_content = format!(
-        r#"# Wiki Schema
+    let schema_content = r#"# Wiki Schema
 
 ## Page Types
 
@@ -115,7 +114,7 @@ When sources contradict each other:
 3. Link both sources from the query page
 4. Resolve in a synthesis page once sufficient evidence exists
 "#
-    );
+    .to_string();
     write_file_inner(root.join("schema.md"), &schema_content)?;
 
     // purpose.md

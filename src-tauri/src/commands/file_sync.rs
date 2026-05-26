@@ -1122,7 +1122,7 @@ impl<'a> SourceWatchRules<'a> {
                 .map(|dir| normalize_rel_string(dir).to_lowercase())
                 .filter(|dir| !dir.is_empty())
                 .collect(),
-            exclude_globs: config.exclude_globs.iter().cloned().collect(),
+            exclude_globs: config.exclude_globs.to_vec(),
         }
     }
 

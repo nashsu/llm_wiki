@@ -704,19 +704,17 @@ fn extract_docx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
                 "w:tr" if !is_closing => {
                     table_row.clear();
                 }
-                "w:tr" if is_closing => {
-                    if !table_row.is_empty() {
-                        result.push_str("| ");
-                        result.push_str(&table_row.join(" | "));
-                        result.push_str(" |\n");
-                        if is_first_table_row {
-                            result.push_str("|");
-                            for _ in &table_row {
-                                result.push_str(" --- |");
-                            }
-                            result.push('\n');
-                            is_first_table_row = false;
+                "w:tr" if is_closing && !table_row.is_empty() => {
+                    result.push_str("| ");
+                    result.push_str(&table_row.join(" | "));
+                    result.push_str(" |\n");
+                    if is_first_table_row {
+                        result.push('|');
+                        for _ in &table_row {
+                            result.push_str(" --- |");
                         }
+                        result.push('\n');
+                        is_first_table_row = false;
                     }
                 }
                 "w:tc" if !is_closing => {
@@ -1299,9 +1297,9 @@ fn collect_related_pages(
                 // wiped. Tightened: scope the substring check to the
                 // `sources:` block only (inline line + any indented
                 // continuation lines of a YAML list).
-                let frontmatter_match = if content.starts_with("---\n") {
-                    if let Some(fm_end_rel) = content[4..].find("\n---") {
-                        let frontmatter = &content[4..4 + fm_end_rel].to_lowercase();
+                let frontmatter_match = if let Some(stripped) = content.strip_prefix("---\n") {
+                    if let Some(fm_end_rel) = stripped.find("\n---") {
+                        let frontmatter = &stripped[..fm_end_rel].to_lowercase();
                         let mut found = false;
                         let mut in_sources_block = false;
                         for line in frontmatter.split('\n') {

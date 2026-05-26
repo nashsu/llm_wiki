@@ -120,8 +120,8 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
             let mut has_remote = false;
 
             for line in output.lines() {
-                if line.starts_with("# branch.head ") {
-                    branch = line[14..].to_string();
+                if let Some(stripped) = line.strip_prefix("# branch.head ") {
+                    branch = stripped.to_string();
                     if branch == "(detached)" {
                         branch = "(detached HEAD)".to_string();
                     }
