@@ -1,4 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ArrowUpRight } from "lucide-react";
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -85,14 +86,32 @@ export function WikiReader({ body }: WikiReaderProps) {
 										void openUrl(h);
 									}
 								}}
+								title={
+									isWikilink
+										? "Wiki page"
+										: isExternal
+											? `Open in browser: ${h}`
+											: undefined
+								}
 								className={
 									isWikilink
-										? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
-										: "text-primary underline underline-offset-2"
+										? "inline-flex cursor-pointer items-center rounded bg-primary/10 px-1 font-medium text-primary no-underline transition-colors hover:bg-primary/20"
+										: isExternal
+											? "inline-flex items-center gap-0.5 text-muted-foreground no-underline transition-colors hover:text-primary"
+											: "text-primary underline underline-offset-2"
 								}
 								{...props}
 							>
-								{children}
+								{isWikilink ? (
+									<span className="flex items-center gap-0.5">{children}</span>
+								) : isExternal ? (
+									<span className="inline-flex items-center gap-0.5 border-b border-dashed border-muted-foreground/40">
+										{children}
+										<ArrowUpRight className="inline size-3 shrink-0 opacity-60" />
+									</span>
+								) : (
+									children
+								)}
 							</a>
 						);
 					},
