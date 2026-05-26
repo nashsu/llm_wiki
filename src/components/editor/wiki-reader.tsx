@@ -1,20 +1,21 @@
-import { useMemo } from "react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import remarkMath from "remark-math"
-import rehypeKatex from "rehype-katex"
-import "katex/dist/katex.min.css"
-import { transformWikilinks } from "@/lib/wikilink-transform"
-import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
-import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
-import { normalizePath } from "@/lib/path-utils"
-import { detectLanguage } from "@/lib/detect-language"
-import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
-import { useWikiStore } from "@/stores/wiki-store"
-import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
+import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram";
+import { detectLanguage } from "@/lib/detect-language";
+import { getHtmlLang, getTextDirection } from "@/lib/language-metadata";
+import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver";
+import { normalizePath } from "@/lib/path-utils";
+import { resolveRelatedSlug } from "@/lib/wiki-page-resolver";
+import { transformWikilinks } from "@/lib/wikilink-transform";
+import { useWikiStore } from "@/stores/wiki-store";
 
 interface WikiReaderProps {
-  body: string
+	body: string;
 }
 
 /**
@@ -30,115 +31,133 @@ interface WikiReaderProps {
  * giving the user single-click navigation between pages.
  */
 export function WikiReader({ body }: WikiReaderProps) {
-  const project = useWikiStore((s) => s.project)
-  const fileTree = useWikiStore((s) => s.fileTree)
-  const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
+	const project = useWikiStore((s) => s.project);
+	const fileTree = useWikiStore((s) => s.fileTree);
+	const setSelectedFile = useWikiStore((s) => s.setSelectedFile);
 
-  const transformed = useMemo(() => transformWikilinks(body), [body])
-  const renderLanguage = detectLanguage(body)
-  const direction = getTextDirection(renderLanguage)
-  const htmlLang = getHtmlLang(renderLanguage)
-  const projectPath = project ? normalizePath(project.path) : null
-  const wikiRoot = projectPath ? `${projectPath}/wiki` : null
+	const transformed = useMemo(() => transformWikilinks(body), [body]);
+	const renderLanguage = detectLanguage(body);
+	const direction = getTextDirection(renderLanguage);
+	const htmlLang = getHtmlLang(renderLanguage);
+	const projectPath = project ? normalizePath(project.path) : null;
+	const wikiRoot = projectPath ? `${projectPath}/wiki` : null;
 
-  function handleAnchorClick(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
-    if (!href.startsWith("#")) return
-    e.preventDefault()
-    if (!wikiRoot) return
-    const slug = (() => {
-      try {
-        return decodeURIComponent(href.slice(1))
-      } catch {
-        return href.slice(1)
-      }
-    })()
-    const path = resolveRelatedSlug(fileTree, slug, wikiRoot)
-    if (path) setSelectedFile(path)
-  }
+	function handleAnchorClick(
+		e: React.MouseEvent<HTMLAnchorElement>,
+		href: string,
+	) {
+		if (!href.startsWith("#")) return;
+		e.preventDefault();
+		if (!wikiRoot) return;
+		const slug = (() => {
+			try {
+				return decodeURIComponent(href.slice(1));
+			} catch {
+				return href.slice(1);
+			}
+		})();
+		const path = resolveRelatedSlug(fileTree, slug, wikiRoot);
+		if (path) setSelectedFile(path);
+	}
 
-  return (
-    <div
-      className="prose prose-invert min-w-0 max-w-none"
-      dir={direction}
-      lang={htmlLang}
-      style={{ textAlign: "start" }}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={{
-          a: ({ href, children, ...props }) => {
-            const h = typeof href === "string" ? href : ""
-            const isWikilink = h.startsWith("#")
-            return (
-              <a
-                href={h || undefined}
-                onClick={(e) => isWikilink && handleAnchorClick(e, h)}
-                className={
-                  isWikilink
-                    ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
-                    : "text-primary underline underline-offset-2"
-                }
-                {...props}
-              >
-                {children}
-              </a>
-            )
-          },
-          img: ({ src, alt, ...props }) => (
-            <img
-              src={
-                typeof src === "string"
-                  ? resolveMarkdownImageSrc(src, projectPath)
-                  : undefined
-              }
-              data-mdsrc={typeof src === "string" ? src : undefined}
-              alt={alt ?? ""}
-              className="max-w-full rounded border border-border/40"
-              loading="lazy"
-              {...props}
-            />
-          ),
-          table: ({ children, ...props }) => (
-            <div className="my-2 overflow-x-auto rounded border border-border">
-              <table className="w-full border-collapse text-xs" {...props}>
-                {children}
-              </table>
-            </div>
-          ),
-          thead: ({ children, ...props }) => (
-            <thead className="bg-muted" {...props}>
-              {children}
-            </thead>
-          ),
-          th: ({ children, ...props }) => (
-            <th
-              className="border border-border/80 bg-muted px-3 py-1.5 text-start font-semibold"
-              {...props}
-            >
-              {children}
-            </th>
-          ),
-          td: ({ children, ...props }) => (
-            <td className="border border-border/60 px-3 py-1.5" {...props}>
-              {children}
-            </td>
-          ),
-          pre: ({ children, ...props }) => {
-            const mermaid = unwrapMermaidPre(children)
-            if (mermaid) return <>{mermaid}</>
-            return <pre dir="ltr" style={{ textAlign: "left" }} {...props}>{children}</pre>
-          },
-          code: ({ className, children, ...props }) => {
-            const lang = className?.replace("language-", "")
-            const codeText = String(children).replace(/\n$/, "")
-            if (lang === "mermaid") return <MermaidDiagram code={codeText} />
-            return <code dir="ltr" className={className} {...props}>{children}</code>
-          },
-        }}
-      >
-        {transformed}
-      </ReactMarkdown>
-    </div>
-  )
+	return (
+		<div
+			className="prose prose-invert min-w-0 max-w-none"
+			dir={direction}
+			lang={htmlLang}
+			style={{ textAlign: "start" }}
+		>
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm, remarkMath]}
+				rehypePlugins={[rehypeKatex]}
+				components={{
+					a: ({ href, children, ...props }) => {
+						const h = typeof href === "string" ? href : "";
+						const isWikilink = h.startsWith("#");
+						const isExternal = /^https?:\/\//i.test(h);
+						return (
+							<a
+								href={h || undefined}
+								onClick={(e) => {
+									if (isWikilink) return handleAnchorClick(e, h);
+									if (isExternal) {
+										e.preventDefault();
+										void openUrl(h);
+									}
+								}}
+								className={
+									isWikilink
+										? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+										: "text-primary underline underline-offset-2"
+								}
+								{...props}
+							>
+								{children}
+							</a>
+						);
+					},
+					img: ({ src, alt, ...props }) => (
+						<img
+							src={
+								typeof src === "string"
+									? resolveMarkdownImageSrc(src, projectPath)
+									: undefined
+							}
+							data-mdsrc={typeof src === "string" ? src : undefined}
+							alt={alt ?? ""}
+							className="max-w-full rounded border border-border/40"
+							loading="lazy"
+							{...props}
+						/>
+					),
+					table: ({ children, ...props }) => (
+						<div className="my-2 overflow-x-auto rounded border border-border">
+							<table className="w-full border-collapse text-xs" {...props}>
+								{children}
+							</table>
+						</div>
+					),
+					thead: ({ children, ...props }) => (
+						<thead className="bg-muted" {...props}>
+							{children}
+						</thead>
+					),
+					th: ({ children, ...props }) => (
+						<th
+							className="border border-border/80 bg-muted px-3 py-1.5 text-start font-semibold"
+							{...props}
+						>
+							{children}
+						</th>
+					),
+					td: ({ children, ...props }) => (
+						<td className="border border-border/60 px-3 py-1.5" {...props}>
+							{children}
+						</td>
+					),
+					pre: ({ children, ...props }) => {
+						const mermaid = unwrapMermaidPre(children);
+						if (mermaid) return <>{mermaid}</>;
+						return (
+							<pre dir="ltr" style={{ textAlign: "left" }} {...props}>
+								{children}
+							</pre>
+						);
+					},
+					code: ({ className, children, ...props }) => {
+						const lang = className?.replace("language-", "");
+						const codeText = String(children).replace(/\n$/, "");
+						if (lang === "mermaid") return <MermaidDiagram code={codeText} />;
+						return (
+							<code dir="ltr" className={className} {...props}>
+								{children}
+							</code>
+						);
+					},
+				}}
+			>
+				{transformed}
+			</ReactMarkdown>
+		</div>
+	);
 }
