@@ -30,6 +30,25 @@ describe("resolveConfig", () => {
     ])
   })
 
+  it("keeps Xiaomi MiMo presets aligned with current official and Token Plan endpoints", () => {
+    const mimo = LLM_PRESETS.find((preset) => preset.id === "xiaomi-mimo")
+
+    expect(mimo?.defaultModel).toBe("mimo-v2.5-pro")
+    expect(mimo?.suggestedContextSize).toBe(1000000)
+    expect(mimo?.baseUrl).toBe("https://api.xiaomimimo.com/v1")
+    expect(mimo?.baseUrlByMode).toEqual({
+      chat_completions: "https://token-plan-cn.xiaomimimo.com/v1",
+      anthropic_messages: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    })
+    expect(mimo?.suggestedModels).toEqual([
+      "mimo-v2.5-pro",
+      "mimo-v2.5",
+      "mimo-v2-flash",
+      "mimo-v2-pro",
+      "mimo-v2-omni",
+    ])
+  })
+
   it("defaults reasoning to auto instead of inheriting another preset's fallback", () => {
     const preset: LlmPreset = {
       id: "deepseek",

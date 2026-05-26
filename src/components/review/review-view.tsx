@@ -16,7 +16,8 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
-import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
+import { useTranslation } from "react-i18next"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -27,6 +28,7 @@ const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label
 }
 
 export function ReviewView() {
+  const { t } = useTranslation()
   const items = useReviewStore((s) => s.items)
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
@@ -40,8 +42,8 @@ export function ReviewView() {
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider first.")
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        window.alert(t("research.notConfigured"))
         return
       }
       if (item) {
@@ -144,8 +146,8 @@ export function ReviewView() {
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        // No search API — fall through to create a page instead
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        // No research source — fall through to create a page instead
         if (item) {
           handleResolve(id, "__create_page__:" + action)
         }
@@ -230,7 +232,7 @@ export function ReviewView() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
-          Review
+          {t("review.title")}
           {pending.length > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
               {pending.length}
@@ -240,7 +242,7 @@ export function ReviewView() {
         {resolved.length > 0 && (
           <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
             <Trash2 className="mr-1 h-3 w-3" />
-            Clear resolved
+            {t("review.clearResolved")}
           </Button>
         )}
       </div>
@@ -249,7 +251,7 @@ export function ReviewView() {
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
-            <p>All clear — nothing to review</p>
+            <p>{t("review.allClear")}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
@@ -263,7 +265,7 @@ export function ReviewView() {
             ))}
             {resolved.length > 0 && pending.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
-                — Resolved —
+                {t("review.resolvedDivider")}
               </div>
             )}
             {resolved.map((item) => (
@@ -290,6 +292,7 @@ function ReviewCard({
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
 }) {
+  const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
 
@@ -329,7 +332,7 @@ function ReviewCard({
               className="h-7 text-xs gap-1"
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
-              🔍 Deep Research
+              🔍 {t("research.title")}
             </Button>
           )}
           {item.options.map((opt) => (

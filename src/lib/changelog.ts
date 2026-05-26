@@ -26,6 +26,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.14",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Deep Research can now use AnyTXT local file search alongside web search, with configurable research sources.",
+        "Improved long-document ingestion with more resilient chunked analysis and follow-up research suggestions.",
+        "Fixed provider compatibility and Windows path handling issues.",
+      ],
+      zh: [
+        "Deep Research 现在可结合 AnyTXT 本地文件搜索和网页搜索，并支持配置研究信息来源。",
+        "改进长文档导入：分块分析更稳，并优化补充研究建议生成。",
+        "修复 Provider 兼容性和 Windows 路径处理相关问题。",
+      ],
+    },
+  },
+  {
     version: "0.4.13",
     date: "2026-05-24",
     highlights: {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
+import { hasConfiguredDeepResearchSources, hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -210,6 +210,27 @@ describe("webSearch", () => {
     })
 
     expect(resolved.ollamaUrl).toBe("https://ollama.com")
+  })
+
+  it("tracks Deep Research source configuration independently from the active web provider", () => {
+    expect(hasConfiguredDeepResearchSources({
+      provider: "none",
+      apiKey: "",
+      deepResearchSource: "anytxt",
+      anyTxt: { endpoint: "http://127.0.0.1:9920" },
+    })).toBe(true)
+
+    expect(hasConfiguredDeepResearchSources({
+      provider: "none",
+      apiKey: "",
+      deepResearchSource: "web",
+      anyTxt: { endpoint: "http://127.0.0.1:9920" },
+    })).toBe(false)
+
+    expect(resolveSearchConfig({
+      provider: "none",
+      apiKey: "",
+    }).deepResearchSource).toBe("web")
   })
 
   it("calls the Ollama Web Search API with Bearer auth", async () => {

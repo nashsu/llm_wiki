@@ -1,4 +1,4 @@
-import { deleteFile, fileExists, readFile, writeFile, listDirectory } from "@/commands/fs"
+import { createDirectory, deleteFile, fileExists, readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -23,6 +23,51 @@ import {
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
+import { computeContextBudget } from "@/lib/context-budget"
+
+const LONG_SOURCE_MIN_BUDGET = 8_000
+const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
+const LONG_SOURCE_CHUNK_MIN = 12_000
+const LONG_SOURCE_CHUNK_MAX = 60_000
+const LONG_SOURCE_DIGEST_MAX = 15_000
+const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
+const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
+const INGEST_GENERATION_TOKENS_128K = 16_384
+const INGEST_GENERATION_TOKENS_256K = 24_576
+const INGEST_GENERATION_TOKENS_512K = 32_768
+const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
+const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
+
+interface SourceChunk {
+  id: string
+  index: number
+  total: number
+  headingPath: string
+  overlapBefore: string
+  main: string
+}
+
+interface LongSourcePlan {
+  chunked: boolean
+  analysis: string
+  sourceContext: string
+  checkpointPath?: string
+}
+
+interface LongSourceCheckpoint {
+  version: 1
+  sourceIdentity: string
+  sourceHash: string
+  sourceLength: number
+  sourceBudget: number
+  targetChars: number
+  overlapChars: number
+  chunkTotal: number
+  completedThrough: number
+  globalDigest: string
+  analyses: string[]
+  updatedAt: number
+}
 
 /**
  * Resolve the LLM config that the caption pipeline should use.
@@ -540,33 +585,63 @@ async function autoIngestImpl(
     }
   }
 
-  const truncatedContent = enrichedSourceContent.length > 50000
-    ? enrichedSourceContent.slice(0, 50000) + "\n\n[...truncated...]"
-    : enrichedSourceContent
+  const stableContextLength = schema.length + purpose.length + index.length + overview.length
+  const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
+  let sourceContext = enrichedSourceContent
+  let precomputedAnalysis = ""
+  let longSourceCheckpointPath: string | undefined
+
+  if (enrichedSourceContent.length > sourceBudget) {
+    const longSourcePlan = await analyzeLongSourceInChunks(
+      pp,
+      llmConfig,
+      purpose,
+      schema,
+      index,
+      sourceIdentity,
+      sourceSummarySlug,
+      folderContext,
+      enrichedSourceContent,
+      sourceBudget,
+      activityId,
+      signal,
+    )
+    if (longSourcePlan.chunked) {
+      sourceContext = longSourcePlan.sourceContext
+      precomputedAnalysis = longSourcePlan.analysis
+      longSourceCheckpointPath = longSourcePlan.checkpointPath
+    }
+  }
 
   // ── Step 1: Analysis ──────────────────────────────────────────
   // LLM reads the source and produces a structured analysis:
   // key entities, concepts, main arguments, connections to existing wiki, contradictions
-  activity.updateItem(activityId, { detail: "Step 1/2: Analyzing source..." })
+  activity.updateItem(activityId, {
+    detail: precomputedAnalysis
+      ? "Step 1/2: Consolidating long-source analysis..."
+      : "Step 1/2: Analyzing source...",
+  })
 
-  let analysis = ""
+  let analysis = precomputedAnalysis
 
-  await streamChat(
-    llmConfig,
-    [
-      { role: "system", content: buildAnalysisPrompt(purpose, index, truncatedContent) },
-      { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${truncatedContent}` },
-    ],
-    {
-      onToken: (token) => { analysis += token },
-      onDone: () => {},
-      onError: (err) => {
-        activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
+  if (!analysis) {
+    await streamChat(
+      llmConfig,
+      [
+        { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext) },
+        { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${sourceContext}` },
+      ],
+      {
+        onToken: (token) => { analysis += token },
+        onDone: () => {},
+        onError: (err) => {
+          activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
+        },
       },
-    },
-    signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
-  )
+      signal,
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    )
+  }
 
   // A silent `return []` here would look like success to the queue
   // runner and cause the task to be filter()'d out. Throw instead so
@@ -585,7 +660,7 @@ async function autoIngestImpl(
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, truncatedContent, sourceSummaryPath) },
+      { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
       {
         role: "user",
         content: [
@@ -599,9 +674,9 @@ async function autoIngestImpl(
           "",
           analysis,
           "",
-          "## Original Source Content",
+          "## Source Context",
           "",
-          truncatedContent,
+          sourceContext,
           "",
           "---",
           "",
@@ -619,12 +694,63 @@ async function autoIngestImpl(
       },
     },
     signal,
-    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 8192 },
+    {
+      temperature: 0.1,
+      reasoning: { mode: "off" },
+      max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+    },
   )
 
   const generationActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (generationActivity?.status === "error") {
     throw new Error(generationActivity.detail || "Generation stream failed")
+  }
+
+  let reviewSuggestionOutput = ""
+  if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
+    let reviewStageHadError = false
+    try {
+      await streamChat(
+        llmConfig,
+        [
+          {
+            role: "system",
+            content: buildReviewSuggestionPrompt(
+              purpose,
+              index,
+              sourceIdentity,
+              analysis,
+              sourceContext,
+              generation,
+              llmConfig.maxContextSize,
+            ),
+          },
+          {
+            role: "user",
+            content: "Emit only high-value REVIEW blocks for follow-up research or unresolved knowledge gaps. Output nothing if there are none.",
+          },
+        ],
+        {
+          onToken: (token) => { reviewSuggestionOutput += token },
+          onDone: () => {},
+          onError: (err) => {
+            reviewStageHadError = true
+            console.warn(`[ingest] Review suggestion generation failed for "${sourceIdentity}": ${err.message}`)
+          },
+        },
+        signal,
+        {
+          temperature: 0.1,
+          reasoning: { mode: "off" },
+          max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
+        },
+      )
+    } catch (err) {
+      if (signal?.aborted) throw err
+      console.warn(`[ingest] Review suggestion generation failed for "${sourceIdentity}":`, err)
+    }
+    if (signal?.aborted) throw new Error("Ingest cancelled")
+    if (reviewStageHadError) reviewSuggestionOutput = ""
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
@@ -706,7 +832,10 @@ async function autoIngestImpl(
   }
 
   // ── Step 4: Parse review items ────────────────────────────────
-  const reviewItems = parseReviewBlocks(generation, sp)
+  const reviewItems = [
+    ...parseReviewBlocks(generation, sp),
+    ...parseReviewBlocks(reviewSuggestionOutput, sp),
+  ]
   if (reviewItems.length > 0) {
     useReviewStore.getState().addItems(reviewItems)
   }
@@ -722,6 +851,9 @@ async function autoIngestImpl(
   // safe.
   if (writtenPaths.length > 0 && hardFailures.length === 0) {
     await saveIngestCache(pp, sourceIdentity, sourceContent, writtenPaths)
+    if (longSourceCheckpointPath) {
+      await clearLongSourceCheckpoint(longSourceCheckpointPath)
+    }
   } else if (hardFailures.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${sourceIdentity}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
@@ -1123,6 +1255,16 @@ function parseReviewBlocks(
   return items
 }
 
+function countFileBlocks(text: string): number {
+  return (text.match(/---FILE:\s*[^-]+---/g) ?? []).length
+}
+
+function shouldRunDedicatedReviewStage(generation: string): boolean {
+  return generation.length >= REVIEW_STAGE_MIN_SIGNAL_CHARS
+    || countFileBlocks(generation) >= REVIEW_STAGE_MIN_FILE_BLOCKS
+    || /---REVIEW:\s*[\w-]+\s*\|[\s\S]*$/i.test(generation)
+}
+
 /**
  * Step 1 prompt: AI reads the source and produces a structured analysis.
  * This is the "discussion" step — the AI reasons about the source before writing wiki pages.
@@ -1330,6 +1472,65 @@ export function buildGenerationPrompt(
   ].filter(Boolean).join("\n")
 }
 
+function buildReviewSuggestionPrompt(
+  purpose: string,
+  index: string,
+  sourceIdentity: string,
+  analysis: string,
+  sourceContext: string,
+  generation: string,
+  maxContextSize: number | undefined,
+): string {
+  const { maxCtx } = computeContextBudget(maxContextSize)
+  const sectionCap = Math.max(4_000, Math.floor(maxCtx * 0.15))
+  const indexCap = Math.max(3_000, Math.floor(sectionCap * 0.8))
+  return [
+    "You are identifying high-value follow-up research items for a personal wiki.",
+    "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
+    "",
+    languageRule(sourceContext),
+    "",
+    "Your job is NOT to generate wiki pages. The wiki page generation already happened.",
+    "Output only REVIEW blocks for unresolved knowledge gaps that deserve human attention or Deep Research.",
+    "",
+    "Create REVIEW blocks only for genuinely useful follow-up work:",
+    "- missing-page: an important entity/concept is referenced but still lacks a dedicated page",
+    "- suggestion: a research question, source type, or comparison that would materially improve the wiki",
+    "- contradiction: a conflict or tension that requires user judgment",
+    "- duplicate: likely duplicate pages/names that need user review",
+    "",
+    "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output nothing.",
+    "For suggestion and missing-page reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
+    "Use only these options: OPTIONS: Create Page | Skip",
+    "",
+    "REVIEW block template:",
+    "```",
+    "---REVIEW: suggestion | Precise title---",
+    "Concise description of the gap and why it matters.",
+    "OPTIONS: Create Page | Skip",
+    "PAGES: wiki/page1.md, wiki/page2.md",
+    "SEARCH: query 1 | query 2 | query 3",
+    "---END REVIEW---",
+    "```",
+    "",
+    "Return REVIEW blocks only. Do not output FILE blocks. Do not wrap the response in markdown fences.",
+    "",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
+    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
+    "",
+    `## Source\n${sourceIdentity}`,
+    "",
+    "## Stage 1 Analysis",
+    trimLongText(analysis, sectionCap),
+    "",
+    "## Source Context",
+    trimLongText(sourceContext, sectionCap),
+    "",
+    "## Generated Wiki Output",
+    trimLongText(generation, sectionCap),
+  ].filter(Boolean).join("\n")
+}
+
 function getStore() {
   return useChatStore.getState()
 }
@@ -1340,6 +1541,438 @@ async function tryReadFile(path: string): Promise<string> {
   } catch {
     return ""
   }
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+export function computeIngestSourceBudget(
+  maxContextSize: number | undefined,
+  stableContextLength: number,
+): number {
+  const { maxCtx, responseReserve } = computeContextBudget(maxContextSize)
+  const stableReserve = Math.min(Math.floor(maxCtx * 0.25), Math.max(12_000, stableContextLength))
+  const instructionReserve = Math.max(12_000, Math.floor(maxCtx * 0.08))
+  const available = maxCtx - responseReserve - stableReserve - instructionReserve
+  const upper = Math.min(LONG_SOURCE_MAX_SINGLE_PASS_BUDGET, Math.max(LONG_SOURCE_MIN_BUDGET, Math.floor(maxCtx * 0.6)))
+  return clampNumber(Math.floor(available), LONG_SOURCE_MIN_BUDGET, upper)
+}
+
+export function computeIngestGenerationMaxTokens(maxContextSize: number | undefined): number {
+  const { maxCtx } = computeContextBudget(maxContextSize)
+  if (maxCtx >= 512_000) return INGEST_GENERATION_TOKENS_512K
+  if (maxCtx >= 256_000) return INGEST_GENERATION_TOKENS_256K
+  if (maxCtx >= 128_000) return INGEST_GENERATION_TOKENS_128K
+  return INGEST_GENERATION_TOKENS_DEFAULT
+}
+
+export function computeIngestReviewMaxTokens(maxContextSize: number | undefined): number {
+  return Math.min(8_192, Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)))
+}
+
+function splitOversizedBlock(block: string, targetChars: number): string[] {
+  if (block.length <= targetChars * 1.25) return [block]
+
+  const pieces = block.match(/[^.!?。！？\n]+[.!?。！？]?|\n+/g) ?? [block]
+  const out: string[] = []
+  let current = ""
+  for (const piece of pieces) {
+    if (current && current.length + piece.length > targetChars) {
+      out.push(current.trim())
+      current = ""
+    }
+    if (piece.length > targetChars) {
+      for (let i = 0; i < piece.length; i += targetChars) {
+        const slice = piece.slice(i, i + targetChars).trim()
+        if (slice) out.push(slice)
+      }
+    } else {
+      current += piece
+    }
+  }
+  if (current.trim()) out.push(current.trim())
+  return out
+}
+
+function semanticBlocks(content: string, targetChars: number): Array<{ text: string; headingPath: string }> {
+  const blocks: Array<{ text: string; headingPath: string }> = []
+  const headingStack: string[] = []
+  let paragraph: string[] = []
+  let paragraphHeading = ""
+
+  const currentHeadingPath = () => headingStack.filter(Boolean).join(" > ")
+  const flushParagraph = () => {
+    const text = paragraph.join("\n").trim()
+    if (text) {
+      for (const piece of splitOversizedBlock(text, targetChars)) {
+        blocks.push({ text: piece, headingPath: paragraphHeading })
+      }
+    }
+    paragraph = []
+  }
+
+  for (const line of content.replace(/\r\n/g, "\n").split("\n")) {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line)
+    if (heading) {
+      flushParagraph()
+      const depth = heading[1].length
+      headingStack.length = depth - 1
+      headingStack[depth - 1] = heading[2].trim()
+      blocks.push({ text: line.trim(), headingPath: currentHeadingPath() })
+      paragraphHeading = currentHeadingPath()
+      continue
+    }
+
+    if (line.trim() === "") {
+      flushParagraph()
+      paragraphHeading = currentHeadingPath()
+      continue
+    }
+
+    if (paragraph.length === 0) paragraphHeading = currentHeadingPath()
+    paragraph.push(line)
+  }
+  flushParagraph()
+
+  return blocks
+}
+
+function overlapSuffix(text: string, maxChars: number): string {
+  if (!text || maxChars <= 0) return ""
+  if (text.length <= maxChars) return text
+  const raw = text.slice(-maxChars)
+  const paragraphBreak = raw.search(/\n\s*\n/)
+  if (paragraphBreak > 0 && raw.length - paragraphBreak > maxChars * 0.4) {
+    return raw.slice(paragraphBreak).trim()
+  }
+  const sentenceBreak = raw.search(/[.!?。！？]\s+/)
+  if (sentenceBreak > 0 && raw.length - sentenceBreak > maxChars * 0.4) {
+    return raw.slice(sentenceBreak + 1).trim()
+  }
+  return raw.trim()
+}
+
+export function splitSourceIntoSemanticChunks(
+  content: string,
+  targetChars: number,
+  overlapChars: number,
+): SourceChunk[] {
+  const target = Math.max(1_000, targetChars)
+  const blocks = semanticBlocks(content, target)
+  if (blocks.length === 0) return []
+
+  const rawChunks: Array<{ main: string; headingPath: string }> = []
+  let current: string[] = []
+  let currentLength = 0
+  let currentHeading = blocks[0]?.headingPath ?? ""
+
+  const flush = () => {
+    const main = current.join("\n\n").trim()
+    if (main) rawChunks.push({ main, headingPath: currentHeading })
+    current = []
+    currentLength = 0
+  }
+
+  for (const block of blocks) {
+    const nextLength = currentLength + block.text.length + (current.length > 0 ? 2 : 0)
+    if (current.length > 0 && nextLength > target) {
+      flush()
+    }
+    if (current.length === 0) currentHeading = block.headingPath
+    current.push(block.text)
+    currentLength += block.text.length + (current.length > 1 ? 2 : 0)
+  }
+  flush()
+
+  return rawChunks.map((chunk, idx) => ({
+    id: `chunk-${idx + 1}`,
+    index: idx + 1,
+    total: rawChunks.length,
+    headingPath: chunk.headingPath,
+    overlapBefore: idx > 0 ? overlapSuffix(rawChunks[idx - 1].main, overlapChars) : "",
+    main: chunk.main,
+  }))
+}
+
+function trimLongText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars).trimEnd()}\n\n[...trimmed for prompt budget...]`
+}
+
+function hashTextHex(text: string): string {
+  // 64-bit FNV-1a over UTF-16 code units. This is a stability key, not
+  // a security primitive; validation also checks source length/chunk
+  // shape before resuming a checkpoint.
+  let hash = 0xcbf29ce484222325n
+  const prime = 0x100000001b3n
+  for (let i = 0; i < text.length; i++) {
+    hash ^= BigInt(text.charCodeAt(i))
+    hash = BigInt.asUintN(64, hash * prime)
+  }
+  return hash.toString(16).padStart(16, "0")
+}
+
+function longSourceCheckpointPath(
+  projectPath: string,
+  sourceSummarySlug: string,
+  sourceHash: string,
+): string {
+  return `${normalizePath(projectPath)}/.llm-wiki/ingest-progress/${sourceSummarySlug}-${sourceHash}.json`
+}
+
+function isCompatibleLongSourceCheckpoint(
+  checkpoint: LongSourceCheckpoint,
+  params: {
+    sourceIdentity: string
+    sourceHash: string
+    sourceLength: number
+    sourceBudget: number
+    targetChars: number
+    overlapChars: number
+    chunkTotal: number
+  },
+): boolean {
+  return checkpoint.version === 1
+    && checkpoint.sourceIdentity === params.sourceIdentity
+    && checkpoint.sourceHash === params.sourceHash
+    && checkpoint.sourceLength === params.sourceLength
+    && checkpoint.sourceBudget === params.sourceBudget
+    && checkpoint.targetChars === params.targetChars
+    && checkpoint.overlapChars === params.overlapChars
+    && checkpoint.chunkTotal === params.chunkTotal
+    && checkpoint.completedThrough >= 0
+    && checkpoint.completedThrough <= params.chunkTotal
+    && Array.isArray(checkpoint.analyses)
+    && checkpoint.analyses.length === checkpoint.completedThrough
+}
+
+async function loadLongSourceCheckpoint(
+  checkpointPath: string,
+  params: Parameters<typeof isCompatibleLongSourceCheckpoint>[1],
+): Promise<LongSourceCheckpoint | null> {
+  try {
+    const raw = await readFile(checkpointPath)
+    const parsed = JSON.parse(raw) as LongSourceCheckpoint
+    if (!isCompatibleLongSourceCheckpoint(parsed, params)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+async function saveLongSourceCheckpoint(
+  checkpointPath: string,
+  checkpoint: LongSourceCheckpoint,
+): Promise<void> {
+  const dir = checkpointPath.split("/").slice(0, -1).join("/")
+  await createDirectory(dir)
+  await writeFile(checkpointPath, JSON.stringify(checkpoint, null, 2))
+}
+
+async function clearLongSourceCheckpoint(checkpointPath: string): Promise<void> {
+  try {
+    if (await fileExists(checkpointPath)) {
+      await deleteFile(checkpointPath)
+    }
+  } catch {
+    // Best-effort cleanup. A stale checkpoint is ignored if source
+    // hash / chunk shape no longer matches.
+  }
+}
+
+function extractMarkedSection(raw: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const re = new RegExp(`(?:^|\\n)##\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i")
+  return re.exec(raw)?.[1]?.trim() ?? ""
+}
+
+function buildChunkAnalysisSystemPrompt(
+  purpose: string,
+  schema: string,
+  index: string,
+  sourceContent: string,
+): string {
+  return [
+    "You are analyzing a long source document for a personal wiki.",
+    "Do not output chain-of-thought, hidden reasoning, or a thinking transcript.",
+    "Analyze only the current MAIN CHUNK. Use overlap and digest for context only.",
+    "Keep stable names consistent with the existing wiki and prior digest.",
+    "",
+    languageRule(sourceContent),
+    "",
+    "Output exactly two markdown sections:",
+    "",
+    "## Chunk Analysis",
+    "- Concise summary of the main chunk",
+    "- New or updated entities",
+    "- New or updated concepts",
+    "- Claims, findings, evidence, contradictions",
+    "- Open questions or research gaps",
+    "",
+    "## Updated Global Digest",
+    "A compact document-level digest that incorporates this chunk and preserves prior cross-chunk context.",
+    "Keep this digest structured under: Summary, Entities, Concepts, Claims, Evidence, Contradictions, Open Questions, Cross-Chunk Relations.",
+    "",
+    "Stable project context follows. It changes rarely and should be treated as background:",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
+    schema ? `## Wiki Schema\n${schema}` : "",
+    index ? `## Current Wiki Index\n${trimLongText(index, 40_000)}` : "",
+  ].filter(Boolean).join("\n")
+}
+
+function buildChunkAnalysisUserPrompt(
+  sourceIdentity: string,
+  folderContext: string | undefined,
+  chunk: SourceChunk,
+  globalDigest: string,
+): string {
+  return [
+    `Source file: ${sourceIdentity}`,
+    folderContext ? `Folder context: ${folderContext}` : "",
+    `Chunk: ${chunk.index}/${chunk.total}`,
+    chunk.headingPath ? `Heading path: ${chunk.headingPath}` : "",
+    "",
+    "## Current Global Digest",
+    globalDigest || "(No prior digest yet.)",
+    "",
+    chunk.overlapBefore ? "## Previous Overlap Context\n" + chunk.overlapBefore : "",
+    "",
+    "## MAIN CHUNK TO ANALYZE",
+    chunk.main,
+    "",
+    "Return only the two requested sections. Do not repeat overlap-only facts unless the main chunk supports them.",
+  ].filter(Boolean).join("\n")
+}
+
+async function analyzeLongSourceInChunks(
+  projectPath: string,
+  llmConfig: LlmConfig,
+  purpose: string,
+  schema: string,
+  index: string,
+  sourceIdentity: string,
+  sourceSummarySlug: string,
+  folderContext: string | undefined,
+  sourceContent: string,
+  sourceBudget: number,
+  activityId: string,
+  signal?: AbortSignal,
+): Promise<LongSourcePlan> {
+  const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+  const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
+  const chunks = splitSourceIntoSemanticChunks(sourceContent, targetChars, overlapChars)
+  if (chunks.length <= 1) {
+    return { chunked: false, analysis: "", sourceContext: sourceContent }
+  }
+
+  const activity = useActivityStore.getState()
+  const systemPrompt = buildChunkAnalysisSystemPrompt(purpose, schema, index, sourceContent)
+  const sourceHash = hashTextHex(sourceContent)
+  const checkpointPath = longSourceCheckpointPath(projectPath, sourceSummarySlug, sourceHash)
+  const checkpointParams = {
+    sourceIdentity,
+    sourceHash,
+    sourceLength: sourceContent.length,
+    sourceBudget,
+    targetChars,
+    overlapChars,
+    chunkTotal: chunks.length,
+  }
+  const checkpoint = await loadLongSourceCheckpoint(checkpointPath, checkpointParams)
+  let globalDigest = checkpoint?.globalDigest ?? ""
+  const analyses: string[] = checkpoint?.analyses ? [...checkpoint.analyses] : []
+  let completedThrough = checkpoint?.completedThrough ?? 0
+
+  if (completedThrough > 0) {
+    activity.updateItem(activityId, {
+      detail: `Resuming long source analysis from chunk ${completedThrough + 1}/${chunks.length}...`,
+    })
+  }
+
+  for (const chunk of chunks) {
+    if (chunk.index <= completedThrough) continue
+    if (signal?.aborted) throw new Error("Ingest cancelled")
+    activity.updateItem(activityId, {
+      detail: `Analyzing long source chunk ${chunk.index}/${chunk.total}...`,
+    })
+
+    let raw = ""
+    let hadError = false
+    await streamChat(
+      llmConfig,
+      [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: buildChunkAnalysisUserPrompt(
+            sourceIdentity,
+            folderContext,
+            chunk,
+            trimLongText(globalDigest, LONG_SOURCE_DIGEST_MAX),
+          ),
+        },
+      ],
+      {
+        onToken: (token) => { raw += token },
+        onDone: () => {},
+        onError: (err) => {
+          hadError = true
+          activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${err.message}` })
+        },
+      },
+      signal,
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+    )
+
+    if (signal?.aborted) throw new Error("Ingest cancelled")
+    if (hadError) throw new Error("Chunk analysis stream failed")
+
+    const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
+    const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
+    analyses.push([
+      `## Chunk ${chunk.index}/${chunk.total}${chunk.headingPath ? ` — ${chunk.headingPath}` : ""}`,
+      trimLongText(chunkAnalysis, LONG_SOURCE_CHUNK_ANALYSIS_MAX),
+    ].join("\n"))
+
+    globalDigest = trimLongText(
+      nextDigest || [globalDigest, chunkAnalysis].filter(Boolean).join("\n\n"),
+      LONG_SOURCE_DIGEST_MAX,
+    )
+    completedThrough = chunk.index
+    await saveLongSourceCheckpoint(checkpointPath, {
+      version: 1,
+      ...checkpointParams,
+      completedThrough,
+      globalDigest,
+      analyses,
+      updatedAt: Date.now(),
+    })
+  }
+
+  const analysis = [
+    "# Consolidated Long-Document Analysis",
+    "",
+    "## Final Global Digest",
+    globalDigest || "(No digest produced.)",
+    "",
+    "## Per-Chunk Analyses",
+    analyses.join("\n\n"),
+  ].join("\n")
+
+  const sourceContext = [
+    `# Long Source Context: ${sourceIdentity}`,
+    "",
+    `The original source was analyzed in ${chunks.length} semantic chunks with paragraph/section boundaries and overlap. Use this consolidated context instead of assuming the raw document ended early.`,
+    "",
+    "## Final Global Digest",
+    globalDigest || "(No digest produced.)",
+    "",
+    "## Chunk Analysis Notes",
+    trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
+  ].join("\n")
+
+  return { chunked: true, analysis, sourceContext, checkpointPath }
 }
 
 /**

@@ -29,6 +29,28 @@
 		"knowledge": "Knowledge",
 		"files": "Files"
 	},
+	"research": {
+		"title": "Deep Research",
+		"notConfigured": "Deep Research sources are not configured. Go to Settings → Deep Research to configure Web Search or AnyTXT.",
+		"activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
+		"inputPlaceholder": "Enter a research topic...",
+		"emptyTitle": "No research tasks yet",
+		"emptyHint": "Enter a topic above or click Deep Research in Review",
+		"sourcesCount": "Sources ({{count}})",
+		"anyTxtSource": "AnyTXT source",
+		"webSource": "Web source",
+		"open": "Open",
+		"remove": "Remove",
+		"status": {
+			"queued": "Queued",
+			"searching": "Searching sources...",
+			"synthesizing": "Synthesizing...",
+			"saving": "Saving to wiki...",
+			"saved": "Saved",
+			"done": "Done",
+			"failed": "Failed"
+		}
+	},
 	"project": {
 		"createTitle": "Create New Wiki Project",
 		"name": "Project Name",
@@ -158,7 +180,8 @@
 	"review": {
 		"title": "Review",
 		"clearResolved": "Clear resolved",
-		"allClear": "All clear — nothing to review"
+		"allClear": "All clear — nothing to review",
+		"resolvedDivider": "— Resolved —"
 	},
 	"settings": {
 		"title": "Settings",
@@ -183,7 +206,7 @@
 			"llm": "LLM Models",
 			"embedding": "Embeddings",
 			"multimodal": "Image Captioning",
-			"webSearch": "Web Search",
+			"webSearch": "Deep Research",
 			"network": "Network",
 			"sourceWatch": "Source Watch",
 			"scheduledImport": "Scheduled Import",
@@ -316,8 +339,23 @@
 				"costPoint4": "Prefer a local vision model (Qwen2.5-VL via LM Studio / Ollama) for bulk ingestion; reserve hosted vision APIs for one-off high-stakes documents."
 			},
 			"webSearch": {
-				"title": "Web Search",
-				"description": "Used by Deep Research to pull fresh external context.",
+				"title": "Deep Research",
+				"description": "Choose where Deep Research gathers context before synthesis.",
+				"deepResearchSources": "Research sources",
+				"deepResearchSourcesHint": "Web Search uses the selected online provider. AnyTXT searches local indexed files through ATGUI.exe on this machine.",
+				"sourceWeb": "Web Search",
+				"sourceAnyTxt": "AnyTXT",
+				"sourceBoth": "Both",
+				"webProviders": "Web Search providers",
+				"anyTxtTitle": "AnyTXT local file search",
+				"anyTxtDescription": "Use AnyTXT's local JSON-RPC API as a Deep Research source. Keep ATGUI.exe running before starting research.",
+				"anyTxtEndpoint": "AnyTXT endpoint",
+				"anyTxtFilterDir": "Search folder",
+				"anyTxtFilterDirPlaceholder": "Leave blank for AnyTXT's default scope; on Windows, set a drive or folder if needed",
+				"anyTxtFilterExt": "Extension filter",
+				"anyTxtLimit": "Max local results",
+				"anyTxtHint": "AnyTXT pattern text is sent directly to AnyTXT, so its native search syntax applies. AnyTXT API is local beta software; respect AnyTXT's usage terms.",
+				"anyTxtBroadDirWarning": "This folder looks very broad. Deep Research may send matching local file fragments, including sensitive content, to the selected LLM.",
 				"expand": "Expand",
 				"collapse": "Collapse",
 				"activate": "Activate",

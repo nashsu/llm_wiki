@@ -29,6 +29,28 @@
 		"knowledge": "知识库",
 		"files": "文件"
 	},
+	"research": {
+		"title": "深度研究",
+		"notConfigured": "深度研究信息来源尚未配置。请到设置 → 深度研究中配置网页搜索或 AnyTXT。",
+		"activeBadge": "{{running}} 个运行中{{queued, plural, =0 {} other {，{{queued}} 个排队中}}}",
+		"inputPlaceholder": "输入研究主题...",
+		"emptyTitle": "还没有研究任务",
+		"emptyHint": "在上方输入主题，或在待审阅中点击深度研究",
+		"sourcesCount": "来源（{{count}}）",
+		"anyTxtSource": "AnyTXT 来源",
+		"webSource": "网页来源",
+		"open": "打开",
+		"remove": "移除",
+		"status": {
+			"queued": "排队中",
+			"searching": "正在搜索来源...",
+			"synthesizing": "正在综合...",
+			"saving": "正在保存到 Wiki...",
+			"saved": "已保存",
+			"done": "已完成",
+			"failed": "失败"
+		}
+	},
 	"project": {
 		"createTitle": "新建 Wiki 项目",
 		"name": "项目名称",
@@ -158,7 +180,8 @@
 	"review": {
 		"title": "待审阅",
 		"clearResolved": "清除已解决",
-		"allClear": "一切正常，无需审阅"
+		"allClear": "一切正常，无需审阅",
+		"resolvedDivider": "— 已解决 —"
 	},
 	"settings": {
 		"title": "设置",
@@ -183,7 +206,7 @@
 			"llm": "LLM 模型",
 			"embedding": "向量嵌入",
 			"multimodal": "图片描述",
-			"webSearch": "网页搜索",
+			"webSearch": "深度研究",
 			"network": "网络",
 			"sourceWatch": "资料文件夹监控",
 			"scheduledImport": "定时导入",
@@ -316,8 +339,23 @@
 				"costPoint4": "批量 ingest 推荐用本地视觉模型（LM Studio / Ollama 跑 Qwen2.5-VL）；托管视觉 API 留给少量高价值文档。"
 			},
 			"webSearch": {
-				"title": "网页搜索",
-				"description": "Deep Research 会用它拉取最新的外部上下文。",
+				"title": "深度研究",
+				"description": "选择 Deep Research 在综合分析前从哪些来源收集上下文。",
+				"deepResearchSources": "研究信息来源",
+				"deepResearchSourcesHint": "网页搜索使用当前选中的在线搜索 Provider。AnyTXT 会通过本机 ATGUI.exe 的本地索引搜索文件内容。",
+				"sourceWeb": "网页搜索",
+				"sourceAnyTxt": "AnyTXT",
+				"sourceBoth": "两者都用",
+				"webProviders": "网页搜索 Provider",
+				"anyTxtTitle": "AnyTXT 本地文件搜索",
+				"anyTxtDescription": "把 AnyTXT 的本地 JSON-RPC API 作为 Deep Research 的信息来源。开始研究前请保持 ATGUI.exe 运行。",
+				"anyTxtEndpoint": "AnyTXT 端点",
+				"anyTxtFilterDir": "搜索文件夹",
+				"anyTxtFilterDirPlaceholder": "留空则使用 AnyTXT 默认范围；Windows 如需其他盘符请指定盘符或文件夹",
+				"anyTxtFilterExt": "扩展名过滤",
+				"anyTxtLimit": "最多本地结果数",
+				"anyTxtHint": "AnyTXT pattern 会直接传给 AnyTXT，因此会使用 AnyTXT 自己的搜索语法。AnyTXT API 是本地 Beta 能力，请遵守 AnyTXT 的使用条款。",
+				"anyTxtBroadDirWarning": "这个目录范围很大。Deep Research 可能会把匹配到的本地文件片段（包括敏感内容）发送给当前选择的 LLM。",
 				"expand": "展开",
 				"collapse": "收起",
 				"activate": "启用",

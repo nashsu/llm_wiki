@@ -31,6 +31,7 @@ interface LlmConfig {
 }
 
 export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "none"
+export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
   | "google"
   | "google_news"
@@ -65,6 +66,13 @@ export interface SearchProviderOverride {
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
 
+export interface AnyTxtConfig {
+  endpoint?: string
+  filterDir?: string
+  filterExt?: string
+  limit?: number
+}
+
 interface SearchApiConfig {
   provider: SearchProvider
   apiKey: string
@@ -73,6 +81,8 @@ interface SearchApiConfig {
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
+  deepResearchSource?: DeepResearchSource
+  anyTxt?: AnyTxtConfig
 }
 
 interface EmbeddingConfig {
@@ -337,6 +347,13 @@ export const useWikiStore = create<WikiState>((set) => ({
     searXngUrl: "",
     searXngCategories: ["general"],
     providerConfigs: {},
+    deepResearchSource: "web",
+    anyTxt: {
+      endpoint: "http://127.0.0.1:9920",
+      filterDir: "",
+      filterExt: "*",
+      limit: 20,
+    },
   },
 
   embeddingConfig: {

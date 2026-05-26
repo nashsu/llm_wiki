@@ -314,6 +314,57 @@ describe("reasoning controls", () => {
     expect(body.max_reasoning_tokens).toBeUndefined()
   })
 
+  it("maps Xiaomi MiMo reasoning off to thinking disabled and max_completion_tokens", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "mimo-v2.5-pro",
+      customEndpoint: "https://api.xiaomimimo.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1, max_tokens: 2048, reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "disabled" })
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(2048)
+    expect(body.temperature).toBe(0.1)
+  })
+
+  it("omits custom temperature for Xiaomi MiMo thinking requests on Token Plan OpenAI wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "custom-router-model",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiMode: "chat_completions",
+    })
+    const provider = getProviderConfig(cfg)
+    const body = provider.buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1, max_tokens: 4096, reasoning: { mode: "auto" } },
+    ) as Record<string, unknown>
+
+    expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
+    expect(body.temperature).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(4096)
+  })
+
+  it("uses Bearer auth for Xiaomi MiMo Token Plan Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-mimo",
+      model: "mimo-v2.5-pro",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/anthropic",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-mimo")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
+  })
+
   it("disables Qwen3 thinking on OpenAI-compatible local endpoints", () => {
     const cfg = mkConfig({
       provider: "custom",
