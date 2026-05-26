@@ -12,6 +12,7 @@ static DAEMON_STATUS: AtomicU8 = AtomicU8::new(0);
 
 const PORT: u16 = 19827;
 const MAX_BIND_RETRIES: u32 = 3;
+const ALLOWED_ORIGINS: &[&str] = &["http://localhost:1420", "tauri://localhost"];
 const MAX_RESTART_RETRIES: u32 = 10;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const RESTART_DELAY_SECS: u64 = 5;
@@ -87,8 +88,22 @@ pub fn start_clip_server() {
             println!("[Clip Server] Listening on http://127.0.0.1:{}", PORT);
 
             for mut request in server.incoming_requests() {
+                let cors_allow_origin: String = request
+                    .headers()
+                    .iter()
+                    .find(|h| h.field.equiv("Origin"))
+                    .map(|h| {
+                        let val = h.value.as_str();
+                        if ALLOWED_ORIGINS.contains(&val) {
+                            val.to_string()
+                        } else {
+                            "null".to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "null".to_string());
                 let cors_headers = vec![
-                    Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+                    Header::from_bytes("Access-Control-Allow-Origin", cors_allow_origin.as_str())
+                        .unwrap(),
                     Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                         .unwrap(),
                     Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
@@ -332,6 +347,23 @@ fn handle_clip(body: &str) -> String {
             Err(e) => return format!(r#"{{"ok":false,"error":"Lock error: {}"}}"#, e),
         }
     } else {
+        let normalized = project_path_from_body.replace('\\', "/");
+        let current = CURRENT_PROJECT
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let projects = ALL_PROJECTS
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let is_registered = current.replace('\\', "/") == normalized
+            || projects
+                .iter()
+                .any(|(_, p)| p.replace('\\', "/") == normalized);
+        if !is_registered {
+            return r#"{"ok":false,"error":"projectPath is not a registered project"}"#
+                .to_string();
+        }
         project_path_from_body
     };
     // Normalize to forward slashes so string comparisons against the
