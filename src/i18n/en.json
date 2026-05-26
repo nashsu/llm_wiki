@@ -150,7 +150,10 @@
       "semantic": "Semantic Issue"
     },
     "issues": "{{count}} issue",
-    "issues_plural": "{{count}} issues"
+    "issues_plural": "{{count}} issues",
+    "autoFix": "Auto Fix",
+    "fixAll": "Fix All",
+    "fixingAll": "Fixing all..."
   },
   "review": {
     "title": "Review",
