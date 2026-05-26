@@ -34,7 +34,8 @@ fn load_source_watch_config(
         .and_then(|state| state.get(project_id).or_else(|| state.get("default")))
         .cloned()
     {
-        if let Ok(config) = serde_json::from_value::<commands::file_sync::SourceWatchConfig>(value) {
+        if let Ok(config) = serde_json::from_value::<commands::file_sync::SourceWatchConfig>(value)
+        {
             return Some(config);
         }
     }
@@ -62,7 +63,8 @@ mod tests {
     #[test]
     fn source_watch_config_supports_legacy_enabled_shape() {
         let payload = json!({ "enabled": true });
-        let parsed = serde_json::from_value::<commands::file_sync::SourceWatchConfig>(payload).unwrap();
+        let parsed =
+            serde_json::from_value::<commands::file_sync::SourceWatchConfig>(payload).unwrap();
         let as_value = serde_json::to_value(parsed).unwrap();
         assert_eq!(as_value["enabled"], true);
     }

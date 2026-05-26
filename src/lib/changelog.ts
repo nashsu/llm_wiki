@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.14",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Updated DeepSeek model presets: default model is now `deepseek-v4-flash`; `deepseek-v4-pro` added as a suggested option. Older `deepseek-chat` and `deepseek-reasoner` remain selectable (DeepSeek plans to deprecate them on 2026-07-24).",
+        "Removed Ollama from the web-search provider list. Tavily, SerpApi, and SearXNG remain fully supported.",
+      ],
+      zh: [
+        "更新 DeepSeek 模型预设：默认模型改为 `deepseek-v4-flash`，新增 `deepseek-v4-pro` 可选项。旧版 `deepseek-chat` 和 `deepseek-reasoner` 仍可手动选用（DeepSeek 计划于 2026-07-24 弃用）。",
+        "移除 Ollama 的网页搜索 Provider 选项，Tavily、SerpApi 和 SearXNG 继续完整支持。",
+      ],
+    },
+  },
+  {
     version: "0.4.13",
     date: "2026-05-24",
     highlights: {

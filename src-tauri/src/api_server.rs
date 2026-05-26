@@ -368,7 +368,9 @@ mod tests {
         assert!(files::is_public_project_rel("Wiki/index.md"));
         assert!(files::is_public_project_rel("raw/sources/source.md"));
         assert!(files::is_public_project_rel("Raw/Sources/source.md"));
-        assert!(!files::is_public_project_rel(".llm-wiki/file-change-queue.json"));
+        assert!(!files::is_public_project_rel(
+            ".llm-wiki/file-change-queue.json"
+        ));
         assert!(!files::is_public_project_rel("wiki/.draft.md"));
     }
 

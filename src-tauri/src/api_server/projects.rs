@@ -98,12 +98,14 @@ pub(super) fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
     }
 
     if !current.is_empty() {
-        by_path.entry(current.clone()).or_insert_with(|| ProjectEntry {
-            id: read_project_id(&current).unwrap_or_else(|| current.clone()),
-            name: project_name_from_path(&current),
-            current: true,
-            path: current.clone(),
-        });
+        by_path
+            .entry(current.clone())
+            .or_insert_with(|| ProjectEntry {
+                id: read_project_id(&current).unwrap_or_else(|| current.clone()),
+                name: project_name_from_path(&current),
+                current: true,
+                path: current.clone(),
+            });
     }
 
     by_path.into_values().collect()

@@ -197,7 +197,10 @@ mod tests {
         let content = "See [[Attention Is All You Need|paper]] and [[knowledge-graph]].";
         assert_eq!(
             extract_wikilinks(content),
-            vec!["Attention Is All You Need".to_string(), "knowledge-graph".to_string()]
+            vec![
+                "Attention Is All You Need".to_string(),
+                "knowledge-graph".to_string()
+            ]
         );
     }
 

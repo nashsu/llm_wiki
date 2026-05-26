@@ -24,11 +24,7 @@ pub(super) fn invalidate_config_cache() {
     }
 }
 
-pub(super) fn is_authorized(
-    app: &AppHandle,
-    query: &str,
-    headers: &[(String, String)],
-) -> bool {
+pub(super) fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> bool {
     if !api_auth_required(app) {
         return true;
     }

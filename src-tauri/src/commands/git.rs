@@ -47,7 +47,11 @@ fn git_cmd(path: &str, args: &[&str]) -> Result<String, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
-            format!("git {} failed with status {}", args.join(" "), output.status)
+            format!(
+                "git {} failed with status {}",
+                args.join(" "),
+                output.status
+            )
         } else {
             stderr
         });
@@ -182,7 +186,15 @@ pub async fn git_commit(path: String, message: String) -> Result<String, String>
             // Use -c to avoid editor prompts
             git_cmd(
                 &path,
-                &["-c", "user.name=LLM Wiki", "-c", "user.email=wiki@llm-wiki.local", "commit", "-m", &message],
+                &[
+                    "-c",
+                    "user.name=LLM Wiki",
+                    "-c",
+                    "user.email=wiki@llm-wiki.local",
+                    "commit",
+                    "-m",
+                    &message,
+                ],
             )?;
 
             Ok(format!("Committed: {}", message))
@@ -199,8 +211,7 @@ pub async fn git_push(path: String) -> Result<String, String> {
             if !is_git_repo(&path) {
                 return Err("Not a git repository. Initialize git first.".to_string());
             }
-            git_cmd(&path, &["push", "origin", "HEAD"])
-                .map(|_| "Pushed successfully".to_string())
+            git_cmd(&path, &["push", "origin", "HEAD"]).map(|_| "Pushed successfully".to_string())
         })
     })
     .await
@@ -214,8 +225,7 @@ pub async fn git_pull(path: String) -> Result<String, String> {
             if !is_git_repo(&path) {
                 return Err("Not a git repository. Initialize git first.".to_string());
             }
-            git_cmd(&path, &["pull", "--rebase"])
-                .map(|_| "Pulled successfully".to_string())
+            git_cmd(&path, &["pull", "--rebase"]).map(|_| "Pulled successfully".to_string())
         })
     })
     .await

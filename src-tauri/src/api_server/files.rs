@@ -143,7 +143,9 @@ pub(super) fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String
 }
 
 pub(super) fn is_public_project_rel(rel: &str) -> bool {
-    let rel = super::normalize_path(rel).trim_start_matches('/').to_string();
+    let rel = super::normalize_path(rel)
+        .trim_start_matches('/')
+        .to_string();
     if rel
         .split('/')
         .any(|part| part.is_empty() || part.starts_with('.'))
@@ -221,7 +223,8 @@ fn list_tree(
     count: &mut usize,
 ) -> Result<Vec<ApiFileNode>, String> {
     let mut out = Vec::new();
-    let entries = fs::read_dir(path).map_err(|error| format!("Failed to list directory: {error}"))?;
+    let entries =
+        fs::read_dir(path).map_err(|error| format!("Failed to list directory: {error}"))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
         push_file_node(
@@ -253,7 +256,8 @@ fn push_file_node(
     if name.starts_with('.') {
         return Ok(());
     }
-    let meta = fs::symlink_metadata(path).map_err(|error| format!("Failed to read metadata: {error}"))?;
+    let meta =
+        fs::symlink_metadata(path).map_err(|error| format!("Failed to read metadata: {error}"))?;
     let file_type = meta.file_type();
     if file_type.is_symlink() {
         return Ok(());

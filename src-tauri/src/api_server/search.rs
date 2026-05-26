@@ -32,16 +32,15 @@ pub(super) fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> Ap
     }
     let top_k = req.top_k.unwrap_or(10).clamp(1, MAX_SEARCH_RESULTS);
     let query = req.query;
-    let query_embedding = match tauri::async_runtime::block_on(
-        commands::search::resolve_query_embedding(
+    let query_embedding =
+        match tauri::async_runtime::block_on(commands::search::resolve_query_embedding(
             &query,
             req.query_embedding,
             load_embedding_config(app),
-        ),
-    ) {
-        Ok(embedding) => embedding,
-        Err(error) => return err(400, error),
-    };
+        )) {
+            Ok(embedding) => embedding,
+            Err(error) => return err(400, error),
+        };
     match tauri::async_runtime::block_on(commands::search::search_project_inner(
         project.path.clone(),
         query,
@@ -83,7 +82,8 @@ mod tests {
             }
         });
         let value = payload.get("embeddingConfig").unwrap().clone();
-        let parsed = serde_json::from_value::<commands::search::SearchEmbeddingConfig>(value).unwrap();
+        let parsed =
+            serde_json::from_value::<commands::search::SearchEmbeddingConfig>(value).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.model, "m");
     }

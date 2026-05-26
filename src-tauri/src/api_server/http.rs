@@ -73,9 +73,14 @@ mod tests {
             })
             .collect();
 
-        assert!(pairs.iter().any(|(k, v)| k == "Access-Control-Allow-Origin" && v == "*"));
-        assert!(pairs.iter().any(|(k, v)| k == "Access-Control-Allow-Methods"
-            && v == "GET, POST, OPTIONS"));
-        assert!(pairs.iter().any(|(k, v)| k == "Content-Type" && v == "application/json"));
+        assert!(pairs
+            .iter()
+            .any(|(k, v)| k == "Access-Control-Allow-Origin" && v == "*"));
+        assert!(pairs
+            .iter()
+            .any(|(k, v)| k == "Access-Control-Allow-Methods" && v == "GET, POST, OPTIONS"));
+        assert!(pairs
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "application/json"));
     }
 }
