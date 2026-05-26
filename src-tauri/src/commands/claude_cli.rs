@@ -53,6 +53,32 @@ pub struct ClaudeMessage {
     content: String,
 }
 
+/// Read the `env` map from `~/.claude/settings.json` so we can inject
+/// provider-specific variables (CLAUDE_CODE_USE_BEDROCK, AWS_REGION, etc.)
+/// into the subprocess environment. Returns None if the file doesn't exist
+/// or lacks an `env` key.
+fn read_claude_settings_env() -> Option<HashMap<String, String>> {
+    let home = std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))?;
+    let settings_path = home.join(".claude").join("settings.json");
+    let contents = std::fs::read_to_string(settings_path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let env_obj = parsed.get("env")?.as_object()?;
+    let mut map = HashMap::new();
+    for (key, value) in env_obj {
+        if let Some(v) = value.as_str() {
+            map.insert(key.clone(), v.to_string());
+        }
+    }
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
+}
+
 fn find_claude_command() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -194,9 +220,29 @@ pub async fn claude_cli_spawn(
         .arg("stream-json")
         .arg("--input-format")
         .arg("stream-json")
-        .arg("--verbose")
-        .arg("--model")
-        .arg(&model);
+        .arg("--verbose");
+
+    // Inject env vars from ~/.claude/settings.json so that Bedrock/proxy
+    // auth works even when the Tauri app wasn't launched from a terminal
+    // that has these vars set. When Bedrock is active, skip the --model
+    // flag so the CLI uses ANTHROPIC_MODEL (which has the full Bedrock
+    // model ID like "global.anthropic.claude-opus-4-6-v1") instead of
+    // LLM Wiki's short model name which Bedrock won't recognize.
+    let settings_env = read_claude_settings_env();
+    let is_bedrock = settings_env
+        .as_ref()
+        .and_then(|m| m.get("CLAUDE_CODE_USE_BEDROCK"))
+        .is_some_and(|v| v == "1");
+
+    if !is_bedrock {
+        cmd.arg("--model").arg(&model);
+    }
+
+    if let Some(env_vars) = settings_env {
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+    }
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
