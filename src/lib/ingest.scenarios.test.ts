@@ -226,7 +226,7 @@ describe("ingest scenarios (fixture-driven)", () => {
     })
 
     pendingResponses = [
-      "analysis for project A",
+      "## Key Concepts\n- Config: project-a configuration file defining project settings and parameters.\n\n## Recommendations\n- Create source summary page.\n",
       [
         "---FILE: wiki/sources/config.md---",
         "---",
@@ -242,7 +242,7 @@ describe("ingest scenarios (fixture-driven)", () => {
         "analysis for project A",
         "---END FILE---",
       ].join("\n"),
-      "analysis for project B",
+      "## Key Concepts\n- Config: project-b configuration file defining project settings and parameters.\n\n## Recommendations\n- Create source summary page.\n",
       [
         "---FILE: wiki/sources/config.md---",
         "---",

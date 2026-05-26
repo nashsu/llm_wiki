@@ -31,7 +31,7 @@ interface LlmConfig {
   reasoning?: ReasoningConfig
 }
 
-export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "none"
+export type SearchProvider = "tavily" | "serpapi" | "searxng" | "none"
 export type SerpApiEngine =
   | "google"
   | "google_news"
@@ -61,7 +61,6 @@ export interface SearchProviderOverride {
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
-  ollamaUrl?: string
 }
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
@@ -72,7 +71,6 @@ interface SearchApiConfig {
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
-  ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
 }
 

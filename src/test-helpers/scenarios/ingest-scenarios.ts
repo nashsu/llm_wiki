@@ -133,7 +133,7 @@ export const ingestScenarios: IngestScenario[] = [
       content:
         "# FlashAttention\n\nFlashAttention is an IO-aware exact attention algorithm.\n",
     },
-    analysisResponse: "## Key Concepts\n- FlashAttention\n",
+    analysisResponse: "## Key Concepts\n- FlashAttention: An IO-aware exact attention algorithm that significantly reduces memory usage for large sequence lengths.\n\n## Recommendations\n- Create wiki/sources/flash-attention.md\n",
     generationResponse: [
       "---FILE: wiki/sources/flash-attention.md---",
       "---",
@@ -232,7 +232,7 @@ export const ingestScenarios: IngestScenario[] = [
       path: "raw/sources/transformer-survey.md",
       content: "# Transformer 综述\n\nTransformer 是一种基于注意力机制的神经网络架构。\n",
     },
-    analysisResponse: "## 核心概念\n- Transformer：基于注意力机制的架构\n",
+    analysisResponse: "## 核心概念\n- Transformer：基于注意力机制的神经网络架构，已成为自然语言处理领域的主流模型。\n\n## 建议\n- 创建 wiki/concepts/transformer.md 概念页面\n",
     generationResponse: [
       "---FILE: wiki/concepts/transformer.md---",
       "---",

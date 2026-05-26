@@ -315,7 +315,7 @@ export async function retryAllFailedTasks(): Promise<number> {
 
   let requeued = 0
   for (const task of queue) {
-    if (task.projectId !== currentProjectId || task.status !== "failed") continue
+    if (task.projectId !== currentProjectId || (task.status !== "failed" && task.status !== "permanently_failed")) continue
     task.status = "pending"
     task.error = null
     task.retryCount = 0
@@ -391,7 +391,7 @@ export async function cancelAllTasks(): Promise<number> {
   }
 
   const before = queue.length
-  queue = queue.filter((t) => t.status === "failed")
+  queue = queue.filter((t) => t.status === "failed" || t.status === "permanently_failed")
   const removed = before - queue.length
 
   await saveQueue(currentProjectPath)

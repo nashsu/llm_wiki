@@ -259,7 +259,7 @@ export function ActivityPanel() {
                 </span>
                 {queueSummary.failed > 0 && (
                   <button
-                    onClick={() => retryAllFailed()}
+                    onClick={() => retryAllFailedTasks()}
                     className="rounded px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
                     title="Retry all failed tasks"
                   >

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { flushMicrotasks } from "@/test-helpers/deferred"
 
 // Mock autoIngest so tests control success/failure timing.
@@ -83,6 +83,7 @@ async function activateProject(id: string = TEST_ID): Promise<void> {
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers()
   clearQueueState()
   mockAutoIngest.mockReset()
   mockReadFile.mockReset()
@@ -106,6 +107,10 @@ beforeEach(async () => {
   })
 
   await activateProject()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
@@ -156,12 +161,12 @@ describe("ingest-queue — retry & failure", () => {
     mockAutoIngest.mockRejectedValue(new Error("LLM error"))
 
     await enqueueIngest(TEST_ID, "bad.md")
-    await flushMicrotasks(30)
+    await vi.runAllTimersAsync()
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     const queue = getQueue()
     expect(queue).toHaveLength(1)
-    expect(queue[0].status).toBe("failed")
+    expect(queue[0].status).toBe("permanently_failed")
     expect(queue[0].error).toContain("LLM error")
     expect(queue[0].retryCount).toBe(3)
   })
@@ -173,7 +178,7 @@ describe("ingest-queue — retry & failure", () => {
       .mockResolvedValueOnce(["wiki/sources/foo.md"])
 
     await enqueueIngest(TEST_ID, "flaky.md")
-    await flushMicrotasks(30)
+    await vi.runAllTimersAsync()
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     expect(getQueue()).toHaveLength(0)
@@ -188,13 +193,13 @@ describe("ingest-queue — retry & failure", () => {
     mockAutoIngest.mockResolvedValue([])
 
     await enqueueIngest(TEST_ID, "refresh-abort.md")
-    await flushMicrotasks(30)
+    await vi.runAllTimersAsync()
 
     // Three retries were attempted — the task didn't just vanish.
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     const queue = getQueue()
     expect(queue).toHaveLength(1)
-    expect(queue[0].status).toBe("failed")
+    expect(queue[0].status).toBe("permanently_failed")
     expect(queue[0].error).toContain("no output files")
     expect(queue[0].retryCount).toBe(3)
   })
@@ -203,14 +208,14 @@ describe("ingest-queue — retry & failure", () => {
     mockAutoIngest.mockRejectedValue(new Error("always fails"))
 
     await enqueueIngest(TEST_ID, "x.md")
-    await flushMicrotasks(20)
-    expect(getQueue()[0].status).toBe("failed")
+    await vi.runAllTimersAsync()
+    expect(getQueue()[0].status).toBe("permanently_failed")
 
     const taskId = getQueue()[0].id
     expect(getQueue()[0].retryCount).toBe(3)
     mockAutoIngest.mockResolvedValueOnce(["wiki/sources/foo.md"])
     await retryTask(taskId)
-    await flushMicrotasks(10)
+    await vi.runAllTimersAsync()
 
     expect(getQueue()).toHaveLength(0)
   })
@@ -328,7 +333,7 @@ describe("ingest-queue — clearCompletedTasks & summary", () => {
   it("getQueueSummary returns accurate counts", async () => {
     mockAutoIngest.mockRejectedValue(new Error("fail"))
     await enqueueIngest(TEST_ID, "fail.md")
-    await flushMicrotasks(20)
+    await vi.runAllTimersAsync()
 
     const summary = getQueueSummary()
     expect(summary.failed).toBe(1)
@@ -339,7 +344,7 @@ describe("ingest-queue — clearCompletedTasks & summary", () => {
   it("clearCompletedTasks drops failed tasks", async () => {
     mockAutoIngest.mockRejectedValue(new Error("fail"))
     await enqueueIngest(TEST_ID, "f.md")
-    await flushMicrotasks(20)
+    await vi.runAllTimersAsync()
 
     expect(getQueue()).toHaveLength(1)
     await clearCompletedTasks()
@@ -378,7 +383,7 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     mockAutoIngest.mockRejectedValue(new Error("always fails"))
 
     await enqueueIngest(TEST_ID, "bad.md")
-    await flushMicrotasks(30)
+    await vi.runAllTimersAsync()
 
     expect(mockSweep).not.toHaveBeenCalled()
   })
