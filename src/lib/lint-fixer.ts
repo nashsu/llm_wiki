@@ -61,7 +61,7 @@ export async function fixAllLintResults(
 	llmConfig: LlmConfig,
 	onProgress?: (fixed: number, total: number) => void,
 ): Promise<{ fixed: LintResult[]; failed: LintResult[] }> {
-	const fixable = results.filter(isFixable);
+	const fixable = results.filter((r) => isFixable(r) && r.type !== "orphan");
 	const fixed: LintResult[] = [];
 	const failed: LintResult[] = [];
 
@@ -217,7 +217,7 @@ async function fixBrokenLink(
 		activity.updateItem(activityId, {
 			status: "done",
 			detail: `Fixed broken link in ${result.page}`,
-			filesWritten: [result.page],
+			filesWritten: [`wiki/${result.page}`],
 		});
 		return true;
 	} catch (err) {
@@ -312,7 +312,7 @@ async function fixNoOutlinks(
 		activity.updateItem(activityId, {
 			status: "done",
 			detail: `Added cross-refs to ${result.page}`,
-			filesWritten: [result.page],
+			filesWritten: [`wiki/${result.page}`],
 		});
 		return true;
 	} catch (err) {
