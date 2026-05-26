@@ -1,4 +1,4 @@
-import type { FileNode } from "@/types/wiki"
+import type { FileNode } from "@/types/wiki";
 
 /**
  * Strip Obsidian-style `[[target]]` or `[[target|alias]]` wrapping
@@ -10,11 +10,11 @@ import type { FileNode } from "@/types/wiki"
  * Non-wikilink input is returned with `slug === label === input`.
  */
 export function unwrapWikilink(s: string): { slug: string; label: string } {
-  const m = s.match(/^\[\[([^\]|]+)(?:\|([^\]]*))?\]\]$/)
-  if (!m) return { slug: s, label: s }
-  const target = m[1].trim()
-  const alias = m[2]?.trim()
-  return { slug: target, label: alias && alias.length > 0 ? alias : target }
+	const m = s.match(/^\[\[([^\]|]+)(?:\|([^\]]*))?\]\]$/);
+	if (!m) return { slug: s, label: s };
+	const target = m[1].trim();
+	const alias = m[2]?.trim();
+	return { slug: target, label: alias && alias.length > 0 ? alias : target };
 }
 
 /**
@@ -32,26 +32,30 @@ export function unwrapWikilink(s: string): { slug: string; label: string } {
  * arbitrarily is no worse than the prior text-only display.
  */
 export function findInTreeByName(
-  tree: FileNode[],
-  targetName: string,
-  pathContains: string,
+	tree: FileNode[],
+	targetName: string,
+	pathContains: string,
 ): string | null {
-  function walk(nodes: FileNode[]): string | null {
-    for (const node of nodes) {
-      if (node.is_dir) {
-        if (node.children) {
-          const r = walk(node.children)
-          if (r) return r
-        }
-        continue
-      }
-      if (node.name === targetName && node.path.includes(pathContains)) {
-        return node.path
-      }
-    }
-    return null
-  }
-  return walk(tree)
+	const lowerTarget = targetName.toLowerCase();
+	function walk(nodes: FileNode[]): string | null {
+		for (const node of nodes) {
+			if (node.is_dir) {
+				if (node.children) {
+					const r = walk(node.children);
+					if (r) return r;
+				}
+				continue;
+			}
+			if (
+				node.name.toLowerCase() === lowerTarget &&
+				node.path.includes(pathContains)
+			) {
+				return node.path;
+			}
+		}
+		return null;
+	}
+	return walk(tree);
 }
 
 /**
@@ -65,21 +69,21 @@ export function findInTreeByName(
  * in a same-named file from `raw/sources/`.
  */
 export function resolveRelatedSlug(
-  tree: FileNode[],
-  ref: string,
-  wikiRoot: string,
+	tree: FileNode[],
+	ref: string,
+	wikiRoot: string,
 ): string | null {
-  // Path-like → resolve relative to project root (one segment up
-  // from wikiRoot).
-  if (ref.includes("/")) {
-    const projectRoot = wikiRoot.replace(/\/wiki$/, "")
-    const target = `${projectRoot}/${ref}`
-    const found = findInTreeByPath(tree, target)
-    return found && found.includes(`${wikiRoot}/`) ? found : null
-  }
+	// Path-like → resolve relative to project root (one segment up
+	// from wikiRoot).
+	if (ref.includes("/")) {
+		const projectRoot = wikiRoot.replace(/\/wiki$/, "");
+		const target = `${projectRoot}/${ref}`;
+		const found = findInTreeByPath(tree, target);
+		return found && found.includes(`${wikiRoot}/`) ? found : null;
+	}
 
-  const filename = ref.endsWith(".md") ? ref : `${ref}.md`
-  return findInTreeByName(tree, filename, `${wikiRoot}/`)
+	const filename = ref.endsWith(".md") ? ref : `${ref}.md`;
+	return findInTreeByName(tree, filename, `${wikiRoot}/`);
 }
 
 /**
@@ -93,53 +97,54 @@ export function resolveRelatedSlug(
  * back to raw/sources/. Returns null if nothing matches.
  */
 export function resolveSourceName(
-  tree: FileNode[],
-  ref: string,
-  sourcesRoot: string,
+	tree: FileNode[],
+	ref: string,
+	sourcesRoot: string,
 ): string | null {
-  // sourcesRoot is `<project>/raw/sources` — derive project root
-  // and wiki/ root from it.
-  const projectRoot = sourcesRoot.replace(/\/raw\/sources$/, "")
-  const wikiSources = `${projectRoot}/wiki/sources`
+	// sourcesRoot is `<project>/raw/sources` — derive project root
+	// and wiki/ root from it.
+	const projectRoot = sourcesRoot.replace(/\/raw\/sources$/, "");
+	const wikiSources = `${projectRoot}/wiki/sources`;
 
-  if (ref.includes("/")) {
-    const normalizedRef = ref.replace(/\\/g, "/").replace(/^\/+/, "")
-    const candidates = normalizedRef.startsWith("raw/sources/") ||
-      normalizedRef.startsWith("wiki/")
-      ? [`${projectRoot}/${normalizedRef}`]
-      : [
-          `${sourcesRoot}/${normalizedRef}`,
-          `${projectRoot}/${normalizedRef}`,
-        ]
+	if (ref.includes("/")) {
+		const normalizedRef = ref.replace(/\\/g, "/").replace(/^\/+/, "");
+		const candidates =
+			normalizedRef.startsWith("raw/sources/") ||
+			normalizedRef.startsWith("wiki/")
+				? [`${projectRoot}/${normalizedRef}`]
+				: [
+						`${sourcesRoot}/${normalizedRef}`,
+						`${projectRoot}/${normalizedRef}`,
+					];
 
-    for (const target of candidates) {
-      const found = findInTreeByPath(tree, target)
-      if (found) return found
-    }
-    return null
-  }
+		for (const target of candidates) {
+			const found = findInTreeByPath(tree, target);
+			if (found) return found;
+		}
+		return null;
+	}
 
-  // Bare .md filename → look in wiki/sources/ first (ingest's
-  // canonical home for source-summary pages).
-  if (ref.endsWith(".md")) {
-    const inWiki = findInTreeByName(tree, ref, `${wikiSources}/`)
-    if (inWiki) return inWiki
-  }
+	// Bare .md filename → look in wiki/sources/ first (ingest's
+	// canonical home for source-summary pages).
+	if (ref.endsWith(".md")) {
+		const inWiki = findInTreeByName(tree, ref, `${wikiSources}/`);
+		if (inWiki) return inWiki;
+	}
 
-  // Otherwise, search raw/sources/.
-  return findInTreeByName(tree, ref, `${sourcesRoot}/`)
+	// Otherwise, search raw/sources/.
+	return findInTreeByName(tree, ref, `${sourcesRoot}/`);
 }
 
 function findInTreeByPath(tree: FileNode[], targetPath: string): string | null {
-  function walk(nodes: FileNode[]): string | null {
-    for (const node of nodes) {
-      if (node.path === targetPath) return node.path
-      if (node.is_dir && node.children) {
-        const r = walk(node.children)
-        if (r) return r
-      }
-    }
-    return null
-  }
-  return walk(tree)
+	function walk(nodes: FileNode[]): string | null {
+		for (const node of nodes) {
+			if (node.path === targetPath) return node.path;
+			if (node.is_dir && node.children) {
+				const r = walk(node.children);
+				if (r) return r;
+			}
+		}
+		return null;
+	}
+	return walk(tree);
 }
