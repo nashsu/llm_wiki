@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc",
+		"test": "npm run build && node --test dist/*.node.js",
 		"start": "node --experimental-strip-types src/main.ts"
 	},
 	"dependencies": {

@@ -64,6 +64,24 @@ struct AgentRequest {
     options: AgentRequestOptions,
 }
 
+fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
+    AgentRequest {
+        r#type: "query",
+        stream_id: args.stream_id,
+        prompt: args.prompt,
+        options: AgentRequestOptions {
+            system_prompt: args.system_prompt,
+            cwd: args.cwd,
+            model: args.model,
+            max_turns: args.max_turns,
+            max_budget_usd: args.max_budget_usd,
+            api_key: args.api_key,
+            base_url: args.base_url,
+            persist_session: false,
+        },
+    }
+}
+
 #[tauri::command]
 pub async fn agent_spawn(
     app: AppHandle,
@@ -103,21 +121,8 @@ pub async fn agent_spawn(
         .take()
         .ok_or_else(|| "Missing stderr handle".to_string())?;
 
-    let request = AgentRequest {
-        r#type: "query",
-        stream_id: args.stream_id.clone(),
-        prompt: args.prompt,
-        options: AgentRequestOptions {
-            system_prompt: args.system_prompt,
-            cwd: args.cwd,
-            model: args.model,
-            max_turns: args.max_turns,
-            max_budget_usd: args.max_budget_usd,
-            api_key: args.api_key,
-            base_url: args.base_url,
-            persist_session: false,
-        },
-    };
+    let stream_id = args.stream_id.clone();
+    let request = build_agent_request(args);
     stdin
         .write_all(
             format!(
@@ -135,7 +140,6 @@ pub async fn agent_spawn(
         .map_err(|e| format!("Failed to flush sidecar stdin: {e}"))?;
     drop(stdin);
 
-    let stream_id = args.stream_id;
     state.children.lock().await.insert(stream_id.clone(), child);
 
     let children = Arc::clone(&state.children);
@@ -188,6 +192,80 @@ pub async fn agent_spawn(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    fn args_with_optional_fields_none() -> AgentSpawnArgs {
+        AgentSpawnArgs {
+            stream_id: "stream-1".to_string(),
+            prompt: "hello".to_string(),
+            system_prompt: None,
+            cwd: None,
+            model: None,
+            max_turns: None,
+            max_budget_usd: None,
+            api_key: None,
+            base_url: None,
+        }
+    }
+
+    #[test]
+    fn agent_request_omits_absent_optional_fields() {
+        let request = build_agent_request(args_with_optional_fields_none());
+        let value: Value = serde_json::to_value(request).unwrap();
+        let options = value.get("options").unwrap();
+
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("query"));
+        assert_eq!(
+            value.get("streamId").and_then(Value::as_str),
+            Some("stream-1")
+        );
+        assert_eq!(
+            options.get("persistSession").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(options.get("cwd").is_none());
+        assert!(options.get("maxBudgetUsd").is_none());
+        assert!(options.get("apiKey").is_none());
+    }
+
+    #[test]
+    fn agent_request_serializes_present_optional_fields_as_camel_case() {
+        let mut args = args_with_optional_fields_none();
+        args.system_prompt = Some("system".to_string());
+        args.cwd = Some("/tmp/wiki".to_string());
+        args.model = Some("claude-sonnet-4-20250514".to_string());
+        args.max_turns = Some(3);
+        args.max_budget_usd = Some(0.25);
+        args.api_key = Some("test-key".to_string());
+        args.base_url = Some("http://localhost:4000".to_string());
+
+        let request = build_agent_request(args);
+        let value: Value = serde_json::to_value(request).unwrap();
+        let options = value.get("options").unwrap();
+
+        assert_eq!(
+            options.get("systemPrompt").and_then(Value::as_str),
+            Some("system")
+        );
+        assert_eq!(
+            options.get("cwd").and_then(Value::as_str),
+            Some("/tmp/wiki")
+        );
+        assert_eq!(options.get("maxTurns").and_then(Value::as_u64), Some(3));
+        assert_eq!(
+            options.get("maxBudgetUsd").and_then(Value::as_f64),
+            Some(0.25)
+        );
+        assert_eq!(
+            options.get("baseUrl").and_then(Value::as_str),
+            Some("http://localhost:4000")
+        );
+    }
 }
 
 #[tauri::command]
