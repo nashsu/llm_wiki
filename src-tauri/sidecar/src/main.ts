@@ -9,6 +9,14 @@ function send(msg: AgentMessage): void {
 	process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+function omitNullish<T extends Record<string, unknown>>(
+	value: T,
+): Partial<T> {
+	return Object.fromEntries(
+		Object.entries(value).filter(([, item]) => item !== null && item !== undefined),
+	) as Partial<T>;
+}
+
 async function handleRequest(
 	req: AgentRequest | AgentKillRequest,
 ): Promise<void> {
@@ -29,20 +37,22 @@ async function handleRequest(
 	if (req.options.baseUrl) env.ANTHROPIC_BASE_URL = req.options.baseUrl;
 
 	try {
+		const options = omitNullish({
+			systemPrompt: req.options.systemPrompt,
+			cwd: req.options.cwd,
+			model: req.options.model,
+			maxTurns: req.options.maxTurns ?? 10,
+			maxBudgetUsd: req.options.maxBudgetUsd,
+			persistSession: req.options.persistSession ?? false,
+			permissionMode: "bypassPermissions",
+			allowDangerouslySkipPermissions: true,
+			abortController,
+			env,
+		});
+
 		const q = query({
 			prompt: req.prompt,
-			options: {
-				systemPrompt: req.options.systemPrompt,
-				cwd: req.options.cwd,
-				model: req.options.model,
-				maxTurns: req.options.maxTurns ?? 10,
-				maxBudgetUsd: req.options.maxBudgetUsd,
-				persistSession: req.options.persistSession ?? false,
-				permissionMode: "bypassPermissions",
-				allowDangerouslySkipPermissions: true,
-				abortController,
-				env,
-			},
+			options,
 		});
 
 		for await (const message of q) {
@@ -91,5 +101,4 @@ rl.on("close", () => {
 	}, 1000);
 });
 
-// Signal parent that sidecar is ready
-send({ streamId: "", type: "done", data: { status: "ready" } });
+console.error("[sidecar] ready");

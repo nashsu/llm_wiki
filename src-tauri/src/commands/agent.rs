@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -20,10 +21,9 @@ pub struct AgentState {
     children: Arc<Mutex<HashMap<String, Child>>>,
 }
 
-#[tauri::command]
-pub async fn agent_spawn(
-    app: AppHandle,
-    state: State<'_, AgentState>,
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSpawnArgs {
     stream_id: String,
     prompt: String,
     system_prompt: Option<String>,
@@ -33,7 +33,47 @@ pub async fn agent_spawn(
     max_budget_usd: Option<f64>,
     api_key: Option<String>,
     base_url: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentRequestOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_budget_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_url: Option<String>,
+    persist_session: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentRequest {
+    r#type: &'static str,
+    stream_id: String,
+    prompt: String,
+    options: AgentRequestOptions,
+}
+
+#[tauri::command]
+pub async fn agent_spawn(
+    app: AppHandle,
+    state: State<'_, AgentState>,
+    args: AgentSpawnArgs,
 ) -> Result<(), String> {
+    eprintln!(
+        "[agent_spawn] stream_id={}, model={:?}, base_url={:?}",
+        args.stream_id, args.model, args.base_url
+    );
     let sidecar_cmd = find_sidecar_command()?;
 
     let mut cmd = Command::new(&sidecar_cmd[0]);
@@ -63,23 +103,30 @@ pub async fn agent_spawn(
         .take()
         .ok_or_else(|| "Missing stderr handle".to_string())?;
 
-    let request = serde_json::json!({
-        "type": "query",
-        "streamId": stream_id,
-        "prompt": prompt,
-        "options": {
-            "systemPrompt": system_prompt,
-            "cwd": cwd,
-            "model": model,
-            "maxTurns": max_turns,
-            "maxBudgetUsd": max_budget_usd,
-            "apiKey": api_key,
-            "baseUrl": base_url,
-            "persistSession": false,
-        }
-    });
+    let request = AgentRequest {
+        r#type: "query",
+        stream_id: args.stream_id.clone(),
+        prompt: args.prompt,
+        options: AgentRequestOptions {
+            system_prompt: args.system_prompt,
+            cwd: args.cwd,
+            model: args.model,
+            max_turns: args.max_turns,
+            max_budget_usd: args.max_budget_usd,
+            api_key: args.api_key,
+            base_url: args.base_url,
+            persist_session: false,
+        },
+    };
     stdin
-        .write_all(format!("{}\n", request).as_bytes())
+        .write_all(
+            format!(
+                "{}\n",
+                serde_json::to_string(&request)
+                    .map_err(|e| format!("Failed to serialize agent request: {e}"))?
+            )
+            .as_bytes(),
+        )
         .await
         .map_err(|e| format!("Failed to write to sidecar stdin: {e}"))?;
     stdin
@@ -88,11 +135,8 @@ pub async fn agent_spawn(
         .map_err(|e| format!("Failed to flush sidecar stdin: {e}"))?;
     drop(stdin);
 
-    state
-        .children
-        .lock()
-        .await
-        .insert(stream_id.clone(), child);
+    let stream_id = args.stream_id;
+    state.children.lock().await.insert(stream_id.clone(), child);
 
     let children = Arc::clone(&state.children);
     let app_for_task = app.clone();
@@ -120,7 +164,6 @@ pub async fn agent_spawn(
 
         let stderr_output = stderr_task.await.unwrap_or_default();
 
-        // Remove child from map and get exit code
         let exit_code = {
             let mut map = children.lock().await;
             if let Some(mut child) = map.remove(&stream_id_task) {
@@ -148,10 +191,7 @@ pub async fn agent_spawn(
 }
 
 #[tauri::command]
-pub async fn agent_kill(
-    state: State<'_, AgentState>,
-    stream_id: String,
-) -> Result<(), String> {
+pub async fn agent_kill(state: State<'_, AgentState>, stream_id: String) -> Result<(), String> {
     if let Some(mut child) = state.children.lock().await.remove(&stream_id) {
         child
             .start_kill()
@@ -162,13 +202,11 @@ pub async fn agent_kill(
 
 #[tauri::command]
 pub fn agent_detect() -> Result<bool, String> {
-    // Check if node is available on PATH
-    which::which("node").map(|_| true).map_err(|e| e.to_string())
+    which::which("node")
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
-/// Returns the command + args to launch the sidecar.
-/// In dev mode: `node --experimental-strip-types <path>/src/main.ts`
-/// In release: TBD (bundled binary)
 fn find_sidecar_command() -> Result<Vec<String>, String> {
     #[cfg(debug_assertions)]
     {

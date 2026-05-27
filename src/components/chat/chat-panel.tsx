@@ -166,29 +166,20 @@ export function ChatPanel() {
 			const store = useWikiStore.getState();
 			const apiKey = store.llmConfig.apiKey;
 			const rawModel = store.llmConfig.model || "";
-			let baseUrl = store.llmConfig.customEndpoint || undefined;
-			if (!baseUrl && apiKey.startsWith("sk-or-")) {
-				baseUrl = "https://openrouter.ai/api";
-			}
-			// Claude Code binary only accepts Claude model IDs — fall back if non-Claude model is configured
+			// Route through LiteLLM Proxy — translates Anthropic Messages API to any provider
+			const baseUrl = "http://localhost:4000";
 			const model = rawModel.startsWith("claude-")
 				? rawModel
 				: "claude-sonnet-4-20250514";
 			if (!apiKey) {
-				addMessage(
-					"assistant",
-					"No API key configured. Set one in Settings.",
-				);
+				addMessage("assistant", "No API key configured. Set one in Settings.");
 				return;
 			}
 			let convId = useChatStore.getState().activeConversationId;
 			if (!convId) {
 				convId = createConversation();
 			}
-			addMessage(
-				"user",
-				"Say hello and list 3 things you can do.",
-			);
+			addMessage("user", "Say hello and list 3 things you can do.");
 			setStreaming(true);
 			setAgentRunning(true);
 			const ctrl = new AbortController();
@@ -205,7 +196,7 @@ export function ChatPanel() {
 				{
 					onMessage: (msg) => {
 						if (msg.type === "result") {
-						console.log("[agent] result:", msg);
+							console.log("[agent] result:", msg);
 						}
 					},
 					onToken: (text) => appendStreamToken(text),
@@ -216,8 +207,12 @@ export function ChatPanel() {
 						abortRef.current = null;
 					},
 					onError: (err) => {
-						addMessage("assistant", `Agent error: ${err.message}`);
-						finalizeStream();
+						console.error("[handleTestAgent] agent error:", err);
+						addMessage(
+							"assistant",
+							`Agent error: ${err.message}\n${err.stack?.slice(0, 2000)}`,
+						);
+						finalizeStream("");
 						setAgentRunning(false);
 						abortRef.current = null;
 					},
@@ -225,11 +220,14 @@ export function ChatPanel() {
 				ctrl.signal,
 			);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			console.error("[handleTestAgent] full error:", err);
+			const msg =
+				err instanceof Error
+					? `${err.message} | ${err.stack?.slice(0, 300)}`
+					: String(err);
 			addMessage("assistant", `Agent error: ${msg}`);
 			setAgentRunning(false);
 			setStreaming(false);
-			alert(`Agent error: ${msg}`);
 		}
 	}, [
 		addMessage,

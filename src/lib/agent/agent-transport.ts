@@ -72,6 +72,10 @@ export async function streamAgent(
 
 	try {
 		let emittedText = "";
+		console.log(
+			"[agent-transport] step 1: setting up listeners, streamId=",
+			streamId,
+		);
 
 		unlistenData = await listen<string>(`agent:${streamId}`, (event) => {
 			try {
@@ -174,16 +178,42 @@ export async function streamAgent(
 			},
 		);
 
+		console.log("[agent-transport] step 2: listeners ready, building payload");
 		const payload: InvokePayload = {
 			streamId,
 			prompt,
 			...options,
 		};
-		await invoke("agent_spawn", payload);
+		console.log(
+			"[agent-transport] step 3: invoking agent_spawn, payload keys:",
+			Object.keys(payload).join(","),
+		);
+		try {
+			await invoke("agent_spawn", { args: payload });
+			console.log("[agent-transport] step 4: invoke returned successfully");
+		} catch (invokeErr) {
+			console.error("[agent-transport] invoke FAILED:", invokeErr);
+			throw invokeErr;
+		}
 	} catch (err) {
+		console.error(
+			"[agent-transport] OUTER CATCH — error type:",
+			typeof err,
+			"value:",
+			err,
+		);
 		finishWith(() => {
-			const message = err instanceof Error ? err.message : String(err);
-			callbacks.onError(err instanceof Error ? err : new Error(message));
+			let message: string;
+			if (err instanceof Error) {
+				message = `[outer-catch] ${err.constructor.name}: ${err.message}`;
+			} else if (err === null) {
+				message = "[outer-catch] null error thrown";
+			} else if (err === undefined) {
+				message = "[outer-catch] undefined error thrown";
+			} else {
+				message = `[outer-catch] ${typeof err}: ${String(err)}`;
+			}
+			callbacks.onError(new Error(message));
 		});
 	} finally {
 		signal?.removeEventListener("abort", abortListener);
