@@ -162,51 +162,75 @@ export function ChatPanel() {
 	// TEMP: Agent sidecar test button — remove after Phase 1 verification
 	const [agentRunning, setAgentRunning] = useState(false);
 	const handleTestAgent = useCallback(async () => {
-		const store = useWikiStore.getState();
-		const apiKey = store.llmConfig.apiKey;
-		if (!apiKey) {
-			return;
-		}
-		let convId = useChatStore.getState().activeConversationId;
-		if (!convId) {
-			convId = createConversation();
-		}
-		addMessage("user", "[Agent Test] Say hello and list 3 things you can do.");
-		setStreaming(true);
-		setAgentRunning(true);
-		const ctrl = new AbortController();
-		abortRef.current = ctrl;
-		await streamAgent(
-			"Say hello and list 3 things you can do as a wiki assistant. Be brief.",
-			{
-				systemPrompt: "You are a helpful wiki assistant. Be concise.",
-				maxTurns: 3,
-				apiKey,
-				baseUrl: store.llmConfig.customEndpoint || undefined,
-				model: store.llmConfig.model || undefined,
-			},
-			{
-				onMessage: (msg) => {
-					if (msg.type === "result") {
-						// eslint-disable-next-line no-console
+		try {
+			const store = useWikiStore.getState();
+			const apiKey = store.llmConfig.apiKey;
+			const rawModel = store.llmConfig.model || "";
+			let baseUrl = store.llmConfig.customEndpoint || undefined;
+			if (!baseUrl && apiKey.startsWith("sk-or-")) {
+				baseUrl = "https://openrouter.ai/api";
+			}
+			// Claude Code binary only accepts Claude model IDs — fall back if non-Claude model is configured
+			const model = rawModel.startsWith("claude-")
+				? rawModel
+				: "claude-sonnet-4-20250514";
+			if (!apiKey) {
+				addMessage(
+					"assistant",
+					"No API key configured. Set one in Settings.",
+				);
+				return;
+			}
+			let convId = useChatStore.getState().activeConversationId;
+			if (!convId) {
+				convId = createConversation();
+			}
+			addMessage(
+				"user",
+				"Say hello and list 3 things you can do.",
+			);
+			setStreaming(true);
+			setAgentRunning(true);
+			const ctrl = new AbortController();
+			abortRef.current = ctrl;
+			await streamAgent(
+				"Say hello and list 3 things you can do as a wiki assistant. Be brief.",
+				{
+					systemPrompt: "You are a helpful wiki assistant. Be concise.",
+					maxTurns: 3,
+					apiKey,
+					baseUrl,
+					model,
+				},
+				{
+					onMessage: (msg) => {
+						if (msg.type === "result") {
 						console.log("[agent] result:", msg);
-					}
+						}
+					},
+					onToken: (text) => appendStreamToken(text),
+					onDone: () => {
+						const text = useChatStore.getState().streamingContent;
+						finalizeStream(text || "");
+						setAgentRunning(false);
+						abortRef.current = null;
+					},
+					onError: (err) => {
+						addMessage("assistant", `Agent error: ${err.message}`);
+						finalizeStream();
+						setAgentRunning(false);
+						abortRef.current = null;
+					},
 				},
-				onToken: (text) => appendStreamToken(text),
-				onDone: () => {
-					finalizeStream();
-					setAgentRunning(false);
-					abortRef.current = null;
-				},
-				onError: (err) => {
-					addMessage("assistant", `[Agent Error] ${err.message}`);
-					finalizeStream();
-					setAgentRunning(false);
-					abortRef.current = null;
-				},
-			},
-			ctrl.signal,
-		);
+				ctrl.signal,
+			);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			addMessage("assistant", `Agent error: ${msg}`);
+			setAgentRunning(false);
+			setStreaming(false);
+			alert(`Agent error: ${msg}`);
+		}
 	}, [
 		addMessage,
 		appendStreamToken,

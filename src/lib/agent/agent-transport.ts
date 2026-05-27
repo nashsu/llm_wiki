@@ -71,26 +71,63 @@ export async function streamAgent(
 	signal?.addEventListener("abort", abortListener);
 
 	try {
-		// Track text already emitted to avoid double-counting. The SDK can
-		// emit multiple assistant messages for the same turn as the content
-		// grows (partial messages). We diff against what we've already sent.
 		let emittedText = "";
 
 		unlistenData = await listen<string>(`agent:${streamId}`, (event) => {
 			try {
-				const wrapper = JSON.parse(event.payload) as {
+				const raw = event.payload;
+				console.log("[agent-transport] raw:", raw?.slice(0, 500));
+
+				const wrapper = JSON.parse(raw) as {
 					streamId: string;
 					type: string;
 					data: SDKMessage;
 				};
 
 				const msg = wrapper.data;
+				if (!msg) {
+					console.log(
+						"[agent-transport] null data, wrapper.type:",
+						wrapper.type,
+					);
+					return;
+				}
+
+				// Handle sidecar-level errors (wrapper.type === "error")
+				if (wrapper.type === "error") {
+					const errMsg =
+						(msg as Record<string, unknown>).error ??
+						(msg as Record<string, unknown>).stack ??
+						"Unknown sidecar error";
+					console.error("[agent-transport] sidecar error:", errMsg);
+					finishWith(() => callbacks.onError(new Error(String(errMsg))));
+					return;
+				}
+
+				console.log(
+					"[agent-transport] msg.type:",
+					msg.type,
+					"keys:",
+					Object.keys(msg).join(","),
+				);
 				callbacks.onMessage(msg);
 
 				if (msg.type === "assistant") {
 					const assistant = msg as SDKAssistantMessage;
+					console.log(
+						"[agent-transport] assistant message keys:",
+						Object.keys(assistant).join(","),
+						"has message?",
+						"message" in assistant,
+					);
 					const content = assistant.message?.content;
-					if (!Array.isArray(content)) return;
+					if (!Array.isArray(content)) {
+						console.log(
+							"[agent-transport] no array content, assistant:",
+							JSON.stringify(assistant).slice(0, 300),
+						);
+						return;
+					}
 					const fullText = extractText(content);
 					if (fullText.startsWith(emittedText)) {
 						const novel = fullText.slice(emittedText.length);
@@ -104,18 +141,25 @@ export async function streamAgent(
 
 				if (msg.type === "result") {
 					const result = msg as SDKResultMessage;
-					// Reset for next turn
+					console.log(
+						"[agent-transport] result:",
+						JSON.stringify(result).slice(0, 200),
+					);
 					emittedText = "";
 					callbacks.onToken("\n");
 				}
-			} catch {
-				// ignore parse errors
+			} catch (err) {
+				console.error("[agent-transport] parse error:", err);
 			}
 		});
 
 		unlistenDone = await listen<AgentDonePayload>(
 			`agent:${streamId}:done`,
 			(event) => {
+				console.log(
+					"[agent-transport] done event:",
+					JSON.stringify(event.payload),
+				);
 				const { code, stderr } = event.payload ?? {};
 				if (code !== undefined && code !== 0) {
 					const detail = stderr?.trim() ? `: ${stderr.trim()}` : "";

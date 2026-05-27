@@ -51,10 +51,14 @@ async function handleRequest(
 
 		send({ streamId: req.streamId, type: "done", data: null });
 	} catch (err) {
+		console.error("[sidecar] query error:", err);
 		send({
 			streamId: req.streamId,
 			type: "error",
-			data: { error: err instanceof Error ? err.message : String(err) },
+			data: {
+				error: err instanceof Error ? err.message : String(err),
+				stack: err instanceof Error ? err.stack : undefined,
+			},
 		});
 	} finally {
 		activeQueries.delete(req.streamId);
@@ -70,6 +74,21 @@ rl.on("line", (line) => {
 	} catch {
 		// ignore malformed input
 	}
+});
+
+// Keep process alive even after stdin EOF — active queries hold refs.
+// When all queries finish and stdin is closed, exit cleanly.
+rl.on("close", () => {
+	// Don't exit immediately — active query() generators keep the event loop alive.
+	// This setInterval prevents Node from exiting while queries are running.
+	const keepAlive = setInterval(() => {}, 60000);
+	const check = setInterval(() => {
+		if (activeQueries.size === 0) {
+			clearInterval(keepAlive);
+			clearInterval(check);
+			process.exit(0);
+		}
+	}, 1000);
 });
 
 // Signal parent that sidecar is ready

@@ -69,6 +69,7 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
+  const content = message.content ?? ""
   const [hovered, setHovered] = useState(false)
 
   return (
@@ -97,16 +98,16 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
           }`}
         >
           {isUser ? (
-            <p dir="auto" className="whitespace-pre-wrap break-words">{message.content}</p>
+            <p dir="auto" className="whitespace-pre-wrap break-words">{content}</p>
           ) : (
-            <MarkdownContent content={message.content} />
+            <MarkdownContent content={content} />
           )}
         </div>
-        {isAssistant && <CitedReferencesPanel content={message.content} savedReferences={message.references} />}
+        {isAssistant && <CitedReferencesPanel content={content} savedReferences={message.references} />}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
-            <CopyButton content={message.content} />
-            <SaveToWikiButton content={message.content} visible={true} />
+            <CopyButton content={content} />
+            <SaveToWikiButton content={content} visible={true} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
