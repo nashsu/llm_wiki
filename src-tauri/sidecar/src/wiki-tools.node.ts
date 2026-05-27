@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { assertWikiMarkdownPath } from "./wiki-paths.js";
 import { createLlmWikiTools, type WikiChangedPayload } from "./wiki-tools.js";
 
 function toolByName(name: string, context: Parameters<typeof createLlmWikiTools>[0]) {
@@ -25,6 +26,21 @@ async function tempProject(): Promise<string> {
 	await fs.writeFile(path.join(dir, "wiki", "index.md"), "# Index\n\nThis is a useful page.\n", "utf8");
 	return dir;
 }
+
+test("wiki markdown paths decode URI encoding before validation", () => {
+	assert.equal(
+		assertWikiMarkdownPath("wiki/entities%2Fencoded.md"),
+		"wiki/entities/encoded.md",
+	);
+	assert.throws(
+		() => assertWikiMarkdownPath("wiki%2F..%2Fsecret.md"),
+		/safe project-relative path/,
+	);
+	assert.throws(
+		() => assertWikiMarkdownPath("wiki/%E0%A4%A.md"),
+		/invalid URI encoding/,
+	);
+});
 
 test("search_pages calls local API with auth and clamped topK", async () => {
 	const calls: Array<{ url: string; init?: RequestInit }> = [];

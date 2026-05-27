@@ -116,10 +116,13 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
     }
 }
 
-fn inject_internal_api_token(args: &mut AgentSpawnArgs) {
+fn inject_internal_api_token(args: &mut AgentSpawnArgs) -> Option<String> {
     if args.enable_wiki_tools != Some(false) && args.project_path.is_some() {
-        args.api_token = Some(api_server::agent_internal_api_token());
+        let token = api_server::new_agent_internal_api_token();
+        args.api_token = Some(token.clone());
+        return Some(token);
     }
+    None
 }
 
 #[tauri::command]
@@ -162,23 +165,28 @@ pub async fn agent_spawn(
         .ok_or_else(|| "Missing stderr handle".to_string())?;
 
     let stream_id = args.stream_id.clone();
-    inject_internal_api_token(&mut args);
+    let internal_api_token = inject_internal_api_token(&mut args);
     let request = build_agent_request(args);
-    stdin
-        .write_all(
-            format!(
-                "{}\n",
-                serde_json::to_string(&request)
-                    .map_err(|e| format!("Failed to serialize agent request: {e}"))?
-            )
-            .as_bytes(),
-        )
-        .await
-        .map_err(|e| format!("Failed to write to sidecar stdin: {e}"))?;
-    stdin
-        .flush()
-        .await
-        .map_err(|e| format!("Failed to flush sidecar stdin: {e}"))?;
+    let request_line = format!(
+        "{}\n",
+        serde_json::to_string(&request)
+            .map_err(|e| format!("Failed to serialize agent request: {e}"))?
+    );
+    if let Some(token) = &internal_api_token {
+        api_server::register_agent_internal_api_token(token);
+    }
+    if let Err(e) = stdin.write_all(request_line.as_bytes()).await {
+        if let Some(token) = &internal_api_token {
+            api_server::revoke_agent_internal_api_token(token);
+        }
+        return Err(format!("Failed to write to sidecar stdin: {e}"));
+    }
+    if let Err(e) = stdin.flush().await {
+        if let Some(token) = &internal_api_token {
+            api_server::revoke_agent_internal_api_token(token);
+        }
+        return Err(format!("Failed to flush sidecar stdin: {e}"));
+    }
     drop(stdin);
 
     state.children.lock().await.insert(stream_id.clone(), child);
@@ -186,6 +194,7 @@ pub async fn agent_spawn(
     let children = Arc::clone(&state.children);
     let app_for_task = app.clone();
     let stream_id_task = stream_id.clone();
+    let internal_api_token_task = internal_api_token.clone();
     let topic = format!("agent:{stream_id}");
     let done_topic = format!("agent:{stream_id}:done");
 
@@ -224,6 +233,10 @@ pub async fn agent_spawn(
                 0
             }
         };
+
+        if let Some(token) = internal_api_token_task {
+            api_server::revoke_agent_internal_api_token(&token);
+        }
 
         let done_payload = serde_json::json!({
             "code": exit_code,
@@ -363,11 +376,11 @@ mod tests {
         args.api_token = Some("user-configured-token".to_string());
         args.enable_wiki_tools = Some(true);
 
-        inject_internal_api_token(&mut args);
+        let token = inject_internal_api_token(&mut args).unwrap();
 
-        let internal_token = api_server::agent_internal_api_token();
-        assert_eq!(args.api_token.as_deref(), Some(internal_token.as_str()));
+        assert_eq!(args.api_token.as_deref(), Some(token.as_str()));
         assert_ne!(args.api_token.as_deref(), Some("user-configured-token"));
+        api_server::revoke_agent_internal_api_token(&token);
     }
 
     #[test]
@@ -376,8 +389,9 @@ mod tests {
         args.project_path = Some("/tmp/wiki".to_string());
         args.enable_wiki_tools = Some(false);
 
-        inject_internal_api_token(&mut args);
+        let token = inject_internal_api_token(&mut args);
 
+        assert!(token.is_none());
         assert!(args.api_token.is_none());
     }
 }

@@ -11,6 +11,7 @@ const tauriMocks = vi.hoisted(() => {
 			});
 		}),
 		emit: (event: string, payload: unknown) => listeners[event]?.({ payload }),
+		emitString: (event: string, payload: string) => listeners[event]?.({ payload }),
 		reset: () => {
 			for (const event of Object.keys(listeners)) {
 				delete listeners[event];
@@ -69,7 +70,7 @@ describe("streamAgent", () => {
 			newSha256: "new",
 		};
 
-		tauriMocks.emit(
+		tauriMocks.emitString(
 			`agent:${payload.args.streamId}`,
 			JSON.stringify({
 				streamId: payload.args.streamId,

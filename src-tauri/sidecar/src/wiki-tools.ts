@@ -143,8 +143,8 @@ async function writePage(args: {
 	if (args.dryRun) return jsonResult(payload);
 
 	const maxFilesChanged = args.context.maxFilesChanged ?? DEFAULT_MAX_FILES_CHANGED;
-	const changedPaths = args.context.changedPaths ?? new Set<string>();
-	args.context.changedPaths = changedPaths;
+	const changedPaths = (args.context.changedPaths =
+		args.context.changedPaths ?? new Set<string>());
 	if (!changedPaths.has(plan.relativePath) && changedPaths.size >= maxFilesChanged) {
 		throw new Error(`Write would exceed maxFilesChanged (${maxFilesChanged})`);
 	}

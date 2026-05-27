@@ -35,7 +35,7 @@ static API_STATUS: AtomicU8 = AtomicU8::new(0);
 static IN_FLIGHT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
-static AGENT_INTERNAL_API_TOKEN: OnceLock<String> = OnceLock::new();
+static AGENT_INTERNAL_API_TOKENS: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct CachedAppState {
@@ -60,16 +60,28 @@ pub fn invalidate_config_cache() {
     }
 }
 
-pub fn agent_internal_api_token() -> String {
-    AGENT_INTERNAL_API_TOKEN
-        .get_or_init(|| {
-            format!(
-                "agent-{}{}",
-                Uuid::new_v4().simple(),
-                Uuid::new_v4().simple()
-            )
-        })
-        .clone()
+fn agent_internal_api_tokens() -> &'static Mutex<BTreeSet<String>> {
+    AGENT_INTERNAL_API_TOKENS.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+pub fn new_agent_internal_api_token() -> String {
+    format!(
+        "agent-{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
+pub fn register_agent_internal_api_token(token: &str) {
+    if let Ok(mut tokens) = agent_internal_api_tokens().lock() {
+        tokens.insert(token.to_string());
+    }
+}
+
+pub fn revoke_agent_internal_api_token(token: &str) {
+    if let Ok(mut tokens) = agent_internal_api_tokens().lock() {
+        tokens.remove(token);
+    }
 }
 
 pub fn start_api_server(app: AppHandle) {
@@ -419,8 +431,30 @@ fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> 
 }
 
 fn is_internal_agent_authorized(headers: &[(String, String)]) -> bool {
-    let token = agent_internal_api_token();
-    headers_contain_token(headers, "x-llm-wiki-agent-token", &token)
+    let Ok(tokens) = agent_internal_api_tokens().lock() else {
+        return false;
+    };
+    if tokens.is_empty() {
+        return false;
+    }
+    headers.iter().any(|(key, value)| {
+        if key == "x-llm-wiki-agent-token" {
+            return tokens
+                .iter()
+                .any(|token| constant_time_eq(value.as_bytes(), token.as_bytes()));
+        }
+        if key == "authorization" {
+            return value
+                .strip_prefix("Bearer ")
+                .map(|v| {
+                    tokens
+                        .iter()
+                        .any(|token| constant_time_eq(v.as_bytes(), token.as_bytes()))
+                })
+                .unwrap_or(false);
+        }
+        false
+    })
 }
 
 fn headers_contain_token(headers: &[(String, String)], header_name: &str, token: &str) -> bool {
@@ -1339,10 +1373,15 @@ mod tests {
     }
 
     #[test]
-    fn internal_agent_token_is_stable_and_header_authorized() {
-        let token = agent_internal_api_token();
+    fn internal_agent_token_is_active_only_while_registered() {
+        let token = new_agent_internal_api_token();
         assert!(token.starts_with("agent-"));
-        assert_eq!(agent_internal_api_token(), token);
+        assert!(!is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            format!("Bearer {token}"),
+        )]));
+
+        register_agent_internal_api_token(&token);
 
         assert!(is_internal_agent_authorized(&[(
             "authorization".to_string(),
@@ -1350,11 +1389,17 @@ mod tests {
         )]));
         assert!(is_internal_agent_authorized(&[(
             "x-llm-wiki-agent-token".to_string(),
-            token,
+            token.clone(),
         )]));
         assert!(!is_internal_agent_authorized(&[(
             "authorization".to_string(),
             "Bearer public-token".to_string(),
+        )]));
+
+        revoke_agent_internal_api_token(&token);
+        assert!(!is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            format!("Bearer {token}"),
         )]));
     }
 

@@ -17,7 +17,12 @@ export interface WritePlan {
 const MAX_SLUG_LENGTH = 80;
 
 export function normalizeProjectRelPath(input: string): string {
-	return input.trim().replaceAll("\\", "/");
+	const trimmed = input.trim();
+	try {
+		return decodeURIComponent(trimmed).replaceAll("\\", "/");
+	} catch {
+		throw new Error("Path contains invalid URI encoding");
+	}
 }
 
 export function sha256(value: string): string {
