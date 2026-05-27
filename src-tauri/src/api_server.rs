@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::{clip_server, commands};
@@ -34,6 +35,7 @@ static API_STATUS: AtomicU8 = AtomicU8::new(0);
 static IN_FLIGHT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
+static AGENT_INTERNAL_API_TOKENS: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct CachedAppState {
@@ -55,6 +57,30 @@ pub fn invalidate_config_cache() {
         if let Ok(mut cache) = lock.lock() {
             *cache = None;
         }
+    }
+}
+
+fn agent_internal_api_tokens() -> &'static Mutex<BTreeSet<String>> {
+    AGENT_INTERNAL_API_TOKENS.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+pub fn new_agent_internal_api_token() -> String {
+    format!(
+        "agent-{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
+pub fn register_agent_internal_api_token(token: &str) {
+    if let Ok(mut tokens) = agent_internal_api_tokens().lock() {
+        tokens.insert(token.to_string());
+    }
+}
+
+pub fn revoke_agent_internal_api_token(token: &str) {
+    if let Ok(mut tokens) = agent_internal_api_tokens().lock() {
+        tokens.remove(token);
     }
 }
 
@@ -226,16 +252,13 @@ fn handle_request(
     if !path.starts_with(API_PREFIX) {
         return err(404, "Not found");
     }
-    if !api_enabled(app) {
-        // Kill-switch path: token may be configured and valid, but the
-        // user toggled the API off in Settings → API Server. 503 is
-        // the right code semantically ("temporarily unavailable")
-        // and tells well-behaved clients to back off rather than
-        // retry instantly the way 401 would.
-        return err(503, "API server is disabled in Settings → API Server");
-    }
-    if !is_authorized(app, query, headers) {
-        return err(401, "Unauthorized");
+    let internal_agent_authorized = is_internal_agent_authorized(headers);
+    if let Some((status, message)) = request_access_denial(
+        api_enabled(app),
+        internal_agent_authorized,
+        internal_agent_authorized || is_authorized(app, query, headers),
+    ) {
+        return err(status, message);
     }
     if !matches!(method, &Method::Get | &Method::Post) {
         return err(405, "Method not allowed");
@@ -265,6 +288,23 @@ fn handle_request(
         }
         _ => err(404, "Not found"),
     }
+}
+
+fn request_access_denial(
+    api_enabled: bool,
+    internal_agent_authorized: bool,
+    external_authorized: bool,
+) -> Option<(u16, &'static str)> {
+    if internal_agent_authorized {
+        return None;
+    }
+    if !api_enabled {
+        return Some((503, "API server is disabled in Settings → API Server"));
+    }
+    if !external_authorized {
+        return Some((401, "Unauthorized"));
+    }
+    None
 }
 
 fn should_rate_limit(method: &Method, url: &str) -> bool {
@@ -387,8 +427,39 @@ fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> 
     {
         return true;
     }
+    headers_contain_token(headers, "x-llm-wiki-token", &token)
+}
+
+fn is_internal_agent_authorized(headers: &[(String, String)]) -> bool {
+    let Ok(tokens) = agent_internal_api_tokens().lock() else {
+        return false;
+    };
+    if tokens.is_empty() {
+        return false;
+    }
     headers.iter().any(|(key, value)| {
-        if key == "x-llm-wiki-token" {
+        if key == "x-llm-wiki-agent-token" {
+            return tokens
+                .iter()
+                .any(|token| constant_time_eq(value.as_bytes(), token.as_bytes()));
+        }
+        if key == "authorization" {
+            return value
+                .strip_prefix("Bearer ")
+                .map(|v| {
+                    tokens
+                        .iter()
+                        .any(|token| constant_time_eq(v.as_bytes(), token.as_bytes()))
+                })
+                .unwrap_or(false);
+        }
+        false
+    })
+}
+
+fn headers_contain_token(headers: &[(String, String)], header_name: &str, token: &str) -> bool {
+    headers.iter().any(|(key, value)| {
+        if key == header_name {
             return constant_time_eq(value.as_bytes(), token.as_bytes());
         }
         if key == "authorization" {
@@ -1299,6 +1370,62 @@ mod tests {
         assert!(constant_time_eq(b"", b""));
         assert!(!constant_time_eq(b"token", b"tokeN"));
         assert!(!constant_time_eq(b"token", b"token-longer"));
+    }
+
+    #[test]
+    fn internal_agent_token_is_active_only_while_registered() {
+        let token = new_agent_internal_api_token();
+        assert!(token.starts_with("agent-"));
+        assert!(!is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            format!("Bearer {token}"),
+        )]));
+
+        register_agent_internal_api_token(&token);
+
+        assert!(is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            format!("Bearer {token}"),
+        )]));
+        assert!(is_internal_agent_authorized(&[(
+            "x-llm-wiki-agent-token".to_string(),
+            token.clone(),
+        )]));
+        assert!(!is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            "Bearer public-token".to_string(),
+        )]));
+
+        revoke_agent_internal_api_token(&token);
+        assert!(!is_internal_agent_authorized(&[(
+            "authorization".to_string(),
+            format!("Bearer {token}"),
+        )]));
+    }
+
+    #[test]
+    fn public_api_token_headers_still_use_public_header_name() {
+        assert!(headers_contain_token(
+            &[("x-llm-wiki-token".to_string(), "public-token".to_string())],
+            "x-llm-wiki-token",
+            "public-token",
+        ));
+        assert!(!headers_contain_token(
+            &[(
+                "x-llm-wiki-agent-token".to_string(),
+                "public-token".to_string()
+            )],
+            "x-llm-wiki-token",
+            "public-token",
+        ));
+    }
+
+    #[test]
+    fn internal_agent_access_bypasses_external_api_settings() {
+        assert_eq!(request_access_denial(false, false, true).unwrap().0, 503);
+        assert_eq!(request_access_denial(true, false, false).unwrap().0, 401);
+        assert!(request_access_denial(false, true, false).is_none());
+        assert!(request_access_denial(true, false, true).is_none());
     }
 
     #[test]

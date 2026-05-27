@@ -79,6 +79,13 @@ export interface AgentDonePayload {
 	stderr?: string;
 }
 
+export interface AgentWikiChangedPayload {
+	path: string;
+	operation: "update" | "create";
+	oldSha256?: string;
+	newSha256: string;
+}
+
 export interface AgentTransportOptions {
 	systemPrompt?: string;
 	cwd?: string;
@@ -87,6 +94,14 @@ export interface AgentTransportOptions {
 	maxBudgetUsd?: number;
 	apiKey?: string;
 	baseUrl?: string;
+	projectId?: string;
+	projectPath?: string;
+	apiServerBaseUrl?: string;
+	apiToken?: string;
+	enableWikiTools?: boolean;
+	enableWriteTools?: boolean;
+	maxWriteBytes?: number;
+	maxFilesChanged?: number;
 }
 
 export interface AgentCallbacks {
@@ -94,4 +109,5 @@ export interface AgentCallbacks {
 	onToken: (text: string) => void;
 	onDone: (result: SDKResultMessage | null) => void;
 	onError: (err: Error) => void;
+	onWikiChanged?: (payload: AgentWikiChangedPayload) => void;
 }
