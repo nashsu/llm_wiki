@@ -86,6 +86,35 @@ export interface AgentWikiChangedPayload {
 	newSha256: string;
 }
 
+export interface AgentToolEventPayload {
+	phase: "pre" | "post" | "failure" | "batch";
+	toolName: string;
+	toolUseId?: string;
+	ok?: boolean;
+	durationMs?: number;
+	inputPreview?: Record<string, unknown>;
+	error?: string;
+	permissionPolicy?: "default" | "restricted" | "bypass";
+	toolCalls?: Array<{
+		toolName: string;
+		toolUseId?: string;
+		inputPreview?: Record<string, unknown>;
+	}>;
+}
+
+export interface AgentSummaryPayload {
+	lastAssistantMessage?: string;
+	changedPaths: string[];
+	toolCalls: number;
+	failedToolCalls: number;
+}
+
+export interface AgentActionRequiredPayload {
+	kind: "lint_recommended";
+	paths: string[];
+	reason: "agent_write";
+}
+
 export interface AgentTransportOptions {
 	systemPrompt?: string;
 	cwd?: string;
@@ -94,6 +123,7 @@ export interface AgentTransportOptions {
 	maxBudgetUsd?: number;
 	apiKey?: string;
 	baseUrl?: string;
+	permissionPolicy?: "default" | "restricted" | "bypass";
 	projectId?: string;
 	projectPath?: string;
 	apiServerBaseUrl?: string;
@@ -110,4 +140,7 @@ export interface AgentCallbacks {
 	onDone: (result: SDKResultMessage | null) => void;
 	onError: (err: Error) => void;
 	onWikiChanged?: (payload: AgentWikiChangedPayload) => void;
+	onToolEvent?: (payload: AgentToolEventPayload) => void;
+	onAgentSummary?: (payload: AgentSummaryPayload) => void;
+	onActionRequired?: (payload: AgentActionRequiredPayload) => void;
 }

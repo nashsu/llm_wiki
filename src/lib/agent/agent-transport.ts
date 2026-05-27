@@ -11,8 +11,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
 	AgentCallbacks,
+	AgentActionRequiredPayload,
 	AgentDonePayload,
+	AgentSummaryPayload,
 	AgentTransportOptions,
+	AgentToolEventPayload,
 	AgentWikiChangedPayload,
 	SDKAssistantMessage,
 	SDKContentBlock,
@@ -30,6 +33,7 @@ type InvokePayload = Record<string, unknown> & {
 	maxBudgetUsd?: number;
 	apiKey?: string;
 	baseUrl?: string;
+	permissionPolicy?: "default" | "restricted" | "bypass";
 	projectId?: string;
 	projectPath?: string;
 	apiServerBaseUrl?: string;
@@ -94,7 +98,7 @@ export async function streamAgent(
 				const wrapper = JSON.parse(raw) as {
 					streamId: string;
 					type: string;
-					data: SDKMessage;
+					data: unknown;
 				};
 
 				const msg = wrapper.data;
@@ -111,6 +115,21 @@ export async function streamAgent(
 					return;
 				}
 
+				if (wrapper.type === "tool_event") {
+					callbacks.onToolEvent?.(msg as AgentToolEventPayload);
+					return;
+				}
+
+				if (wrapper.type === "agent_summary") {
+					callbacks.onAgentSummary?.(msg as AgentSummaryPayload);
+					return;
+				}
+
+				if (wrapper.type === "agent_action_required") {
+					callbacks.onActionRequired?.(msg as AgentActionRequiredPayload);
+					return;
+				}
+
 				// Handle sidecar-level errors (wrapper.type === "error")
 				if (wrapper.type === "error") {
 					const errMsg =
@@ -124,13 +143,13 @@ export async function streamAgent(
 
 				console.log(
 					"[agent-transport] msg.type:",
-					msg.type,
+					(msg as SDKMessage).type,
 					"keys:",
-					Object.keys(msg).join(","),
+					Object.keys(msg as Record<string, unknown>).join(","),
 				);
-				callbacks.onMessage(msg);
+				callbacks.onMessage(msg as SDKMessage);
 
-				if (msg.type === "assistant") {
+				if ((msg as SDKMessage).type === "assistant") {
 					const assistant = msg as SDKAssistantMessage;
 					console.log(
 						"[agent-transport] assistant message keys:",
@@ -157,7 +176,7 @@ export async function streamAgent(
 					}
 				}
 
-				if (msg.type === "result") {
+				if ((msg as SDKMessage).type === "result") {
 					const result = msg as SDKResultMessage;
 					console.log(
 						"[agent-transport] result:",

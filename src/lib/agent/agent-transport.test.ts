@@ -91,4 +91,81 @@ describe("streamAgent", () => {
 		expect(callbacks.onDone).toHaveBeenCalledWith(null);
 		expect(callbacks.onError).not.toHaveBeenCalled();
 	});
+
+	it("forwards sidecar control events to optional callbacks", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+			onWikiChanged: vi.fn(),
+			onToolEvent: vi.fn(),
+			onAgentSummary: vi.fn(),
+			onActionRequired: vi.fn(),
+		};
+
+		const stream = streamAgent("run agent", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		const streamEvent = `agent:${payload.args.streamId}`;
+		const toolEvent = {
+			phase: "pre",
+			toolName: "mcp__llm_wiki__read_page",
+			toolUseId: "tool-1",
+		};
+		const summary = {
+			changedPaths: ["wiki/entities/example.md"],
+			toolCalls: 1,
+			failedToolCalls: 0,
+		};
+		const action = {
+			kind: "lint_recommended",
+			paths: ["wiki/entities/example.md"],
+			reason: "agent_write",
+		};
+
+		tauriMocks.emitString(
+			streamEvent,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "tool_event",
+				data: toolEvent,
+			}),
+		);
+		tauriMocks.emitString(
+			streamEvent,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "agent_summary",
+				data: summary,
+			}),
+		);
+		tauriMocks.emitString(
+			streamEvent,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "agent_action_required",
+				data: action,
+			}),
+		);
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
+		expect(callbacks.onToolEvent).toHaveBeenCalledWith(toolEvent);
+		expect(callbacks.onAgentSummary).toHaveBeenCalledWith(summary);
+		expect(callbacks.onActionRequired).toHaveBeenCalledWith(action);
+		expect(callbacks.onMessage).not.toHaveBeenCalled();
+		expect(callbacks.onDone).toHaveBeenCalledWith(null);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
 });

@@ -35,6 +35,7 @@ pub struct AgentSpawnArgs {
     max_budget_usd: Option<f64>,
     api_key: Option<String>,
     base_url: Option<String>,
+    permission_policy: Option<String>,
     project_id: Option<String>,
     project_path: Option<String>,
     api_server_base_url: Option<String>,
@@ -62,6 +63,8 @@ struct AgentRequestOptions {
     api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    permission_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +106,7 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             max_budget_usd: args.max_budget_usd,
             api_key: args.api_key,
             base_url: args.base_url,
+            permission_policy: args.permission_policy,
             project_id: args.project_id,
             project_path: args.project_path,
             api_server_base_url: args.api_server_base_url,
@@ -264,6 +268,7 @@ mod tests {
             max_budget_usd: None,
             api_key: None,
             base_url: None,
+            permission_policy: None,
             project_id: None,
             project_path: None,
             api_server_base_url: None,
@@ -305,6 +310,7 @@ mod tests {
         args.max_budget_usd = Some(0.25);
         args.api_key = Some("test-key".to_string());
         args.base_url = Some("http://localhost:4000".to_string());
+        args.permission_policy = Some("default".to_string());
         args.project_id = Some("project-1".to_string());
         args.project_path = Some("/tmp/wiki".to_string());
         args.api_server_base_url = Some("http://127.0.0.1:19828".to_string());
@@ -334,6 +340,10 @@ mod tests {
         assert_eq!(
             options.get("baseUrl").and_then(Value::as_str),
             Some("http://localhost:4000")
+        );
+        assert_eq!(
+            options.get("permissionPolicy").and_then(Value::as_str),
+            Some("default")
         );
         assert_eq!(
             options.get("projectId").and_then(Value::as_str),

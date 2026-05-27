@@ -1,23 +1,15 @@
 import type { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
+import { createLlmWikiHooks } from "./agent-hooks.js";
+import {
+	buildPermissionOptions,
+	getAllowedWikiTools,
+	type AgentPermissionPolicy,
+} from "./agent-policy.js";
 import { createLlmWikiMcpServer } from "./wiki-tools.js";
 
 type QueryInput = Parameters<typeof sdkQuery>[0];
 export type QueryFn = (input: QueryInput) => AsyncIterable<unknown>;
-
-const READ_WIKI_TOOLS = [
-	"mcp__llm_wiki__list_projects",
-	"mcp__llm_wiki__list_pages",
-	"mcp__llm_wiki__read_page",
-	"mcp__llm_wiki__search_pages",
-	"mcp__llm_wiki__get_graph",
-] as const;
-
-const WRITE_WIKI_TOOLS = [
-	"mcp__llm_wiki__update_page",
-	"mcp__llm_wiki__create_entity",
-	"mcp__llm_wiki__create_concept",
-] as const;
 
 interface RequestHandlerDeps {
 	queryFn: QueryFn;
@@ -65,12 +57,13 @@ export function createRequestHandler({
 			const enableWikiTools = req.options.enableWikiTools !== false;
 			const enableWriteTools = req.options.enableWriteTools !== false;
 			const wikiToolsEnabled = enableWikiTools && Boolean(req.options.projectPath);
-			const allowedTools = wikiToolsEnabled
-				? [
-						...READ_WIKI_TOOLS,
-						...(enableWriteTools ? WRITE_WIKI_TOOLS : []),
-					]
-				: [];
+			const permissionPolicy: AgentPermissionPolicy =
+				req.options.permissionPolicy ?? "default";
+			const changedPaths = new Set<string>();
+			const allowedTools = getAllowedWikiTools({
+				wikiToolsEnabled,
+				enableWriteTools,
+			});
 			const mcpServers = wikiToolsEnabled
 				? {
 						llm_wiki: createLlmWikiMcpServer({
@@ -81,16 +74,34 @@ export function createRequestHandler({
 							enableWriteTools,
 							maxWriteBytes: req.options.maxWriteBytes,
 							maxFilesChanged: req.options.maxFilesChanged,
+							changedPaths,
 							onWikiChanged: (payload) => {
+								changedPaths.add(payload.path);
 								send({
 									streamId: req.streamId,
 									type: "wiki_changed",
 									data: payload,
 								});
+								send({
+									streamId: req.streamId,
+									type: "agent_action_required",
+									data: {
+										kind: "lint_recommended",
+										paths: [payload.path],
+										reason: "agent_write",
+									},
+								});
 							},
 						}),
 					}
 				: undefined;
+			const hooks = createLlmWikiHooks({
+				streamId: req.streamId,
+				enableWriteTools,
+				permissionPolicy,
+				changedPaths,
+				send,
+			});
 
 			const options = omitNullish({
 				systemPrompt: req.options.systemPrompt,
@@ -99,9 +110,10 @@ export function createRequestHandler({
 				maxTurns: req.options.maxTurns ?? 10,
 				maxBudgetUsd: req.options.maxBudgetUsd,
 				persistSession: req.options.persistSession ?? false,
-				tools: [],
+				...buildPermissionOptions(permissionPolicy),
 				allowedTools,
 				mcpServers,
+				hooks,
 				abortController,
 				env,
 			}) as QueryInput["options"];
