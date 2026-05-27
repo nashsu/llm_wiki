@@ -99,6 +99,7 @@ pub fn run() {
             app.manage(commands::claude_cli::ClaudeCliState::default());
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
+            app.manage(commands::agent::AgentState::default());
             api_server::start_api_server(app.handle().clone());
             Ok(())
         })
@@ -141,6 +142,9 @@ pub fn run() {
             commands::codex_cli::codex_cli_detect,
             commands::codex_cli::codex_cli_spawn,
             commands::codex_cli::codex_cli_kill,
+            commands::agent::agent_detect,
+            commands::agent::agent_spawn,
+            commands::agent::agent_kill,
             commands::extract_images::extract_pdf_images_cmd,
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,
