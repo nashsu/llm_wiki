@@ -1,8 +1,23 @@
 import type { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
+import { createLlmWikiMcpServer } from "./wiki-tools.js";
 
 type QueryInput = Parameters<typeof sdkQuery>[0];
 export type QueryFn = (input: QueryInput) => AsyncIterable<unknown>;
+
+const READ_WIKI_TOOLS = [
+	"mcp__llm_wiki__list_projects",
+	"mcp__llm_wiki__list_pages",
+	"mcp__llm_wiki__read_page",
+	"mcp__llm_wiki__search_pages",
+	"mcp__llm_wiki__get_graph",
+] as const;
+
+const WRITE_WIKI_TOOLS = [
+	"mcp__llm_wiki__update_page",
+	"mcp__llm_wiki__create_entity",
+	"mcp__llm_wiki__create_concept",
+] as const;
 
 interface RequestHandlerDeps {
 	queryFn: QueryFn;
@@ -47,6 +62,36 @@ export function createRequestHandler({
 		if (req.options.baseUrl) env.ANTHROPIC_BASE_URL = req.options.baseUrl;
 
 		try {
+			const enableWikiTools = req.options.enableWikiTools !== false;
+			const enableWriteTools = req.options.enableWriteTools !== false;
+			const wikiToolsEnabled = enableWikiTools && Boolean(req.options.projectPath);
+			const allowedTools = wikiToolsEnabled
+				? [
+						...READ_WIKI_TOOLS,
+						...(enableWriteTools ? WRITE_WIKI_TOOLS : []),
+					]
+				: [];
+			const mcpServers = wikiToolsEnabled
+				? {
+						llm_wiki: createLlmWikiMcpServer({
+							baseUrl: req.options.apiServerBaseUrl,
+							token: req.options.apiToken,
+							projectId: req.options.projectId,
+							projectPath: req.options.projectPath,
+							enableWriteTools,
+							maxWriteBytes: req.options.maxWriteBytes,
+							maxFilesChanged: req.options.maxFilesChanged,
+							onWikiChanged: (payload) => {
+								send({
+									streamId: req.streamId,
+									type: "wiki_changed",
+									data: payload,
+								});
+							},
+						}),
+					}
+				: undefined;
+
 			const options = omitNullish({
 				systemPrompt: req.options.systemPrompt,
 				cwd: req.options.cwd,
@@ -54,8 +99,9 @@ export function createRequestHandler({
 				maxTurns: req.options.maxTurns ?? 10,
 				maxBudgetUsd: req.options.maxBudgetUsd,
 				persistSession: req.options.persistSession ?? false,
-				permissionMode: "bypassPermissions",
-				allowDangerouslySkipPermissions: true,
+				tools: [],
+				allowedTools,
+				mcpServers,
 				abortController,
 				env,
 			}) as QueryInput["options"];

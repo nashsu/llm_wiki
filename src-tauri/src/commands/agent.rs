@@ -15,6 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+use crate::api_server;
+
 /// Shared state holding running agent sidecar processes keyed by stream id.
 #[derive(Default)]
 pub struct AgentState {
@@ -33,6 +35,14 @@ pub struct AgentSpawnArgs {
     max_budget_usd: Option<f64>,
     api_key: Option<String>,
     base_url: Option<String>,
+    project_id: Option<String>,
+    project_path: Option<String>,
+    api_server_base_url: Option<String>,
+    api_token: Option<String>,
+    enable_wiki_tools: Option<bool>,
+    enable_write_tools: Option<bool>,
+    max_write_bytes: Option<u32>,
+    max_files_changed: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -52,6 +62,22 @@ struct AgentRequestOptions {
     api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_server_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_wiki_tools: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_write_tools: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_write_bytes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_files_changed: Option<u32>,
     persist_session: bool,
 }
 
@@ -77,8 +103,22 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             max_budget_usd: args.max_budget_usd,
             api_key: args.api_key,
             base_url: args.base_url,
+            project_id: args.project_id,
+            project_path: args.project_path,
+            api_server_base_url: args.api_server_base_url,
+            api_token: args.api_token,
+            enable_wiki_tools: args.enable_wiki_tools,
+            enable_write_tools: args.enable_write_tools,
+            max_write_bytes: args.max_write_bytes,
+            max_files_changed: args.max_files_changed,
             persist_session: false,
         },
+    }
+}
+
+fn inject_internal_api_token(args: &mut AgentSpawnArgs) {
+    if args.enable_wiki_tools != Some(false) && args.project_path.is_some() {
+        args.api_token = Some(api_server::agent_internal_api_token());
     }
 }
 
@@ -86,7 +126,7 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
 pub async fn agent_spawn(
     app: AppHandle,
     state: State<'_, AgentState>,
-    args: AgentSpawnArgs,
+    mut args: AgentSpawnArgs,
 ) -> Result<(), String> {
     eprintln!(
         "[agent_spawn] stream_id={}, model={:?}, base_url={:?}",
@@ -122,6 +162,7 @@ pub async fn agent_spawn(
         .ok_or_else(|| "Missing stderr handle".to_string())?;
 
     let stream_id = args.stream_id.clone();
+    inject_internal_api_token(&mut args);
     let request = build_agent_request(args);
     stdin
         .write_all(
@@ -210,6 +251,14 @@ mod tests {
             max_budget_usd: None,
             api_key: None,
             base_url: None,
+            project_id: None,
+            project_path: None,
+            api_server_base_url: None,
+            api_token: None,
+            enable_wiki_tools: None,
+            enable_write_tools: None,
+            max_write_bytes: None,
+            max_files_changed: None,
         }
     }
 
@@ -243,6 +292,14 @@ mod tests {
         args.max_budget_usd = Some(0.25);
         args.api_key = Some("test-key".to_string());
         args.base_url = Some("http://localhost:4000".to_string());
+        args.project_id = Some("project-1".to_string());
+        args.project_path = Some("/tmp/wiki".to_string());
+        args.api_server_base_url = Some("http://127.0.0.1:19828".to_string());
+        args.api_token = Some("api-token".to_string());
+        args.enable_wiki_tools = Some(true);
+        args.enable_write_tools = Some(true);
+        args.max_write_bytes = Some(262144);
+        args.max_files_changed = Some(3);
 
         let request = build_agent_request(args);
         let value: Value = serde_json::to_value(request).unwrap();
@@ -265,6 +322,63 @@ mod tests {
             options.get("baseUrl").and_then(Value::as_str),
             Some("http://localhost:4000")
         );
+        assert_eq!(
+            options.get("projectId").and_then(Value::as_str),
+            Some("project-1")
+        );
+        assert_eq!(
+            options.get("projectPath").and_then(Value::as_str),
+            Some("/tmp/wiki")
+        );
+        assert_eq!(
+            options.get("apiServerBaseUrl").and_then(Value::as_str),
+            Some("http://127.0.0.1:19828")
+        );
+        assert_eq!(
+            options.get("apiToken").and_then(Value::as_str),
+            Some("api-token")
+        );
+        assert_eq!(
+            options.get("enableWikiTools").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            options.get("enableWriteTools").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            options.get("maxWriteBytes").and_then(Value::as_u64),
+            Some(262144)
+        );
+        assert_eq!(
+            options.get("maxFilesChanged").and_then(Value::as_u64),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn agent_wiki_tools_use_internal_api_token() {
+        let mut args = args_with_optional_fields_none();
+        args.project_path = Some("/tmp/wiki".to_string());
+        args.api_token = Some("user-configured-token".to_string());
+        args.enable_wiki_tools = Some(true);
+
+        inject_internal_api_token(&mut args);
+
+        let internal_token = api_server::agent_internal_api_token();
+        assert_eq!(args.api_token.as_deref(), Some(internal_token.as_str()));
+        assert_ne!(args.api_token.as_deref(), Some("user-configured-token"));
+    }
+
+    #[test]
+    fn agent_without_wiki_tools_does_not_receive_internal_api_token() {
+        let mut args = args_with_optional_fields_none();
+        args.project_path = Some("/tmp/wiki".to_string());
+        args.enable_wiki_tools = Some(false);
+
+        inject_internal_api_token(&mut args);
+
+        assert!(args.api_token.is_none());
     }
 }
 
@@ -288,14 +402,20 @@ pub fn agent_detect() -> Result<bool, String> {
 fn find_sidecar_command() -> Result<Vec<String>, String> {
     #[cfg(debug_assertions)]
     {
-        let sidecar_dir = std::env::current_dir()
-            .map(|d| d.join("sidecar/src/main.ts"))
+        let sidecar_entry = std::env::current_dir()
+            .map(|d| d.join("sidecar/dist/main.js"))
             .map_err(|e| format!("Cannot resolve sidecar path: {e}"))?;
+
+        if !sidecar_entry.exists() {
+            return Err(
+                "Agent sidecar dist missing; run `npm --prefix src-tauri/sidecar run build` first"
+                    .to_string(),
+            );
+        }
 
         Ok(vec![
             "node".to_string(),
-            "--experimental-strip-types".to_string(),
-            sidecar_dir.to_string_lossy().to_string(),
+            sidecar_entry.to_string_lossy().to_string(),
         ])
     }
 

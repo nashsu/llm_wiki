@@ -328,7 +328,6 @@ async function fixSemantic(
 ): Promise<boolean> {
 	if (!hasUsableLlm(llmConfig)) return false;
 
-	const detail = result.detail.toLowerCase();
 	// Parse sub-type from "[subtype] description"
 	const subMatch = result.detail.match(/^\[([^\]]+)\]/);
 	const subType = subMatch ? subMatch[1] : "";

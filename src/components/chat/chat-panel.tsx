@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { deleteFile, listDirectory, readFile } from "@/commands/fs";
 import { Button } from "@/components/ui/button";
 import { streamAgent } from "@/lib/agent/agent-transport";
+import { API_SERVER_BASE_URL } from "@/lib/api-server-constants";
 import { computeContextBudget } from "@/lib/context-budget";
 import { buildRetrievalGraph, getRelatedNodes } from "@/lib/graph-relevance";
 import { isGreeting } from "@/lib/greeting-detector";
@@ -165,6 +166,7 @@ export function ChatPanel() {
 		try {
 			const store = useWikiStore.getState();
 			const apiKey = store.llmConfig.apiKey;
+			const project = store.project;
 			const rawModel = store.llmConfig.model || "";
 			// Route through LiteLLM Proxy — translates Anthropic Messages API to any provider
 			const baseUrl = "http://localhost:4000";
@@ -175,23 +177,35 @@ export function ChatPanel() {
 				addMessage("assistant", "No API key configured. Set one in Settings.");
 				return;
 			}
+			if (!project) {
+				addMessage("assistant", "No project open. Open a Wiki project first.");
+				return;
+			}
 			let convId = useChatStore.getState().activeConversationId;
 			if (!convId) {
 				convId = createConversation();
 			}
-			addMessage("user", "Say hello and list 3 things you can do.");
+			addMessage("user", "Search the current wiki for its purpose and cite page paths.");
 			setStreaming(true);
 			setAgentRunning(true);
 			const ctrl = new AbortController();
 			abortRef.current = ctrl;
 			await streamAgent(
-				"Say hello and list 3 things you can do as a wiki assistant. Be brief.",
+				"Use the LLM Wiki tools to search the current wiki for its purpose. Summarize what you find and cite page paths. Be brief.",
 				{
-					systemPrompt: "You are a helpful wiki assistant. Be concise.",
-					maxTurns: 3,
+					systemPrompt:
+						"You are a helpful wiki assistant. Use LLM Wiki tools when available. Be concise and cite wiki paths.",
+					maxTurns: 8,
 					apiKey,
 					baseUrl,
 					model,
+					projectId: project.id,
+					projectPath: project.path,
+					apiServerBaseUrl: API_SERVER_BASE_URL,
+					enableWikiTools: true,
+					enableWriteTools: true,
+					maxWriteBytes: 262_144,
+					maxFilesChanged: 3,
 				},
 				{
 					onMessage: (msg) => {
@@ -200,6 +214,14 @@ export function ChatPanel() {
 						}
 					},
 					onToken: (text) => appendStreamToken(text),
+					onWikiChanged: async (payload) => {
+						console.log("[agent] wiki changed:", payload);
+						const currentProject = useWikiStore.getState().project;
+						if (!currentProject) return;
+						const tree = await listDirectory(currentProject.path);
+						setFileTree(tree);
+						useWikiStore.getState().bumpDataVersion();
+					},
 					onDone: () => {
 						const text = useChatStore.getState().streamingContent;
 						finalizeStream(text || "");

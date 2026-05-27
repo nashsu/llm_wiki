@@ -13,6 +13,7 @@ import type {
 	AgentCallbacks,
 	AgentDonePayload,
 	AgentTransportOptions,
+	AgentWikiChangedPayload,
 	SDKAssistantMessage,
 	SDKContentBlock,
 	SDKMessage,
@@ -29,6 +30,14 @@ type InvokePayload = Record<string, unknown> & {
 	maxBudgetUsd?: number;
 	apiKey?: string;
 	baseUrl?: string;
+	projectId?: string;
+	projectPath?: string;
+	apiServerBaseUrl?: string;
+	apiToken?: string;
+	enableWikiTools?: boolean;
+	enableWriteTools?: boolean;
+	maxWriteBytes?: number;
+	maxFilesChanged?: number;
 };
 
 function extractText(content: SDKContentBlock[]): string {
@@ -94,6 +103,11 @@ export async function streamAgent(
 						"[agent-transport] null data, wrapper.type:",
 						wrapper.type,
 					);
+					return;
+				}
+
+				if (wrapper.type === "wiki_changed") {
+					callbacks.onWikiChanged?.(msg as unknown as AgentWikiChangedPayload);
 					return;
 				}
 

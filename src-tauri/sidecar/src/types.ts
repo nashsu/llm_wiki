@@ -12,6 +12,14 @@ export interface AgentRequest {
 		baseUrl?: string;
 		persistSession?: boolean;
 		allowedTools?: string[];
+		projectId?: string;
+		projectPath?: string;
+		apiServerBaseUrl?: string;
+		apiToken?: string;
+		enableWikiTools?: boolean;
+		enableWriteTools?: boolean;
+		maxWriteBytes?: number;
+		maxFilesChanged?: number;
 	};
 }
 
@@ -22,6 +30,6 @@ export interface AgentKillRequest {
 
 export interface AgentMessage {
 	streamId: string;
-	type: "message" | "error" | "done";
+	type: "message" | "error" | "done" | "wiki_changed";
 	data: unknown;
 }

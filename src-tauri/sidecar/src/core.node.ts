@@ -64,7 +64,48 @@ test("query request strips nullish SDK options and emits message then done", asy
 	assert.equal(capturedInput?.options?.cwd, undefined);
 	assert.equal(capturedInput?.options?.maxBudgetUsd, undefined);
 	assert.equal(capturedInput?.options?.maxTurns, 10);
+	assert.deepEqual(capturedInput?.options?.tools, []);
+	assert.deepEqual(capturedInput?.options?.allowedTools, []);
+	assert.equal("permissionMode" in (capturedInput?.options ?? {}), false);
 	assert.deepEqual(sent.map((msg) => msg.type), ["message", "done"]);
+});
+
+test("query request enables LLM Wiki MCP tools when project context is present", async () => {
+	let capturedInput: Parameters<QueryFn>[0] | undefined;
+	const queryFn: QueryFn = async function* (input) {
+		capturedInput = input;
+	};
+
+	const handleRequest = createRequestHandler({
+		queryFn,
+		send: () => {},
+		error: () => {},
+		env: {},
+	});
+
+	await handleRequest({
+		...baseRequest,
+		options: {
+			...baseRequest.options,
+			projectPath: "/tmp/wiki",
+			apiServerBaseUrl: "http://127.0.0.1:19828",
+			enableWikiTools: true,
+			enableWriteTools: true,
+		},
+	});
+
+	assert.deepEqual(capturedInput?.options?.tools, []);
+	assert.deepEqual(capturedInput?.options?.allowedTools, [
+		"mcp__llm_wiki__list_projects",
+		"mcp__llm_wiki__list_pages",
+		"mcp__llm_wiki__read_page",
+		"mcp__llm_wiki__search_pages",
+		"mcp__llm_wiki__get_graph",
+		"mcp__llm_wiki__update_page",
+		"mcp__llm_wiki__create_entity",
+		"mcp__llm_wiki__create_concept",
+	]);
+	assert.ok(capturedInput?.options?.mcpServers);
 });
 
 test("kill request aborts active query and removes it from tracking", async () => {
