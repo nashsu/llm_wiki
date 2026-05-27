@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod claude_cli;
 pub mod codex_cli;
 pub mod extract_images;
