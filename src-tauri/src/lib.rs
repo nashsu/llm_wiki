@@ -65,6 +65,12 @@ pub fn run() {
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
             use tauri::Manager;
+            #[cfg(debug_assertions)]
+            {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_title("[DEV] LLM Wiki");
+                }
+            }
             if let Ok(dir) = app.path().resource_dir() {
                 commands::fs::set_resource_dir_hint(dir);
             }
