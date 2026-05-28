@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import React, { useMemo } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -135,6 +135,14 @@ export function WikiReader({ body }: WikiReaderProps) {
             const codeText = String(children).replace(/\n$/, "")
             if (lang === "mermaid") return <MermaidDiagram code={codeText} />
             return <code dir="ltr" className={className} {...props}>{children}</code>
+          },
+          li: ({ children, ...props }) => {
+            // ReactMarkdown wraps <li> content in <p> tags, but Milkdown
+            // renders bare text — strip the wrapper to match edit mode.
+            const flat = Array.isArray(children) && children.length === 1 && React.isValidElement(children[0]) && (children[0] as React.ReactElement).type === "p"
+              ? (children[0] as React.ReactElement<{ children: React.ReactNode }>).props.children
+              : children
+            return <li {...props}>{flat}</li>
           },
         }}
       >
