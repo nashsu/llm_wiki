@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { FileNode } from "@/types/wiki"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
+import { useReviewStore } from "@/stores/review-store"
 import { runAgentAppTool } from "./agent-app-tools"
 
 const fsMock = vi.hoisted(() => ({
   tree: [] as FileNode[],
   canonical: new Map<string, string>(),
+  files: new Map<string, string>(),
 }))
 
 const ingestMock = vi.hoisted(() => ({
@@ -20,9 +22,37 @@ const deepResearchMock = vi.hoisted(() => ({
   rewriteAnyTxtQueries: vi.fn(),
 }))
 
+const dedupRunnerMock = vi.hoisted(() => ({
+  buildDedupLlmCall: vi.fn(),
+  executeMerge: vi.fn(),
+  loadAllWikiPages: vi.fn(),
+  runDuplicateDetection: vi.fn(),
+}))
+
+const dedupMock = vi.hoisted(() => ({
+  mergeDuplicateGroup: vi.fn(),
+}))
+
+const optimizeResearchTopicMock = vi.hoisted(() => ({
+  optimizeResearchTopic: vi.fn(),
+}))
+
+const sweepReviewsMock = vi.hoisted(() => ({
+  sweepResolvedReviews: vi.fn(),
+}))
+
+const connectionTestsMock = vi.hoisted(() => ({
+  testLlmConnection: vi.fn(),
+}))
+
 vi.mock("@/commands/fs", () => ({
   canonicalizePath: vi.fn(async (path: string) => fsMock.canonical.get(path) ?? path),
   listDirectory: vi.fn(async () => fsMock.tree),
+  readFile: vi.fn(async (path: string) => {
+    const value = fsMock.files.get(path)
+    if (value === undefined) throw new Error(`missing file: ${path}`)
+    return value
+  }),
 }))
 
 vi.mock("@/lib/ingest", () => ({
@@ -36,16 +66,53 @@ vi.mock("@/lib/deep-research", () => ({
   rewriteAnyTxtQueries: deepResearchMock.rewriteAnyTxtQueries,
 }))
 
+vi.mock("@/lib/dedup-runner", () => ({
+  buildDedupLlmCall: dedupRunnerMock.buildDedupLlmCall,
+  executeMerge: dedupRunnerMock.executeMerge,
+  loadAllWikiPages: dedupRunnerMock.loadAllWikiPages,
+  runDuplicateDetection: dedupRunnerMock.runDuplicateDetection,
+}))
+
+vi.mock("@/lib/dedup", () => ({
+  mergeDuplicateGroup: dedupMock.mergeDuplicateGroup,
+}))
+
+vi.mock("@/lib/optimize-research-topic", () => ({
+  optimizeResearchTopic: optimizeResearchTopicMock.optimizeResearchTopic,
+}))
+
+vi.mock("@/lib/sweep-reviews", () => ({
+  sweepResolvedReviews: sweepReviewsMock.sweepResolvedReviews,
+}))
+
+vi.mock("@/lib/connection-tests", () => ({
+  testLlmConnection: connectionTestsMock.testLlmConnection,
+}))
+
 describe("runAgentAppTool ingest parity tools", () => {
   beforeEach(() => {
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true }]
     fsMock.canonical = new Map([["/project/raw/sources", "/project/raw/sources"]])
+    fsMock.files = new Map([
+      ["/project/wiki/overview.md", "# Overview"],
+      ["/project/purpose.md", "# Purpose"],
+    ])
     ingestMock.autoIngest.mockReset()
     ingestMock.captionSourceImages.mockReset()
     deepResearchMock.collectResearchSources.mockReset()
     deepResearchMock.queueResearch.mockReset()
     deepResearchMock.rewriteAnyTxtQueries.mockReset()
+    dedupRunnerMock.buildDedupLlmCall.mockReset()
+    dedupRunnerMock.executeMerge.mockReset()
+    dedupRunnerMock.loadAllWikiPages.mockReset()
+    dedupRunnerMock.runDuplicateDetection.mockReset()
+    dedupMock.mergeDuplicateGroup.mockReset()
+    optimizeResearchTopicMock.optimizeResearchTopic.mockReset()
+    sweepReviewsMock.sweepResolvedReviews.mockReset()
+    connectionTestsMock.testLlmConnection.mockReset()
+    dedupRunnerMock.buildDedupLlmCall.mockReturnValue(vi.fn())
     useResearchStore.setState({ tasks: [], panelOpen: false })
+    useReviewStore.setState({ items: [] })
     useWikiStore.setState({
       project: { id: "p1", name: "Project", path: "/project" },
       fileTree: [],
@@ -315,5 +382,186 @@ describe("runAgentAppTool ingest parity tools", () => {
         sourceMode: "files",
       }),
     ).rejects.toThrow(/sourceMode/)
+  })
+
+  it("detects duplicate groups with a bounded result set", async () => {
+    dedupRunnerMock.runDuplicateDetection.mockResolvedValue([
+      { slugs: ["a", "b"], reason: "same", confidence: "high" },
+      { slugs: ["c", "d"], reason: "same", confidence: "medium" },
+    ])
+
+    const response = await runAgentAppTool("detect_duplicates", { limit: 1 })
+
+    expect(dedupRunnerMock.runDuplicateDetection).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({ model: "gpt-test" }),
+    )
+    expect(response.result).toEqual({
+      groups: [{ slugs: ["a", "b"], reason: "same", confidence: "high" }],
+      totalGroups: 2,
+    })
+  })
+
+  it("dry-runs duplicate merge without writing and summarizes the plan", async () => {
+    dedupRunnerMock.loadAllWikiPages.mockResolvedValue([
+      { path: "wiki/entities/a.md", content: "---\ntitle: A\n---\nA" },
+      { path: "wiki/entities/b.md", content: "---\ntitle: B\n---\nB" },
+      { path: "wiki/index.md", content: "- [[a]]\n- [[b]]" },
+    ])
+    dedupMock.mergeDuplicateGroup.mockResolvedValue({
+      canonicalPath: "wiki/entities/a.md",
+      canonicalContent: "---\ntitle: A\n---\nMerged",
+      rewrites: [{ path: "wiki/index.md", newContent: "- [[a]]" }],
+      pagesToDelete: ["wiki/entities/b.md"],
+      backup: [
+        { path: "wiki/entities/a.md", content: "A" },
+        { path: "wiki/entities/b.md", content: "B" },
+      ],
+    })
+
+    const response = await runAgentAppTool("merge_duplicate_group", {
+      group: { slugs: ["a", "b"], reason: "same", confidence: "high" },
+      canonicalSlug: "a",
+    })
+
+    expect(dedupRunnerMock.executeMerge).not.toHaveBeenCalled()
+    expect(dedupMock.mergeDuplicateGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canonicalSlug: "a",
+        group: [
+          { slug: "a", path: "wiki/entities/a.md", content: "---\ntitle: A\n---\nA" },
+          { slug: "b", path: "wiki/entities/b.md", content: "---\ntitle: B\n---\nB" },
+        ],
+      }),
+      expect.any(Function),
+    )
+    expect(response.wikiChanged).toEqual([])
+    expect(response.result).toMatchObject({
+      dryRun: true,
+      canonicalPath: "wiki/entities/a.md",
+      rewrites: [{ path: "wiki/index.md", bytes: 7 }],
+      pagesToDelete: ["wiki/entities/b.md"],
+      backupPaths: ["wiki/entities/a.md", "wiki/entities/b.md"],
+    })
+    expect(useWikiStore.getState().dataVersion).toBe(0)
+  })
+
+  it("executes duplicate merge only when dryRun is false and refreshes wiki state", async () => {
+    dedupRunnerMock.executeMerge.mockResolvedValue({
+      canonicalPath: "wiki/entities/a.md",
+      canonicalContent: "Merged",
+      rewrites: [{ path: "wiki/overview.md", newContent: "Overview" }],
+      pagesToDelete: ["wiki/entities/b.md"],
+      backup: [],
+    })
+
+    const response = await runAgentAppTool("merge_duplicate_group", {
+      slugs: ["a", "b"],
+      canonicalSlug: "a",
+      dryRun: false,
+    })
+
+    expect(dedupRunnerMock.executeMerge).toHaveBeenCalledWith(
+      "/project",
+      { slugs: ["a", "b"], reason: "", confidence: "low" },
+      "a",
+      expect.objectContaining({ model: "gpt-test" }),
+    )
+    expect(response.wikiChanged).toEqual([
+      { path: "wiki/entities/a.md", operation: "update" },
+      { path: "wiki/overview.md", operation: "update" },
+      { path: "wiki/entities/b.md", operation: "delete" },
+    ])
+    expect(useWikiStore.getState().fileTree).toEqual(fsMock.tree)
+    expect(useWikiStore.getState().dataVersion).toBe(1)
+  })
+
+  it("optimizes research topics with project context files", async () => {
+    optimizeResearchTopicMock.optimizeResearchTopic.mockResolvedValue({
+      topic: "better topic",
+      searchQueries: ["q1", "q2"],
+    })
+
+    const response = await runAgentAppTool("optimize_research_topic", {
+      gapTitle: "gap",
+      gapDescription: "desc",
+      gapType: "missing-page",
+    })
+
+    expect(optimizeResearchTopicMock.optimizeResearchTopic).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-test" }),
+      "gap",
+      "desc",
+      "missing-page",
+      "# Overview",
+      "# Purpose",
+    )
+    expect(response.result).toEqual({ topic: "better topic", searchQueries: ["q1", "q2"] })
+  })
+
+  it("sweeps reviews and reports before/after counts", async () => {
+    useReviewStore.setState({
+      items: [
+        {
+          id: "r1",
+          type: "missing-page",
+          title: "Missing",
+          description: "",
+          options: [],
+          resolved: false,
+          createdAt: 1,
+        },
+        {
+          id: "r2",
+          type: "duplicate",
+          title: "Dup",
+          description: "",
+          options: [],
+          resolved: true,
+          createdAt: 2,
+        },
+      ],
+    })
+    sweepReviewsMock.sweepResolvedReviews.mockImplementation(async () => {
+      useReviewStore.setState({
+        items: useReviewStore.getState().items.map((item) =>
+          item.id === "r1" ? { ...item, resolved: true, resolvedAction: "auto-resolved" } : item,
+        ),
+      })
+      return 1
+    })
+
+    const response = await runAgentAppTool("sweep_reviews", {})
+
+    expect(sweepReviewsMock.sweepResolvedReviews).toHaveBeenCalledWith("/project")
+    expect(response.result).toEqual({
+      resolvedCount: 1,
+      pendingBefore: 1,
+      pendingAfter: 0,
+      totalReviews: 2,
+    })
+  })
+
+  it("tests provider connection and redacts configured secrets", async () => {
+    useWikiStore.setState({
+      llmConfig: {
+        ...useWikiStore.getState().llmConfig,
+        apiKey: "llm-secret",
+      },
+    })
+    connectionTestsMock.testLlmConnection.mockResolvedValue({
+      ok: false,
+      message: "provider rejected llm-secret",
+    })
+
+    const response = await runAgentAppTool("test_provider_connection", {})
+
+    expect(connectionTestsMock.testLlmConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "llm-secret" }),
+    )
+    expect(response.result).toEqual({
+      ok: false,
+      message: "provider rejected REDACTED",
+    })
   })
 })

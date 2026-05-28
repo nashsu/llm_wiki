@@ -12,6 +12,10 @@ export const READ_WIKI_TOOLS = [
 	"mcp__llm_wiki__run_lint",
 	"mcp__llm_wiki__collect_research_sources",
 	"mcp__llm_wiki__get_agent_task_status",
+	"mcp__llm_wiki__detect_duplicates",
+	"mcp__llm_wiki__merge_duplicate_group",
+	"mcp__llm_wiki__optimize_research_topic",
+	"mcp__llm_wiki__test_provider_connection",
 ] as const;
 
 export const WRITE_WIKI_TOOLS = [
@@ -24,6 +28,7 @@ export const WRITE_WIKI_TOOLS = [
 	"mcp__llm_wiki__caption_source_images",
 	"mcp__llm_wiki__fix_lint_result",
 	"mcp__llm_wiki__enrich_wikilinks",
+	"mcp__llm_wiki__sweep_reviews",
 ] as const;
 
 const WIKI_TOOL_NAMES = new Set<string>([
@@ -111,14 +116,39 @@ export function previewToolInput(input: unknown): Record<string, unknown> {
 		"sourcePath",
 		"folderContext",
 		"forceRecaption",
+		"slugs",
+		"canonicalSlug",
+		"gapTitle",
+		"gapType",
 	]) {
 		if (source[key] !== undefined) preview[key] = source[key];
 	}
+	if (source.group && typeof source.group === "object" && !Array.isArray(source.group)) {
+		const group = source.group as Record<string, unknown>;
+		preview.group = {
+			slugs: group.slugs,
+			confidence: group.confidence,
+		};
+	}
 	if (typeof source.contents === "string") {
-		preview.contentsBytes = Buffer.byteLength(source.contents, "utf8");
-		preview.contentsSha256 = createHash("sha256")
-			.update(source.contents)
-			.digest("hex");
+		addTextDigest(preview, "contents", source.contents);
+	}
+	if (typeof source.overview === "string") {
+		addTextDigest(preview, "overview", source.overview);
+	}
+	if (typeof source.purpose === "string") {
+		addTextDigest(preview, "purpose", source.purpose);
 	}
 	return preview;
+}
+
+function addTextDigest(
+	preview: Record<string, unknown>,
+	key: string,
+	value: string,
+): void {
+	preview[`${key}Bytes`] = Buffer.byteLength(value, "utf8");
+	preview[`${key}Sha256`] = createHash("sha256")
+		.update(value)
+		.digest("hex");
 }

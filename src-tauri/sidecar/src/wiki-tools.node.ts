@@ -390,7 +390,7 @@ test("run_deep_research calls app bridge as write tool and returns app task id",
 	assert.match(resultText(result), /"taskId": "research-42"/);
 });
 
-test("collect_research_sources and get_agent_task_status are allowed without write tools", async () => {
+test("read-side app tools are allowed without write tools", async () => {
 	const bridgeCalls: string[] = [];
 	const context = {
 		streamId: "stream-1",
@@ -406,11 +406,67 @@ test("collect_research_sources and get_agent_task_status are allowed without wri
 	};
 	const collect = toolByName("collect_research_sources", context);
 	const status = toolByName("get_agent_task_status", context);
+	const detect = toolByName("detect_duplicates", context);
+	const mergeDryRun = toolByName("merge_duplicate_group", context);
+	const optimize = toolByName("optimize_research_topic", context);
+	const providerTest = toolByName("test_provider_connection", context);
 
 	const collectResult = await collect.handler({ topic: "topic" }, {});
 	const statusResult = await status.handler({ taskId: "research-1" }, {});
+	const detectResult = await detect.handler({ limit: 5 }, {});
+	const mergeResult = await mergeDryRun.handler(
+		{
+			group: { slugs: ["a", "b"], confidence: "high" },
+			canonicalSlug: "a",
+		},
+		{},
+	);
+	const optimizeResult = await optimize.handler({ gapTitle: "gap" }, {});
+	const providerResult = await providerTest.handler({}, {});
 
 	assert.equal(collectResult.isError, undefined);
 	assert.equal(statusResult.isError, undefined);
-	assert.deepEqual(bridgeCalls, ["collect_research_sources", "get_agent_task_status"]);
+	assert.equal(detectResult.isError, undefined);
+	assert.equal(mergeResult.isError, undefined);
+	assert.equal(optimizeResult.isError, undefined);
+	assert.equal(providerResult.isError, undefined);
+	assert.deepEqual(bridgeCalls, [
+		"collect_research_sources",
+		"get_agent_task_status",
+		"detect_duplicates",
+		"merge_duplicate_group",
+		"optimize_research_topic",
+		"test_provider_connection",
+	]);
+});
+
+test("merge_duplicate_group real writes and sweep_reviews require write tools", async () => {
+	const context = {
+		streamId: "stream-1",
+		enableWriteTools: false,
+		appToolBridge: {
+			async callTool() {
+				throw new Error("should not call bridge");
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	};
+	const merge = toolByName("merge_duplicate_group", context);
+	const sweep = toolByName("sweep_reviews", context);
+
+	const mergeResult = await merge.handler(
+		{
+			slugs: ["a", "b"],
+			canonicalSlug: "a",
+			dryRun: false,
+		},
+		{},
+	);
+	const sweepResult = await sweep.handler({}, {});
+
+	assert.equal(mergeResult.isError, true);
+	assert.match(resultText(mergeResult), /disabled/);
+	assert.equal(sweepResult.isError, true);
+	assert.match(resultText(sweepResult), /disabled/);
 });

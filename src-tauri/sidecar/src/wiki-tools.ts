@@ -400,6 +400,65 @@ export function createLlmWikiTools(
 			async (args) => safe(async () => appTool(context, "get_agent_task_status", args)),
 		),
 		tool(
+			"detect_duplicates",
+			"Detect duplicate entity/concept pages using LLM Wiki's existing dedup workflow.",
+			{
+				limit: z.number().int().positive().optional(),
+			},
+			async (args) => safe(async () => appTool(context, "detect_duplicates", args)),
+		),
+		tool(
+			"merge_duplicate_group",
+			"Preview or execute LLM Wiki's duplicate-page merge. Defaults to dryRun=true; only dryRun=false writes files and requires write tools enabled.",
+			{
+				group: z.object({
+					slugs: z.array(z.string().min(1)).min(2),
+					reason: z.string().optional(),
+					confidence: z.enum(["high", "medium", "low"]).optional(),
+				}).optional(),
+				slugs: z.array(z.string().min(1)).min(2).optional(),
+				canonicalSlug: z.string().min(1),
+				dryRun: z.boolean().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "merge_duplicate_group", args, {
+						requiresWrite: args.dryRun === false,
+						includeTaskId: true,
+					}),
+				),
+		),
+		tool(
+			"optimize_research_topic",
+			"Generate a context-aware research topic and search queries for a review/gap item.",
+			{
+				gapTitle: z.string().min(1),
+				gapDescription: z.string().optional(),
+				gapType: z.string().optional(),
+				overview: z.string().optional(),
+				purpose: z.string().optional(),
+			},
+			async (args) => safe(async () => appTool(context, "optimize_research_topic", args)),
+		),
+		tool(
+			"sweep_reviews",
+			"Run LLM Wiki's review cleanup and resolve stale review items when the current wiki state addresses them.",
+			{},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "sweep_reviews", args, {
+						requiresWrite: true,
+						includeTaskId: true,
+					}),
+				),
+		),
+		tool(
+			"test_provider_connection",
+			"Test the active LLM provider connection using LLM Wiki's existing provider test.",
+			{},
+			async (args) => safe(async () => appTool(context, "test_provider_connection", args)),
+		),
+		tool(
 			"ingest_source",
 			"Run LLM Wiki's full auto-ingest pipeline for one raw source, including cache, merge, review items, and image captioning when enabled.",
 			{

@@ -110,6 +110,10 @@ test("query request enables LLM Wiki MCP tools when project context is present",
 		"mcp__llm_wiki__run_lint",
 		"mcp__llm_wiki__collect_research_sources",
 		"mcp__llm_wiki__get_agent_task_status",
+		"mcp__llm_wiki__detect_duplicates",
+		"mcp__llm_wiki__merge_duplicate_group",
+		"mcp__llm_wiki__optimize_research_topic",
+		"mcp__llm_wiki__test_provider_connection",
 		"mcp__llm_wiki__update_page",
 		"mcp__llm_wiki__create_entity",
 		"mcp__llm_wiki__create_concept",
@@ -119,6 +123,7 @@ test("query request enables LLM Wiki MCP tools when project context is present",
 		"mcp__llm_wiki__caption_source_images",
 		"mcp__llm_wiki__fix_lint_result",
 		"mcp__llm_wiki__enrich_wikilinks",
+		"mcp__llm_wiki__sweep_reviews",
 	]);
 	assert.ok(capturedInput?.options?.mcpServers);
 	assert.ok(capturedInput?.options?.hooks);
@@ -160,6 +165,10 @@ test("query request can restrict tools to pre-approved Wiki MCP tools", async ()
 		"mcp__llm_wiki__run_lint",
 		"mcp__llm_wiki__collect_research_sources",
 		"mcp__llm_wiki__get_agent_task_status",
+		"mcp__llm_wiki__detect_duplicates",
+		"mcp__llm_wiki__merge_duplicate_group",
+		"mcp__llm_wiki__optimize_research_topic",
+		"mcp__llm_wiki__test_provider_connection",
 	]);
 });
 

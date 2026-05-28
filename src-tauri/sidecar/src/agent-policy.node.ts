@@ -44,6 +44,10 @@ test("allowed Wiki tools follow write mode", () => {
 			"mcp__llm_wiki__run_lint",
 			"mcp__llm_wiki__collect_research_sources",
 			"mcp__llm_wiki__get_agent_task_status",
+			"mcp__llm_wiki__detect_duplicates",
+			"mcp__llm_wiki__merge_duplicate_group",
+			"mcp__llm_wiki__optimize_research_topic",
+			"mcp__llm_wiki__test_provider_connection",
 		],
 	);
 	assert.ok(
@@ -59,6 +63,11 @@ test("allowed Wiki tools follow write mode", () => {
 	assert.ok(
 		getAllowedWikiTools({ wikiToolsEnabled: true, enableWriteTools: true }).includes(
 			"mcp__llm_wiki__run_deep_research",
+		),
+	);
+	assert.ok(
+		getAllowedWikiTools({ wikiToolsEnabled: true, enableWriteTools: true }).includes(
+			"mcp__llm_wiki__sweep_reviews",
 		),
 	);
 });
@@ -94,7 +103,21 @@ test("wiki tool preflight denies non-wiki and disabled write tools", () => {
 	);
 	assert.deepEqual(
 		shouldAllowWikiTool({
+			toolName: "mcp__llm_wiki__sweep_reviews",
+			enableWriteTools: false,
+		}),
+		{ allowed: false, reason: "Wiki write tools are disabled" },
+	);
+	assert.deepEqual(
+		shouldAllowWikiTool({
 			toolName: "mcp__llm_wiki__read_page",
+			enableWriteTools: false,
+		}),
+		{ allowed: true },
+	);
+	assert.deepEqual(
+		shouldAllowWikiTool({
+			toolName: "mcp__llm_wiki__merge_duplicate_group",
 			enableWriteTools: false,
 		}),
 		{ allowed: true },
@@ -105,6 +128,8 @@ test("tool input preview omits raw contents", () => {
 	const preview = previewToolInput({
 		path: "wiki/entities/example.md",
 		contents: "hello",
+		overview: "# Private overview",
+		purpose: "# Private purpose",
 		mode: "replace",
 	});
 
@@ -113,4 +138,10 @@ test("tool input preview omits raw contents", () => {
 	assert.equal(preview.contents, undefined);
 	assert.equal(preview.contentsBytes, 5);
 	assert.equal(typeof preview.contentsSha256, "string");
+	assert.equal(preview.overview, undefined);
+	assert.equal(preview.purpose, undefined);
+	assert.equal(preview.overviewBytes, 18);
+	assert.equal(preview.purposeBytes, 17);
+	assert.equal(typeof preview.overviewSha256, "string");
+	assert.equal(typeof preview.purposeSha256, "string");
 });

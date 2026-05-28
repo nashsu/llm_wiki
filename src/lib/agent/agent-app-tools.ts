@@ -1,4 +1,4 @@
-import { canonicalizePath, listDirectory } from "@/commands/fs"
+import { canonicalizePath, listDirectory, readFile } from "@/commands/fs"
 import { buildWikiAnswerContext } from "@/lib/wiki-answer-context"
 import { saveQueryPage } from "@/lib/save-query-page"
 import { runSemanticLint, runStructuralLint, type LintResult } from "@/lib/lint"
@@ -7,9 +7,15 @@ import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { autoIngest, captionSourceImages } from "@/lib/ingest"
 import { collectResearchSources, queueResearch, rewriteAnyTxtQueries } from "@/lib/deep-research"
+import { buildDedupLlmCall, executeMerge, loadAllWikiPages, runDuplicateDetection } from "@/lib/dedup-runner"
+import { mergeDuplicateGroup, type DuplicateGroup, type MergeResult } from "@/lib/dedup"
+import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
+import { sweepResolvedReviews } from "@/lib/sweep-reviews"
+import { testLlmConnection } from "@/lib/connection-tests"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredDeepResearchSources, resolveSearchConfig } from "@/lib/web-search"
 import { useResearchStore } from "@/stores/research-store"
+import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { SearchApiConfig } from "@/stores/wiki-store"
 import type { AgentWikiChangedPayload } from "./agent-types"
@@ -169,6 +175,80 @@ function lintResultArg(args: ToolArgs): LintResult {
       ? result.affectedPages.filter((item): item is string => typeof item === "string")
       : undefined,
   }
+}
+
+function duplicateGroupArg(args: ToolArgs): DuplicateGroup {
+  const rawGroup = args.group
+  const source = rawGroup && typeof rawGroup === "object" && !Array.isArray(rawGroup)
+    ? rawGroup as Record<string, unknown>
+    : args
+  const slugs = Array.isArray(source.slugs)
+    ? source.slugs.map((slug) => typeof slug === "string" ? slug.trim() : "").filter(Boolean)
+    : []
+  if (slugs.length < 2) throw new Error("merge_duplicate_group requires at least two slugs")
+  const confidence = source.confidence === "high" || source.confidence === "medium" || source.confidence === "low"
+    ? source.confidence
+    : "low"
+  return {
+    slugs,
+    reason: typeof source.reason === "string" ? source.reason : "",
+    confidence,
+  }
+}
+
+async function previewDuplicateMerge(
+  projectPath: string,
+  group: DuplicateGroup,
+  canonicalSlug: string,
+  llmConfig: ReturnType<typeof useWikiStore.getState>["llmConfig"],
+): Promise<MergeResult> {
+  const pp = normalizePath(projectPath)
+  const allPages = await loadAllWikiPages(pp)
+  const pathBySlug = new Map<string, string>()
+  for (const page of allPages) {
+    const base = page.path.split("/").pop() ?? ""
+    if (base.endsWith(".md")) pathBySlug.set(base.slice(0, -3), page.path)
+  }
+  const groupPages = group.slugs.map((slug) => {
+    const relPath = pathBySlug.get(slug)
+    if (!relPath) throw new Error(`Slug "${slug}" not found on disk`)
+    const page = allPages.find((item) => item.path === relPath)
+    if (!page) throw new Error(`Internal: page lookup miss for ${relPath}`)
+    return { slug, path: relPath, content: page.content }
+  })
+  const groupPaths = new Set(groupPages.map((page) => page.path))
+  const otherWikiPages = allPages.filter((page) => !groupPaths.has(page.path))
+  return mergeDuplicateGroup(
+    { group: groupPages, canonicalSlug, otherWikiPages },
+    buildDedupLlmCall(llmConfig),
+  )
+}
+
+function summarizeMergeResult(result: MergeResult, dryRun: boolean): Record<string, unknown> {
+  return {
+    dryRun,
+    canonicalPath: result.canonicalPath,
+    canonicalBytes: new TextEncoder().encode(result.canonicalContent).length,
+    canonicalPreview: result.canonicalContent.slice(0, 2000),
+    rewrites: result.rewrites.map((rewrite) => ({
+      path: rewrite.path,
+      bytes: new TextEncoder().encode(rewrite.newContent).length,
+    })),
+    pagesToDelete: result.pagesToDelete,
+    backupPaths: result.backup.map((item) => item.path),
+  }
+}
+
+function mergeWikiChanged(result: MergeResult): AgentWikiChangedPayload[] {
+  const updates = [
+    result.canonicalPath,
+    ...result.rewrites.map((rewrite) => rewrite.path),
+  ]
+  const uniqueUpdates = [...new Set(updates.filter((path) => path.startsWith("wiki/")))]
+  return [
+    ...uniqueUpdates.map((path) => ({ path, operation: "update" as const })),
+    ...result.pagesToDelete.map((path) => ({ path, operation: "delete" as const })),
+  ]
 }
 
 /**
@@ -334,6 +414,82 @@ export async function runAgentAppTool(
           savedPath: task.savedPath,
         error: task.error ? redactConfiguredSecrets(task.error, state) : null,
         createdAt: task.createdAt,
+      },
+    }
+  }
+
+  if (toolName === "detect_duplicates") {
+    const limit = typeof args.limit === "number" ? Math.max(1, Math.min(50, Math.floor(args.limit))) : 20
+    const groups = await runDuplicateDetection(projectPath, state.llmConfig)
+    return {
+      ok: true,
+      result: {
+        groups: groups.slice(0, limit),
+        totalGroups: groups.length,
+      },
+    }
+  }
+
+  if (toolName === "merge_duplicate_group") {
+    const group = duplicateGroupArg(args)
+    const canonicalSlug = stringArg(args, "canonicalSlug")
+    const dryRun = args.dryRun !== false
+    const result = dryRun
+      ? await previewDuplicateMerge(projectPath, group, canonicalSlug, state.llmConfig)
+      : await executeMerge(projectPath, group, canonicalSlug, state.llmConfig)
+    if (!dryRun) {
+      state.setFileTree(await listDirectory(projectPath))
+      useWikiStore.getState().bumpDataVersion()
+    }
+    return {
+      ok: true,
+      result: summarizeMergeResult(result, dryRun),
+      wikiChanged: dryRun ? [] : mergeWikiChanged(result),
+    }
+  }
+
+  if (toolName === "optimize_research_topic") {
+    const pp = normalizePath(projectPath)
+    const overview = typeof args.overview === "string"
+      ? args.overview
+      : await readFile(`${pp}/wiki/overview.md`).catch(() => "")
+    const purpose = typeof args.purpose === "string"
+      ? args.purpose
+      : await readFile(`${pp}/purpose.md`).catch(() => "")
+    const result = await optimizeResearchTopic(
+      state.llmConfig,
+      stringArg(args, "gapTitle"),
+      typeof args.gapDescription === "string" ? args.gapDescription : "",
+      typeof args.gapType === "string" ? args.gapType : "suggestion",
+      overview,
+      purpose,
+    )
+    return { ok: true, result }
+  }
+
+  if (toolName === "sweep_reviews") {
+    const before = useReviewStore.getState().items
+    const pendingBefore = before.filter((item) => !item.resolved).length
+    const resolvedCount = await sweepResolvedReviews(projectPath)
+    const after = useReviewStore.getState().items
+    return {
+      ok: true,
+      result: {
+        resolvedCount,
+        pendingBefore,
+        pendingAfter: after.filter((item) => !item.resolved).length,
+        totalReviews: after.length,
+      },
+    }
+  }
+
+  if (toolName === "test_provider_connection") {
+    const result = await testLlmConnection(state.llmConfig)
+    return {
+      ok: true,
+      result: {
+        ok: result.ok,
+        message: redactConfiguredSecrets(result.message, state),
       },
     }
   }
