@@ -271,6 +271,65 @@ describe("fetchEmbedding — provider wire formats", () => {
     })
   })
 
+  it("sends safe custom embedding headers on OpenAI-compatible endpoints", async () => {
+    mockHttpFetch.mockResolvedValueOnce(okResponse([0.5, 0.6]))
+
+    const out = await fetchEmbedding("hi", {
+      enabled: true,
+      endpoint: "https://gateway.example.com/v1/embeddings",
+      apiKey: "sk-test",
+      model: "text-embedding-3-small",
+      extraHeaders: {
+        "X-Model-Provider-Id": " siliconflow ",
+        "X-Empty": "",
+        "Bad Header": "nope",
+        Authorization: "Bearer attacker",
+        "Content-Type": "text/plain",
+        Host: "evil.example.com",
+        "Content-Length": "999",
+        "x-goog-api-key": "wrong-google-key",
+      },
+    })
+
+    expect(out).toEqual([0.5, 0.6])
+    const [, opts] = mockHttpFetch.mock.calls[0]
+    const headers = opts?.headers as Record<string, string>
+    expect(headers["X-Model-Provider-Id"]).toBe("siliconflow")
+    expect(headers.Authorization).toBe("Bearer sk-test")
+    expect(headers["Content-Type"]).toBe("application/json")
+    expect(headers.Host).toBeUndefined()
+    expect(headers["Content-Length"]).toBeUndefined()
+    expect(headers["x-goog-api-key"]).toBeUndefined()
+    expect(headers["Bad Header"]).toBeUndefined()
+    expect(headers["X-Empty"]).toBeUndefined()
+  })
+
+  it("does not let custom headers override the Gemini API key header", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ embedding: { values: [0.7, 0.8] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+
+    const out = await fetchEmbedding("hello", {
+      enabled: true,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "real-google-key",
+      model: "gemini-embedding-001",
+      extraHeaders: {
+        "x-goog-api-key": "wrong-google-key",
+        "X-Trace-Id": "trace-1",
+      },
+    })
+
+    expect(out).toEqual([0.7, 0.8])
+    const [, opts] = mockHttpFetch.mock.calls[0]
+    const headers = opts?.headers as Record<string, string>
+    expect(headers["x-goog-api-key"]).toBe("real-google-key")
+    expect(headers["X-Trace-Id"]).toBe("trace-1")
+  })
+
   it("supports Gemini native embedContent endpoint and response shape", async () => {
     mockHttpFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ embedding: { values: [0.1, 0.2, 0.3] } }), {

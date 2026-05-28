@@ -301,7 +301,9 @@
 				"legacyPromptTitle": "检测到旧版（按页）索引",
 				"legacyPromptBody": "当前项目在旧版按页向量存储里有 {{count}} 条记录。新版按 chunk 索引检索质量更高,但需要一次性重新 embed。点击\"重新索引全部页面\"完成升级。",
 				"dropLegacy": "删除旧版索引",
-				"dropLegacyDone": "旧版索引已删除。"
+				"dropLegacyDone": "旧版索引已删除。",
+				"extraHeaders": "自定义请求头",
+				"extraHeadersHint": "可选。每行一条，格式 `Header-Name: value`。用于需要按请求头路由的网关，例如 mify 需要 `X-Model-Provider-Id: siliconflow`。Authorization、Content-Type、Host、Content-Length、x-goog-api-key 由系统管理，会被忽略。"
 			},
 			"multimodal": {
 				"title": "图片描述",
