@@ -360,6 +360,27 @@ describe("runAgentAppTool ingest parity tools", () => {
       status: "missing",
       error: "Agent task not found",
     })
+
+    deepResearchMock.queueResearch.mockClear()
+    deepResearchMock.queueResearch.mockReturnValue("research-queries-only")
+    const queriesOnly = await runAgentAppTool("run_deep_research", {
+      queries: ["query topic", "extra query"],
+    })
+
+    expect(deepResearchMock.queueResearch).toHaveBeenCalledWith(
+      "/project",
+      "query topic",
+      expect.objectContaining({ model: "gpt-test" }),
+      expect.objectContaining({ provider: "tavily" }),
+      ["query topic", "extra query"],
+    )
+    expect(queriesOnly.result).toEqual({
+      taskId: "research-queries-only",
+      status: "queued",
+      topic: "query topic",
+      searchQueries: ["query topic", "extra query"],
+      sourceMode: "web",
+    })
   })
 
   it("returns a structured error when deep research sources are not configured", async () => {
@@ -382,6 +403,19 @@ describe("runAgentAppTool ingest parity tools", () => {
         sourceMode: "files",
       }),
     ).rejects.toThrow(/sourceMode/)
+  })
+
+  it("rejects research tools without a topic or query seed", async () => {
+    await expect(
+      runAgentAppTool("collect_research_sources", {
+        searchQueries: ["  "],
+      }),
+    ).rejects.toThrow(/topic or at least one searchQueries\/queries/)
+    await expect(
+      runAgentAppTool("run_deep_research", {
+        queries: [],
+      }),
+    ).rejects.toThrow(/topic or at least one searchQueries\/queries/)
   })
 
   it("detects duplicate groups with a bounded result set", async () => {

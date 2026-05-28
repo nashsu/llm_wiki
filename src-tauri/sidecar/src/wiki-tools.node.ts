@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { assertWikiMarkdownPath } from "./wiki-paths.js";
 import { createLlmWikiTools, type WikiChangedPayload } from "./wiki-tools.js";
 
@@ -17,6 +18,29 @@ function resultText(result: CallToolResult): string {
 	const first = result.content[0];
 	assert.equal(first?.type, "text");
 	return first.text;
+}
+
+function inputSchemaResult(
+	name: string,
+	input: unknown,
+): { success: boolean } {
+	const found = toolByName(name, {});
+	const schema = found.inputSchema as {
+		safeParse?: (value: unknown) => { success: boolean };
+	};
+	assert.equal(typeof schema.safeParse, "function", `${name} should expose a Zod object schema`);
+	return schema.safeParse!(input);
+}
+
+function jsonSchemaForTool(name: string): Record<string, unknown> {
+	const found = toolByName(name, {});
+	return z.toJSONSchema(found.inputSchema as z.ZodTypeAny) as Record<string, unknown>;
+}
+
+function schemaVariants(schema: Record<string, unknown>): Array<Record<string, unknown>> {
+	const variants = schema.anyOf ?? schema.oneOf;
+	assert.ok(Array.isArray(variants), "schema should expose anyOf/oneOf variants");
+	return variants as Array<Record<string, unknown>>;
 }
 
 async function tempProject(): Promise<string> {
@@ -373,21 +397,124 @@ test("run_deep_research calls app bridge as write tool and returns app task id",
 		{ topic: "membrane bioreactor", sourceMode: "both" },
 		{},
 	);
+	const topicWithEmptyQueries = await runResearch.handler(
+		{ topic: "seed topic", searchQueries: [] },
+		{},
+	);
 
 	assert.equal(result.isError, undefined);
+	assert.equal(topicWithEmptyQueries.isError, undefined);
+	const queriesOnly = await runResearch.handler(
+		{ queries: ["query topic", "extra query"] },
+		{},
+	);
+	const missingSeed = await runResearch.handler(
+		{ sourceMode: "web" },
+		{},
+	);
+
+	assert.equal(queriesOnly.isError, undefined);
+	assert.equal(missingSeed.isError, true);
+	assert.match(resultText(missingSeed), /topic or at least one searchQueries\/queries/);
 	assert.deepEqual(bridgeCalls, [
 		{
 			streamId: "stream-1",
 			toolName: "run_deep_research",
 			args: { topic: "membrane bioreactor", sourceMode: "both" },
 		},
+		{
+			streamId: "stream-1",
+			toolName: "run_deep_research",
+			args: { topic: "seed topic", searchQueries: [] },
+		},
+		{
+			streamId: "stream-1",
+			toolName: "run_deep_research",
+			args: { queries: ["query topic", "extra query"] },
+		},
 	]);
 	assert.deepEqual(sent.map((event) => event.type), [
 		"agent_task_started",
 		"agent_task_progress",
 		"agent_task_done",
+		"agent_task_started",
+		"agent_task_progress",
+		"agent_task_done",
+		"agent_task_started",
+		"agent_task_progress",
+		"agent_task_done",
 	]);
 	assert.match(resultText(result), /"taskId": "research-42"/);
+});
+
+test("cross-field app tool schemas reject missing seeds", () => {
+	assert.equal(inputSchemaResult("collect_research_sources", { sourceMode: "web" }).success, false);
+	assert.equal(inputSchemaResult("collect_research_sources", { topic: "topic", searchQueries: [] }).success, true);
+	assert.equal(inputSchemaResult("collect_research_sources", { queries: ["query"] }).success, true);
+	assert.equal(inputSchemaResult("run_deep_research", { sourceMode: "both" }).success, false);
+	assert.equal(inputSchemaResult("run_deep_research", { queries: ["query"] }).success, true);
+	assert.equal(inputSchemaResult("merge_duplicate_group", { canonicalSlug: "a" }).success, false);
+	assert.equal(inputSchemaResult("merge_duplicate_group", { canonicalSlug: "a", slugs: ["a", "b"] }).success, true);
+	assert.equal(
+		inputSchemaResult("merge_duplicate_group", {
+			canonicalSlug: "a",
+			group: { slugs: ["a", "b"], confidence: "high" },
+		}).success,
+		true,
+	);
+});
+
+test("cross-field app tool JSON schemas expose union requirements", () => {
+	const collectSchema = jsonSchemaForTool("collect_research_sources");
+	const runResearchSchema = jsonSchemaForTool("run_deep_research");
+	const mergeSchema = jsonSchemaForTool("merge_duplicate_group");
+	const collectRequired = schemaVariants(collectSchema).map((variant) => variant.required);
+	const runResearchRequired = schemaVariants(runResearchSchema).map((variant) => variant.required);
+	const mergeRequired = schemaVariants(mergeSchema).map((variant) => variant.required);
+
+	assert.deepEqual(collectRequired, [
+		["topic"],
+		["searchQueries"],
+		["queries"],
+	]);
+	assert.deepEqual(runResearchRequired, [
+		["topic"],
+		["searchQueries"],
+		["queries"],
+	]);
+	assert.deepEqual(mergeRequired, [
+		["group", "canonicalSlug"],
+		["slugs", "canonicalSlug"],
+	]);
+	assert.match(JSON.stringify(collectSchema), /minItems/);
+	assert.match(JSON.stringify(mergeSchema), /minItems/);
+});
+
+test("research and merge tools reject missing seed inputs before bridge calls", async () => {
+	const bridgeCalls: string[] = [];
+	const context = {
+		streamId: "stream-1",
+		enableWriteTools: true,
+		appToolBridge: {
+			async callTool(_streamId: string, toolName: string) {
+				bridgeCalls.push(toolName);
+				return { ok: true, result: {} };
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	};
+	const collect = toolByName("collect_research_sources", context);
+	const merge = toolByName("merge_duplicate_group", context);
+
+	const collectResult = await collect.handler({ searchQueries: [] }, {});
+	const mergeResult = await merge.handler({ slugs: ["only-one"], canonicalSlug: "only-one" }, {});
+
+	assert.equal(collectResult.isError, true);
+	assert.match(resultText(collectResult), /topic or at least one searchQueries\/queries/);
+	assert.equal(mergeResult.isError, true);
+	assert.match(resultText(mergeResult), /at least two page slugs/);
+	assert.deepEqual(bridgeCalls, []);
 });
 
 test("read-side app tools are allowed without write tools", async () => {

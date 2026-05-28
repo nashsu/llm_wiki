@@ -26,6 +26,10 @@ import {
 
 const DEFAULT_MAX_WRITE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILES_CHANGED = 3;
+const STRING_ARRAY = z.array(z.string());
+const SOURCE_MODE_SCHEMA = z.enum(["web", "anytxt", "both"]);
+const RESEARCH_SEED_ERROR = "Provide topic or at least one searchQueries/queries item";
+const DUPLICATE_MERGE_SEED_ERROR = "Provide duplicate group.slugs or slugs with at least two page slugs";
 
 export interface WikiChangedPayload {
 	path: string;
@@ -197,6 +201,107 @@ function parseWikiChanged(value: unknown): WikiChangedPayload[] {
 	});
 }
 
+function hasNonEmptyString(value: unknown): boolean {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasNonEmptyStringArray(value: unknown): boolean {
+	return Array.isArray(value) && value.some((item) => hasNonEmptyString(item));
+}
+
+function hasAtLeastTwoNonEmptyStrings(value: unknown): boolean {
+	return Array.isArray(value) && value.filter((item) => hasNonEmptyString(item)).length >= 2;
+}
+
+function assertResearchSeed(args: Record<string, unknown>): void {
+	if (
+		hasNonEmptyString(args.topic) ||
+		hasNonEmptyStringArray(args.searchQueries) ||
+		hasNonEmptyStringArray(args.queries)
+	) {
+		return;
+	}
+	throw new Error(RESEARCH_SEED_ERROR);
+}
+
+function assertDuplicateMergeSeed(args: Record<string, unknown>): void {
+	if (hasAtLeastTwoNonEmptyStrings(args.slugs)) return;
+	const group = args.group;
+	if (group && typeof group === "object" && !Array.isArray(group)) {
+		if (hasAtLeastTwoNonEmptyStrings((group as Record<string, unknown>).slugs)) return;
+	}
+	throw new Error(DUPLICATE_MERGE_SEED_ERROR);
+}
+
+const RESEARCH_TOPIC_FIELD = z.string().min(1)
+	.describe("Research topic. Required when searchQueries/queries is omitted.");
+const RESEARCH_QUERIES_FIELD = STRING_ARRAY
+	.describe("Specific search queries. Empty items are ignored when topic is present.");
+const RESEARCH_QUERIES_REQUIRED_FIELD = z.array(z.string().min(1)).min(1)
+	.describe("Specific search queries. Required when topic is omitted.");
+const RESEARCH_QUERY_ALIAS_FIELD = STRING_ARRAY
+	.describe("Alias for searchQueries. Empty items are ignored when topic/searchQueries is present.");
+const RESEARCH_QUERY_ALIAS_REQUIRED_FIELD = z.array(z.string().min(1)).min(1)
+	.describe("Alias for searchQueries. Required when topic/searchQueries is omitted.");
+
+const researchSeedObjectSchema = z.union([
+	z.object({
+		topic: RESEARCH_TOPIC_FIELD,
+		searchQueries: RESEARCH_QUERIES_FIELD.optional(),
+		queries: RESEARCH_QUERY_ALIAS_FIELD.optional(),
+		sourceMode: SOURCE_MODE_SCHEMA.optional(),
+	}),
+	z.object({
+		topic: RESEARCH_TOPIC_FIELD.optional(),
+		searchQueries: RESEARCH_QUERIES_REQUIRED_FIELD,
+		queries: RESEARCH_QUERY_ALIAS_FIELD.optional(),
+		sourceMode: SOURCE_MODE_SCHEMA.optional(),
+	}),
+	z.object({
+		topic: RESEARCH_TOPIC_FIELD.optional(),
+		searchQueries: RESEARCH_QUERIES_FIELD.optional(),
+		queries: RESEARCH_QUERY_ALIAS_REQUIRED_FIELD,
+		sourceMode: SOURCE_MODE_SCHEMA.optional(),
+	}),
+]);
+
+const DUPLICATE_GROUP_FIELD = z.object({
+	slugs: z.array(z.string().min(1)).min(2),
+	reason: z.string().optional(),
+	confidence: z.enum(["high", "medium", "low"]).optional(),
+}).describe("Duplicate group returned by detect_duplicates. Required when slugs is omitted.");
+const DUPLICATE_SLUGS_FIELD = z.array(z.string().min(1)).min(2)
+	.describe("Duplicate page slugs. Required when group is omitted.");
+
+const duplicateMergeObjectSchema = z.union([
+	z.object({
+		group: DUPLICATE_GROUP_FIELD,
+		slugs: DUPLICATE_SLUGS_FIELD.optional(),
+		canonicalSlug: z.string().min(1),
+		dryRun: z.boolean().optional(),
+	}),
+	z.object({
+		group: DUPLICATE_GROUP_FIELD.optional(),
+		slugs: DUPLICATE_SLUGS_FIELD,
+		canonicalSlug: z.string().min(1),
+		dryRun: z.boolean().optional(),
+	}),
+]);
+
+function appMcpTool<Schema extends z.ZodTypeAny>(
+	name: string,
+	description: string,
+	inputSchema: Schema,
+	handler: (args: z.infer<Schema>) => Promise<CallToolResult>,
+): SdkMcpToolDefinition<any> {
+	return {
+		name,
+		description,
+		inputSchema,
+		handler: (args) => handler(args as z.infer<Schema>),
+	};
+}
+
 async function readExisting(fsLike: FileSystemLike, absolutePath: string): Promise<string> {
 	return fsLike.readFile(absolutePath, "utf8");
 }
@@ -363,33 +468,28 @@ export function createLlmWikiTools(
 			},
 			async (args) => safe(async () => appTool(context, "run_lint", args)),
 		),
-		tool(
+		appMcpTool(
 			"collect_research_sources",
-			"Collect Deep Research sources using LLM Wiki's configured Web Search and/or AnyTXT providers without exposing API keys.",
-			{
-				topic: z.string().min(1).optional(),
-				searchQueries: z.array(z.string()).optional(),
-				queries: z.array(z.string()).optional(),
-				sourceMode: z.enum(["web", "anytxt", "both"]).optional(),
-			},
+			"Collect Deep Research sources using LLM Wiki's configured Web Search and/or AnyTXT providers without exposing API keys. Provide topic or at least one searchQueries/queries item.",
+			researchSeedObjectSchema,
 			async (args) =>
-				safe(async () => appTool(context, "collect_research_sources", args)),
+				safe(async () => {
+					assertResearchSeed(args);
+					return appTool(context, "collect_research_sources", args);
+				}),
 		),
-		tool(
+		appMcpTool(
 			"run_deep_research",
-			"Queue LLM Wiki's Deep Research workflow. Tool completion means queued, not finished; poll get_agent_task_status for progress and savedPath.",
-			{
-				topic: z.string().min(1),
-				searchQueries: z.array(z.string()).optional(),
-				sourceMode: z.enum(["web", "anytxt", "both"]).optional(),
-			},
+			"Queue LLM Wiki's Deep Research workflow. Provide topic or at least one searchQueries/queries item. Tool completion means queued, not finished; poll get_agent_task_status for progress and savedPath.",
+			researchSeedObjectSchema,
 			async (args) =>
-				safe(async () =>
-					appTool(context, "run_deep_research", args, {
+				safe(async () => {
+					assertResearchSeed(args);
+					return appTool(context, "run_deep_research", args, {
 						requiresWrite: true,
 						includeTaskId: true,
-					}),
-				),
+					});
+				}),
 		),
 		tool(
 			"get_agent_task_status",
@@ -407,26 +507,18 @@ export function createLlmWikiTools(
 			},
 			async (args) => safe(async () => appTool(context, "detect_duplicates", args)),
 		),
-		tool(
+		appMcpTool(
 			"merge_duplicate_group",
 			"Preview or execute LLM Wiki's duplicate-page merge. Defaults to dryRun=true; only dryRun=false writes files and requires write tools enabled.",
-			{
-				group: z.object({
-					slugs: z.array(z.string().min(1)).min(2),
-					reason: z.string().optional(),
-					confidence: z.enum(["high", "medium", "low"]).optional(),
-				}).optional(),
-				slugs: z.array(z.string().min(1)).min(2).optional(),
-				canonicalSlug: z.string().min(1),
-				dryRun: z.boolean().optional(),
-			},
+			duplicateMergeObjectSchema,
 			async (args) =>
-				safe(async () =>
-					appTool(context, "merge_duplicate_group", args, {
+				safe(async () => {
+					assertDuplicateMergeSeed(args);
+					return appTool(context, "merge_duplicate_group", args, {
 						requiresWrite: args.dryRun === false,
 						includeTaskId: true,
-					}),
-				),
+					});
+				}),
 		),
 		tool(
 			"optimize_research_topic",

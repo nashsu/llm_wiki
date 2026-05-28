@@ -43,6 +43,14 @@ function stringArg(args: ToolArgs, key: string): string {
   return value
 }
 
+function optionalStringArg(args: ToolArgs, key: string): string | undefined {
+  const value = args[key]
+  if (value === undefined) return undefined
+  if (typeof value !== "string") throw new Error(`${key} must be a string`)
+  const clean = value.trim()
+  return clean.length > 0 ? clean : undefined
+}
+
 function optionalStringArray(args: ToolArgs, key: string): string[] | undefined {
   const value = args[key]
   if (value === undefined) return undefined
@@ -52,14 +60,33 @@ function optionalStringArray(args: ToolArgs, key: string): string[] | undefined 
   return value
 }
 
+function optionalNonEmptyStringArray(args: ToolArgs, key: string): string[] | undefined {
+  const values = optionalStringArray(args, key)
+  if (!values) return undefined
+  const clean = values.map((item) => item.trim()).filter(Boolean)
+  return clean.length > 0 ? clean : undefined
+}
+
 function searchQueriesArg(args: ToolArgs): string[] {
-  const queries = optionalStringArray(args, "searchQueries")
-    ?? optionalStringArray(args, "queries")
-  if (queries) {
-    const clean = queries.map((query) => query.trim()).filter(Boolean)
-    if (clean.length > 0) return clean
+  const queries = optionalNonEmptyStringArray(args, "searchQueries")
+    ?? optionalNonEmptyStringArray(args, "queries")
+  if (queries) return queries
+  const topic = optionalStringArg(args, "topic")
+  if (topic) return [topic]
+  throw new Error("Provide topic or at least one searchQueries/queries item")
+}
+
+function researchRequestArg(args: ToolArgs): { topic: string; searchQueries?: string[] } {
+  const topic = optionalStringArg(args, "topic")
+  const searchQueries = optionalNonEmptyStringArray(args, "searchQueries")
+    ?? optionalNonEmptyStringArray(args, "queries")
+  if (!topic && !searchQueries) {
+    throw new Error("Provide topic or at least one searchQueries/queries item")
   }
-  return [stringArg(args, "topic")]
+  return {
+    topic: topic ?? searchQueries![0],
+    searchQueries,
+  }
 }
 
 function searchConfigWithSourceMode(
@@ -357,8 +384,7 @@ export async function runAgentAppTool(
   }
 
   if (toolName === "run_deep_research") {
-    const topic = stringArg(args, "topic")
-    const searchQueries = optionalStringArray(args, "searchQueries")
+    const { topic, searchQueries } = researchRequestArg(args)
     const searchConfig = searchConfigWithSourceMode(state.searchApiConfig, args.sourceMode)
     if (!hasConfiguredDeepResearchSources(searchConfig)) {
       return {
