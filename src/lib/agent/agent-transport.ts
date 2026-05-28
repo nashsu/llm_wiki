@@ -14,6 +14,9 @@ import type {
 	AgentActionRequiredPayload,
 	AgentAppToolRequestPayload,
 	AgentDonePayload,
+	AgentPermissionDecision,
+	AgentPermissionRequestPayload,
+	AgentPermissionPolicy,
 	AgentSummaryPayload,
 	AgentTaskEventPayload,
 	AgentTransportOptions,
@@ -43,7 +46,7 @@ type InvokePayload = Record<string, unknown> & {
 	title?: string;
 	apiKey?: string;
 	baseUrl?: string;
-	permissionPolicy?: "default" | "restricted" | "bypass";
+	permissionPolicy?: AgentPermissionPolicy;
 	projectId?: string;
 	projectPath?: string;
 	apiServerBaseUrl?: string;
@@ -68,6 +71,19 @@ function sendAppToolResponse(payload: Record<string, unknown>) {
 	return invoke("agent_tool_response", payload).catch((err) => {
 		console.error("[agent-transport] failed to send app tool response:", err);
 	});
+}
+
+function sendPermissionResponse(payload: Record<string, unknown>) {
+	return invoke("agent_permission_response", payload).catch((err) => {
+		console.error("[agent-transport] failed to send permission response:", err);
+	});
+}
+
+function defaultPermissionDecision(): AgentPermissionDecision {
+	return {
+		behavior: "deny",
+		message: "Permission request was not handled",
+	};
 }
 
 export async function streamAgent(
@@ -131,6 +147,30 @@ export async function streamAgent(
 						)
 						.catch((err) =>
 							sendAppToolResponse({
+								streamId,
+								requestId: request.requestId,
+								ok: false,
+								error: err instanceof Error ? err.message : String(err),
+							}),
+						);
+					return;
+				}
+
+				if (wrapper.type === "agent_permission_request") {
+					const request = msg as AgentPermissionRequestPayload;
+					void Promise.resolve(
+						callbacks.onPermissionRequest?.(request) ?? defaultPermissionDecision(),
+					)
+						.then((decision) =>
+							sendPermissionResponse({
+								streamId,
+								requestId: request.requestId,
+								ok: true,
+								decision,
+							}),
+						)
+						.catch((err) =>
+							sendPermissionResponse({
 								streamId,
 								requestId: request.requestId,
 								ok: false,

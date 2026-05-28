@@ -18,7 +18,15 @@ export interface AgentRequest {
 		persistSession?: boolean;
 		title?: string;
 		allowedTools?: string[];
-		permissionPolicy?: "default" | "restricted" | "bypass";
+		permissionPolicy?:
+			| "default"
+			| "restricted"
+			| "bypass"
+			| "acceptEdits"
+			| "bypassPermissions"
+			| "plan"
+			| "dontAsk"
+			| "auto";
 		projectId?: string;
 		projectPath?: string;
 		apiServerBaseUrl?: string;
@@ -84,6 +92,7 @@ export interface AgentMessage {
 		| "tool_event"
 		| "agent_summary"
 		| "agent_action_required"
+		| "agent_permission_request"
 		| "agent_task_started"
 		| "agent_task_progress"
 		| "agent_task_done"

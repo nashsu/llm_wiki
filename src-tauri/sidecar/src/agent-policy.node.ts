@@ -25,6 +25,25 @@ test("bypass permission policy requires explicit dangerous flag", () => {
 		permissionMode: "bypassPermissions",
 		allowDangerouslySkipPermissions: true,
 	});
+	assert.deepEqual(buildPermissionOptions("bypassPermissions"), {
+		permissionMode: "bypassPermissions",
+		allowDangerouslySkipPermissions: true,
+	});
+});
+
+test("SDK-native permission policies pass through", () => {
+	assert.deepEqual(buildPermissionOptions("acceptEdits"), {
+		permissionMode: "acceptEdits",
+	});
+	assert.deepEqual(buildPermissionOptions("plan"), {
+		permissionMode: "plan",
+	});
+	assert.deepEqual(buildPermissionOptions("dontAsk"), {
+		permissionMode: "dontAsk",
+	});
+	assert.deepEqual(buildPermissionOptions("auto"), {
+		permissionMode: "auto",
+	});
 });
 
 test("allowed Wiki tools follow write mode", () => {

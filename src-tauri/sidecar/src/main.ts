@@ -2,6 +2,10 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
 import { createAppToolBridge, type AppToolResponseMessage } from "./app-tool-bridge.js";
 import { createRequestHandler } from "./core.js";
+import {
+	createPermissionBridge,
+	type AgentPermissionResponseMessage,
+} from "./permission-bridge.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
 
 const rl = createInterface({ input: process.stdin });
@@ -27,12 +31,14 @@ function scheduleExitIfIdle(): void {
 }
 
 const appToolBridge = createAppToolBridge({ send });
+const permissionBridge = createPermissionBridge({ send });
 const handleRequest = createRequestHandler({
 	queryFn: query,
 	send,
 	error: console.error,
 	activeQueries,
 	appToolBridge,
+	permissionBridge,
 });
 
 rl.on("line", (line) => {
@@ -41,9 +47,14 @@ rl.on("line", (line) => {
 		const parsed = JSON.parse(line) as
 			| AgentRequest
 			| AgentKillRequest
-			| AppToolResponseMessage;
+			| AppToolResponseMessage
+			| AgentPermissionResponseMessage;
 		if (parsed.type === "app_tool_response") {
 			appToolBridge.handleResponse(parsed);
+			return;
+		}
+		if (parsed.type === "permission_response") {
+			permissionBridge.handleResponse(parsed);
 			return;
 		}
 		handleRequest(parsed).catch((err) => {
