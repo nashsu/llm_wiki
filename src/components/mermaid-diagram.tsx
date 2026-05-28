@@ -5,16 +5,26 @@ interface MermaidDiagramProps {
   code: string
 }
 
+const svgCache = new Map<string, string>()
+
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [svg, setSvg] = useState<string | null>(null)
-  const [visible, setVisible] = useState(false)
+  const [svg, setSvg] = useState<string | null>(() => svgCache.get(code) ?? null)
+  const [visible, setVisible] = useState(() => svgCache.has(code))
   const [expanded, setExpanded] = useState(false)
   const [scale, setScale] = useState(1)
 
+  useEffect(() => {
+    const cached = svgCache.get(code) ?? null
+    setError(null)
+    setSvg(cached)
+    setVisible(Boolean(cached))
+  }, [code])
+
   // Only render when the diagram scrolls into view
   useEffect(() => {
+    if (svgCache.has(code)) return
     const el = containerRef.current
     if (!el) return
 
@@ -33,7 +43,12 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
   // Render mermaid SVG once visible
   useEffect(() => {
-    if (!visible) return
+    if (!visible || svg) return
+    const cached = svgCache.get(code)
+    if (cached) {
+      setSvg(cached)
+      return
+    }
     let cancelled = false
 
     async function render() {
@@ -48,6 +63,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
         const { svg: rendered } = await mermaid.render(id, code)
         if (!cancelled) {
+          svgCache.set(code, rendered)
           setSvg(rendered)
           setError(null)
         }
@@ -61,7 +77,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
     render()
     return () => { cancelled = true }
-  }, [visible, code])
+  }, [visible, code, svg])
 
   // Prevent layout shift: compute a stable min-height from code line count
   const estimatedHeight = Math.max(80, code.split("\n").length * 20)
