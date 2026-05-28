@@ -364,6 +364,42 @@ export function createLlmWikiTools(
 			async (args) => safe(async () => appTool(context, "run_lint", args)),
 		),
 		tool(
+			"collect_research_sources",
+			"Collect Deep Research sources using LLM Wiki's configured Web Search and/or AnyTXT providers without exposing API keys.",
+			{
+				topic: z.string().min(1).optional(),
+				searchQueries: z.array(z.string()).optional(),
+				queries: z.array(z.string()).optional(),
+				sourceMode: z.enum(["web", "anytxt", "both"]).optional(),
+			},
+			async (args) =>
+				safe(async () => appTool(context, "collect_research_sources", args)),
+		),
+		tool(
+			"run_deep_research",
+			"Queue LLM Wiki's Deep Research workflow. Tool completion means queued, not finished; poll get_agent_task_status for progress and savedPath.",
+			{
+				topic: z.string().min(1),
+				searchQueries: z.array(z.string()).optional(),
+				sourceMode: z.enum(["web", "anytxt", "both"]).optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "run_deep_research", args, {
+						requiresWrite: true,
+						includeTaskId: true,
+					}),
+				),
+		),
+		tool(
+			"get_agent_task_status",
+			"Return status for an app-level Agent task such as Deep Research.",
+			{
+				taskId: z.string().min(1),
+			},
+			async (args) => safe(async () => appTool(context, "get_agent_task_status", args)),
+		),
+		tool(
 			"ingest_source",
 			"Run LLM Wiki's full auto-ingest pipeline for one raw source, including cache, merge, review items, and image captioning when enabled.",
 			{

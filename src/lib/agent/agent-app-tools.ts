@@ -6,8 +6,12 @@ import { fixLintResult } from "@/lib/lint-fixer"
 import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { autoIngest, captionSourceImages } from "@/lib/ingest"
+import { collectResearchSources, queueResearch, rewriteAnyTxtQueries } from "@/lib/deep-research"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
+import { hasConfiguredDeepResearchSources, resolveSearchConfig } from "@/lib/web-search"
+import { useResearchStore } from "@/stores/research-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import type { SearchApiConfig } from "@/stores/wiki-store"
 import type { AgentWikiChangedPayload } from "./agent-types"
 
 export interface AgentAppToolResponse {
@@ -40,6 +44,45 @@ function optionalStringArray(args: ToolArgs, key: string): string[] | undefined 
     throw new Error(`${key} must be a string array`)
   }
   return value
+}
+
+function searchQueriesArg(args: ToolArgs): string[] {
+  const queries = optionalStringArray(args, "searchQueries")
+    ?? optionalStringArray(args, "queries")
+  if (queries) {
+    const clean = queries.map((query) => query.trim()).filter(Boolean)
+    if (clean.length > 0) return clean
+  }
+  return [stringArg(args, "topic")]
+}
+
+function searchConfigWithSourceMode(
+  searchConfig: SearchApiConfig,
+  sourceMode: unknown,
+): SearchApiConfig {
+  if (sourceMode === undefined) return searchConfig
+  if (sourceMode !== "web" && sourceMode !== "anytxt" && sourceMode !== "both") {
+    throw new Error("sourceMode must be web, anytxt, or both")
+  }
+  return { ...searchConfig, deepResearchSource: sourceMode }
+}
+
+function redactConfiguredSecrets(text: string, state: ReturnType<typeof useWikiStore.getState>): string {
+  const secrets = [
+    state.llmConfig.apiKey,
+    state.searchApiConfig.apiKey,
+    ...Object.values(state.searchApiConfig.providerConfigs ?? {}).map((config) => config?.apiKey ?? ""),
+  ].filter((secret) => secret.length >= 6)
+
+  let redacted = text
+  for (const secret of secrets) {
+    redacted = redacted.split(secret).join("REDACTED")
+  }
+  return redacted
+}
+
+function redactErrors(errors: string[], state: ReturnType<typeof useWikiStore.getState>): string[] {
+  return errors.map((error) => redactConfiguredSecrets(error, state))
 }
 
 function normalizePagePath(projectPath: string, input: string): string {
@@ -192,6 +235,105 @@ export async function runAgentAppTool(
         structuralCount: structural.length,
         semanticCount: semantic.length,
         semanticSkipped: includeSemantic && !hasUsableLlm(state.llmConfig),
+      },
+    }
+  }
+
+  if (toolName === "collect_research_sources") {
+    const queries = searchQueriesArg(args)
+    const searchConfig = searchConfigWithSourceMode(state.searchApiConfig, args.sourceMode)
+    const resolved = resolveSearchConfig(searchConfig)
+    if (!hasConfiguredDeepResearchSources(searchConfig)) {
+      return {
+        ok: true,
+        result: {
+          queries,
+          sourceMode: resolved.deepResearchSource ?? "web",
+          results: [],
+          errors: ["Deep research source is not configured"],
+        },
+      }
+    }
+    const anyTxtQueries = resolved.deepResearchSource === "anytxt" || resolved.deepResearchSource === "both"
+      ? await rewriteAnyTxtQueries(queries, state.llmConfig).catch(() => undefined)
+      : undefined
+    const collected = await collectResearchSources(
+      queries,
+      searchConfig,
+      projectPath,
+      undefined,
+      { anyTxtQueries },
+    )
+    return {
+      ok: true,
+      result: {
+        queries,
+        anyTxtQueries,
+        sourceMode: resolved.deepResearchSource ?? "web",
+        results: collected.results,
+        errors: redactErrors(collected.errors, state),
+      },
+    }
+  }
+
+  if (toolName === "run_deep_research") {
+    const topic = stringArg(args, "topic")
+    const searchQueries = optionalStringArray(args, "searchQueries")
+    const searchConfig = searchConfigWithSourceMode(state.searchApiConfig, args.sourceMode)
+    if (!hasConfiguredDeepResearchSources(searchConfig)) {
+      return {
+        ok: true,
+        result: {
+          taskId: null,
+          status: "error",
+          error: "Deep research source is not configured",
+        },
+      }
+    }
+    const taskId = queueResearch(
+      normalizePath(projectPath),
+      topic,
+      state.llmConfig,
+      searchConfig,
+      searchQueries,
+    )
+    return {
+      ok: true,
+      result: {
+        taskId,
+        status: "queued",
+        topic,
+        searchQueries,
+        sourceMode: resolveSearchConfig(searchConfig).deepResearchSource ?? "web",
+      },
+    }
+  }
+
+  if (toolName === "get_agent_task_status") {
+    const taskId = stringArg(args, "taskId")
+    const task = useResearchStore.getState().tasks.find((item) => item.id === taskId)
+    if (!task) {
+      return {
+        ok: true,
+        result: {
+          taskId,
+          status: "missing",
+          error: "Agent task not found",
+        },
+      }
+    }
+    return {
+      ok: true,
+      result: {
+        taskId: task.id,
+        topic: task.topic,
+        status: task.status,
+        searchQueries: task.searchQueries,
+        sourceCount: task.webResults.length,
+        synthesis: task.synthesis,
+          savedPath: task.savedPath,
+        error: task.error ? redactConfiguredSecrets(task.error, state) : null,
+        createdAt: task.createdAt,
       },
     }
   }

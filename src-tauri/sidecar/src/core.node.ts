@@ -108,10 +108,13 @@ test("query request enables LLM Wiki MCP tools when project context is present",
 		"mcp__llm_wiki__get_graph",
 		"mcp__llm_wiki__build_answer_context",
 		"mcp__llm_wiki__run_lint",
+		"mcp__llm_wiki__collect_research_sources",
+		"mcp__llm_wiki__get_agent_task_status",
 		"mcp__llm_wiki__update_page",
 		"mcp__llm_wiki__create_entity",
 		"mcp__llm_wiki__create_concept",
 		"mcp__llm_wiki__save_query_page",
+		"mcp__llm_wiki__run_deep_research",
 		"mcp__llm_wiki__ingest_source",
 		"mcp__llm_wiki__caption_source_images",
 		"mcp__llm_wiki__fix_lint_result",
@@ -155,6 +158,8 @@ test("query request can restrict tools to pre-approved Wiki MCP tools", async ()
 		"mcp__llm_wiki__get_graph",
 		"mcp__llm_wiki__build_answer_context",
 		"mcp__llm_wiki__run_lint",
+		"mcp__llm_wiki__collect_research_sources",
+		"mcp__llm_wiki__get_agent_task_status",
 	]);
 });
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { FileNode } from "@/types/wiki"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useResearchStore } from "@/stores/research-store"
 import { runAgentAppTool } from "./agent-app-tools"
 
 const fsMock = vi.hoisted(() => ({
@@ -13,6 +14,12 @@ const ingestMock = vi.hoisted(() => ({
   captionSourceImages: vi.fn(),
 }))
 
+const deepResearchMock = vi.hoisted(() => ({
+  collectResearchSources: vi.fn(),
+  queueResearch: vi.fn(),
+  rewriteAnyTxtQueries: vi.fn(),
+}))
+
 vi.mock("@/commands/fs", () => ({
   canonicalizePath: vi.fn(async (path: string) => fsMock.canonical.get(path) ?? path),
   listDirectory: vi.fn(async () => fsMock.tree),
@@ -23,12 +30,22 @@ vi.mock("@/lib/ingest", () => ({
   captionSourceImages: ingestMock.captionSourceImages,
 }))
 
+vi.mock("@/lib/deep-research", () => ({
+  collectResearchSources: deepResearchMock.collectResearchSources,
+  queueResearch: deepResearchMock.queueResearch,
+  rewriteAnyTxtQueries: deepResearchMock.rewriteAnyTxtQueries,
+}))
+
 describe("runAgentAppTool ingest parity tools", () => {
   beforeEach(() => {
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true }]
     fsMock.canonical = new Map([["/project/raw/sources", "/project/raw/sources"]])
     ingestMock.autoIngest.mockReset()
     ingestMock.captionSourceImages.mockReset()
+    deepResearchMock.collectResearchSources.mockReset()
+    deepResearchMock.queueResearch.mockReset()
+    deepResearchMock.rewriteAnyTxtQueries.mockReset()
+    useResearchStore.setState({ tasks: [], panelOpen: false })
     useWikiStore.setState({
       project: { id: "p1", name: "Project", path: "/project" },
       fileTree: [],
@@ -42,6 +59,11 @@ describe("runAgentAppTool ingest parity tools", () => {
         customEndpoint: "",
         azureApiVersion: "2024-10-21",
         reasoning: { mode: "auto" },
+      },
+      searchApiConfig: {
+        provider: "none",
+        apiKey: "",
+        deepResearchSource: "web",
       },
     })
   })
@@ -124,5 +146,174 @@ describe("runAgentAppTool ingest parity tools", () => {
     await expect(
       runAgentAppTool("ingest_source", { sourcePath: "link.pdf" }),
     ).rejects.toThrow(/resolve inside raw\/sources/)
+  })
+
+  it("collects research sources through configured app search services", async () => {
+    deepResearchMock.rewriteAnyTxtQueries.mockResolvedValue(["local keywords"])
+    deepResearchMock.collectResearchSources.mockResolvedValue({
+      results: [{ title: "Source", url: "https://example.com", snippet: "hit", source: "web" }],
+      errors: ["provider leaked search-key in body"],
+    })
+    useWikiStore.setState({
+      searchApiConfig: {
+        provider: "tavily",
+        apiKey: "search-key",
+        deepResearchSource: "both",
+        anyTxt: { endpoint: "http://127.0.0.1:9920" },
+      },
+    })
+
+    const response = await runAgentAppTool("collect_research_sources", {
+      topic: "winter ammonia",
+      sourceMode: "both",
+    })
+
+    expect(deepResearchMock.rewriteAnyTxtQueries).toHaveBeenCalledWith(
+      ["winter ammonia"],
+      expect.objectContaining({ model: "gpt-test" }),
+    )
+    expect(deepResearchMock.collectResearchSources).toHaveBeenCalledWith(
+      ["winter ammonia"],
+      expect.objectContaining({ deepResearchSource: "both" }),
+      "/project",
+      undefined,
+      { anyTxtQueries: ["local keywords"] },
+    )
+    expect(response.result).toEqual({
+      queries: ["winter ammonia"],
+      anyTxtQueries: ["local keywords"],
+      sourceMode: "both",
+      results: [{ title: "Source", url: "https://example.com", snippet: "hit", source: "web" }],
+      errors: ["provider leaked REDACTED in body"],
+    })
+  })
+
+  it("returns structured collect errors and falls back when AnyTXT rewrite fails", async () => {
+    const unconfigured = await runAgentAppTool("collect_research_sources", {
+      topic: "unconfigured",
+    })
+    expect(unconfigured.result).toEqual({
+      queries: ["unconfigured"],
+      sourceMode: "web",
+      results: [],
+      errors: ["Deep research source is not configured"],
+    })
+
+    deepResearchMock.rewriteAnyTxtQueries.mockRejectedValue(new Error("rewrite failed"))
+    deepResearchMock.collectResearchSources.mockResolvedValue({ results: [], errors: [] })
+    useWikiStore.setState({
+      searchApiConfig: {
+        provider: "none",
+        apiKey: "",
+        deepResearchSource: "anytxt",
+        anyTxt: { endpoint: "http://127.0.0.1:9920" },
+      },
+    })
+
+    await runAgentAppTool("collect_research_sources", {
+      topic: "fallback",
+      sourceMode: "anytxt",
+    })
+
+    expect(deepResearchMock.collectResearchSources).toHaveBeenLastCalledWith(
+      ["fallback"],
+      expect.objectContaining({ deepResearchSource: "anytxt" }),
+      "/project",
+      undefined,
+      { anyTxtQueries: undefined },
+    )
+  })
+
+  it("starts deep research and exposes task status", async () => {
+    deepResearchMock.queueResearch.mockReturnValue("research-42")
+    useWikiStore.setState({
+      searchApiConfig: {
+        provider: "tavily",
+        apiKey: "search-key",
+        deepResearchSource: "web",
+      },
+    })
+
+    const started = await runAgentAppTool("run_deep_research", {
+      topic: "membrane bioreactor",
+      searchQueries: ["MBR winter"],
+    })
+
+    expect(deepResearchMock.queueResearch).toHaveBeenCalledWith(
+      "/project",
+      "membrane bioreactor",
+      expect.objectContaining({ model: "gpt-test" }),
+      expect.objectContaining({ provider: "tavily" }),
+      ["MBR winter"],
+    )
+    expect(started.result).toEqual({
+      taskId: "research-42",
+      status: "queued",
+      topic: "membrane bioreactor",
+      searchQueries: ["MBR winter"],
+      sourceMode: "web",
+    })
+
+    useResearchStore.setState({
+      tasks: [{
+        id: "research-42",
+        topic: "membrane bioreactor",
+        status: "done",
+        searchQueries: ["MBR winter"],
+        webResults: [{ title: "Source", url: "https://example.com", snippet: "hit", source: "web" }],
+        synthesis: "summary",
+        savedPath: "wiki/queries/research-mbr.md",
+        error: "failed with search-key",
+        createdAt: 123,
+      }],
+    })
+
+    const status = await runAgentAppTool("get_agent_task_status", {
+      taskId: "research-42",
+    })
+
+    expect(status.result).toEqual({
+      taskId: "research-42",
+      topic: "membrane bioreactor",
+      status: "done",
+      searchQueries: ["MBR winter"],
+      sourceCount: 1,
+      synthesis: "summary",
+      savedPath: "wiki/queries/research-mbr.md",
+      error: "failed with REDACTED",
+      createdAt: 123,
+    })
+
+    const missing = await runAgentAppTool("get_agent_task_status", {
+      taskId: "missing-task",
+    })
+
+    expect(missing.result).toEqual({
+      taskId: "missing-task",
+      status: "missing",
+      error: "Agent task not found",
+    })
+  })
+
+  it("returns a structured error when deep research sources are not configured", async () => {
+    const response = await runAgentAppTool("run_deep_research", {
+      topic: "unconfigured",
+    })
+
+    expect(deepResearchMock.queueResearch).not.toHaveBeenCalled()
+    expect(response.result).toEqual({
+      taskId: null,
+      status: "error",
+      error: "Deep research source is not configured",
+    })
+  })
+
+  it("rejects invalid sourceMode values in app tool args", async () => {
+    await expect(
+      runAgentAppTool("collect_research_sources", {
+        topic: "bad mode",
+        sourceMode: "files",
+      }),
+    ).rejects.toThrow(/sourceMode/)
   })
 })

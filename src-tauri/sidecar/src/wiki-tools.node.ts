@@ -348,3 +348,69 @@ test("caption_source_images rejects when write tools are disabled", async () => 
 	assert.equal(result.isError, true);
 	assert.match(resultText(result), /disabled/);
 });
+
+test("run_deep_research calls app bridge as write tool and returns app task id", async () => {
+	const sent: Array<{ type: string; data: unknown }> = [];
+	const bridgeCalls: Array<{ streamId: string; toolName: string; args: Record<string, unknown> }> = [];
+	const runResearch = toolByName("run_deep_research", {
+		streamId: "stream-1",
+		enableWriteTools: true,
+		emitAgentEvent: (type, data) => sent.push({ type, data }),
+		appToolBridge: {
+			async callTool(streamId, toolName, args) {
+				bridgeCalls.push({ streamId, toolName, args });
+				return {
+					ok: true,
+					result: { taskId: "research-42", status: "queued" },
+				};
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	});
+
+	const result = await runResearch.handler(
+		{ topic: "membrane bioreactor", sourceMode: "both" },
+		{},
+	);
+
+	assert.equal(result.isError, undefined);
+	assert.deepEqual(bridgeCalls, [
+		{
+			streamId: "stream-1",
+			toolName: "run_deep_research",
+			args: { topic: "membrane bioreactor", sourceMode: "both" },
+		},
+	]);
+	assert.deepEqual(sent.map((event) => event.type), [
+		"agent_task_started",
+		"agent_task_progress",
+		"agent_task_done",
+	]);
+	assert.match(resultText(result), /"taskId": "research-42"/);
+});
+
+test("collect_research_sources and get_agent_task_status are allowed without write tools", async () => {
+	const bridgeCalls: string[] = [];
+	const context = {
+		streamId: "stream-1",
+		enableWriteTools: false,
+		appToolBridge: {
+			async callTool(_streamId: string, toolName: string) {
+				bridgeCalls.push(toolName);
+				return { ok: true, result: { toolName } };
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	};
+	const collect = toolByName("collect_research_sources", context);
+	const status = toolByName("get_agent_task_status", context);
+
+	const collectResult = await collect.handler({ topic: "topic" }, {});
+	const statusResult = await status.handler({ taskId: "research-1" }, {});
+
+	assert.equal(collectResult.isError, undefined);
+	assert.equal(statusResult.isError, undefined);
+	assert.deepEqual(bridgeCalls, ["collect_research_sources", "get_agent_task_status"]);
+});

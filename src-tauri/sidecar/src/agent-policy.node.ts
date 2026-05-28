@@ -42,6 +42,8 @@ test("allowed Wiki tools follow write mode", () => {
 			"mcp__llm_wiki__get_graph",
 			"mcp__llm_wiki__build_answer_context",
 			"mcp__llm_wiki__run_lint",
+			"mcp__llm_wiki__collect_research_sources",
+			"mcp__llm_wiki__get_agent_task_status",
 		],
 	);
 	assert.ok(
@@ -52,6 +54,11 @@ test("allowed Wiki tools follow write mode", () => {
 	assert.ok(
 		getAllowedWikiTools({ wikiToolsEnabled: true, enableWriteTools: true }).includes(
 			"mcp__llm_wiki__ingest_source",
+		),
+	);
+	assert.ok(
+		getAllowedWikiTools({ wikiToolsEnabled: true, enableWriteTools: true }).includes(
+			"mcp__llm_wiki__run_deep_research",
 		),
 	);
 });
@@ -74,6 +81,13 @@ test("wiki tool preflight denies non-wiki and disabled write tools", () => {
 	assert.deepEqual(
 		shouldAllowWikiTool({
 			toolName: "mcp__llm_wiki__ingest_source",
+			enableWriteTools: false,
+		}),
+		{ allowed: false, reason: "Wiki write tools are disabled" },
+	);
+	assert.deepEqual(
+		shouldAllowWikiTool({
+			toolName: "mcp__llm_wiki__run_deep_research",
 			enableWriteTools: false,
 		}),
 		{ allowed: false, reason: "Wiki write tools are disabled" },
