@@ -12,6 +12,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { useWikiStore } from "@/stores/wiki-store"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import "@milkdown/theme-nord/style.css"
 
 interface WikiReaderProps {
   body: string
@@ -58,7 +59,7 @@ export function WikiReader({ body }: WikiReaderProps) {
 
   return (
     <div
-      className="prose prose-invert min-w-0 max-w-none"
+      className="milkdown-theme-nord min-w-0 max-w-none"
       dir={direction}
       lang={htmlLang}
       style={{ textAlign: "start" }}
