@@ -8,6 +8,7 @@ import { API_SERVER_HEALTH_URL, API_SERVER_PORT } from "@/lib/api-server-constan
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { checkForUpdates, toLatestReleaseUrl } from "@/lib/update-check"
 import { saveUpdateCheckState } from "@/lib/project-store"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 interface ApiHealth {
   enabled?: boolean
@@ -251,6 +252,7 @@ function UpdateAvailableBanner({
   onDismiss,
 }: UpdateAvailableBannerProps) {
   const { t } = useTranslation()
+  const { alert } = useAppDialog()
   // Use `/releases/latest` (canonical GitHub redirect to the newest
   // release) rather than the tag-specific URL from the release
   // payload. Same rationale as in the top banner — see
@@ -273,11 +275,15 @@ function UpdateAvailableBanner({
       console.error("[update-banner] openUrl failed:", err)
       try {
         await navigator.clipboard.writeText(targetUrl)
-        // eslint-disable-next-line no-alert
-        alert(`Could not open browser. URL copied to clipboard:\n${targetUrl}`)
+        await alert({
+          title: "Could Not Open Browser",
+          message: `URL copied to clipboard:\n${targetUrl}`,
+        })
       } catch {
-        // eslint-disable-next-line no-alert
-        alert(`Could not open browser. Visit:\n${targetUrl}`)
+        await alert({
+          title: "Could Not Open Browser",
+          message: `Visit:\n${targetUrl}`,
+        })
       }
     }
   }

@@ -19,6 +19,7 @@ import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { useTranslation } from "react-i18next"
 
 export function ResearchPanel() {
@@ -29,17 +30,21 @@ export function ResearchPanel() {
   const project = useWikiStore((s) => s.project)
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
+  const { alert } = useAppDialog()
   const [inputValue, setInputValue] = useState("")
 
   const running = tasks.filter((t) => ["searching", "synthesizing", "saving"].includes(t.status))
   const queued = tasks.filter((t) => t.status === "queued")
   const done = tasks.filter((t) => t.status === "done" || t.status === "error")
 
-  function handleStartResearch() {
+  async function handleStartResearch() {
     const topic = inputValue.trim()
     if (!topic || !project) return
     if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
-      window.alert(t("research.notConfigured"))
+      await alert({
+        title: t("research.title"),
+        message: t("research.notConfigured"),
+      })
       return
     }
     queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig)

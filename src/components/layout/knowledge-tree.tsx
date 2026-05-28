@@ -10,6 +10,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 interface WikiPageInfo {
   path: string
@@ -41,6 +42,7 @@ export function KnowledgeTree() {
   const fileTree = useWikiStore((s) => s.fileTree)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
+  const { alert } = useAppDialog()
   const [pages, setPages] = useState<WikiPageInfo[]>([])
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
   // Two-stage delete: first click arms the row, second click executes.
@@ -109,7 +111,10 @@ export function KnowledgeTree() {
         if (selectedFile === pagePath) setSelectedFile(null)
       } catch (err) {
         console.error("[KnowledgeTree] delete failed:", err)
-        window.alert(`Failed to delete: ${err}`)
+        void alert({
+          title: "Delete Failed",
+          message: `Failed to delete: ${err}`,
+        })
       } finally {
         setDeletingPath(null)
       }

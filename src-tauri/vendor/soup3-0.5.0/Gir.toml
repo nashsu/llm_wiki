@@ -1,0 +1,329 @@
+[external_libraries]
+Gio = {min_version = "2.66"}
+
+[options]
+girs_directories = [".", "./gir-files"]
+library = "Soup"
+version = "3.0"
+min_cfg_version = "3.0"
+target_path = "."
+work_mode = "normal"
+generate_safety_asserts = true
+deprecate_by_min_version = true
+single_version_file = true
+use_gi_docgen = true
+
+external_libraries = [
+   "GLib",
+   "GObject",
+]
+
+generate = [
+	# "Soup.*",
+	"Soup.Auth",
+	"Soup.AuthBasic",
+	"Soup.AuthDigest",
+	"Soup.AuthDomainBasicAuthCallback",
+	"Soup.AuthDomainFilter",
+	"Soup.AuthDomainGenericAuthCallback",
+	"Soup.AuthManager",
+	"Soup.AuthNegotiate",
+	"Soup.AuthNTLM",
+	"Soup.Cache",
+	"Soup.Cacheability",
+	"Soup.CacheType",
+	"Soup.ContentDecoder",
+	"Soup.ContentSniffer",
+	"Soup.CookieJarAcceptPolicy",
+	"Soup.CookieJarDB",
+	"Soup.CookieJarText",
+	"Soup.DateFormat",
+	"Soup.Encoding",
+	"Soup.Expectation",
+	"Soup.HSTSEnforcer",
+	"Soup.HSTSEnforcerDB",
+	# "Soup.HSTSPolicy",
+	"Soup.HTTPVersion",
+	# "Soup.Logger",
+	"Soup.LoggerFilter",
+	"Soup.LoggerLogLevel",
+	"Soup.LoggerPrinter",
+	"Soup.MemoryUse",
+	# "Soup.Message",
+	# "Soup.MessageBody",
+	"Soup.MessageFlags",
+	# "Soup.MessageHeadersIter",
+	"Soup.MessageHeadersType",
+	"Soup.MessageMetrics",
+	"Soup.MessagePriority",
+	"Soup.Multipart",
+	# "Soup.MultipartInputStream",
+	# "Soup.Range",
+	"Soup.SameSitePolicy",
+	"Soup.ServerMessage",
+	"Soup.ServerListenOptions",
+	"Soup.SessionError",
+	"Soup.SessionFeature",
+	"Soup.Status",
+	"Soup.TLDError",
+	"Soup.URIComponent",
+	"Soup.WebsocketCloseCode",
+	# "Soup.WebsocketConnection",
+	"Soup.WebsocketConnectionType",
+	"Soup.WebsocketDataType",
+	"Soup.WebsocketError",
+	"Soup.WebsocketExtension",
+	# "Soup.WebsocketExtensionDeflate",
+	"Soup.WebsocketExtensionManager",
+	"Soup.WebsocketState",
+]
+
+manual = [
+	"Gio.AsyncResult",
+	"Gio.Cancellable",
+	"Gio.File",
+	"Gio.FilterInputStream",
+	"Gio.InputStream",
+	"Gio.IOStream",
+	"Gio.InetSocketAddress",
+	"Gio.OutputStream",
+	"Gio.OutputStreamSpliceFlags",
+	"Gio.PollableInputStream",
+	"Gio.ProxyResolver",
+	"Gio.Socket",
+	"Gio.SocketAddress",
+	"Gio.SocketClientEvent",
+	"Gio.SocketConnectable",
+	"Gio.TlsCertificate",
+	"Gio.TlsCertificateFlags",
+	"Gio.TlsClientConnection",
+	"Gio.TlsDatabase",
+	"Gio.TlsInteraction",
+	"Gio.TlsAuthenticationMode",
+	"Gio.TlsPassword",
+	"Gio.TlsProtocolVersion",
+	"GLib.Bytes",
+	"GLib.DateTime",
+	"GLib.DestroyNotify",
+	"GLib.Error",
+	"GLib.HashTable",
+	"GLib.IOChannel",
+	"GLib.IOCondition",
+	"GLib.IOFunc",
+	"GLib.List",
+	"GLib.MainContext",
+	"GLib.Priority",
+	"GLib.PtrArray",
+	"GLib.Quark",
+	"GLib.SList",
+	"GLib.Source",
+	"GLib.SourceFunc",
+	"GLib.Uri",
+	# "GLib.Value",
+	# "GLib.ValueArray",
+	"GLib.Variant",
+	"GObject.Object"
+	# "GLib.Data",
+	# "GLib.TimeVal",
+]
+
+[[object]]
+name="Soup.Cookie"
+status = "generate"
+    [[object.function]]
+    name = "equal"
+	 	[[object.function.parameter]]
+		name = "cookie1"
+		const = true
+    	[[object.function.parameter]]
+		name = "cookie2"
+		const = true
+
+[[object]]
+name="Soup.CookieJar"
+status = "generate"
+manual_traits = ["CookieJarExtManual"]
+    [[object.function]]
+    name = "add_cookie"
+	manual = true
+    [[object.function]]
+    name = "add_cookie_full"
+	manual = true
+    [[object.function]]
+    name = "add_cookie_with_first_party"
+	manual = true
+    [[object.function]]
+    name = "delete_cookie"
+	manual = true
+
+[[object]]
+name="Soup.AuthDomain"
+status="generate"
+	[[object.property]]
+	name="filter"
+	ignore=true
+	[[object.property]]
+	name="generic-auth-callback"
+	ignore=true
+
+[[object]]
+name="Soup.AuthDomainBasic"
+status="generate"
+	[[object.property]]
+	name="auth-callback"
+	ignore=true
+
+[[object]]
+name="Soup.AuthDomainDigest"
+status="generate"
+	[[object.property]]
+	name="auth-callback"
+	ignore=true
+
+[[object]]
+name="Soup.Server"
+manual_traits = ["ServerExtManual"]
+status="generate"
+	[[object.function]]
+	name="add_early_handler"
+	manual = true
+	[[object.function]]
+	name="add_handler"
+	manual = true
+	[[object.function]]
+	name="add_websocket_handler"
+	manual = true
+
+[[object]]
+name = "Soup.Session"
+status = "generate"
+generate_builder = true
+manual_traits = ["SessionExtManual"]
+	[[object.function]]
+	name = "websocket_connect_async"
+	ignore = true
+
+[[object]]
+name="Soup.Logger"
+status = "generate"
+    [[object.function]]
+    name = "set_printer"
+    manual = true
+
+[[object]]
+name="Soup.MessageBody"
+status = "generate"
+    [[object.function]]
+    name = "append"
+    ignore = true
+
+
+# [[object]]
+# name="Soup.CookieJar"
+# status = "generate"
+#     [[object.function]]
+#     name = "add_cookie"
+# 	ignore= true
+#     [[object.function]]
+#     name = "add_cookie_with_first_party"
+# 	ignore= true
+#     [[object.function]]
+#     name = "add_cookie_full"
+# 	ignore= true
+#     [[object.function]]
+#     name = "get_cookie_list_with_same_site_info"
+# 	ignore= true
+
+[[object]]
+name="Soup.WebsocketConnection"
+manual_traits = ["WebsocketConnectionExtManual"]
+status="generate"
+	[[object.function]]
+	name = "new"
+	manual = true
+	[[object.function]]
+	name = "send_binary"
+	ignore = true
+	[[object.function]]
+	name = "send_message"
+	ignore = true
+
+[[object]]
+name="Soup.WebsocketExtensionDeflate"
+version="2.68"
+status="generate"
+
+[[object]]
+name="Soup.MultipartInputStream"
+status="generate"
+	[[object.function]]
+	name="next_part_async"
+	ignore=true
+
+[[object]]
+name="Soup.Message"
+status="generate"
+	[[object.function]]
+	name="new"
+		[object.function.return]
+		nullable_return_is_error = "Invalid URL"
+	[[object.function]]
+	name="new_from_encoded_form"
+		[object.function.return]
+		nullable_return_is_error = "Invalid URL"
+	[[object.function]]
+	name="new_from_multipart"
+		[object.function.return]
+		nullable_return_is_error = "Invalid URL"
+	[[object.function]]
+	name = "get_site_for_cookies"
+	ignore = true
+	[[object.function]]
+	name = "set_site_for_cookies"
+	ignore = true
+	[[object.function]]
+	name="set_chunk_allocator"
+	ignore=true
+
+[[object]]
+name="Soup.MessageHeaders"
+status="generate"
+	[[object.function]]
+	name = "get_content_disposition"
+	manual = true
+	[[object.function]]
+	name = "set_content_disposition"
+	manual = true
+	[[object.function]]
+	name = "get_content_type"
+	manual = true
+	[[object.function]]
+	name = "set_content_type"
+	manual = true
+
+[[object]]
+name="Soup.HSTSPolicy"
+status="generate"
+	[[object.function]]
+	name="equal"
+	ignore=true
+
+[[object]]
+name="Soup.*"
+status="generate"
+	[[object.function]]
+	name = "(header_g_string_append_param|soup_header_g_string_append_param_quoted)"
+	manual = true
+	[[object.function]]
+	name = "cookies_free"
+	ignore = true
+	[[object.function]]
+	name = "cookies_to_cookie_header"
+	ignore = true
+	[[object.function]]
+	name = "cookies_to_request"
+	ignore = true
+	[[object.function]]
+	name = "cookies_to_response"
+	ignore = true
+

@@ -1,0 +1,65 @@
+variables:
+  # format is <branch>=<name>
+  # the name is used in the URL
+  # latest release must be at the top
+  # (only relevant on main branch)
+  RELEASES: |
+    v0.4=0.4
+
+image: "debian:testing"
+
+before_script:
+  - apt update; apt install -y --no-install-recommends git build-essential libsoup-3.0-dev libglib2.0-dev ca-certificates meson cmake libnghttp2-dev libsqlite3-dev libpsl-dev glib-networking curl
+  # compile libsoup3
+  - git clone --recursive https://gitlab.gnome.org/GNOME/libsoup
+  - cd libsoup
+  - meson build -Dprefix=/usr -Dbrotli=enabled -Ddocs=disabled -Dinstalled_tests=false -Dvapi=disabled
+  - cd build
+  - ninja install
+  - cd ../../
+
+  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain none -y
+  - source $HOME/.cargo/env
+  - rustup toolchain install nightly --profile minimal --allow-downgrade -c rustfmt
+
+  - git submodule update --init
+  - curl --proto '=https' --tlsv1.2 -sSf -o gir-rustdoc.py
+    https://gitlab.gnome.org/World/Rust/gir-rustdoc/-/raw/main/gir-rustdoc.py
+  - chmod +x gir-rustdoc.py
+
+build:
+  script:
+    - cargo build --all-features --examples
+    - cargo test
+
+docs:
+  stage: test
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    RUSTFLAGS: --cfg docsrs
+  script:
+    # generate the docs
+    - cargo install rustdoc-stripper
+    - ./generator.py --embed-docs
+    - rustup default nightly
+    - eval $(./gir-rustdoc.py pre-docs)
+    - cargo doc --all-features --no-deps
+    - mv target/doc/ docs
+  artifacts:
+    paths:
+      - docs
+
+pages:
+  stage: deploy
+  script:
+    - ./gir-rustdoc.py html-index
+    # main docs
+    - mkdir public/git
+    - mv docs public/git/docs
+    # stable docs
+    # - ./gir-rustdoc.py docs-from-artifacts
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_DEFAULT_BRANCH == $CI_COMMIT_BRANCH

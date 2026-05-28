@@ -1,0 +1,48 @@
+[package]
+name = "soup3"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Soup crate for Rust"
+repository = "https://gitlab.gnome.org/World/Rust/soup3-rs"
+license = "MIT"
+keywords = ["soup", "gtk-rs", "gnome"]
+exclude = ["gir", "gir-files", "generator.py", "Soup-3.0.gir"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "soup"
+
+[dependencies]
+libc = "0.2"
+futures-channel = "0.3"
+
+[dependencies.ffi]
+package = "soup3-sys"
+path = "sys"
+version = "0.5"
+
+[dependencies.glib]
+git = "https://github.com/gtk-rs/gtk-rs-core"
+branch = "0.18"
+version = "0.18"
+features = [ "v2_66" ]
+
+[dependencies.gio]
+git = "https://github.com/gtk-rs/gtk-rs-core"
+branch = "0.18"
+version = "0.18"
+features = [ "v2_70" ]
+
+[features]
+default = ["ffi/v3_0"]
+v3_2 = ["ffi/v3_2"]
+v3_4 = ["v3_2", "ffi/v3_4"]
+
+[dev-dependencies]
+rustdoc-stripper = "^0.1.5"
+gir-format-check = "^0.1"

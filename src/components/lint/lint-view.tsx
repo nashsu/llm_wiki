@@ -19,6 +19,7 @@ import { runStructuralLint, runSemanticLint } from "@/lib/lint"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { useTranslation } from "react-i18next"
 
 export function groupLintResultsForDisplay(results: readonly LintItem[]): {
@@ -52,6 +53,7 @@ export function LintView() {
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
+  const { confirm } = useAppDialog()
 
   // Dynamic type config based on i18n
   const typeConfig = useMemo(() => ({
@@ -205,7 +207,12 @@ export function LintView() {
     if (!project) return
     const pp = normalizePath(project.path)
     const pagePath = `${pp}/wiki/${item.page}`
-    const confirmed = window.confirm(t("lint.deleteOrphanConfirm", { page: item.page }))
+    const confirmed = await confirm({
+      title: "Delete Orphan Page",
+      message: t("lint.deleteOrphanConfirm", { page: item.page }),
+      confirmLabel: "Delete",
+      confirmVariant: "destructive",
+    })
     if (!confirmed) return
 
     try {
