@@ -112,6 +112,8 @@ test("query request enables LLM Wiki MCP tools when project context is present",
 		"mcp__llm_wiki__create_entity",
 		"mcp__llm_wiki__create_concept",
 		"mcp__llm_wiki__save_query_page",
+		"mcp__llm_wiki__ingest_source",
+		"mcp__llm_wiki__caption_source_images",
 		"mcp__llm_wiki__fix_lint_result",
 		"mcp__llm_wiki__enrich_wikilinks",
 	]);

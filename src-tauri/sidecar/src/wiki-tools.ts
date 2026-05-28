@@ -97,7 +97,7 @@ async function appTool(
 	context: LlmWikiToolContext,
 	toolName: string,
 	args: Record<string, unknown>,
-	options: { requiresWrite?: boolean } = {},
+	options: { requiresWrite?: boolean; includeTaskId?: boolean } = {},
 ): Promise<CallToolResult> {
 	if (!context.streamId) throw new Error("streamId is required for app tools");
 	if (!context.appToolBridge) throw new Error("App tool bridge is not available");
@@ -131,14 +131,18 @@ async function appTool(
 				operation: "update",
 			});
 		}
+		const toolResult = data.result ?? raw;
+		const resultPayload = options.includeTaskId && toolResult && typeof toolResult === "object" && !Array.isArray(toolResult)
+			? { taskId, ...(toolResult as Record<string, unknown>) }
+			: toolResult;
 		context.emitAgentEvent?.("agent_task_done", {
 			taskId,
 			toolName,
 			message: `Finished ${toolName}`,
 			progress: 1,
-			result: data.result ?? raw,
+			result: resultPayload,
 		});
-		return jsonResult(data.result ?? raw);
+		return jsonResult(resultPayload);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		context.emitAgentEvent?.("agent_task_error", {
@@ -358,6 +362,36 @@ export function createLlmWikiTools(
 				includeSemantic: z.boolean().optional(),
 			},
 			async (args) => safe(async () => appTool(context, "run_lint", args)),
+		),
+		tool(
+			"ingest_source",
+			"Run LLM Wiki's full auto-ingest pipeline for one raw source, including cache, merge, review items, and image captioning when enabled.",
+			{
+				sourcePath: z.string().min(1),
+				folderContext: z.string().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "ingest_source", args, {
+						requiresWrite: true,
+						includeTaskId: true,
+					}),
+				),
+		),
+		tool(
+			"caption_source_images",
+			"Extract and caption embedded images for one raw source, then inject the image section into its source summary.",
+			{
+				sourcePath: z.string().min(1),
+				forceRecaption: z.boolean().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "caption_source_images", args, {
+						requiresWrite: true,
+						includeTaskId: true,
+					}),
+				),
 		),
 		tool(
 			"fix_lint_result",

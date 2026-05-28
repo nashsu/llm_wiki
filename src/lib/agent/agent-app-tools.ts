@@ -1,11 +1,12 @@
-import { listDirectory } from "@/commands/fs"
+import { canonicalizePath, listDirectory } from "@/commands/fs"
 import { buildWikiAnswerContext } from "@/lib/wiki-answer-context"
 import { saveQueryPage } from "@/lib/save-query-page"
 import { runSemanticLint, runStructuralLint, type LintResult } from "@/lib/lint"
 import { fixLintResult } from "@/lib/lint-fixer"
 import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
-import { normalizePath } from "@/lib/path-utils"
+import { autoIngest, captionSourceImages } from "@/lib/ingest"
+import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { AgentWikiChangedPayload } from "./agent-types"
 
@@ -47,6 +48,59 @@ function normalizePagePath(projectPath: string, input: string): string {
   if (path.startsWith(`${pp}/`)) return path
   if (path.startsWith("wiki/")) return `${pp}/${path}`
   return `${pp}/wiki/${path}`
+}
+
+async function normalizeSourcePath(projectPath: string, input: string): Promise<string> {
+  const pp = normalizePath(projectPath).replace(/\/+$/, "")
+  const rawSourcesRoot = `${pp}/raw/sources/`
+  const rawSourcesPrefix = "raw/sources/"
+  const sourcesPrefix = "sources/"
+  let path: string
+  try {
+    path = normalizePath(decodeURIComponent(input.trim()))
+  } catch {
+    throw new Error("sourcePath has invalid URI encoding")
+  }
+
+  const assertSafeRelativeSource = (relPath: string): string => {
+    const segments = relPath.split("/")
+    if (
+      relPath.length === 0 ||
+      segments.some((segment) => segment === ".." || segment === "." || segment === "")
+    ) {
+      throw new Error("sourcePath must not contain traversal segments")
+    }
+    return relPath
+  }
+
+  let candidate: string
+  if (path.startsWith(rawSourcesRoot)) {
+    assertSafeRelativeSource(path.slice(rawSourcesRoot.length))
+    candidate = path
+  } else if (path.startsWith(`${pp}/`) || isAbsolutePath(path)) {
+    throw new Error("sourcePath must be inside the active project")
+  } else if (path.startsWith(rawSourcesPrefix)) {
+    assertSafeRelativeSource(path.slice(rawSourcesPrefix.length))
+    candidate = `${pp}/${path}`
+  } else if (path.startsWith(sourcesPrefix)) {
+    const relPath = assertSafeRelativeSource(path.slice(sourcesPrefix.length))
+    candidate = `${rawSourcesRoot}${relPath}`
+  } else {
+    candidate = `${rawSourcesRoot}${assertSafeRelativeSource(path)}`
+  }
+
+  const canonicalRoot = normalizePath(await canonicalizePath(`${pp}/raw/sources`)).replace(/\/+$/, "")
+  const canonicalCandidate = normalizePath(await canonicalizePath(candidate))
+  if (canonicalCandidate !== canonicalRoot && !canonicalCandidate.startsWith(`${canonicalRoot}/`)) {
+    throw new Error("sourcePath must resolve inside raw/sources")
+  }
+  return canonicalCandidate
+}
+
+function wikiChangedFromPaths(paths: string[]): AgentWikiChangedPayload[] {
+  return paths
+    .filter((path) => path.startsWith("wiki/"))
+    .map((path) => ({ path, operation: "update" as const }))
 }
 
 function lintResultArg(args: ToolArgs): LintResult {
@@ -139,6 +193,44 @@ export async function runAgentAppTool(
         semanticCount: semantic.length,
         semanticSkipped: includeSemantic && !hasUsableLlm(state.llmConfig),
       },
+    }
+  }
+
+  if (toolName === "ingest_source") {
+    const sourcePath = await normalizeSourcePath(projectPath, stringArg(args, "sourcePath"))
+    const folderContext = typeof args.folderContext === "string" ? args.folderContext : undefined
+    const writtenPaths = await autoIngest(projectPath, sourcePath, state.llmConfig, undefined, folderContext)
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true,
+      result: {
+        sourcePath,
+        writtenPaths,
+        filesWritten: writtenPaths.length,
+      },
+      wikiChanged: wikiChangedFromPaths(writtenPaths),
+    }
+  }
+
+  if (toolName === "caption_source_images") {
+    const sourcePath = await normalizeSourcePath(projectPath, stringArg(args, "sourcePath"))
+    const result = await captionSourceImages(
+      projectPath,
+      sourcePath,
+      state.llmConfig,
+      undefined,
+      args.forceRecaption === true,
+    )
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    const wikiChanged = result.sourceSummaryUpdated
+      ? [{ path: result.sourceSummaryPath, operation: "update" as const }]
+      : []
+    return {
+      ok: true,
+      result,
+      wikiChanged,
     }
   }
 

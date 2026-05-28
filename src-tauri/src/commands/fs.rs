@@ -1440,6 +1440,20 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
 }
 
+/// Resolve symlinks and `..` segments to an absolute canonical path.
+#[tauri::command]
+pub async fn canonicalize_path(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("canonicalize_path", || {
+            let canonical = fs::canonicalize(&path)
+                .map_err(|e| format!("Failed to canonicalize '{}': {}", path, e))?;
+            Ok(canonical.to_string_lossy().to_string())
+        })
+    })
+    .await
+    .map_err(|e| format!("canonicalize_path blocking task join error: {e}"))?
+}
+
 /// Get the last modified timestamp of a file in milliseconds since Unix epoch.
 /// Returns 0 if the file doesn't exist or metadata can't be read.
 #[tauri::command]

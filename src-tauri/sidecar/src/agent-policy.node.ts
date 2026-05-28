@@ -49,6 +49,11 @@ test("allowed Wiki tools follow write mode", () => {
 			"mcp__llm_wiki__update_page",
 		),
 	);
+	assert.ok(
+		getAllowedWikiTools({ wikiToolsEnabled: true, enableWriteTools: true }).includes(
+			"mcp__llm_wiki__ingest_source",
+		),
+	);
 });
 
 test("wiki tool preflight denies non-wiki and disabled write tools", () => {
@@ -62,6 +67,13 @@ test("wiki tool preflight denies non-wiki and disabled write tools", () => {
 	assert.deepEqual(
 		shouldAllowWikiTool({
 			toolName: "mcp__llm_wiki__update_page",
+			enableWriteTools: false,
+		}),
+		{ allowed: false, reason: "Wiki write tools are disabled" },
+	);
+	assert.deepEqual(
+		shouldAllowWikiTool({
+			toolName: "mcp__llm_wiki__ingest_source",
 			enableWriteTools: false,
 		}),
 		{ allowed: false, reason: "Wiki write tools are disabled" },

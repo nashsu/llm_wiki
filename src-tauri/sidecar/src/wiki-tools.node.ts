@@ -291,3 +291,60 @@ test("app-level tools call bridge and emit wiki change/task events", async () =>
 	]);
 	assert.match(resultText(result), /wiki\/queries\/saved.md/);
 });
+
+test("ingest_source calls app bridge as write tool and returns task id", async () => {
+	const sent: Array<{ type: string; data: unknown }> = [];
+	const bridgeCalls: Array<{ streamId: string; toolName: string; args: Record<string, unknown> }> = [];
+	const changed: WikiChangedPayload[] = [];
+	const ingest = toolByName("ingest_source", {
+		streamId: "stream-1",
+		enableWriteTools: true,
+		emitAgentEvent: (type, data) => sent.push({ type, data }),
+		onWikiChanged: (payload) => changed.push(payload),
+		appToolBridge: {
+			async callTool(streamId, toolName, args) {
+				bridgeCalls.push({ streamId, toolName, args });
+				return {
+					ok: true,
+					result: { sourcePath: "/project/raw/sources/source.pdf", writtenPaths: ["wiki/sources/source.md"] },
+					wikiChanged: [{ path: "wiki/sources/source.md", operation: "update" }],
+				};
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	});
+
+	const result = await ingest.handler({ sourcePath: "raw/sources/source.pdf" }, {});
+
+	assert.equal(result.isError, undefined);
+	assert.equal(bridgeCalls[0]?.toolName, "ingest_source");
+	assert.deepEqual(bridgeCalls[0]?.args, { sourcePath: "raw/sources/source.pdf" });
+	assert.deepEqual(changed, [{ path: "wiki/sources/source.md", operation: "update" }]);
+	assert.deepEqual(sent.map((event) => event.type), [
+		"agent_task_started",
+		"agent_task_progress",
+		"agent_task_done",
+	]);
+	assert.match(resultText(result), /"taskId": "ingest_source-/);
+	assert.match(resultText(result), /wiki\/sources\/source.md/);
+});
+
+test("caption_source_images rejects when write tools are disabled", async () => {
+	const caption = toolByName("caption_source_images", {
+		streamId: "stream-1",
+		enableWriteTools: false,
+		appToolBridge: {
+			async callTool() {
+				throw new Error("should not call bridge");
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	});
+
+	const result = await caption.handler({ sourcePath: "raw/sources/source.pdf" }, {});
+
+	assert.equal(result.isError, true);
+	assert.match(resultText(result), /disabled/);
+});

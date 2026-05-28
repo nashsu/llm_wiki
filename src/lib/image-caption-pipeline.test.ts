@@ -163,6 +163,31 @@ describe("captionMarkdownImages", () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
+  it("force option refreshes cached captions", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("fresh caption")
+    const knownHash = await __test.sha256OfBase64("AAAA")
+    mockFileExists.mockResolvedValue(true)
+    mockReadFile.mockResolvedValue(JSON.stringify({
+      [knownHash]: {
+        caption: "old caption",
+        mimeType: "image/png",
+        model: "vl-old",
+        capturedAt: "2026-01-01T00:00:00Z",
+      },
+    }))
+
+    const out = await captionMarkdownImages("/proj", "![](/abs/x.png)", cfg, {
+      force: true,
+    })
+
+    expect(out.cachedCaptions).toBe(0)
+    expect(out.freshCaptions).toBe(1)
+    expect(mockCaption).toHaveBeenCalledTimes(1)
+    expect(out.enrichedMarkdown).toBe("![fresh caption](/abs/x.png)")
+    expect(mockWriteFile).toHaveBeenCalledTimes(1)
+  })
+
   it("sanitizes captions: strips newlines and replaces ] with )", async () => {
     mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
     mockCaption.mockResolvedValue("line1\nline2 with ] bracket")

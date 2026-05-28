@@ -61,6 +61,11 @@ export async function fileExists(path: string): Promise<boolean> {
   return invoke<boolean>("file_exists", { path })
 }
 
+/** Resolve symlinks and path segments to an absolute canonical filesystem path. */
+export async function canonicalizePath(path: string): Promise<string> {
+  return invoke<string>("canonicalize_path", { path })
+}
+
 export async function getFileModifiedTime(path: string): Promise<number> {
   return invoke<number>("get_file_modified_time", { path })
 }

@@ -350,6 +350,96 @@ export async function autoIngest(
   )
 }
 
+export interface CaptionSourceImagesResult {
+  sourcePath: string
+  sourceIdentity: string
+  sourceSummaryPath: string
+  imagesFound: number
+  freshCaptions: number
+  cachedCaptions: number
+  failed: number
+  multimodalEnabled: boolean
+  sourceSummaryUpdated: boolean
+  embeddingRecommended: boolean
+}
+
+/**
+ * Run the existing source-image cascade for one raw source without running
+ * full text ingest. This keeps Agent-triggered captioning on the same
+ * extractor, cache, source-summary injection, and embedding refresh path as
+ * autoIngest.
+ */
+export async function captionSourceImages(
+  projectPath: string,
+  sourcePath: string,
+  llmConfig: LlmConfig,
+  signal?: AbortSignal,
+  forceRecaption = false,
+): Promise<CaptionSourceImagesResult> {
+  return withProjectLock(normalizePath(projectPath), () =>
+    captionSourceImagesImpl(projectPath, sourcePath, llmConfig, signal, forceRecaption),
+  )
+}
+
+async function captionSourceImagesImpl(
+  projectPath: string,
+  sourcePath: string,
+  llmConfig: LlmConfig,
+  signal?: AbortSignal,
+  forceRecaption = false,
+): Promise<CaptionSourceImagesResult> {
+  const pp = normalizePath(projectPath)
+  const sp = normalizePath(sourcePath)
+  const sourceIdentity = sourceIdentityForPath(pp, sp)
+  const sourceSummarySlug = sourceSummarySlugFromIdentity(sourceIdentity)
+  const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
+  const savedImages = await extractAndSaveSourceImages(pp, sp, sourceSummarySlug)
+  const mmCfg = useWikiStore.getState().multimodalConfig
+  const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
+
+  let freshCaptions = 0
+  let cachedCaptions = 0
+  let failed = 0
+  let sourceSummaryUpdated = false
+
+  if (mmCfg.enabled && savedImages.length > 0) {
+    const markdown = savedImages
+      .map((img) => `![](${img.absPath})`)
+      .join("\n")
+    const mediaPrefix = `${pp}/wiki/media/${sourceSummarySlug}/`
+    if (captionLlm) {
+      const result = await captionMarkdownImages(pp, markdown, captionLlm, {
+        signal,
+        shouldCaption: (url) => url.startsWith(mediaPrefix),
+        urlToAbsPath: (url) => url,
+        concurrency: mmCfg.concurrency,
+        force: forceRecaption,
+      })
+      freshCaptions = result.freshCaptions
+      cachedCaptions = result.cachedCaptions
+      failed = result.failed
+    }
+
+    sourceSummaryUpdated = await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+    if (sourceSummaryUpdated) {
+      await reembedSourceSummary(pp, sourceIdentity, sourceSummarySlug)
+    }
+  }
+
+  return {
+    sourcePath: sp,
+    sourceIdentity,
+    sourceSummaryPath,
+    imagesFound: savedImages.length,
+    freshCaptions,
+    cachedCaptions,
+    failed,
+    multimodalEnabled: mmCfg.enabled,
+    sourceSummaryUpdated,
+    embeddingRecommended: sourceSummaryUpdated,
+  }
+}
+
 async function autoIngestImpl(
   projectPath: string,
   sourcePath: string,
@@ -2089,8 +2179,8 @@ async function injectImagesIntoSourceSummary(
   sourceIdentity: string,
   sourceSummarySlug: string,
   savedImages: { relPath: string; page: number | null; sha256?: string }[],
-): Promise<void> {
-  if (savedImages.length === 0) return
+): Promise<boolean> {
+  if (savedImages.length === 0) return false
   const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   console.log(`[ingest:diag] injectImagesIntoSourceSummary: target=${sourceSummaryFullPath}, images=${savedImages.length}`)
@@ -2141,11 +2231,13 @@ async function injectImagesIntoSourceSummary(
     console.log(
       `[ingest:images] injected ${savedImages.length} image reference(s) into ${sourceSummaryPath}`,
     )
+    return true
   } catch (err) {
     console.warn(
       `[ingest:images] failed to append images to ${sourceSummaryPath}:`,
       err instanceof Error ? err.message : err,
     )
+    return false
   }
 }
 

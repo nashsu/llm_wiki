@@ -261,6 +261,11 @@ export interface CaptionPipelineOptions {
    */
   concurrency?: number
   /**
+   * Ignore existing cache entries and refresh captions. Cache is still
+   * updated at the end with fresh model output.
+   */
+  force?: boolean
+  /**
    * Progress hook fired after each image finishes (ok or failed),
    * with running counts. Used by ingest to update the activity
    * feed with "captioning N/M" messages — without it a long
@@ -370,7 +375,7 @@ export async function captionMarkdownImages(
     }
 
     const hash = await sha256OfBase64(bytes.base64)
-    const hit = cache[hash]
+    const hit = options?.force ? undefined : cache[hash]
     if (hit) {
       captionByUrl.set(ref.url, hit.caption)
       cachedCaptions++
