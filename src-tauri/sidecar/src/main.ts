@@ -1,27 +1,55 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
+import { createAppToolBridge, type AppToolResponseMessage } from "./app-tool-bridge.js";
 import { createRequestHandler } from "./core.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
 
 const rl = createInterface({ input: process.stdin });
 const activeQueries = new Map<string, AbortController>();
+let exitTimer: NodeJS.Timeout | undefined;
 
 function send(msg: AgentMessage): void {
 	process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+function cancelScheduledExit(): void {
+	if (!exitTimer) return;
+	clearTimeout(exitTimer);
+	exitTimer = undefined;
+}
+
+function scheduleExitIfIdle(): void {
+	if (activeQueries.size !== 0 || exitTimer) return;
+	exitTimer = setTimeout(() => {
+		exitTimer = undefined;
+		if (activeQueries.size === 0) process.exit(0);
+	}, 250);
+}
+
+const appToolBridge = createAppToolBridge({ send });
 const handleRequest = createRequestHandler({
 	queryFn: query,
 	send,
 	error: console.error,
 	activeQueries,
+	appToolBridge,
 });
 
 rl.on("line", (line) => {
 	try {
-		const req = JSON.parse(line) as AgentRequest | AgentKillRequest;
-		handleRequest(req).catch((err) => {
+		cancelScheduledExit();
+		const parsed = JSON.parse(line) as
+			| AgentRequest
+			| AgentKillRequest
+			| AppToolResponseMessage;
+		if (parsed.type === "app_tool_response") {
+			appToolBridge.handleResponse(parsed);
+			return;
+		}
+		handleRequest(parsed).catch((err) => {
 			console.error("[sidecar] unhandled error:", err);
+		}).finally(() => {
+			scheduleExitIfIdle();
 		});
 	} catch {
 		// ignore malformed input
@@ -38,7 +66,7 @@ rl.on("close", () => {
 		if (activeQueries.size === 0) {
 			clearInterval(keepAlive);
 			clearInterval(check);
-			process.exit(0);
+			scheduleExitIfIdle();
 		}
 	}, 1000);
 });

@@ -12,16 +12,18 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
 	AgentCallbacks,
 	AgentActionRequiredPayload,
+	AgentAppToolRequestPayload,
 	AgentDonePayload,
 	AgentSummaryPayload,
+	AgentTaskEventPayload,
 	AgentTransportOptions,
 	AgentToolEventPayload,
 	AgentWikiChangedPayload,
 	SDKAssistantMessage,
 	SDKContentBlock,
 	SDKMessage,
-	SDKResultMessage,
 } from "./agent-types";
+import { runAgentAppTool } from "./agent-app-tools";
 
 type InvokePayload = Record<string, unknown> & {
 	streamId: string;
@@ -52,6 +54,12 @@ function extractText(content: SDKContentBlock[]): string {
 		)
 		.map((b) => b.text)
 		.join("");
+}
+
+function sendAppToolResponse(payload: Record<string, unknown>) {
+	return invoke("agent_tool_response", payload).catch((err) => {
+		console.error("[agent-transport] failed to send app tool response:", err);
+	});
 }
 
 export async function streamAgent(
@@ -85,15 +93,10 @@ export async function streamAgent(
 
 	try {
 		let emittedText = "";
-		console.log(
-			"[agent-transport] step 1: setting up listeners, streamId=",
-			streamId,
-		);
 
 		unlistenData = await listen<string>(`agent:${streamId}`, (event) => {
 			try {
 				const raw = event.payload;
-				console.log("[agent-transport] raw:", raw?.slice(0, 500));
 
 				const wrapper = JSON.parse(raw) as {
 					streamId: string;
@@ -103,10 +106,28 @@ export async function streamAgent(
 
 				const msg = wrapper.data;
 				if (!msg) {
-					console.log(
-						"[agent-transport] null data, wrapper.type:",
-						wrapper.type,
-					);
+					return;
+				}
+
+				if (wrapper.type === "app_tool_request") {
+					const request = msg as AgentAppToolRequestPayload;
+					void runAgentAppTool(request.toolName, request.args)
+						.then((data) =>
+							sendAppToolResponse({
+								streamId,
+								requestId: request.requestId,
+								ok: true,
+								data,
+							}),
+						)
+						.catch((err) =>
+							sendAppToolResponse({
+								streamId,
+								requestId: request.requestId,
+								ok: false,
+								error: err instanceof Error ? err.message : String(err),
+							}),
+						);
 					return;
 				}
 
@@ -130,6 +151,11 @@ export async function streamAgent(
 					return;
 				}
 
+				if (wrapper.type.startsWith("agent_task_")) {
+					callbacks.onTaskEvent?.(wrapper.type, msg as AgentTaskEventPayload);
+					return;
+				}
+
 				// Handle sidecar-level errors (wrapper.type === "error")
 				if (wrapper.type === "error") {
 					const errMsg =
@@ -141,28 +167,12 @@ export async function streamAgent(
 					return;
 				}
 
-				console.log(
-					"[agent-transport] msg.type:",
-					(msg as SDKMessage).type,
-					"keys:",
-					Object.keys(msg as Record<string, unknown>).join(","),
-				);
 				callbacks.onMessage(msg as SDKMessage);
 
 				if ((msg as SDKMessage).type === "assistant") {
 					const assistant = msg as SDKAssistantMessage;
-					console.log(
-						"[agent-transport] assistant message keys:",
-						Object.keys(assistant).join(","),
-						"has message?",
-						"message" in assistant,
-					);
 					const content = assistant.message?.content;
 					if (!Array.isArray(content)) {
-						console.log(
-							"[agent-transport] no array content, assistant:",
-							JSON.stringify(assistant).slice(0, 300),
-						);
 						return;
 					}
 					const fullText = extractText(content);
@@ -177,11 +187,6 @@ export async function streamAgent(
 				}
 
 				if ((msg as SDKMessage).type === "result") {
-					const result = msg as SDKResultMessage;
-					console.log(
-						"[agent-transport] result:",
-						JSON.stringify(result).slice(0, 200),
-					);
 					emittedText = "";
 					callbacks.onToken("\n");
 				}
@@ -193,10 +198,6 @@ export async function streamAgent(
 		unlistenDone = await listen<AgentDonePayload>(
 			`agent:${streamId}:done`,
 			(event) => {
-				console.log(
-					"[agent-transport] done event:",
-					JSON.stringify(event.payload),
-				);
 				const { code, stderr } = event.payload ?? {};
 				if (code !== undefined && code !== 0) {
 					const detail = stderr?.trim() ? `: ${stderr.trim()}` : "";
@@ -211,19 +212,13 @@ export async function streamAgent(
 			},
 		);
 
-		console.log("[agent-transport] step 2: listeners ready, building payload");
 		const payload: InvokePayload = {
 			streamId,
 			prompt,
 			...options,
 		};
-		console.log(
-			"[agent-transport] step 3: invoking agent_spawn, payload keys:",
-			Object.keys(payload).join(","),
-		);
 		try {
 			await invoke("agent_spawn", { args: payload });
-			console.log("[agent-transport] step 4: invoke returned successfully");
 		} catch (invokeErr) {
 			console.error("[agent-transport] invoke FAILED:", invokeErr);
 			throw invokeErr;

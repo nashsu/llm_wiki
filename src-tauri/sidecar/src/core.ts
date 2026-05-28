@@ -1,4 +1,5 @@
 import type { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import type { AppToolBridge } from "./app-tool-bridge.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
 import { createLlmWikiHooks } from "./agent-hooks.js";
 import {
@@ -17,6 +18,7 @@ interface RequestHandlerDeps {
 	error?: (...args: unknown[]) => void;
 	activeQueries?: Map<string, AbortController>;
 	env?: NodeJS.ProcessEnv;
+	appToolBridge?: AppToolBridge;
 }
 
 export function omitNullish<T extends Record<string, unknown>>(
@@ -33,6 +35,7 @@ export function createRequestHandler({
 	error = console.error,
 	activeQueries = new Map<string, AbortController>(),
 	env: baseEnv = process.env,
+	appToolBridge,
 }: RequestHandlerDeps) {
 	return async function handleRequest(
 		req: AgentRequest | AgentKillRequest,
@@ -42,6 +45,7 @@ export function createRequestHandler({
 			if (ctrl) {
 				ctrl.abort();
 				activeQueries.delete(req.streamId);
+				appToolBridge?.rejectStream(req.streamId, "Agent stream was killed");
 			}
 			return;
 		}
@@ -75,6 +79,11 @@ export function createRequestHandler({
 							maxWriteBytes: req.options.maxWriteBytes,
 							maxFilesChanged: req.options.maxFilesChanged,
 							changedPaths,
+							streamId: req.streamId,
+							appToolBridge,
+							emitAgentEvent: (type, data) => {
+								send({ streamId: req.streamId, type: type as AgentMessage["type"], data });
+							},
 							onWikiChanged: (payload) => {
 								changedPaths.add(payload.path);
 								send({

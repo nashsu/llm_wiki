@@ -8,12 +8,17 @@ export const READ_WIKI_TOOLS = [
 	"mcp__llm_wiki__read_page",
 	"mcp__llm_wiki__search_pages",
 	"mcp__llm_wiki__get_graph",
+	"mcp__llm_wiki__build_answer_context",
+	"mcp__llm_wiki__run_lint",
 ] as const;
 
 export const WRITE_WIKI_TOOLS = [
 	"mcp__llm_wiki__update_page",
 	"mcp__llm_wiki__create_entity",
 	"mcp__llm_wiki__create_concept",
+	"mcp__llm_wiki__save_query_page",
+	"mcp__llm_wiki__fix_lint_result",
+	"mcp__llm_wiki__enrich_wikilinks",
 ] as const;
 
 const WIKI_TOOL_NAMES = new Set<string>([
@@ -92,6 +97,7 @@ export function previewToolInput(input: unknown): Record<string, unknown> {
 		"mode",
 		"expectedSha256",
 		"dryRun",
+		"includeSemantic",
 	]) {
 		if (source[key] !== undefined) preview[key] = source[key];
 	}

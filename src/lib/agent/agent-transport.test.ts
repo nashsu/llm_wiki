@@ -20,6 +20,10 @@ const tauriMocks = vi.hoisted(() => {
 	};
 });
 
+const appToolMocks = vi.hoisted(() => ({
+	runAgentAppTool: vi.fn(async () => ({ ok: true, result: { value: "ok" } })),
+}));
+
 vi.mock("@tauri-apps/api/core", () => ({
 	invoke: tauriMocks.invoke,
 }));
@@ -28,12 +32,17 @@ vi.mock("@tauri-apps/api/event", () => ({
 	listen: tauriMocks.listen,
 }));
 
+vi.mock("./agent-app-tools", () => ({
+	runAgentAppTool: appToolMocks.runAgentAppTool,
+}));
+
 import { streamAgent } from "./agent-transport";
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	tauriMocks.reset();
 	tauriMocks.invoke.mockResolvedValue(undefined);
+	appToolMocks.runAgentAppTool.mockResolvedValue({ ok: true, result: { value: "ok" } });
 });
 
 describe("streamAgent", () => {
@@ -164,6 +173,62 @@ describe("streamAgent", () => {
 		expect(callbacks.onToolEvent).toHaveBeenCalledWith(toolEvent);
 		expect(callbacks.onAgentSummary).toHaveBeenCalledWith(summary);
 		expect(callbacks.onActionRequired).toHaveBeenCalledWith(action);
+		expect(callbacks.onMessage).not.toHaveBeenCalled();
+		expect(callbacks.onDone).toHaveBeenCalledWith(null);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
+
+	it("handles app tool requests and sends responses back to the sidecar", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+		};
+
+		const stream = streamAgent("run app tool", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		const streamEvent = `agent:${payload.args.streamId}`;
+
+		tauriMocks.emitString(
+			streamEvent,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "app_tool_request",
+				data: {
+					requestId: "request-1",
+					toolName: "run_lint",
+					args: { includeSemantic: false },
+				},
+			}),
+		);
+
+		await vi.waitFor(() => {
+			expect(appToolMocks.runAgentAppTool).toHaveBeenCalledWith("run_lint", {
+				includeSemantic: false,
+			});
+			expect(tauriMocks.invoke).toHaveBeenCalledWith("agent_tool_response", {
+				streamId: payload.args.streamId,
+				requestId: "request-1",
+				ok: true,
+				data: { ok: true, result: { value: "ok" } },
+			});
+		});
+
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
 		expect(callbacks.onMessage).not.toHaveBeenCalled();
 		expect(callbacks.onDone).toHaveBeenCalledWith(null);
 		expect(callbacks.onError).not.toHaveBeenCalled();

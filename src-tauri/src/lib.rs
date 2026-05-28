@@ -145,6 +145,7 @@ pub fn run() {
             commands::agent::agent_detect,
             commands::agent::agent_spawn,
             commands::agent::agent_kill,
+            commands::agent::agent_tool_response,
             commands::extract_images::extract_pdf_images_cmd,
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,

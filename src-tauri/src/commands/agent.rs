@@ -10,9 +10,10 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex;
 
 use crate::api_server;
@@ -20,7 +21,12 @@ use crate::api_server;
 /// Shared state holding running agent sidecar processes keyed by stream id.
 #[derive(Default)]
 pub struct AgentState {
-    children: Arc<Mutex<HashMap<String, Child>>>,
+    children: Arc<Mutex<HashMap<String, AgentProcess>>>,
+}
+
+struct AgentProcess {
+    child: Child,
+    stdin: Arc<Mutex<ChildStdin>>,
 }
 
 #[derive(Deserialize)]
@@ -155,7 +161,7 @@ pub async fn agent_spawn(
         .spawn()
         .map_err(|e| format!("Failed to spawn agent sidecar: {e}"))?;
 
-    let mut stdin = child
+    let stdin = child
         .stdin
         .take()
         .ok_or_else(|| "Missing stdin handle".to_string())?;
@@ -179,21 +185,30 @@ pub async fn agent_spawn(
     if let Some(token) = &internal_api_token {
         api_server::register_agent_internal_api_token(token);
     }
-    if let Err(e) = stdin.write_all(request_line.as_bytes()).await {
-        if let Some(token) = &internal_api_token {
-            api_server::revoke_agent_internal_api_token(token);
+    let stdin = Arc::new(Mutex::new(stdin));
+    {
+        let mut stdin_guard = stdin.lock().await;
+        if let Err(e) = stdin_guard.write_all(request_line.as_bytes()).await {
+            if let Some(token) = &internal_api_token {
+                api_server::revoke_agent_internal_api_token(token);
+            }
+            return Err(format!("Failed to write to sidecar stdin: {e}"));
         }
-        return Err(format!("Failed to write to sidecar stdin: {e}"));
-    }
-    if let Err(e) = stdin.flush().await {
-        if let Some(token) = &internal_api_token {
-            api_server::revoke_agent_internal_api_token(token);
+        if let Err(e) = stdin_guard.flush().await {
+            if let Some(token) = &internal_api_token {
+                api_server::revoke_agent_internal_api_token(token);
+            }
+            return Err(format!("Failed to flush sidecar stdin: {e}"));
         }
-        return Err(format!("Failed to flush sidecar stdin: {e}"));
     }
-    drop(stdin);
 
-    state.children.lock().await.insert(stream_id.clone(), child);
+    state.children.lock().await.insert(
+        stream_id.clone(),
+        AgentProcess {
+            child,
+            stdin: Arc::clone(&stdin),
+        },
+    );
 
     let children = Arc::clone(&state.children);
     let app_for_task = app.clone();
@@ -224,11 +239,11 @@ pub async fn agent_spawn(
 
         let exit_code = {
             let mut map = children.lock().await;
-            if let Some(mut child) = map.remove(&stream_id_task) {
-                match child.try_wait() {
+            if let Some(mut process) = map.remove(&stream_id_task) {
+                match process.child.try_wait() {
                     Ok(Some(status)) => status.code().unwrap_or(-1),
                     Ok(None) => {
-                        let _ = child.kill().await;
+                        let _ = process.child.kill().await;
                         -1
                     }
                     Err(_) => -1,
@@ -249,6 +264,43 @@ pub async fn agent_spawn(
         let _ = app_for_task.emit(&done_topic, &done_payload);
     });
 
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn agent_tool_response(
+    state: State<'_, AgentState>,
+    stream_id: String,
+    request_id: String,
+    ok: bool,
+    data: Option<Value>,
+    error: Option<String>,
+) -> Result<(), String> {
+    let stdin = {
+        let map = state.children.lock().await;
+        map.get(&stream_id)
+            .map(|process| Arc::clone(&process.stdin))
+            .ok_or_else(|| format!("No running agent stream: {stream_id}"))?
+    };
+    let line = serde_json::json!({
+        "type": "app_tool_response",
+        "streamId": stream_id,
+        "requestId": request_id,
+        "ok": ok,
+        "data": data,
+        "error": error,
+    })
+    .to_string()
+        + "\n";
+    let mut guard = stdin.lock().await;
+    guard
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write app tool response: {e}"))?;
+    guard
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush app tool response: {e}"))?;
     Ok(())
 }
 
@@ -408,8 +460,9 @@ mod tests {
 
 #[tauri::command]
 pub async fn agent_kill(state: State<'_, AgentState>, stream_id: String) -> Result<(), String> {
-    if let Some(mut child) = state.children.lock().await.remove(&stream_id) {
-        child
+    if let Some(mut process) = state.children.lock().await.remove(&stream_id) {
+        process
+            .child
             .start_kill()
             .map_err(|e| format!("Failed to kill agent sidecar: {e}"))?;
     }

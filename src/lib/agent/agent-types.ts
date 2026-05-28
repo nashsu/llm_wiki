@@ -81,9 +81,9 @@ export interface AgentDonePayload {
 
 export interface AgentWikiChangedPayload {
 	path: string;
-	operation: "update" | "create";
+	operation: "update" | "create" | "delete";
 	oldSha256?: string;
-	newSha256: string;
+	newSha256?: string;
 }
 
 export interface AgentToolEventPayload {
@@ -115,6 +115,21 @@ export interface AgentActionRequiredPayload {
 	reason: "agent_write";
 }
 
+export interface AgentTaskEventPayload {
+	taskId: string;
+	toolName: string;
+	message?: string;
+	progress?: number;
+	result?: unknown;
+	error?: string;
+}
+
+export interface AgentAppToolRequestPayload {
+	requestId: string;
+	toolName: string;
+	args: Record<string, unknown>;
+}
+
 export interface AgentTransportOptions {
 	systemPrompt?: string;
 	cwd?: string;
@@ -143,4 +158,5 @@ export interface AgentCallbacks {
 	onToolEvent?: (payload: AgentToolEventPayload) => void;
 	onAgentSummary?: (payload: AgentSummaryPayload) => void;
 	onActionRequired?: (payload: AgentActionRequiredPayload) => void;
+	onTaskEvent?: (type: string, payload: AgentTaskEventPayload) => void;
 }

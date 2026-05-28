@@ -58,15 +58,29 @@ export interface AgentActionRequiredPayload {
 	reason: "agent_write";
 }
 
+export interface AgentTaskEventPayload {
+	taskId: string;
+	toolName: string;
+	message?: string;
+	progress?: number;
+	result?: unknown;
+	error?: string;
+}
+
 export interface AgentMessage {
 	streamId: string;
 	type:
 		| "message"
 		| "error"
 		| "done"
+		| "app_tool_request"
 		| "wiki_changed"
 		| "tool_event"
 		| "agent_summary"
-		| "agent_action_required";
+		| "agent_action_required"
+		| "agent_task_started"
+		| "agent_task_progress"
+		| "agent_task_done"
+		| "agent_task_error";
 	data: unknown;
 }

@@ -40,6 +40,8 @@ test("allowed Wiki tools follow write mode", () => {
 			"mcp__llm_wiki__read_page",
 			"mcp__llm_wiki__search_pages",
 			"mcp__llm_wiki__get_graph",
+			"mcp__llm_wiki__build_answer_context",
+			"mcp__llm_wiki__run_lint",
 		],
 	);
 	assert.ok(

@@ -7,6 +7,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import type { AppToolBridge } from "./app-tool-bridge.js";
 import { createWikiApiClient, type WikiApiClientOptions } from "./wiki-api.js";
 import {
 	assertFixedDirectoryPath,
@@ -28,9 +29,16 @@ const DEFAULT_MAX_FILES_CHANGED = 3;
 
 export interface WikiChangedPayload {
 	path: string;
-	operation: "update" | "create";
+	operation: "update" | "create" | "delete";
 	oldSha256?: string;
-	newSha256: string;
+	newSha256?: string;
+}
+
+interface AppToolResult {
+	ok?: boolean;
+	result?: unknown;
+	changedPaths?: string[];
+	wikiChanged?: WikiChangedPayload[];
 }
 
 export interface LlmWikiToolContext extends WikiApiClientOptions {
@@ -41,6 +49,9 @@ export interface LlmWikiToolContext extends WikiApiClientOptions {
 	fs?: FileSystemLike;
 	onWikiChanged?: (payload: WikiChangedPayload) => void;
 	changedPaths?: Set<string>;
+	streamId?: string;
+	appToolBridge?: AppToolBridge;
+	emitAgentEvent?: (type: string, data: unknown) => void;
 }
 
 function jsonResult(data: unknown, isError = false): CallToolResult {
@@ -80,6 +91,106 @@ async function safe(handler: () => Promise<CallToolResult>): Promise<CallToolRes
 			true,
 		);
 	}
+}
+
+async function appTool(
+	context: LlmWikiToolContext,
+	toolName: string,
+	args: Record<string, unknown>,
+	options: { requiresWrite?: boolean } = {},
+): Promise<CallToolResult> {
+	if (!context.streamId) throw new Error("streamId is required for app tools");
+	if (!context.appToolBridge) throw new Error("App tool bridge is not available");
+	if (options.requiresWrite && context.enableWriteTools === false) {
+		throw new Error("Wiki write tools are disabled for this request");
+	}
+
+	const taskId = `${toolName}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	context.emitAgentEvent?.("agent_task_started", {
+		taskId,
+		toolName,
+		message: `Starting ${toolName}`,
+	});
+	context.emitAgentEvent?.("agent_task_progress", {
+		taskId,
+		toolName,
+		message: "Waiting for LLM Wiki app service",
+	});
+
+	try {
+		const raw = await context.appToolBridge.callTool(context.streamId, toolName, args);
+		const data = normalizeAppToolResult(raw);
+		for (const changed of data.wikiChanged ?? []) {
+			context.changedPaths?.add(changed.path);
+			context.onWikiChanged?.(changed);
+		}
+		for (const changedPath of data.changedPaths ?? []) {
+			context.changedPaths?.add(changedPath);
+			context.onWikiChanged?.({
+				path: changedPath,
+				operation: "update",
+			});
+		}
+		context.emitAgentEvent?.("agent_task_done", {
+			taskId,
+			toolName,
+			message: `Finished ${toolName}`,
+			progress: 1,
+			result: data.result ?? raw,
+		});
+		return jsonResult(data.result ?? raw);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		context.emitAgentEvent?.("agent_task_error", {
+			taskId,
+			toolName,
+			error: message,
+		});
+		return jsonResult({ ok: false, error: message }, true);
+	}
+}
+
+function normalizeAppToolResult(raw: unknown): AppToolResult {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new Error("App tool returned an invalid response");
+	}
+	const data = raw as Record<string, unknown>;
+	return {
+		ok: typeof data.ok === "boolean" ? data.ok : undefined,
+		result: data.result ?? raw,
+		changedPaths: parseChangedPaths(data.changedPaths),
+		wikiChanged: parseWikiChanged(data.wikiChanged),
+	};
+}
+
+function parseChangedPaths(value: unknown): string[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new Error("changedPaths must be an array");
+	return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function parseWikiChanged(value: unknown): WikiChangedPayload[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new Error("wikiChanged must be an array");
+	const allowedOperations = new Set(["update", "create", "delete"]);
+	return value.flatMap((item): WikiChangedPayload[] => {
+		if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+		const record = item as Record<string, unknown>;
+		if (
+			typeof record.path !== "string" ||
+			!allowedOperations.has(String(record.operation))
+		) {
+			return [];
+		}
+		return [
+			{
+				path: record.path,
+				operation: record.operation as WikiChangedPayload["operation"],
+				...(typeof record.oldSha256 === "string" ? { oldSha256: record.oldSha256 } : {}),
+				...(typeof record.newSha256 === "string" ? { newSha256: record.newSha256 } : {}),
+			},
+		];
+	});
 }
 
 async function readExisting(fsLike: FileSystemLike, absolutePath: string): Promise<string> {
@@ -215,6 +326,66 @@ export function createLlmWikiTools(
 				limit: z.number().int().positive().optional(),
 			},
 			async (args) => safe(async () => jsonResult(await api.getGraph(args))),
+		),
+		tool(
+			"build_answer_context",
+			"Build the same deterministic Wiki RAG context used by normal Chat.",
+			{
+				query: z.string().min(1),
+				maxContextSize: z.number().int().positive().optional(),
+			},
+			async (args) => safe(async () => appTool(context, "build_answer_context", args)),
+		),
+		tool(
+			"save_query_page",
+			"Save text as a Wiki query page using LLM Wiki's canonical Save-to-Wiki rules.",
+			{
+				content: z.string().min(1),
+				title: z.string().optional(),
+				tags: z.array(z.string()).optional(),
+				autoIngest: z.boolean().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "save_query_page", args, { requiresWrite: true }),
+				),
+		),
+		tool(
+			"run_lint",
+			"Run LLM Wiki lint checks on the active Wiki.",
+			{
+				includeStructural: z.boolean().optional(),
+				includeSemantic: z.boolean().optional(),
+			},
+			async (args) => safe(async () => appTool(context, "run_lint", args)),
+		),
+		tool(
+			"fix_lint_result",
+			"Apply LLM Wiki's existing fixer to one lint result.",
+			{
+				result: z.object({
+					type: z.enum(["orphan", "broken-link", "no-outlinks", "semantic"]),
+					severity: z.enum(["warning", "info"]),
+					page: z.string().min(1),
+					detail: z.string(),
+					affectedPages: z.array(z.string()).optional(),
+				}),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "fix_lint_result", args, { requiresWrite: true }),
+				),
+		),
+		tool(
+			"enrich_wikilinks",
+			"Add safe wikilinks to one Wiki page using LLM Wiki's enrichment pipeline.",
+			{
+				path: z.string().min(1),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "enrich_wikilinks", args, { requiresWrite: true }),
+				),
 		),
 		tool(
 			"update_page",

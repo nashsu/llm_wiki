@@ -250,3 +250,44 @@ test("create_entity writes fixed directory and refuses overwrite", async () => {
 	assert.equal(duplicate.isError, true);
 	assert.match(resultText(duplicate), /already exists/);
 });
+
+test("app-level tools call bridge and emit wiki change/task events", async () => {
+	const sent: Array<{ type: string; data: unknown }> = [];
+	const bridgeCalls: Array<{ streamId: string; toolName: string; args: Record<string, unknown> }> = [];
+	const changed: WikiChangedPayload[] = [];
+	const save = toolByName("save_query_page", {
+		streamId: "stream-1",
+		emitAgentEvent: (type, data) => sent.push({ type, data }),
+		onWikiChanged: (payload) => changed.push(payload),
+		appToolBridge: {
+			async callTool(streamId, toolName, args) {
+				bridgeCalls.push({ streamId, toolName, args });
+				return {
+					ok: true,
+					result: { relativePath: "wiki/queries/saved.md" },
+					wikiChanged: [{ path: "wiki/queries/saved.md", operation: "create" }],
+				};
+			},
+			handleResponse() {},
+			rejectStream() {},
+		},
+	});
+
+	const result = await save.handler({ content: "Saved answer", title: "Saved" }, {});
+
+	assert.equal(result.isError, undefined);
+	assert.deepEqual(bridgeCalls, [
+		{
+			streamId: "stream-1",
+			toolName: "save_query_page",
+			args: { content: "Saved answer", title: "Saved" },
+		},
+	]);
+	assert.deepEqual(changed, [{ path: "wiki/queries/saved.md", operation: "create" }]);
+	assert.deepEqual(sent.map((event) => event.type), [
+		"agent_task_started",
+		"agent_task_progress",
+		"agent_task_done",
+	]);
+	assert.match(resultText(result), /wiki\/queries\/saved.md/);
+});
