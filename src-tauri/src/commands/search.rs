@@ -61,6 +61,12 @@ pub struct SearchEmbeddingConfig {
     pub api_key: String,
     pub model: String,
     pub output_dimensionality: Option<u32>,
+    /// Extra HTTP headers to send with every embedding request, e.g.
+    /// `X-Model-Provider-Id: siliconflow` for the mify gateway.
+    /// Reserved names (Authorization, Content-Type, Host,
+    /// Content-Length) are skipped — they're managed by the client.
+    #[serde(default)]
+    pub extra_headers: Option<BTreeMap<String, String>>,
 }
 
 #[tauri::command]
@@ -681,6 +687,22 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
             req = req.bearer_auth(cfg.api_key.trim());
         }
     }
+    if let Some(extra) = cfg.extra_headers.as_ref() {
+        for (name, value) in extra {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let lower = trimmed.to_ascii_lowercase();
+            if matches!(
+                lower.as_str(),
+                "authorization" | "content-type" | "host" | "content-length"
+            ) {
+                continue;
+            }
+            req = req.header(trimmed, value.as_str());
+        }
+    }
     let body = if is_google {
         google_embedding_body(&cfg.model, text, cfg.output_dimensionality)
     } else {
@@ -940,6 +962,7 @@ mod tests {
             api_key: "HEADER_KEY".to_string(),
             model: "gemini-embedding-001".to_string(),
             output_dimensionality: Some(768),
+            extra_headers: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);

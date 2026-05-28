@@ -94,6 +94,14 @@ export async function fetchEmbedding(
       headers.Authorization = `Bearer ${cfg.apiKey}`
     }
   }
+  if (cfg.extraHeaders) {
+    const reserved = new Set(["authorization", "content-type", "host", "content-length"])
+    for (const [k, v] of Object.entries(cfg.extraHeaders)) {
+      const name = k.trim()
+      if (!name || reserved.has(name.toLowerCase())) continue
+      headers[name] = v
+    }
+  }
 
   let current = text
   let attempts = 0

@@ -38,6 +38,29 @@ function parsePositiveInteger(value: string): number | undefined {
   return Math.floor(n)
 }
 
+const RESERVED_HEADER_NAMES = new Set(["authorization", "content-type", "host", "content-length"])
+
+function headersToText(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+}
+
+function parseHeadersText(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+    const idx = line.indexOf(":")
+    if (idx <= 0) continue
+    const name = line.slice(0, idx).trim()
+    const value = line.slice(idx + 1).trim()
+    if (!name || RESERVED_HEADER_NAMES.has(name.toLowerCase())) continue
+    out[name] = value
+  }
+  return out
+}
+
 export function EmbeddingSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -49,6 +72,7 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
   const [reindex, setReindex] = useState<ReindexState>({ kind: "idle" })
   const [testState, setTestState] = useState<TestState>({ kind: "idle" })
   const [legacyDropped, setLegacyDropped] = useState(false)
+  const [headersText, setHeadersText] = useState<string>(() => headersToText(draft.embeddingExtraHeaders ?? {}))
 
   const refreshStats = useCallback(async () => {
     if (!project) return
@@ -94,6 +118,7 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     outputDimensionality: draft.embeddingOutputDimensionality,
     maxChunkChars: draft.embeddingMaxChunkChars,
     overlapChunkChars: draft.embeddingOverlapChunkChars,
+    extraHeaders: draft.embeddingExtraHeaders,
   }
 
   async function runEmbeddingTest(kind: "connection" | "function") {
@@ -191,6 +216,24 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
             />
             <p className="text-xs text-muted-foreground">
               {t("settings.sections.embedding.outputDimensionalityHint")}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
+            <textarea
+              value={headersText}
+              onChange={(e) => {
+                const text = e.target.value
+                setHeadersText(text)
+                setDraft("embeddingExtraHeaders", parseHeadersText(text))
+              }}
+              placeholder={"X-Model-Provider-Id: siliconflow\nX-Custom-Header: value"}
+              rows={3}
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.embedding.extraHeadersHint")}
             </p>
           </div>
 

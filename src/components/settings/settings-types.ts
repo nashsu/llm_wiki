@@ -31,6 +31,8 @@ export interface SettingsDraft {
   embeddingMaxChunkChars: number | undefined
   /** Overlap characters between adjacent chunks. Empty = default (200). */
   embeddingOverlapChunkChars: number | undefined
+  /** Extra HTTP headers to send on every embedding request. Empty = none. */
+  embeddingExtraHeaders: Record<string, string>
 
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean

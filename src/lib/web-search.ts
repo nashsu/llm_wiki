@@ -6,6 +6,7 @@ import type {
   SerpApiEngine,
 } from "@/stores/wiki-store"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
+import { hasConfiguredAnyTxt, normalizeAnyTxtConfig } from "@/lib/anytxt-search"
 
 export interface WebSearchResult {
   title: string
@@ -85,6 +86,8 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
       searXngCategories: config.searXngCategories ?? providerConfigs.searxng?.searXngCategories ?? ["general"],
       ollamaUrl: providerConfigs.ollama?.ollamaUrl ?? "https://ollama.com",
       providerConfigs,
+      deepResearchSource: config.deepResearchSource ?? "web",
+      anyTxt: normalizeAnyTxtConfig(config.anyTxt),
     }
   }
 
@@ -97,6 +100,8 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
     searXngCategories: activeOverride?.searXngCategories ?? config.searXngCategories ?? ["general"],
     ollamaUrl: resolvedOllamaUrl,
     providerConfigs,
+    deepResearchSource: config.deepResearchSource ?? "web",
+    anyTxt: normalizeAnyTxtConfig(config.anyTxt),
   }
 }
 
@@ -110,6 +115,17 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
     return Boolean(resolved.apiKey?.trim())
   }
   return Boolean(resolved.apiKey?.trim())
+}
+
+export function hasConfiguredDeepResearchSources(config: SearchApiConfig): boolean {
+  const resolved = resolveSearchConfig(config)
+  const source = resolved.deepResearchSource ?? "web"
+  const webConfigured = hasConfiguredSearchProvider(resolved)
+  const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
+
+  if (source === "web") return webConfigured
+  if (source === "anytxt") return anyTxtConfigured
+  return webConfigured || anyTxtConfigured
 }
 
 export async function webSearch(

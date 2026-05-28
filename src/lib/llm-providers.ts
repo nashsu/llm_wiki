@@ -250,6 +250,11 @@ function isKimiEndpoint(config: LlmConfig): boolean {
     || /api\.moonshot\.(ai|cn)/i.test(config.customEndpoint)
 }
 
+function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
+  return /(^|[/:.-])mimo([/:.-]|$)/i.test(config.model)
+    || /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
+}
+
 function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
   if ((config.provider === "azure" || (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
     && config.azureModelFamily === "gpt5") {
@@ -291,6 +296,35 @@ function adaptKimiBody(config: LlmConfig, body: Record<string, unknown>): void {
   delete body.temperature
 }
 
+function adaptXiaomiMimoBody(
+  config: LlmConfig,
+  body: Record<string, unknown>,
+  reasoning: ReasoningConfig,
+): void {
+  if (!isXiaomiMimoEndpoint(config)) return
+
+  // Xiaomi MiMo's OpenAI-compatible examples use
+  // `max_completion_tokens`. Accept callers' provider-agnostic
+  // `max_tokens` override but send the documented field on the wire.
+  if (typeof body.max_tokens === "number") {
+    body.max_completion_tokens = body.max_tokens
+    delete body.max_tokens
+  }
+
+  // Official thinking-mode control documents `thinking.type=disabled`.
+  // Do not invent an enabled/budget shape here; omitting the field lets
+  // the server apply the model default.
+  if (reasoning.mode === "off") {
+    body.thinking = { type: "disabled" }
+  } else {
+    // MiMo v2.5 thinking mode forces temperature=1.0 and rejects
+    // custom temperature. Structured ingest passes temperature=0.1,
+    // but it also passes reasoning off above, so keep deterministic
+    // non-thinking requests intact while protecting thinking requests.
+    delete body.temperature
+  }
+}
+
 function buildOpenAiCompatibleBody(
   config: LlmConfig,
   messages: ChatMessage[],
@@ -300,6 +334,7 @@ function buildOpenAiCompatibleBody(
   const body: Record<string, unknown> = buildOpenAiBody(messages, stripWireAgnosticOverrides(overrides))
   adaptOpenAiStrictCompletionBody(config, body)
   adaptKimiBody(config, body)
+  adaptXiaomiMimoBody(config, body, reasoning)
 
   if (isDeepSeekEndpoint(config)) {
     // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most
@@ -451,7 +486,10 @@ function requiresBearerAuth(url: string): boolean {
     // Alibaba Bailian Coding Plan — issues sk-xxx bearer-style tokens
     // on its /apps/anthropic gateway; behavior matches the other
     // Chinese Anthropic-wire proxies above.
-    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic")
+    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
+    // Xiaomi MiMo Token Plan Anthropic gateway authenticates with
+    // Authorization Bearer, matching its OpenAI-compatible gateway.
+    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized)
   )
 }
 

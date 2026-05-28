@@ -1,5 +1,6 @@
 import { writeFile, readFile, createDirectory } from "@/commands/fs"
 import type { ReviewItem } from "@/stores/review-store"
+import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -19,6 +20,22 @@ export async function loadReviewItems(projectPath: string): Promise<ReviewItem[]
   try {
     const content = await readFile(`${pp}/.llm-wiki/review.json`)
     return JSON.parse(content) as ReviewItem[]
+  } catch {
+    return []
+  }
+}
+
+export async function saveLintItems(projectPath: string, items: LintItem[]): Promise<void> {
+  const pp = normalizePath(projectPath)
+  await ensureDir(pp)
+  await writeFile(`${pp}/.llm-wiki/lint.json`, JSON.stringify(items, null, 2))
+}
+
+export async function loadLintItems(projectPath: string): Promise<LintItem[]> {
+  const pp = normalizePath(projectPath)
+  try {
+    const content = await readFile(`${pp}/.llm-wiki/lint.json`)
+    return JSON.parse(content) as LintItem[]
   } catch {
     return []
   }
