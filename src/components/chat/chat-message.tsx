@@ -10,15 +10,14 @@ import {
   TrendingUp, Target, Image as ImageIcon,
 } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { readFile, writeFile, listDirectory } from "@/commands/fs"
+import { listDirectory, readFile } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
 import type { DisplayMessage } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
-import { makeQueryFileName } from "@/lib/wiki-filename"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { saveQueryPage } from "@/lib/save-query-page"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
@@ -162,87 +161,20 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
 
   const handleSave = useCallback(async () => {
     if (!project || saving) return
-    const pp = normalizePath(project.path)
     setSaving(true)
     try {
-      // Generate a unique filename for this save.
-      // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
-      // (so CJK titles don't collapse to empty) and the HHMMSS
-      // timestamp suffix guarantees same-day saves stay distinct.
-      const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
-      const { date, fileName } = makeQueryFileName(title)
-      const filePath = `${pp}/wiki/queries/${fileName}`
-
-      // Strip hidden sources comment and thinking blocks from content
-      const cleanContent = content
-        .replace(/<!--\s*sources:.*?-->/g, "")
-        .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
-        .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
-        .trimEnd()
-
-      const frontmatter = [
-        "---",
-        `type: query`,
-        `title: "${title.replace(/"/g, '\\"')}"`,
-        `created: ${date}`,
-        `tags: []`,
-        "---",
-        "",
-      ].join("\n")
-
-      await writeFile(filePath, frontmatter + cleanContent)
-
-      // Update index.md — append under ## Queries section
-      const indexPath = `${pp}/wiki/index.md`
-      let indexContent = ""
-      try {
-        indexContent = await readFile(indexPath)
-      } catch {
-        indexContent = "# Wiki Index\n\n## Queries\n"
-      }
-      // The wikilink target is the filename WITHOUT the `.md`
-      // extension — must match `fileName` exactly (including the
-      // time suffix) or the link lands on a 404.
-      const linkTarget = fileName.replace(/\.md$/, "")
-      const entry = `- [[queries/${linkTarget}|${title}]]`
-      if (indexContent.includes("## Queries")) {
-        indexContent = indexContent.replace(
-          /(## Queries\n)/,
-          `$1${entry}\n`
-        )
-      } else {
-        indexContent = indexContent.trimEnd() + "\n\n## Queries\n" + entry + "\n"
-      }
-      await writeFile(indexPath, indexContent)
-
-      // Append to log.md
-      const logPath = `${pp}/wiki/log.md`
-      let logContent = ""
-      try {
-        logContent = await readFile(logPath)
-      } catch {
-        logContent = "# Wiki Log\n\n"
-      }
-      const logEntry = `- ${date}: Saved query page \`${fileName}\`\n`
-      await writeFile(logPath, logContent.trimEnd() + "\n" + logEntry)
-
-      // Refresh file tree and update graph
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
+      const llmConfig = useWikiStore.getState().llmConfig
+      const result = await saveQueryPage({
+        projectPath: project.path,
+        content,
+        autoIngest: true,
+        llmConfig,
+      })
+      setFileTree(result.fileTree)
       useWikiStore.getState().bumpDataVersion()
 
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-
-      // Full auto-ingest: extract entities, concepts, cross-references from saved content
-      const llmConfig = useWikiStore.getState().llmConfig
-      if (hasUsableLlm(llmConfig)) {
-        const { autoIngest } = await import("@/lib/ingest")
-        autoIngest(pp, filePath, llmConfig).catch((err) =>
-          console.error("Failed to auto-ingest saved query:", err)
-        )
-      }
     } catch (err) {
       console.error("Failed to save to wiki:", err)
     } finally {

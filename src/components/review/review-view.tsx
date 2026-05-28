@@ -16,6 +16,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { saveQueryPage } from "@/lib/save-query-page"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { useTranslation } from "react-i18next"
 
@@ -63,45 +64,13 @@ export function ReviewView() {
       try {
         const encoded = action.slice(5)
         const content = decodeURIComponent(atob(encoded))
-
-        // Strip hidden comments
-        const cleanContent = content
-          .replace(/<!--\s*save-worthy:.*?-->/g, "")
-          .replace(/<!--\s*sources:.*?-->/g, "")
-          .trimEnd()
-
-        // Generate filename
-        const firstLine = cleanContent.split("\n").find((l) => l.trim() && !l.startsWith("<!--"))?.replace(/^#+\s*/, "").trim() ?? "Saved Query"
-        const title = firstLine.slice(0, 60)
-        const slug = title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 50)
-        const date = new Date().toISOString().slice(0, 10)
-        const fileName = `${slug}-${date}.md`
-        const filePath = `${pp}/wiki/queries/${fileName}`
-
-        const frontmatter = `---\ntype: query\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\n---\n\n`
-        await writeFile(filePath, frontmatter + cleanContent)
-
-        // Update index
-        const indexPath = `${pp}/wiki/index.md`
-        let indexContent = ""
-        try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-        const entry = `- [[queries/${slug}-${date}|${title}]]`
-        if (indexContent.includes("## Queries")) {
-          indexContent = indexContent.replace(/(## Queries\n)/, `$1${entry}\n`)
-        } else {
-          indexContent = indexContent.trimEnd() + "\n\n## Queries\n" + entry + "\n"
-        }
-        await writeFile(indexPath, indexContent)
-
-        // Append log
-        const logPath = `${pp}/wiki/log.md`
-        let logContent = ""
-        try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
-        await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Saved query page \`${fileName}\`\n`)
-
-        // Refresh tree
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
+        const result = await saveQueryPage({
+          projectPath: pp,
+          content,
+          autoIngest: false,
+        })
+        setFileTree(result.fileTree)
+        useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
