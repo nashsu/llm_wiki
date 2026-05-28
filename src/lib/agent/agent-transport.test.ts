@@ -46,6 +46,108 @@ beforeEach(() => {
 });
 
 describe("streamAgent", () => {
+	it("passes session options to agent_spawn", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+		};
+
+		const stream = streamAgent(
+			"resume agent",
+			{
+				apiKey: "test-key",
+				sessionId: "11111111-1111-4111-8111-111111111111",
+				resume: "22222222-2222-4222-8222-222222222222",
+				continueSession: true,
+				forkSession: true,
+				resumeSessionAt: "msg-1",
+				persistSession: true,
+				title: "Wiki Agent",
+			},
+			callbacks,
+		);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: Record<string, unknown> & { streamId: string };
+		};
+		expect(payload.args).toMatchObject({
+			prompt: "resume agent",
+			sessionId: "11111111-1111-4111-8111-111111111111",
+			resume: "22222222-2222-4222-8222-222222222222",
+			continueSession: true,
+			forkSession: true,
+			resumeSessionAt: "msg-1",
+			persistSession: true,
+			title: "Wiki Agent",
+		});
+
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
+		expect(callbacks.onDone).toHaveBeenCalledWith(null);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
+
+	it("returns SDK result metadata through onDone", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+		};
+
+		const stream = streamAgent("run agent", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		const result = {
+			type: "result",
+			result: "ok",
+			session_id: "11111111-1111-4111-8111-111111111111",
+			total_cost_usd: 0.01,
+			duration_ms: 1234,
+			usage: {
+				input_tokens: 10,
+				output_tokens: 5,
+			},
+		};
+
+		tauriMocks.emitString(
+			`agent:${payload.args.streamId}`,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "message",
+				data: result,
+			}),
+		);
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
+		expect(callbacks.onMessage).toHaveBeenCalledWith(result);
+		expect(callbacks.onToken).toHaveBeenCalledWith("\n");
+		expect(callbacks.onDone).toHaveBeenCalledWith(result);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
+
 	it("forwards wiki_changed events to the wiki change callback", async () => {
 		const callbacks = {
 			onMessage: vi.fn(),

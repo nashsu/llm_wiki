@@ -39,6 +39,13 @@ pub struct AgentSpawnArgs {
     model: Option<String>,
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
+    session_id: Option<String>,
+    resume: Option<String>,
+    continue_session: Option<bool>,
+    fork_session: Option<bool>,
+    resume_session_at: Option<String>,
+    persist_session: Option<bool>,
+    title: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
     permission_policy: Option<String>,
@@ -65,6 +72,18 @@ struct AgentRequestOptions {
     max_turns: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_budget_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume: Option<String>,
+    #[serde(rename = "continue", skip_serializing_if = "Option::is_none")]
+    continue_session: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fork_session: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume_session_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +129,12 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             model: args.model,
             max_turns: args.max_turns,
             max_budget_usd: args.max_budget_usd,
+            session_id: args.session_id,
+            resume: args.resume,
+            continue_session: args.continue_session,
+            fork_session: args.fork_session,
+            resume_session_at: args.resume_session_at,
+            title: args.title,
             api_key: args.api_key,
             base_url: args.base_url,
             permission_policy: args.permission_policy,
@@ -121,7 +146,7 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             enable_write_tools: args.enable_write_tools,
             max_write_bytes: args.max_write_bytes,
             max_files_changed: args.max_files_changed,
-            persist_session: false,
+            persist_session: args.persist_session.unwrap_or(false),
         },
     }
 }
@@ -318,6 +343,13 @@ mod tests {
             model: None,
             max_turns: None,
             max_budget_usd: None,
+            session_id: None,
+            resume: None,
+            continue_session: None,
+            fork_session: None,
+            resume_session_at: None,
+            persist_session: None,
+            title: None,
             api_key: None,
             base_url: None,
             permission_policy: None,
@@ -349,6 +381,12 @@ mod tests {
         );
         assert!(options.get("cwd").is_none());
         assert!(options.get("maxBudgetUsd").is_none());
+        assert!(options.get("sessionId").is_none());
+        assert!(options.get("resume").is_none());
+        assert!(options.get("continue").is_none());
+        assert!(options.get("forkSession").is_none());
+        assert!(options.get("resumeSessionAt").is_none());
+        assert!(options.get("title").is_none());
         assert!(options.get("apiKey").is_none());
     }
 
@@ -360,6 +398,13 @@ mod tests {
         args.model = Some("claude-sonnet-4-20250514".to_string());
         args.max_turns = Some(3);
         args.max_budget_usd = Some(0.25);
+        args.session_id = Some("11111111-1111-4111-8111-111111111111".to_string());
+        args.resume = Some("22222222-2222-4222-8222-222222222222".to_string());
+        args.continue_session = Some(true);
+        args.fork_session = Some(true);
+        args.resume_session_at = Some("msg-1".to_string());
+        args.persist_session = Some(true);
+        args.title = Some("Wiki Agent".to_string());
         args.api_key = Some("test-key".to_string());
         args.base_url = Some("http://localhost:4000".to_string());
         args.permission_policy = Some("default".to_string());
@@ -388,6 +433,31 @@ mod tests {
         assert_eq!(
             options.get("maxBudgetUsd").and_then(Value::as_f64),
             Some(0.25)
+        );
+        assert_eq!(
+            options.get("sessionId").and_then(Value::as_str),
+            Some("11111111-1111-4111-8111-111111111111")
+        );
+        assert_eq!(
+            options.get("resume").and_then(Value::as_str),
+            Some("22222222-2222-4222-8222-222222222222")
+        );
+        assert_eq!(options.get("continue").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            options.get("forkSession").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            options.get("resumeSessionAt").and_then(Value::as_str),
+            Some("msg-1")
+        );
+        assert_eq!(
+            options.get("persistSession").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            options.get("title").and_then(Value::as_str),
+            Some("Wiki Agent")
         );
         assert_eq!(
             options.get("baseUrl").and_then(Value::as_str),

@@ -136,6 +136,13 @@ export interface AgentTransportOptions {
 	model?: string;
 	maxTurns?: number;
 	maxBudgetUsd?: number;
+	sessionId?: string;
+	resume?: string;
+	continueSession?: boolean;
+	forkSession?: boolean;
+	resumeSessionAt?: string;
+	persistSession?: boolean;
+	title?: string;
 	apiKey?: string;
 	baseUrl?: string;
 	permissionPolicy?: "default" | "restricted" | "bypass";

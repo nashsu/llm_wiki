@@ -22,6 +22,7 @@ import type {
 	SDKAssistantMessage,
 	SDKContentBlock,
 	SDKMessage,
+	SDKResultMessage,
 } from "./agent-types";
 import { runAgentAppTool } from "./agent-app-tools";
 
@@ -33,6 +34,13 @@ type InvokePayload = Record<string, unknown> & {
 	model?: string;
 	maxTurns?: number;
 	maxBudgetUsd?: number;
+	sessionId?: string;
+	resume?: string;
+	continueSession?: boolean;
+	forkSession?: boolean;
+	resumeSessionAt?: string;
+	persistSession?: boolean;
+	title?: string;
 	apiKey?: string;
 	baseUrl?: string;
 	permissionPolicy?: "default" | "restricted" | "bypass";
@@ -93,6 +101,7 @@ export async function streamAgent(
 
 	try {
 		let emittedText = "";
+		let resultMessage: SDKResultMessage | null = null;
 
 		unlistenData = await listen<string>(`agent:${streamId}`, (event) => {
 			try {
@@ -187,6 +196,7 @@ export async function streamAgent(
 				}
 
 				if ((msg as SDKMessage).type === "result") {
+					resultMessage = msg as SDKResultMessage;
 					emittedText = "";
 					callbacks.onToken("\n");
 				}
@@ -207,7 +217,7 @@ export async function streamAgent(
 						),
 					);
 				} else {
-					finishWith(() => callbacks.onDone(null));
+					finishWith(() => callbacks.onDone(resultMessage));
 				}
 			},
 		);

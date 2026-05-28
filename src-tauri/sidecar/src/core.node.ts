@@ -74,6 +74,48 @@ test("query request strips nullish SDK options and emits message then done", asy
 	assert.deepEqual(sent.map((msg) => msg.type), ["message", "done"]);
 });
 
+test("query request forwards session options to the SDK", async () => {
+	let capturedInput: Parameters<QueryFn>[0] | undefined;
+	const queryFn: QueryFn = async function* (input) {
+		capturedInput = input;
+	};
+
+	const handleRequest = createRequestHandler({
+		queryFn,
+		send: () => {},
+		error: () => {},
+		env: {},
+	});
+
+	await handleRequest({
+		...baseRequest,
+		options: {
+			...baseRequest.options,
+			sessionId: "11111111-1111-4111-8111-111111111111",
+			resume: "22222222-2222-4222-8222-222222222222",
+			continue: true,
+			forkSession: true,
+			resumeSessionAt: "msg-1",
+			persistSession: true,
+			title: "Wiki Agent",
+		},
+	});
+
+	assert.equal(
+		capturedInput?.options?.sessionId,
+		"11111111-1111-4111-8111-111111111111",
+	);
+	assert.equal(
+		capturedInput?.options?.resume,
+		"22222222-2222-4222-8222-222222222222",
+	);
+	assert.equal(capturedInput?.options?.continue, true);
+	assert.equal(capturedInput?.options?.forkSession, true);
+	assert.equal(capturedInput?.options?.resumeSessionAt, "msg-1");
+	assert.equal(capturedInput?.options?.persistSession, true);
+	assert.equal(capturedInput?.options?.title, "Wiki Agent");
+});
+
 test("query request enables LLM Wiki MCP tools when project context is present", async () => {
 	let capturedInput: Parameters<QueryFn>[0] | undefined;
 	const queryFn: QueryFn = async function* (input) {

@@ -8,9 +8,15 @@ export interface AgentRequest {
 		model?: string;
 		maxTurns?: number;
 		maxBudgetUsd?: number;
+		sessionId?: string;
+		resume?: string;
+		continue?: boolean;
+		forkSession?: boolean;
+		resumeSessionAt?: string;
 		apiKey?: string;
 		baseUrl?: string;
 		persistSession?: boolean;
+		title?: string;
 		allowedTools?: string[];
 		permissionPolicy?: "default" | "restricted" | "bypass";
 		projectId?: string;
