@@ -172,6 +172,7 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
         ? COMMUNITY_COLORS[node.community % COMMUNITY_COLORS.length]
         : nodeColor(node.type)
       graph.addNode(node.id, {
+        type: "circle",
         x: cached?.x ?? Math.random() * 100,
         y: cached?.y ?? Math.random() * 100,
         size: nodeSize(node.linkCount, maxLinks),
@@ -873,55 +874,65 @@ export function GraphView() {
             <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
               {t("graph.resizing")}
             </div>
-          ) : searchedGraph.nodes.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-              <Search className="h-8 w-8 opacity-40" />
-              <p className="text-sm">{searchActive ? t("graph.noSearchResults") : t("graph.noVisibleNodes")}</p>
-              {searchActive && (
-                <Button variant="outline" size="sm" onClick={() => setGraphSearch("")}>
-                  {t("graph.clearSearch")}
-                </Button>
-              )}
-            </div>
           ) : (
-          <ErrorBoundary>
-          <SigmaContainer
-            key={sigmaKey}
-            style={{ width: "100%", height: "100%", background: "transparent" }}
-            settings={{
-              renderEdgeLabels: false,
-              hideEdgesOnMove: true,
-              hideLabelsOnMove: true,
-              defaultEdgeColor: "#cbd5e1",
-              defaultNodeColor: "#94a3b8",
-              labelSize: 13,
-              labelWeight: "bold",
-              labelColor: { color: "#1e293b" },
-              labelDensity: labelDensity(searchedGraph.nodes.length),
-              labelRenderedSizeThreshold: labelSizeThreshold(searchedGraph.nodes.length),
-              stagePadding: 30,
-            }}
-          >
-            <GraphLoader
-              nodes={searchedGraph.nodes}
-              edges={searchedGraph.edges}
-              colorMode={colorMode}
-              nodeScale={nodeScale}
-              graphSpacing={graphSpacing}
-            />
-            <EventHandler
-              onNodeClick={handleNodeClick}
-              onNodeContextMenu={handleNodeContextMenu}
-              onHoverChange={setHoverState}
-            />
-            <GraphRenderSettings
-              hoverState={hoverState}
-              highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes}
-              nodeCount={searchedGraph.nodes.length}
-            />
-            <ZoomControls />
-          </SigmaContainer>
-          </ErrorBoundary>
+            <>
+              <ErrorBoundary>
+                <SigmaContainer
+                  key={sigmaKey}
+                  style={{ width: "100%", height: "100%", background: "transparent" }}
+                  settings={{
+                    defaultNodeType: "circle",
+                    renderEdgeLabels: false,
+                    hideEdgesOnMove: true,
+                    hideLabelsOnMove: true,
+                    defaultEdgeColor: "#cbd5e1",
+                    defaultNodeColor: "#94a3b8",
+                    labelSize: 13,
+                    labelWeight: "bold",
+                    labelColor: { color: "#1e293b" },
+                    labelDensity: labelDensity(searchedGraph.nodes.length),
+                    labelRenderedSizeThreshold: labelSizeThreshold(searchedGraph.nodes.length),
+                    stagePadding: 30,
+                  }}
+                >
+                  <GraphLoader
+                    nodes={searchedGraph.nodes}
+                    edges={searchedGraph.edges}
+                    colorMode={colorMode}
+                    nodeScale={nodeScale}
+                    graphSpacing={graphSpacing}
+                  />
+                  <EventHandler
+                    onNodeClick={handleNodeClick}
+                    onNodeContextMenu={handleNodeContextMenu}
+                    onHoverChange={setHoverState}
+                  />
+                  <GraphRenderSettings
+                    hoverState={hoverState}
+                    highlightedNodes={searchActive ? searchedGraph.matchedNodeIds : highlightedNodes}
+                    nodeCount={searchedGraph.nodes.length}
+                  />
+                  <ZoomControls />
+                </SigmaContainer>
+              </ErrorBoundary>
+
+              {searchedGraph.nodes.length === 0 && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-50/85 text-muted-foreground backdrop-blur-[1px] dark:bg-slate-950/85">
+                  <Search className="h-8 w-8 opacity-40" />
+                  <p className="text-sm">{searchActive ? t("graph.noSearchResults") : t("graph.noVisibleNodes")}</p>
+                  {searchActive && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="pointer-events-auto"
+                      onClick={() => setGraphSearch("")}
+                    >
+                      {t("graph.clearSearch")}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {showFilters && (
