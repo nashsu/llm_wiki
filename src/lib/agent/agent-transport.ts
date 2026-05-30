@@ -84,6 +84,24 @@ type InvokePayload = Record<string, unknown> & {
 	promptSuggestions?: boolean;
 	agentProgressSummaries?: boolean;
 	forwardSubagentText?: boolean;
+
+	// PR E: subagents + skills + plugins
+	agentName?: string;
+	agents?: Record<string, {
+		description?: string;
+		prompt: string;
+		model?: string;
+		tools?: string[];
+		allowedTools?: string[];
+		disallowedTools?: string[];
+		permissionMode?: string;
+		skills?: "all" | string[];
+	}>;
+	skills?: "all" | string[];
+	plugins?: Array<{
+		name: string;
+		path: string;
+	}>;
 };
 
 function extractText(content: SDKContentBlock[]): string {

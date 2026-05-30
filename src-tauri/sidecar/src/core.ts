@@ -182,6 +182,11 @@ export function createRequestHandler({
 				promptSuggestions: req.options.promptSuggestions,
 				agentProgressSummaries: req.options.agentProgressSummaries,
 				forwardSubagentText: req.options.forwardSubagentText,
+				// PR E: subagents + skills + plugins
+				agentName: req.options.agentName,
+				agents: req.options.agents,
+				skills: req.options.skills,
+				plugins: req.options.plugins,
 			};
 			const options = omitNullish(rawOptions) as QueryInput["options"];
 

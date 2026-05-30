@@ -225,6 +225,24 @@ export interface AgentTransportOptions {
 	promptSuggestions?: boolean;
 	agentProgressSummaries?: boolean;
 	forwardSubagentText?: boolean;
+
+	// PR E: subagents + skills + plugins
+	agentName?: string;
+	agents?: Record<string, {
+		description?: string;
+		prompt: string;
+		model?: string;
+		tools?: string[];
+		allowedTools?: string[];
+		disallowedTools?: string[];
+		permissionMode?: string;
+		skills?: "all" | string[];
+	}>;
+	skills?: "all" | string[];
+	plugins?: Array<{
+		name: string;
+		path: string;
+	}>;
 }
 
 export interface AgentCallbacks {

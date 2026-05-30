@@ -71,6 +71,11 @@ pub struct AgentSpawnArgs {
     max_write_bytes: Option<u32>,
     max_files_changed: Option<u32>,
     enable_file_checkpointing: Option<bool>,
+    // PR E: subagents + skills + plugins
+    agent_name: Option<String>,
+    agents: Option<Value>,
+    skills: Option<Value>,
+    plugins: Option<Value>,
     // PR D: structured output
     output_format: Option<Value>,
 
@@ -139,6 +144,15 @@ struct AgentRequestOptions {
     enable_file_checkpointing: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox: Option<AgentSandboxOptions>,
+    // PR E: subagents + skills + plugins
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agents: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skills: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plugins: Option<Value>,
     // PR D: structured output
     #[serde(skip_serializing_if = "Option::is_none")]
     output_format: Option<Value>,
@@ -204,6 +218,11 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             max_files_changed: args.max_files_changed,
             enable_file_checkpointing: args.enable_file_checkpointing,
             sandbox: args.sandbox,
+            // PR E: subagents + skills + plugins
+            agent_name: args.agent_name,
+            agents: args.agents,
+            skills: args.skills,
+            plugins: args.plugins,
             // PR D: structured output
             output_format: args.output_format,
             // PR D: thinking / effort / taskBudget
@@ -544,6 +563,10 @@ mod tests {
             max_write_bytes: None,
             max_files_changed: None,
             enable_file_checkpointing: None,
+            agent_name: None,
+            agents: None,
+            skills: None,
+            plugins: None,
             output_format: None,
             thinking: None,
             effort: None,
