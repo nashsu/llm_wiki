@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc",
-		"test": "npm run build && node --test dist/*.node.js",
+		"test": "npm run build && node --test dist/core.node.js dist/agent-policy.node.js dist/permission-bridge.node.js",
 		"start": "node dist/main.js"
 	},
 	"dependencies": {
