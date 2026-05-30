@@ -1324,7 +1324,7 @@ async function writeFileBlocks(
       continue
     }
 
-    const fullPath = `${projectPath}/${relativePath}`
+    let fullPath = `${projectPath}/${relativePath}`
     try {
       if (isLogPath(relativePath)) {
         const existing = await tryReadFile(fullPath)
@@ -1347,6 +1347,7 @@ async function writeFileBlocks(
           warnings.push(msg)
           // Rewrite target: write into the existing page instead
           relativePath = dedupPath
+          fullPath = `${projectPath}/${relativePath}`
         }
 
         // Content pages (entities / concepts / queries / synthesis /
