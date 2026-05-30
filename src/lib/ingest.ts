@@ -345,7 +345,7 @@ export function languageRule(sourceContent: string = ""): string {
 
 /** Normalize a concept slug for fuzzy dedup matching.
  *  Lowercase, collapse hyphens/underscores to single hyphen,
- *  strip trailing `-s` plural, remove common filler words. */
+ *  remove common filler words. */
 export function normalizeConceptSlug(slug: string): string {
   return slug
     .toLowerCase()
@@ -353,7 +353,6 @@ export function normalizeConceptSlug(slug: string): string {
     .replace(/-{2,}/g, '-')
     .replace(/-+$/, '')
     .replace(/^-+/, '')
-    .replace(/-s$/, '')  // strip trailing plural
     .replace(/^(the|a|an)-/, '')
 }
 
@@ -419,11 +418,7 @@ export async function findExistingPageByNormalizedSlug(
       for (const file of files) {
         const existingSlug = file.name.replace(/\.md$/, '')
         const existingNorm = normalizeConceptSlug(existingSlug)
-        if (
-          existingNorm === normalized ||
-          existingNorm.includes(normalized) ||
-          normalized.includes(existingNorm)
-        ) {
+        if (existingNorm === normalized) {
           return `${dir}/${file.name}`
         }
       }
