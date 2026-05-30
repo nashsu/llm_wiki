@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        platform: [macos-latest, ubuntu-22.04]
 
     runs-on: ${{ matrix.platform }}
 
@@ -32,9 +32,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf protobuf-compiler
 
-      - name: Install protoc (Windows)
-        if: matrix.platform == 'windows-latest'
-        run: choco install protoc -y
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
