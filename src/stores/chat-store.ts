@@ -56,11 +56,8 @@ interface ChatState {
   getActiveMessages: () => DisplayMessage[]
 }
 
-let messageCounter = 0
-
 function nextId(): string {
-  messageCounter += 1
-  return String(messageCounter)
+  return crypto.randomUUID()
 }
 
 function generateConversationId(): string {
