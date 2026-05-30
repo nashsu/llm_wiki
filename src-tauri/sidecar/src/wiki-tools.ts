@@ -613,7 +613,7 @@ export function createLlmWikiTools(
 			"fix_lint_report",
 			"Auto-fix all auto-fix items in a lint report and append a repair log.",
 			{
-				report: z.object({}).passthrough(),
+				report: z.object({ healthScore: z.number(), autoFixItems: z.array(z.object({}).passthrough()), humanItems: z.array(z.object({}).passthrough()), }).passthrough(),
 				reportPath: z.string().min(1),
 			},
 			async (args) =>

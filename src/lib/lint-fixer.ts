@@ -698,8 +698,6 @@ async function applyLlmFix(
 // ── Batch report-driven fix (Phase 3.65-B) ───────────────────────────────────
 
 
-// ── Batch report-driven fix (Phase 3.65-B) ───────────────────────────────────
-
 export interface FixLintReportResult {
   report: LintReport
   reportPath: string
@@ -741,7 +739,7 @@ export async function fixLintReport(
     skipped.push(`[${item.type}] ${item.page}: requires human judgment`)
   }
 
-  report.repairLog = { fixed, failed, skipped }
+  report = { ...report, repairLog: { fixed, failed, skipped } }
 
   const runId =
     reportPath.match(/lint-report-([a-zA-Z0-9]+)\.md$/)?.[1] ??
@@ -770,9 +768,11 @@ export async function runLintAndReport(
   projectPath: string,
   llmConfig: LlmConfig,
   fileTree: readonly { name: string; path: string; is_dir: boolean; children?: unknown[] }[],
+  includeStructural = true,
+  includeSemantic = true,
 ): Promise<{ report: LintReport; reportPath: string }> {
-  const structural = await runStructuralLint(projectPath)
-  const semantic = await runSemanticLint(projectPath, llmConfig)
+  const structural = includeStructural ? await runStructuralLint(projectPath) : []
+  const semantic = includeSemantic ? await runSemanticLint(projectPath, llmConfig) : []
 
   const results = [...structural, ...semantic]
 
