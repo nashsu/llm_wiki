@@ -49,9 +49,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Check frontend build
         run: npx vite build
+
+      - name: Frontend tests
+        run: npm run test:mocks
+
+      - name: Sidecar tests
+        run: npm --prefix src-tauri/sidecar test
 
       - name: Check Rust build
         working-directory: src-tauri
         run: cargo build
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
