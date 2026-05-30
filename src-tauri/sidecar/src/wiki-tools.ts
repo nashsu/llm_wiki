@@ -598,6 +598,31 @@ export function createLlmWikiTools(
 				),
 		),
 		tool(
+			"run_lint_and_report",
+			"Run structural + semantic lint, generate a structured report page with health score, auto-fix/human split, and save to wiki.",
+			{
+				includeStructural: z.boolean().optional(),
+				includeSemantic: z.boolean().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "run_lint_and_report", args, { requiresWrite: true }),
+				),
+		),
+		tool(
+			"fix_lint_report",
+			"Auto-fix all auto-fix items in a lint report and append a repair log.",
+			{
+				report: z.object({ healthScore: z.number(), autoFixItems: z.array(z.object({}).passthrough()), humanItems: z.array(z.object({}).passthrough()), }).passthrough(),
+				reportPath: z.string().min(1),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "fix_lint_report", args, { requiresWrite: true }),
+				),
+		),
+
+		tool(
 			"enrich_wikilinks",
 			"Add safe wikilinks to one Wiki page using LLM Wiki's enrichment pipeline.",
 			{

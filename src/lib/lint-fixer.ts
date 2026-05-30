@@ -2,7 +2,7 @@ import { listDirectory, readFile, writeFile } from "@/commands/fs";
 import { hasUsableLlm } from "@/lib/has-usable-llm";
 import { parseFileBlocks } from "@/lib/ingest";
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize";
-import type { LintResult } from "@/lib/lint";
+import { type LintResult, runStructuralLint, runSemanticLint, generateLintReport, lintReportToMarkdown, type LintReport } from "@/lib/lint";
 import { streamChat } from "@/lib/llm-client";
 import { buildLanguageDirective } from "@/lib/output-language";
 import { getRelativePath, normalizePath } from "@/lib/path-utils";
@@ -693,4 +693,113 @@ async function applyLlmFix(
 		filesWritten,
 	});
 	return true;
+}
+
+// ── Batch report-driven fix (Phase 3.65-B) ───────────────────────────────────
+
+
+export interface FixLintReportResult {
+  report: LintReport
+  reportPath: string
+}
+
+/**
+ * Fix all auto-fix items in a lint report and append a repair log.
+ * Writes the updated report back to the same wiki page.
+ */
+export async function fixLintReport(
+  projectPath: string,
+  report: LintReport,
+  reportPath: string,
+  llmConfig: LlmConfig,
+): Promise<FixLintReportResult> {
+  const pp = normalizePath(projectPath)
+  const activity = useActivityStore.getState()
+
+  const fixed: string[] = []
+  const failed: string[] = []
+  const skipped: string[] = []
+
+  for (const item of report.autoFixItems) {
+    try {
+      const ok = await fixLintResult(pp, item, llmConfig)
+      if (ok) {
+        fixed.push(`[${item.type}] ${item.page}: ${item.detail.slice(0, 80)}`)
+      } else {
+        failed.push(`[${item.type}] ${item.page}: fix returned false`)
+      }
+    } catch (err) {
+      failed.push(
+        `[${item.type}] ${item.page}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  for (const item of report.humanItems) {
+    skipped.push(`[${item.type}] ${item.page}: requires human judgment`)
+  }
+
+  report = { ...report, repairLog: { fixed, failed, skipped } }
+
+  const runId =
+    reportPath.match(/lint-report-([a-zA-Z0-9]+)\.md$/)?.[1] ??
+    new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  const markdown = lintReportToMarkdown(report, runId)
+
+  const fullPath = `${pp}/${reportPath}`
+  await writeFile(fullPath, markdown)
+
+  activity.addItem({
+    type: "lint",
+    title: "Auto-fix lint report",
+    status: "done",
+    detail: `Fixed ${fixed.length}, failed ${failed.length}, skipped ${skipped.length}`,
+    filesWritten: [reportPath],
+  })
+
+  return { report, reportPath }
+}
+
+/**
+ * Run structural + semantic lint, generate a report, and save it as a wiki page.
+ * Returns the report and its path for later consumption by fixLintReport.
+ */
+export async function runLintAndReport(
+  projectPath: string,
+  llmConfig: LlmConfig,
+  fileTree: readonly { name: string; path: string; is_dir: boolean; children?: unknown[] }[],
+  includeStructural = true,
+  includeSemantic = true,
+): Promise<{ report: LintReport; reportPath: string }> {
+  const structural = includeStructural ? await runStructuralLint(projectPath) : []
+  const semantic = includeSemantic ? await runSemanticLint(projectPath, llmConfig) : []
+
+  const results = [...structural, ...semantic]
+
+  // Count wiki pages
+  let wikiPageCount = 0
+  const countPages = (nodes: readonly { name: string; path: string; is_dir: boolean; children?: unknown[] }[]) => {
+    for (const n of nodes) {
+      if (n.is_dir && n.children) {
+        countPages(n.children as typeof nodes)
+      } else if (n.name.endsWith(".md")) {
+        wikiPageCount++
+      }
+    }
+  }
+  countPages(fileTree)
+
+  const report = generateLintReport(results, wikiPageCount)
+
+  const now = new Date()
+  const runId = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`
+  const reportPath = `wiki/lint-report-${runId}.md`
+
+  const markdown = lintReportToMarkdown(report, runId)
+
+  const pp = normalizePath(projectPath)
+  const fullPath = `${pp}/${reportPath}`
+  await writeFile(fullPath, markdown)
+
+  return { report, reportPath }
 }
