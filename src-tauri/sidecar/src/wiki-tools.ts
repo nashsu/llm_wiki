@@ -599,10 +599,11 @@ export function createLlmWikiTools(
 		),
 		tool(
 			"run_lint_and_report",
-			"Run structural + semantic lint, generate a structured report page with health score, auto-fix/human split, and save to wiki.",
+			"Run structural + semantic lint, generate a structured report page with health score, auto-fix/human split, and save to wiki. Set autoFix=true to automatically fix all auto-fix items after generating the report.",
 			{
 				includeStructural: z.boolean().optional(),
 				includeSemantic: z.boolean().optional(),
+				autoFix: z.boolean().optional(),
 			},
 			async (args) =>
 				safe(async () =>

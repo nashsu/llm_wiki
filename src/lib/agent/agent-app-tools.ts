@@ -580,7 +580,8 @@ export async function runAgentAppTool(
     const fileTree = state.fileTree
     const includeStructural = args.includeStructural !== false
     const includeSemantic = args.includeSemantic === true
-    const { report, reportPath } = await runLintAndReport(projectPath, state.llmConfig, fileTree, includeStructural, includeSemantic)
+    const autoFix = args.autoFix === true
+    const { report, reportPath } = await runLintAndReport(projectPath, state.llmConfig, fileTree, includeStructural, includeSemantic, autoFix)
     state.setFileTree(await listDirectory(projectPath))
     useWikiStore.getState().bumpDataVersion()
     return {
