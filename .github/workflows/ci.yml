@@ -58,6 +58,9 @@ jobs:
       - name: Frontend tests
         run: npm run test:mocks
 
+      - name: Install sidecar dependencies
+        run: npm --prefix src-tauri/sidecar install
+
       - name: Sidecar tests
         run: npm --prefix src-tauri/sidecar test
 
