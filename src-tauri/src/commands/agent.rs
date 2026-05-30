@@ -329,6 +329,43 @@ pub async fn agent_tool_response(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn agent_permission_response(
+    state: State<'_, AgentState>,
+    stream_id: String,
+    request_id: String,
+    ok: bool,
+    decision: Option<Value>,
+    error: Option<String>,
+) -> Result<(), String> {
+    let stdin = {
+        let map = state.children.lock().await;
+        map.get(&stream_id)
+            .map(|process| Arc::clone(&process.stdin))
+            .ok_or_else(|| format!("No running agent stream: {stream_id}"))?
+    };
+    let line = serde_json::json!({
+        "type": "permission_response",
+        "streamId": stream_id,
+        "requestId": request_id,
+        "ok": ok,
+        "decision": decision,
+        "error": error,
+    })
+    .to_string()
+        + "\n";
+    let mut guard = stdin.lock().await;
+    guard
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write permission response: {e}"))?;
+    guard
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush permission response: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 
-export type AgentPermissionPolicy = "default" | "restricted" | "bypass";
+export type AgentPermissionPolicy =
+	| "default"
+	| "restricted"
+	| "bypass"
+	| "acceptEdits"
+	| "bypassPermissions"
+	| "plan"
+	| "dontAsk"
+	| "auto";
 
 export const READ_WIKI_TOOLS = [
 	"mcp__llm_wiki__list_projects",
@@ -56,10 +64,20 @@ export function buildPermissionOptions(policy: AgentPermissionPolicy = "default"
 			permissionMode: "dontAsk" as const,
 		};
 	}
-	if (policy === "bypass") {
+	if (policy === "bypass" || policy === "bypassPermissions") {
 		return {
 			permissionMode: "bypassPermissions" as const,
 			allowDangerouslySkipPermissions: true,
+		};
+	}
+	if (
+		policy === "acceptEdits" ||
+		policy === "plan" ||
+		policy === "dontAsk" ||
+		policy === "auto"
+	) {
+		return {
+			permissionMode: policy,
 		};
 	}
 	return {

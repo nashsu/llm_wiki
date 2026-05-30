@@ -116,6 +116,127 @@ test("query request forwards session options to the SDK", async () => {
 	assert.equal(capturedInput?.options?.title, "Wiki Agent");
 });
 
+test("canUseTool pre-approves allowed Wiki tools and denies disabled Wiki writes", async () => {
+	let capturedInput: Parameters<QueryFn>[0] | undefined;
+	let bridgeCalls = 0;
+	const queryFn: QueryFn = async function* (input) {
+		capturedInput = input;
+	};
+
+	const handleRequest = createRequestHandler({
+		queryFn,
+		send: () => {},
+		error: () => {},
+		env: {},
+		permissionBridge: {
+			requestPermission: async () => {
+				bridgeCalls += 1;
+				throw new Error("bridge should not be called for Wiki tools");
+			},
+			handleResponse: () => {},
+			rejectStream: () => {},
+		},
+	});
+
+	await handleRequest({
+		...baseRequest,
+		options: {
+			...baseRequest.options,
+			projectPath: "/tmp/wiki",
+			enableWikiTools: true,
+			enableWriteTools: false,
+		},
+	});
+
+	const canUseTool = capturedInput?.options?.canUseTool;
+	assert.ok(canUseTool);
+	const signal = new AbortController().signal;
+	assert.deepEqual(
+		await canUseTool(
+			"mcp__llm_wiki__read_page",
+			{ path: "wiki/index.md" },
+			{ signal, toolUseID: "tool-1" },
+		),
+		{
+			behavior: "allow",
+			toolUseID: "tool-1",
+		},
+	);
+	assert.deepEqual(
+		await canUseTool(
+			"mcp__llm_wiki__update_page",
+			{ path: "wiki/index.md" },
+			{ signal, toolUseID: "tool-2" },
+		),
+		{
+			behavior: "deny",
+			message: "Wiki write tools are disabled",
+			toolUseID: "tool-2",
+		},
+	);
+	assert.equal(bridgeCalls, 0);
+});
+
+test("canUseTool asks permission bridge for non-Wiki tools", async () => {
+	let capturedInput: Parameters<QueryFn>[0] | undefined;
+	const bridgeCalls: Array<{
+		streamId: string;
+		toolName: string;
+		input: Record<string, unknown>;
+		toolUseID: string;
+	}> = [];
+	const queryFn: QueryFn = async function* (input) {
+		capturedInput = input;
+	};
+
+	const handleRequest = createRequestHandler({
+		queryFn,
+		send: () => {},
+		error: () => {},
+		env: {},
+		permissionBridge: {
+			requestPermission: async (streamId, toolName, input, options) => {
+				bridgeCalls.push({
+					streamId,
+					toolName,
+					input,
+					toolUseID: options.toolUseID,
+				});
+				return {
+					behavior: "allow",
+					toolUseID: options.toolUseID,
+				};
+			},
+			handleResponse: () => {},
+			rejectStream: () => {},
+		},
+	});
+
+	await handleRequest(baseRequest);
+
+	const canUseTool = capturedInput?.options?.canUseTool;
+	assert.ok(canUseTool);
+	assert.deepEqual(
+		await canUseTool(
+			"Bash",
+			{ command: "pwd" },
+			{ signal: new AbortController().signal, toolUseID: "tool-3" },
+		),
+		{
+			behavior: "allow",
+			toolUseID: "tool-3",
+		},
+	);
+	assert.deepEqual(bridgeCalls, [
+		{
+			streamId: "stream-1",
+			toolName: "Bash",
+			input: { command: "pwd" },
+			toolUseID: "tool-3",
+		},
+	]);
+});
+
 test("query request enables LLM Wiki MCP tools when project context is present", async () => {
 	let capturedInput: Parameters<QueryFn>[0] | undefined;
 	const queryFn: QueryFn = async function* (input) {
@@ -244,6 +365,7 @@ test("kill request aborts active query and removes it from tracking", async () =
 	const activeQueries = new Map<string, AbortController>();
 	let capturedSignal: AbortSignal | undefined;
 	let releaseQuery: (() => void) | undefined;
+	let rejectedStream: string | undefined;
 	const queryFn: QueryFn = async function* (input) {
 		capturedSignal = input.options?.abortController?.signal;
 		await new Promise<void>((resolve) => {
@@ -257,6 +379,13 @@ test("kill request aborts active query and removes it from tracking", async () =
 		error: () => {},
 		activeQueries,
 		env: {},
+		permissionBridge: {
+			requestPermission: async () => ({ behavior: "deny", message: "no" }),
+			handleResponse: () => {},
+			rejectStream: (streamId) => {
+				rejectedStream = streamId;
+			},
+		},
 	});
 
 	const running = handleRequest(baseRequest);
@@ -266,6 +395,7 @@ test("kill request aborts active query and removes it from tracking", async () =
 	await handleRequest({ type: "kill", streamId: "stream-1" });
 	assert.equal(capturedSignal?.aborted, true);
 	assert.equal(activeQueries.has("stream-1"), false);
+	assert.equal(rejectedStream, "stream-1");
 
 	releaseQuery?.();
 	await running;

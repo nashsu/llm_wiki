@@ -1,10 +1,13 @@
-import type { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { AppToolBridge } from "./app-tool-bridge.js";
+import type { PermissionBridge } from "./permission-bridge.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
 import { createLlmWikiHooks } from "./agent-hooks.js";
 import {
 	buildPermissionOptions,
 	getAllowedWikiTools,
+	isWikiToolName,
+	shouldAllowWikiTool,
 	type AgentPermissionPolicy,
 } from "./agent-policy.js";
 import { createLlmWikiMcpServer } from "./wiki-tools.js";
@@ -19,6 +22,7 @@ interface RequestHandlerDeps {
 	activeQueries?: Map<string, AbortController>;
 	env?: NodeJS.ProcessEnv;
 	appToolBridge?: AppToolBridge;
+	permissionBridge?: PermissionBridge;
 }
 
 export function omitNullish<T extends Record<string, unknown>>(
@@ -36,6 +40,7 @@ export function createRequestHandler({
 	activeQueries = new Map<string, AbortController>(),
 	env: baseEnv = process.env,
 	appToolBridge,
+	permissionBridge,
 }: RequestHandlerDeps) {
 	return async function handleRequest(
 		req: AgentRequest | AgentKillRequest,
@@ -46,6 +51,7 @@ export function createRequestHandler({
 				ctrl.abort();
 				activeQueries.delete(req.streamId);
 				appToolBridge?.rejectStream(req.streamId, "Agent stream was killed");
+				permissionBridge?.rejectStream(req.streamId, "Agent stream was killed");
 			}
 			return;
 		}
@@ -112,7 +118,34 @@ export function createRequestHandler({
 				send,
 			});
 
-			const options = omitNullish({
+			const canUseTool: CanUseTool | undefined = permissionBridge
+				? async (toolName, input, options) => {
+						if (isWikiToolName(toolName)) {
+							const decision = shouldAllowWikiTool({
+								toolName,
+								enableWriteTools,
+							});
+							if (decision.allowed) {
+								return {
+									behavior: "allow" as const,
+									toolUseID: options.toolUseID,
+								};
+							}
+							return {
+								behavior: "deny" as const,
+								message: decision.reason,
+								toolUseID: options.toolUseID,
+							};
+						}
+						return permissionBridge.requestPermission(
+							req.streamId,
+							toolName,
+							input,
+							options,
+						);
+					}
+				: undefined;
+			const rawOptions: Record<string, unknown> = {
 				systemPrompt: req.options.systemPrompt,
 				cwd: req.options.cwd,
 				model: req.options.model,
@@ -127,11 +160,13 @@ export function createRequestHandler({
 				title: req.options.title,
 				...buildPermissionOptions(permissionPolicy),
 				allowedTools,
+				canUseTool,
 				mcpServers,
 				hooks,
 				abortController,
 				env,
-			}) as QueryInput["options"];
+			};
+			const options = omitNullish(rawOptions) as QueryInput["options"];
 
 			const q = queryFn({
 				prompt: req.prompt,

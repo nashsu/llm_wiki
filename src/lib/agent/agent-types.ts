@@ -94,13 +94,52 @@ export interface AgentToolEventPayload {
 	durationMs?: number;
 	inputPreview?: Record<string, unknown>;
 	error?: string;
-	permissionPolicy?: "default" | "restricted" | "bypass";
+	permissionPolicy?: AgentPermissionPolicy;
 	toolCalls?: Array<{
 		toolName: string;
 		toolUseId?: string;
 		inputPreview?: Record<string, unknown>;
 	}>;
 }
+
+export type AgentPermissionPolicy =
+	| "default"
+	| "restricted"
+	| "bypass"
+	| "acceptEdits"
+	| "bypassPermissions"
+	| "plan"
+	| "dontAsk"
+	| "auto";
+
+export interface AgentPermissionRequestPayload {
+	requestId: string;
+	toolName: string;
+	inputPreview: Record<string, unknown>;
+	suggestions?: unknown[];
+	blockedPath?: string;
+	decisionReason?: string;
+	title?: string;
+	displayName?: string;
+	description?: string;
+	toolUseID: string;
+	agentID?: string;
+}
+
+export type AgentPermissionDecision =
+	| {
+			behavior: "allow";
+			updatedInput?: Record<string, unknown>;
+			updatedPermissions?: unknown[];
+			decisionClassification?: "user_temporary" | "user_permanent" | "user_reject";
+	  }
+	| {
+			behavior: "deny";
+			message?: string;
+			reason?: string;
+			interrupt?: boolean;
+			decisionClassification?: "user_temporary" | "user_permanent" | "user_reject";
+	  };
 
 export interface AgentSummaryPayload {
 	lastAssistantMessage?: string;
@@ -145,7 +184,7 @@ export interface AgentTransportOptions {
 	title?: string;
 	apiKey?: string;
 	baseUrl?: string;
-	permissionPolicy?: "default" | "restricted" | "bypass";
+	permissionPolicy?: AgentPermissionPolicy;
 	projectId?: string;
 	projectPath?: string;
 	apiServerBaseUrl?: string;
@@ -166,4 +205,7 @@ export interface AgentCallbacks {
 	onAgentSummary?: (payload: AgentSummaryPayload) => void;
 	onActionRequired?: (payload: AgentActionRequiredPayload) => void;
 	onTaskEvent?: (type: string, payload: AgentTaskEventPayload) => void;
+	onPermissionRequest?: (
+		payload: AgentPermissionRequestPayload,
+	) => AgentPermissionDecision | Promise<AgentPermissionDecision>;
 }

@@ -335,4 +335,121 @@ describe("streamAgent", () => {
 		expect(callbacks.onDone).toHaveBeenCalledWith(null);
 		expect(callbacks.onError).not.toHaveBeenCalled();
 	});
+
+	it("handles permission requests and sends decisions back to the sidecar", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+			onPermissionRequest: vi.fn(async () => ({
+				behavior: "allow" as const,
+				updatedInput: { command: "pwd" },
+			})),
+		};
+
+		const stream = streamAgent("run protected tool", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		const streamEvent = `agent:${payload.args.streamId}`;
+		const request = {
+			requestId: "permission-1",
+			toolName: "Bash",
+			inputPreview: { commandBytes: 3 },
+			toolUseID: "tool-1",
+			title: "Claude wants to run Bash",
+		};
+
+		tauriMocks.emitString(
+			streamEvent,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "agent_permission_request",
+				data: request,
+			}),
+		);
+
+		await vi.waitFor(() => {
+			expect(callbacks.onPermissionRequest).toHaveBeenCalledWith(request);
+			expect(tauriMocks.invoke).toHaveBeenCalledWith("agent_permission_response", {
+				streamId: payload.args.streamId,
+				requestId: "permission-1",
+				ok: true,
+				decision: {
+					behavior: "allow",
+					updatedInput: { command: "pwd" },
+				},
+			});
+		});
+
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
+		expect(callbacks.onDone).toHaveBeenCalledWith(null);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
+
+	it("denies permission requests when no callback is registered", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+		};
+
+		const stream = streamAgent("run protected tool", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		tauriMocks.emitString(
+			`agent:${payload.args.streamId}`,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "agent_permission_request",
+				data: {
+					requestId: "permission-2",
+					toolName: "Bash",
+					inputPreview: {},
+					toolUseID: "tool-2",
+				},
+			}),
+		);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledWith("agent_permission_response", {
+				streamId: payload.args.streamId,
+				requestId: "permission-2",
+				ok: true,
+				decision: {
+					behavior: "deny",
+					message: "Permission request was not handled",
+				},
+			});
+		});
+
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+
+		await stream;
+
+		expect(callbacks.onDone).toHaveBeenCalledWith(null);
+		expect(callbacks.onError).not.toHaveBeenCalled();
+	});
 });
