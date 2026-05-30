@@ -35,6 +35,8 @@ export const WRITE_WIKI_TOOLS = [
 	"mcp__llm_wiki__ingest_source",
 	"mcp__llm_wiki__caption_source_images",
 	"mcp__llm_wiki__fix_lint_result",
+	"mcp__llm_wiki__fix_lint_report",
+	"mcp__llm_wiki__run_lint_and_report",
 	"mcp__llm_wiki__enrich_wikilinks",
 	"mcp__llm_wiki__sweep_reviews",
 ] as const;

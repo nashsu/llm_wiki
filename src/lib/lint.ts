@@ -297,3 +297,178 @@ export async function runSemanticLint(
 
   return results
 }
+
+// ── Lint Report (Phase 3.65-B) ──────────────────────────────────────────────
+
+/** Structured lint report with health score, auto-fix/human split, and repair log. */
+export interface LintReport {
+  healthScore: number
+  stats: {
+    totalPages: number
+    totalIssues: number
+    orphanCount: number
+    brokenLinkCount: number
+    noOutlinksCount: number
+    semanticCount: number
+  }
+  autoFixItems: LintResult[]
+  humanItems: LintResult[]
+  /** Appended by the fixer after auto-fix runs. */
+  repairLog?: {
+    fixed: string[]
+    failed: string[]
+    skipped: string[]
+  }
+}
+
+/** Categorize lint result as auto-fixable or human-only.
+ *  Matches the logic in lint-fixer.ts isFixable() plus severity filter. */
+function classifyFixability(result: LintResult): "auto" | "human" {
+  if (result.type === "suggestion") return "human"
+  if (result.type === "semantic") {
+    const detail = result.detail.toLowerCase()
+    if (detail.startsWith("[suggestion]")) return "human"
+  }
+  // All structural issues and semantic non-suggestions are auto-fixable
+  return "auto"
+}
+
+/** Compute health score from lint results (100-based, deduct per issue). */
+function computeHealthScore(results: LintResult[]): number {
+  let score = 100
+  for (const r of results) {
+    if (r.type === "orphan") score -= 5
+    else if (r.type === "broken-link") score -= 3
+    else if (r.type === "no-outlinks") score -= 2
+    else if (r.type === "semantic") {
+      const detail = r.detail.toLowerCase()
+      if (detail.startsWith("[contradiction]") || detail.startsWith("[stale]")) score -= 10
+      else score -= 3
+    }
+  }
+  return Math.max(0, score)
+}
+
+/** Generate a structured lint report from raw lint results. */
+export function generateLintReport(
+  results: LintResult[],
+  totalPages: number,
+): LintReport {
+  const stats = {
+    totalPages,
+    totalIssues: results.length,
+    orphanCount: results.filter((r) => r.type === "orphan").length,
+    brokenLinkCount: results.filter((r) => r.type === "broken-link").length,
+    noOutlinksCount: results.filter((r) => r.type === "no-outlinks").length,
+    semanticCount: results.filter((r) => r.type === "semantic").length,
+  }
+
+  const autoFixItems: LintResult[] = []
+  const humanItems: LintResult[] = []
+
+  for (const r of results) {
+    if (classifyFixability(r) === "auto") {
+      autoFixItems.push(r)
+    } else {
+      humanItems.push(r)
+    }
+  }
+
+  return {
+    healthScore: computeHealthScore(results),
+    stats,
+    autoFixItems,
+    humanItems,
+  }
+}
+
+/** Serialize a LintReport to a markdown page body for saving into the wiki. */
+export function lintReportToMarkdown(report: LintReport, runId: string): string {
+  const hc = report.healthScore
+  const icon = hc >= 80 ? "🟢" : hc >= 50 ? "🟡" : "🔴"
+
+  let md = `---
+type: lint-report
+date: ${new Date().toISOString().slice(0, 10)}
+healthScore: ${report.healthScore}
+runId: ${runId}
+---
+
+# Lint Report ${icon}
+
+**Health Score**: ${report.healthScore}/100
+**Run**: ${runId}
+**Pages scanned**: ${report.stats.totalPages}
+**Issues found**: ${report.stats.totalIssues}
+
+## Statistics
+
+| Category | Count |
+|----------|-------|
+| Orphan pages | ${report.stats.orphanCount} |
+| Broken links | ${report.stats.brokenLinkCount} |
+| No outbound links | ${report.stats.noOutlinksCount} |
+| Semantic issues | ${report.stats.semanticCount} |
+
+---
+
+## 🤖 Auto-Fix Items (${report.autoFixItems.length})
+
+`
+
+  if (report.autoFixItems.length === 0) {
+    md += `No auto-fix items.\n\n`
+  } else {
+    for (const item of report.autoFixItems) {
+      md += `### ${item.severity === "warning" ? "⚠️" : "ℹ️"} [${item.type}] ${item.page}\n`
+      md += `${item.detail}\n`
+      if (item.affectedPages && item.affectedPages.length > 0) {
+        md += `- Affected: ${item.affectedPages.join(", ")}\n`
+      }
+      md += `\n`
+    }
+  }
+
+  md += `---\n\n## 👤 Human Intervention Items (${report.humanItems.length})\n\n`
+
+  if (report.humanItems.length === 0) {
+    md += `No items requiring human attention.\n\n`
+  } else {
+    for (const item of report.humanItems) {
+      md += `### ${item.severity === "warning" ? "⚠️" : "ℹ️"} [${item.type}] ${item.page}\n`
+      md += `${item.detail}\n`
+      if (item.affectedPages && item.affectedPages.length > 0) {
+        md += `- Affected: ${item.affectedPages.join(", ")}\n`
+      }
+      md += `\n`
+    }
+  }
+
+  md += `---\n\n## 🔧 Repair Log\n\n_(appended by fixer after auto-fix runs)_\n`
+
+  if (report.repairLog) {
+    if (report.repairLog.fixed.length > 0) {
+      md += `### ✅ Fixed (${report.repairLog.fixed.length})\n`
+      for (const f of report.repairLog.fixed) {
+        md += `- ${f}\n`
+      }
+      md += `\n`
+    }
+    if (report.repairLog.failed.length > 0) {
+      md += `### ❌ Failed (${report.repairLog.failed.length})\n`
+      for (const f of report.repairLog.failed) {
+        md += `- ${f}\n`
+      }
+      md += `\n`
+    }
+    if (report.repairLog.skipped.length > 0) {
+      md += `### ⏭️ Skipped (${report.repairLog.skipped.length})\n`
+      for (const s of report.repairLog.skipped) {
+        md += `- ${s}\n`
+      }
+      md += `\n`
+    }
+  }
+
+  return md
+}

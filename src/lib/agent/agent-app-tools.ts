@@ -1,8 +1,8 @@
 import { canonicalizePath, listDirectory, readFile } from "@/commands/fs"
 import { buildWikiAnswerContext } from "@/lib/wiki-answer-context"
 import { saveQueryPage } from "@/lib/save-query-page"
-import { runSemanticLint, runStructuralLint, type LintResult } from "@/lib/lint"
-import { fixLintResult } from "@/lib/lint-fixer"
+import { runSemanticLint, runStructuralLint, type LintResult, type LintReport } from "@/lib/lint"
+import { fixLintResult, fixLintReport, runLintAndReport } from "@/lib/lint-fixer"
 import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { autoIngest, captionSourceImages } from "@/lib/ingest"
@@ -570,6 +570,39 @@ export async function runAgentAppTool(
       ok: true,
       result: { fixed: ok, result },
       wikiChanged: ok ? [{ path: changedPath, operation: "update" }] : [],
+    }
+  }
+
+
+  // ── Phase 3.65-B: lint report loop ──
+
+  if (toolName === "run_lint_and_report") {
+    const fileTree = state.fileTree
+    const { report, reportPath } = await runLintAndReport(projectPath, state.llmConfig, fileTree)
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true,
+      result: { report, reportPath },
+      wikiChanged: [{ path: reportPath, operation: "create" }],
+    }
+  }
+
+  if (toolName === "fix_lint_report") {
+    const report = args.report as LintReport
+    const reportPath = stringArg(args, "reportPath")
+    const { report: updatedReport, reportPath: updatedPath } = await fixLintReport(
+      projectPath,
+      report,
+      reportPath,
+      state.llmConfig,
+    )
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true,
+      result: { report: updatedReport, reportPath: updatedPath },
+      wikiChanged: [{ path: reportPath, operation: "update" }],
     }
   }
 
