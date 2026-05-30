@@ -204,6 +204,27 @@ export interface AgentTransportOptions {
 		failIfUnavailable?: boolean;
 		network?: Record<string, unknown>;
 	};
+
+	// PR D: structured output
+	outputFormat?: {
+		type: "json_schema";
+		schema: Record<string, unknown>;
+	};
+
+	// PR D: thinking / effort / taskBudget
+	thinking?:
+		| { type: "adaptive" }
+		| { type: "enabled"; budgetTokens: number }
+		| { type: "disabled" };
+	effort?: "low" | "medium" | "high" | "xhigh" | "max";
+	taskBudget?: { total: number };
+
+	// PR D: event passthrough
+	includePartialMessages?: boolean;
+	includeHookEvents?: boolean;
+	promptSuggestions?: boolean;
+	agentProgressSummaries?: boolean;
+	forwardSubagentText?: boolean;
 }
 
 export interface AgentCallbacks {
@@ -220,4 +241,11 @@ export interface AgentCallbacks {
 		payload: AgentPermissionRequestPayload,
 	) => AgentPermissionDecision | Promise<AgentPermissionDecision>;
 	onRewindFiles?: (payload: AgentRewindFilesPayload) => void;
+
+	// PR D: SDK native event callbacks
+	onPromptSuggestion?: (payload: unknown) => void;
+	onPartialMessage?: (payload: unknown) => void;
+	onHookEvent?: (payload: unknown) => void;
+	onSubagentEvent?: (payload: unknown) => void;
+	onAgentProgressSummary?: (payload: unknown) => void;
 }

@@ -42,6 +42,25 @@ export interface AgentRequest {
 			failIfUnavailable?: boolean;
 			network?: Record<string, unknown>;
 		};
+
+		// PR D: structured output
+		outputFormat?:
+			| { type: "json_schema"; schema: Record<string, unknown> };
+
+		// PR D: thinking / effort / taskBudget
+		thinking?:
+			| { type: "adaptive" }
+			| { type: "enabled"; budgetTokens: number }
+			| { type: "disabled" };
+		effort?: "low" | "medium" | "high" | "xhigh" | "max";
+		taskBudget?: { total: number };
+
+		// PR D: event passthrough
+		includePartialMessages?: boolean;
+		includeHookEvents?: boolean;
+		promptSuggestions?: boolean;
+		agentProgressSummaries?: boolean;
+		forwardSubagentText?: boolean;
 	};
 }
 
@@ -110,6 +129,11 @@ export interface AgentMessage {
 		| "agent_task_progress"
 		| "agent_task_done"
 		| "agent_task_error"
-		| "rewind_files";
+		| "rewind_files"
+		| "prompt_suggestion"
+		| "partial_message"
+		| "hook_event"
+		| "subagent_event"
+		| "agent_progress_summary";
 	data: unknown;
 }

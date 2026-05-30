@@ -71,6 +71,20 @@ pub struct AgentSpawnArgs {
     max_write_bytes: Option<u32>,
     max_files_changed: Option<u32>,
     enable_file_checkpointing: Option<bool>,
+    // PR D: structured output
+    output_format: Option<Value>,
+
+    // PR D: thinking / effort / taskBudget
+    thinking: Option<Value>,
+    effort: Option<String>,
+    task_budget: Option<Value>,
+
+    // PR D: event passthrough
+    include_partial_messages: Option<bool>,
+    include_hook_events: Option<bool>,
+    prompt_suggestions: Option<bool>,
+    agent_progress_summaries: Option<bool>,
+    forward_subagent_text: Option<bool>,
     sandbox: Option<AgentSandboxOptions>,
 }
 
@@ -125,6 +139,29 @@ struct AgentRequestOptions {
     enable_file_checkpointing: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sandbox: Option<AgentSandboxOptions>,
+    // PR D: structured output
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_format: Option<Value>,
+
+    // PR D: thinking / effort / taskBudget
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_budget: Option<Value>,
+
+    // PR D: event passthrough
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_partial_messages: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_hook_events: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_suggestions: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_progress_summaries: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forward_subagent_text: Option<bool>,
     persist_session: bool,
 }
 
@@ -167,6 +204,18 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             max_files_changed: args.max_files_changed,
             enable_file_checkpointing: args.enable_file_checkpointing,
             sandbox: args.sandbox,
+            // PR D: structured output
+            output_format: args.output_format,
+            // PR D: thinking / effort / taskBudget
+            thinking: args.thinking,
+            effort: args.effort,
+            task_budget: args.task_budget,
+            // PR D: event passthrough
+            include_partial_messages: args.include_partial_messages,
+            include_hook_events: args.include_hook_events,
+            prompt_suggestions: args.prompt_suggestions,
+            agent_progress_summaries: args.agent_progress_summaries,
+            forward_subagent_text: args.forward_subagent_text,
             persist_session: args.persist_session.unwrap_or(false),
         },
     }
@@ -495,6 +544,15 @@ mod tests {
             max_write_bytes: None,
             max_files_changed: None,
             enable_file_checkpointing: None,
+            output_format: None,
+            thinking: None,
+            effort: None,
+            task_budget: None,
+            include_partial_messages: None,
+            include_hook_events: None,
+            prompt_suggestions: None,
+            agent_progress_summaries: None,
+            forward_subagent_text: None,
             sandbox: None,
         }
     }

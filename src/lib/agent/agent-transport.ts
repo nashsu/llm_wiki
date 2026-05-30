@@ -63,6 +63,27 @@ type InvokePayload = Record<string, unknown> & {
 		failIfUnavailable?: boolean;
 		network?: Record<string, unknown>;
 	};
+
+	// PR D: structured output
+	outputFormat?: {
+		type: "json_schema";
+		schema: Record<string, unknown>;
+	};
+
+	// PR D: thinking / effort / taskBudget
+	thinking?:
+		| { type: "adaptive" }
+		| { type: "enabled"; budgetTokens: number }
+		| { type: "disabled" };
+	effort?: "low" | "medium" | "high" | "xhigh" | "max";
+	taskBudget?: { total: number };
+
+	// PR D: event passthrough
+	includePartialMessages?: boolean;
+	includeHookEvents?: boolean;
+	promptSuggestions?: boolean;
+	agentProgressSummaries?: boolean;
+	forwardSubagentText?: boolean;
 };
 
 function extractText(content: SDKContentBlock[]): string {
@@ -216,6 +237,29 @@ export async function streamAgent(
 
 				if (wrapper.type === "rewind_files") {
 					callbacks.onRewindFiles?.(msg as AgentRewindFilesPayload);
+					return;
+				}
+
+				// PR D: SDK native event passthrough
+				if (wrapper.type === "prompt_suggestion") {
+					callbacks.onPromptSuggestion?.(msg);
+					return;
+				}
+				if (wrapper.type === "partial_message") {
+					callbacks.onPartialMessage?.(msg);
+					return;
+				}
+				if (wrapper.type === "hook_event") {
+					callbacks.onHookEvent?.(msg);
+					return;
+				}
+				if (wrapper.type === "agent_progress_summary") {
+					callbacks.onAgentProgressSummary?.(msg);
+					return;
+				}
+
+				if (wrapper.type === "subagent_event") {
+					callbacks.onSubagentEvent?.(msg);
 					return;
 				}
 

@@ -167,6 +167,21 @@ export function createRequestHandler({
 				hooks,
 				abortController,
 				env,
+
+				// PR D: structured output
+				outputFormat: req.options.outputFormat,
+
+				// PR D: thinking / effort / taskBudget
+				thinking: req.options.thinking,
+				effort: req.options.effort,
+				taskBudget: req.options.taskBudget,
+
+				// PR D: event passthrough
+				includePartialMessages: req.options.includePartialMessages,
+				includeHookEvents: req.options.includeHookEvents,
+				promptSuggestions: req.options.promptSuggestions,
+				agentProgressSummaries: req.options.agentProgressSummaries,
+				forwardSubagentText: req.options.forwardSubagentText,
 			};
 			const options = omitNullish(rawOptions) as QueryInput["options"];
 
@@ -176,6 +191,35 @@ export function createRequestHandler({
 			});
 
 			for await (const message of q) {
+				const msg = message as Record<string, unknown> | undefined;
+
+				// PR D: emit SDK native events separately so frontend can route them
+				if (req.options.promptSuggestions && msg?.type === "result") {
+					const suggestions = msg.promptSuggestions;
+					if (suggestions) {
+						send({ streamId: req.streamId, type: "prompt_suggestion", data: suggestions });
+					}
+				}
+				if (req.options.agentProgressSummaries && msg?.type === "result") {
+					const summaries = msg.agentProgressSummaries;
+					if (summaries) {
+						send({ streamId: req.streamId, type: "agent_progress_summary", data: summaries });
+					}
+				}
+
+				if (req.options.includePartialMessages && msg?.type === "partial_message") {
+					send({ streamId: req.streamId, type: "partial_message", data: msg });
+					continue;
+				}
+				if (req.options.includeHookEvents && msg?.type === "hook_event") {
+					send({ streamId: req.streamId, type: "hook_event", data: msg });
+					continue;
+				}
+				if (req.options.forwardSubagentText && msg?.type === "subagent_event") {
+					send({ streamId: req.streamId, type: "subagent_event", data: msg });
+					continue;
+				}
+
 				send({ streamId: req.streamId, type: "message", data: message });
 			}
 
