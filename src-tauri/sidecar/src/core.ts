@@ -158,6 +158,8 @@ export function createRequestHandler({
 				resumeSessionAt: req.options.resumeSessionAt,
 				persistSession: req.options.persistSession ?? false,
 				title: req.options.title,
+				enableFileCheckpointing: req.options.enableFileCheckpointing,
+				sandbox: req.options.sandbox,
 				...buildPermissionOptions(permissionPolicy),
 				allowedTools,
 				canUseTool,

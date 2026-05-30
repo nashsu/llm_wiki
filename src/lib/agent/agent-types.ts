@@ -141,6 +141,10 @@ export type AgentPermissionDecision =
 			decisionClassification?: "user_temporary" | "user_permanent" | "user_reject";
 	  };
 
+export interface AgentRewindFilesPayload {
+	messageId?: string;
+}
+
 export interface AgentSummaryPayload {
 	lastAssistantMessage?: string;
 	changedPaths: string[];
@@ -193,6 +197,13 @@ export interface AgentTransportOptions {
 	enableWriteTools?: boolean;
 	maxWriteBytes?: number;
 	maxFilesChanged?: number;
+	enableFileCheckpointing?: boolean;
+	sandbox?: {
+		enabled?: boolean;
+		autoAllowBashIfSandboxed?: boolean;
+		failIfUnavailable?: boolean;
+		network?: Record<string, unknown>;
+	};
 }
 
 export interface AgentCallbacks {
@@ -208,4 +219,5 @@ export interface AgentCallbacks {
 	onPermissionRequest?: (
 		payload: AgentPermissionRequestPayload,
 	) => AgentPermissionDecision | Promise<AgentPermissionDecision>;
+	onRewindFiles?: (payload: AgentRewindFilesPayload) => void;
 }

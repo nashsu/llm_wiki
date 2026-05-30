@@ -6,7 +6,7 @@ import {
 	createPermissionBridge,
 	type AgentPermissionResponseMessage,
 } from "./permission-bridge.js";
-import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
+import type { AgentKillRequest, AgentMessage, AgentRequest, RewindFilesRequest } from "./types.js";
 
 const rl = createInterface({ input: process.stdin });
 const activeQueries = new Map<string, AbortController>();
@@ -48,13 +48,23 @@ rl.on("line", (line) => {
 			| AgentRequest
 			| AgentKillRequest
 			| AppToolResponseMessage
-			| AgentPermissionResponseMessage;
+			| AgentPermissionResponseMessage
+			| RewindFilesRequest;
 		if (parsed.type === "app_tool_response") {
 			appToolBridge.handleResponse(parsed);
 			return;
 		}
 		if (parsed.type === "permission_response") {
 			permissionBridge.handleResponse(parsed);
+			return;
+		}
+		if (parsed.type === "rewind_files") {
+			send({
+				streamId: parsed.streamId,
+				type: "rewind_files",
+				data: { messageId: parsed.messageId },
+			});
+			scheduleExitIfIdle();
 			return;
 		}
 		handleRequest(parsed).catch((err) => {
