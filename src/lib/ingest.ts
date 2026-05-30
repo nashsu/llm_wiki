@@ -338,6 +338,103 @@ export function languageRule(sourceContent: string = ""): string {
  * "updated" index based on the same pre-state and overwrite each
  * other's additions.
  */
+
+// ──────────────────────────────────────────────────────────────────
+// Dedup & quality guards (Phase 3.65-A)
+// ──────────────────────────────────────────────────────────────────
+
+/** Normalize a concept slug for fuzzy dedup matching.
+ *  Lowercase, collapse hyphens/underscores to single hyphen,
+ *  strip trailing `-s` plural, remove common filler words. */
+export function normalizeConceptSlug(slug: string): string {
+  return slug
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/-+$/, '')
+    .replace(/^-+/, '')
+    .replace(/-s$/, '')  // strip trailing plural
+    .replace(/^(the|a|an)-/, '')
+}
+
+/** Check whether source content is too low-quality to ingest.
+ *  Skips: very short content, pages that are primarily TOC/navigation,
+ *  placeholder titles, redirect pages. */
+export function isLowQualitySource(
+  fileName: string,
+  content: string,
+): { skip: boolean; reason?: string } {
+  const stripped = content.trim()
+
+  // Very short — likely placeholder or stub
+  if (stripped.length < 5) {
+    return { skip: true, reason: `Content too short (${stripped.length} chars)` }
+  }
+
+  // Placeholder file names
+  const placeholderNames = [
+    'documentation', 'official docs', 'readme', 'index', 'toc',
+    'table of contents', 'home', 'main page', 'untitled', 'new page',
+  ]
+  const baseName = fileName.replace(/\.[^.]+$/, '').toLowerCase().trim()
+  if (placeholderNames.includes(baseName)) {
+    return { skip: true, reason: `Placeholder file name: "${fileName}"` }
+  }
+
+  // Primary TOC/navigation detection — count link density
+  const linkCount = (stripped.match(/\[.+\]\(.+\)/g) || []).length
+  const lineCount = stripped.split('\n').length
+  if (lineCount > 3 && linkCount > lineCount * 0.5) {
+    return { skip: true, reason: `Appears to be a TOC/navigation page (${linkCount} links in ${lineCount} lines)` }
+  }
+
+  return { skip: false }
+}
+
+/** Find an existing wiki page whose normalized slug matches the
+ *  proposed new page. Returns the existing page path or null. */
+export async function findExistingPageByNormalizedSlug(
+  projectPath: string,
+  proposedPath: string,
+): Promise<string | null> {
+  // Only dedup concepts and entities — not summaries, sources, logs, etc.
+  if (
+    !proposedPath.startsWith('wiki/concepts/') &&
+    !proposedPath.startsWith('wiki/entities/')
+  ) {
+    return null
+  }
+
+  const proposedSlug = proposedPath
+    .replace(/^wiki\/(concepts|entities)\//, '')
+    .replace(/\.md$/, '')
+  const normalized = normalizeConceptSlug(proposedSlug)
+
+  if (!normalized || normalized.length < 3) return null
+
+  // Check concepts directory
+  for (const dir of ['wiki/concepts', 'wiki/entities']) {
+    try {
+      const files = await listDirectory(`${projectPath}/${dir}`)
+      for (const file of files) {
+        const existingSlug = file.name.replace(/\.md$/, '')
+        const existingNorm = normalizeConceptSlug(existingSlug)
+        if (
+          existingNorm === normalized ||
+          existingNorm.includes(normalized) ||
+          normalized.includes(existingNorm)
+        ) {
+          return `${dir}/${file.name}`
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet — no conflict
+    }
+  }
+
+  return null
+}
+
 export async function autoIngest(
   projectPath: string,
   sourcePath: string,
@@ -470,6 +567,14 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+
+  // ── Low-quality guard: skip placeholder/TOC/stub sources ──
+  const lqCheck = isLowQualitySource(fileName, sourceContent)
+  if (lqCheck.skip) {
+    console.log(`[ingest:dedup] skipping low-quality source "${fileName}": ${lqCheck.reason}`)
+    activity.updateItem(activityId, { status: "done", detail: `Skipped: ${lqCheck.reason}` })
+    return []
+  }
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -1239,6 +1344,16 @@ async function writeFileBlocks(
         // content pages).
         await writeFile(fullPath, content)
       } else {
+        // ── Dedup check: normalized slug collision ──
+        const dedupPath = await findExistingPageByNormalizedSlug(projectPath, relativePath)
+        if (dedupPath && dedupPath !== relativePath) {
+          const msg = `Dedup: "${relativePath}" matches existing "${dedupPath}" by normalized slug — merging into existing page.`
+          console.warn(`[ingest:dedup] ${msg}`)
+          warnings.push(msg)
+          // Rewrite target: write into the existing page instead
+          relativePath = dedupPath
+        }
+
         // Content pages (entities / concepts / queries / synthesis /
         // comparisons / sources summaries): if a page with this
         // path already exists on disk, merge old + new instead of
