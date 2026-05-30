@@ -16,6 +16,7 @@ import type {
 	AgentDonePayload,
 	AgentPermissionDecision,
 	AgentPermissionRequestPayload,
+	AgentRewindFilesPayload,
 	AgentPermissionPolicy,
 	AgentSummaryPayload,
 	AgentTaskEventPayload,
@@ -55,6 +56,13 @@ type InvokePayload = Record<string, unknown> & {
 	enableWriteTools?: boolean;
 	maxWriteBytes?: number;
 	maxFilesChanged?: number;
+	enableFileCheckpointing?: boolean;
+	sandbox?: {
+		enabled?: boolean;
+		autoAllowBashIfSandboxed?: boolean;
+		failIfUnavailable?: boolean;
+		network?: Record<string, unknown>;
+	};
 };
 
 function extractText(content: SDKContentBlock[]): string {
@@ -76,6 +84,12 @@ function sendAppToolResponse(payload: Record<string, unknown>) {
 function sendPermissionResponse(payload: Record<string, unknown>) {
 	return invoke("agent_permission_response", payload).catch((err) => {
 		console.error("[agent-transport] failed to send permission response:", err);
+	});
+}
+
+export function rewindAgentFiles(streamId: string, messageId?: string) {
+	return invoke("agent_rewind_files", { streamId, messageId }).catch((err) => {
+		console.error("[agent-transport] failed to rewind agent files:", err);
 	});
 }
 
@@ -197,6 +211,11 @@ export async function streamAgent(
 
 				if (wrapper.type === "agent_action_required") {
 					callbacks.onActionRequired?.(msg as AgentActionRequiredPayload);
+					return;
+				}
+
+				if (wrapper.type === "rewind_files") {
+					callbacks.onRewindFiles?.(msg as AgentRewindFilesPayload);
 					return;
 				}
 

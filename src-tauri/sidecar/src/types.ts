@@ -35,6 +35,13 @@ export interface AgentRequest {
 		enableWriteTools?: boolean;
 		maxWriteBytes?: number;
 		maxFilesChanged?: number;
+		enableFileCheckpointing?: boolean;
+		sandbox?: {
+			enabled?: boolean;
+			autoAllowBashIfSandboxed?: boolean;
+			failIfUnavailable?: boolean;
+			network?: Record<string, unknown>;
+		};
 	};
 }
 
@@ -81,6 +88,12 @@ export interface AgentTaskEventPayload {
 	error?: string;
 }
 
+export interface RewindFilesRequest {
+	type: "rewind_files";
+	streamId: string;
+	messageId?: string;
+}
+
 export interface AgentMessage {
 	streamId: string;
 	type:
@@ -96,6 +109,7 @@ export interface AgentMessage {
 		| "agent_task_started"
 		| "agent_task_progress"
 		| "agent_task_done"
-		| "agent_task_error";
+		| "agent_task_error"
+		| "rewind_files";
 	data: unknown;
 }

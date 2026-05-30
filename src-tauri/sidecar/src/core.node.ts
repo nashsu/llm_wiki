@@ -423,3 +423,38 @@ test("query errors emit error message and cleanup active query", async () => {
 	assert.equal(sent[0]?.type, "error");
 	assert.match(String((sent[0]?.data as { error?: string }).error), /boom/);
 });
+
+
+test("query request forwards enableFileCheckpointing and sandbox to SDK", async () => {
+	let capturedInput: Parameters<QueryFn>[0] | undefined;
+	const queryFn: QueryFn = async function* (input) {
+		capturedInput = input;
+	};
+
+	const handleRequest = createRequestHandler({
+		queryFn,
+		send: () => {},
+		error: () => {},
+		env: {},
+	});
+
+	await handleRequest({
+		...baseRequest,
+		options: {
+			...baseRequest.options,
+			enableFileCheckpointing: true,
+			sandbox: {
+				enabled: true,
+				autoAllowBashIfSandboxed: false,
+				failIfUnavailable: true,
+			},
+		},
+	});
+
+	assert.equal(capturedInput?.options?.enableFileCheckpointing, true);
+	assert.deepEqual(capturedInput?.options?.sandbox, {
+		enabled: true,
+		autoAllowBashIfSandboxed: false,
+		failIfUnavailable: true,
+	});
+});

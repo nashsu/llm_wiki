@@ -29,6 +29,19 @@ struct AgentProcess {
     stdin: Arc<Mutex<ChildStdin>>,
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSandboxOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_allow_bash_if_sandboxed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fail_if_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<Value>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpawnArgs {
@@ -57,6 +70,8 @@ pub struct AgentSpawnArgs {
     enable_write_tools: Option<bool>,
     max_write_bytes: Option<u32>,
     max_files_changed: Option<u32>,
+    enable_file_checkpointing: Option<bool>,
+    sandbox: Option<AgentSandboxOptions>,
 }
 
 #[derive(Serialize)]
@@ -106,6 +121,10 @@ struct AgentRequestOptions {
     max_write_bytes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_files_changed: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_file_checkpointing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox: Option<AgentSandboxOptions>,
     persist_session: bool,
 }
 
@@ -146,6 +165,8 @@ fn build_agent_request(args: AgentSpawnArgs) -> AgentRequest {
             enable_write_tools: args.enable_write_tools,
             max_write_bytes: args.max_write_bytes,
             max_files_changed: args.max_files_changed,
+            enable_file_checkpointing: args.enable_file_checkpointing,
+            sandbox: args.sandbox,
             persist_session: args.persist_session.unwrap_or(false),
         },
     }
@@ -366,8 +387,83 @@ pub async fn agent_permission_response(
     Ok(())
 }
 
+
+#[tauri::command]
+pub async fn agent_rewind_files(
+    state: State<'_, AgentState>,
+    stream_id: String,
+    message_id: Option<String>,
+) -> Result<(), String> {
+    let stdin = {
+        let map = state.children.lock().await;
+        map.get(&stream_id)
+            .map(|process| Arc::clone(&process.stdin))
+            .ok_or_else(|| format!("No running agent stream: {stream_id}"))?
+    };
+    let line = serde_json::json!({
+        "type": "rewind_files",
+        "streamId": stream_id,
+        "messageId": message_id,
+    })
+    .to_string()
+        + "\n";
+    let mut guard = stdin.lock().await;
+    guard
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write rewind request: {e}"))?;
+    guard
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush rewind request: {e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agent_request_serializes_checkpoint_and_sandbox_options() {
+        let mut args = args_with_optional_fields_none();
+        args.enable_file_checkpointing = Some(true);
+        args.sandbox = Some(AgentSandboxOptions {
+            enabled: Some(true),
+            auto_allow_bash_if_sandboxed: Some(false),
+            fail_if_unavailable: Some(true),
+            network: None,
+        });
+
+        let request = build_agent_request(args);
+        let value: Value = serde_json::to_value(request).unwrap();
+        let options = value.get("options").unwrap();
+
+        assert_eq!(
+            options.get("enableFileCheckpointing").and_then(Value::as_bool),
+            Some(true)
+        );
+        let sandbox = options.get("sandbox").unwrap();
+        assert_eq!(sandbox.get("enabled").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            sandbox.get("autoAllowBashIfSandboxed").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            sandbox.get("failIfUnavailable").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(sandbox.get("network").is_none());
+    }
+
+    #[test]
+    fn agent_request_omits_absent_checkpoint_and_sandbox() {
+        let args = args_with_optional_fields_none();
+        let request = build_agent_request(args);
+        let value: Value = serde_json::to_value(request).unwrap();
+        let options = value.get("options").unwrap();
+
+        assert!(options.get("enableFileCheckpointing").is_none());
+        assert!(options.get("sandbox").is_none());
+    }
+
     use super::*;
     use serde_json::Value;
 
@@ -398,6 +494,8 @@ mod tests {
             enable_write_tools: None,
             max_write_bytes: None,
             max_files_changed: None,
+            enable_file_checkpointing: None,
+            sandbox: None,
         }
     }
 
