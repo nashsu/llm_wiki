@@ -150,6 +150,94 @@ describe("executePipeline", () => {
     expect(startTimes).toContain("run_lint_and_report")
   })
 
+
+  it("extracts resultKey from prior step result", async () => {
+    const runner: ToolRunner = vi.fn(async (toolName: string) => {
+      if (toolName === "run_lint_and_report") {
+        return { ok: true, result: { report: { healthScore: 80 }, metadata: { count: 5 } } }
+      }
+      return { ok: true, result: {} }
+    })
+
+    const schema = {
+      name: "resultkey-test",
+      description: "test",
+      stages: [{
+        mode: "sequential" as const,
+        steps: [
+          { id: "lint", subagentId: "wiki-linter" as const },
+          {
+            id: "fix",
+            subagentId: "wiki-fixer" as const,
+            inputFrom: { stepId: "lint", argName: "report", resultKey: "report" },
+          },
+        ],
+      }],
+    }
+
+    await executePipeline(schema, runner)
+    const fixCall = (runner as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => c[0] === "fix_lint_report",
+    )
+    // Should receive { healthScore: 80 }, not the full result { report: {...}, metadata: {...} }
+    expect(fixCall![1]).toMatchObject({ report: { healthScore: 80 } })
+  })
+
+  it("fails fast when inputFrom references a failed step", async () => {
+    const runner: ToolRunner = vi.fn(async (toolName: string) => {
+      if (toolName === "run_lint_and_report") {
+        return { ok: false, result: "lint crashed" }
+      }
+      return { ok: true, result: {} }
+    })
+
+    const schema = {
+      name: "fail-fast-test",
+      description: "test",
+      stages: [{
+        mode: "sequential" as const,
+        steps: [
+          { id: "lint", subagentId: "wiki-linter" as const },
+          {
+            id: "fix",
+            subagentId: "wiki-fixer" as const,
+            inputFrom: { stepId: "lint", argName: "report" },
+          },
+        ],
+      }],
+    }
+
+    const result = await executePipeline(schema, runner)
+    expect(result.ok).toBe(false)
+    // Lint fails, then abort prevents fix from running
+    expect(result.steps).toHaveLength(1)
+    expect(result.steps[0].error).toBe("lint crashed")
+  })
+
+  it("fails fast when inputFrom references nonexistent step", async () => {
+    const runner: ToolRunner = vi.fn(async () => ({ ok: true, result: {} }))
+
+    const schema = {
+      name: "missing-step-test",
+      description: "test",
+      stages: [{
+        mode: "sequential" as const,
+        steps: [
+          { id: "lint", subagentId: "wiki-linter" as const },
+          {
+            id: "fix",
+            subagentId: "wiki-fixer" as const,
+            inputFrom: { stepId: "nonexistent", argName: "report" },
+          },
+        ],
+      }],
+    }
+
+    const result = await executePipeline(schema, runner)
+    expect(result.ok).toBe(false)
+    expect(result.steps[1].error).toContain("nonexistent")
+  })
+
   it("merges global args, default args, and step args", async () => {
     const capturedArgs: Record<string, unknown>[] = []
     const runner: ToolRunner = vi.fn(async (_toolName: string, args: Record<string, unknown>) => {

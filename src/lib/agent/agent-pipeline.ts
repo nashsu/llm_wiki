@@ -103,7 +103,7 @@ export interface PipelineSchema {
  */
 export const INGEST_PIPELINE: PipelineSchema = {
   name: "full-ingest",
-  description: "Compile source, lint, fix issues, then autofill properties",
+  description: "Compile source (autofill runs inside compiler), lint, then fix issues",
   stages: [
     {
       mode: "sequential",
@@ -112,6 +112,7 @@ export const INGEST_PIPELINE: PipelineSchema = {
         {
           id: "lint",
           subagentId: "wiki-linter",
+          // Semantic lint skipped: ingest processes new sources, no existing pages to cross-reference yet
           args: { includeStructural: true, includeSemantic: false, autoFix: false },
         },
       ],
@@ -250,7 +251,27 @@ async function executeStep(
   // Resolve inputFrom: pull result from a prior step
   if (step.inputFrom) {
     const source = priorResults.get(step.inputFrom.stepId)
-    if (source?.ok && source.result != null) {
+    if (!source) {
+      return {
+        stepId: step.id,
+        subagentId: step.subagentId,
+        ok: false,
+        result: null,
+        error: `inputFrom step "${step.inputFrom.stepId}" not found or not yet executed`,
+        durationMs: Date.now() - start,
+      }
+    }
+    if (!source.ok) {
+      return {
+        stepId: step.id,
+        subagentId: step.subagentId,
+        ok: false,
+        result: null,
+        error: `inputFrom step "${step.inputFrom.stepId}" failed: ${source.error}`,
+        durationMs: Date.now() - start,
+      }
+    }
+    if (source.result != null) {
       const val = step.inputFrom.resultKey
         ? (source.result as Record<string, unknown>)[step.inputFrom.resultKey]
         : source.result
