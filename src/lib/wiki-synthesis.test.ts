@@ -16,6 +16,7 @@ vi.mock("@/commands/fs", () => ({
   writeFile: vi.fn(async (path: string, content: string) => {
     fsMock.files.set(path, content)
   }),
+  createDirectory: vi.fn(async () => {}),
 }))
 
 vi.mock("@/lib/frontmatter", () => ({
@@ -42,24 +43,52 @@ vi.mock("@/lib/frontmatter", () => ({
   }),
 }))
 
-vi.mock("@/lib/llm-client", () => ({
-  streamChat: vi.fn(async (_config: unknown, _messages: unknown[], handlers: { onToken: (t: string) => void; onDone: () => void }) => {
-    handlers.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test Synthesis\n\n## Research Question\n\nWhat connects these concepts?\n\n## Key Findings\n\n- Finding 1\n- Finding 2\n")
-    handlers.onDone()
-  }),
+vi.mock("@/lib/output-language", () => ({
+  buildLanguageDirective: vi.fn(() => "Respond in the same language as the input."),
 }))
 
-vi.mock("@/lib/web-search", () => ({
-  webSearch: vi.fn(async () => [
-    { title: "External Source", snippet: "Relevant info", url: "https://example.com", source: "exa" },
-  ]),
+const streamChatMock = vi.fn(async (
+  _config: unknown,
+  _messages: unknown[],
+  handlers: { onToken: (t: string) => void; onDone: () => void; onError?: (e: unknown) => void },
+) => {
+  handlers.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test Synthesis\n\n## Research Question\n\nWhat connects these concepts?\n\n## Key Findings\n\n- Finding 1\n- Finding 2\n")
+  handlers.onDone()
+})
+
+vi.mock("@/lib/llm-client", () => ({
+  streamChat: (...args: unknown[]) => streamChatMock(...args),
 }))
+
+const webSearchMock = vi.fn(async () => [
+  { title: "External Source", snippet: "Relevant info", url: "https://example.com", source: "exa" },
+])
+
+vi.mock("@/lib/web-search", () => ({
+  webSearch: (...args: unknown[]) => webSearchMock(...args),
+}))
+
+/** Helper: create a cluster of N wiki concept pages with the given tag. */
+function makeCluster(tree: Array<{ name: string; path: string; is_dir: boolean }>, tag: string, count: number) {
+  for (let i = 0; i < count; i++) {
+    const path = `/project/wiki/p${i}.md`
+    tree.push({ name: `p${i}.md`, path, is_dir: false })
+    fsMock.files.set(path,
+      `---\ntype: concept\ntitle: Page ${i}\ntags: [${tag}]\n---\n\n# Page ${i}\n\n## Definition\n\nConcept ${i}\n\n## Key Points\n\n- Point\n`,
+    )
+  }
+}
 
 describe("runWikiSynthesis", () => {
   beforeEach(() => {
     fsMock.files.clear()
     fsMock.tree = []
     vi.clearAllMocks()
+    // Reset streamChat to default behavior
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      h.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test\n\n## Research Question\n\nQ?\n\n## Key Findings\n\n- F1\n")
+      h.onDone()
+    })
   })
 
   it("returns error when no concept/entity pages exist", async () => {
@@ -80,21 +109,79 @@ describe("runWikiSynthesis", () => {
   })
 
   it("generates synthesis when cluster is large enough", async () => {
-    const children = Array.from({ length: 4 }, (_, i) => ({
-      name: `page${i}.md`, path: `/project/wiki/page${i}.md`, is_dir: false,
-    }))
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "ai", 4)
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
-
-    for (let i = 0; i < 4; i++) {
-      fsMock.files.set(`/project/wiki/page${i}.md`,
-        `---\ntype: concept\ntitle: Page ${i}\ntags: [ai, ml]\n---\n\n# Page ${i}\n\n## Definition\n\nConcept ${i}\n\n## Key Points\n\n- Point about [[other]]\n`
-      )
-    }
 
     const result = await runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, undefined, 3)
     expect(result.ok).toBe(true)
     expect(result.topic).toBeTruthy()
     expect(result.clusterSize).toBeGreaterThanOrEqual(3)
     expect(result.synthesisPath).toContain("synthesis")
+  })
+
+  it("throws when streamChat reports an error", async () => {
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "ml", 4)
+    fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
+
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      h.onError?.(new Error("LLM rate limited"))
+    })
+
+    await expect(
+      runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, undefined, 3),
+    ).rejects.toThrow("LLM rate limited")
+  })
+
+  it("continues when external search fails", async () => {
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "deep-learning", 4)
+    fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
+
+    webSearchMock.mockRejectedValueOnce(new Error("EXA API down"))
+
+    const result = await runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, undefined, 3)
+    expect(result.ok).toBe(true)
+    expect(result.externalSources).toBe(0)
+  })
+
+  it("returns error when LLM returns empty response", async () => {
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "nlp", 4)
+    fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
+
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      h.onDone()
+    })
+
+    const result = await runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, undefined, 3)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("empty")
+  })
+
+  it("returns error when LLM output lacks synthesis frontmatter", async () => {
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "cv", 4)
+    fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
+
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      h.onToken("# Just a plain markdown response\n\nNo frontmatter here.")
+      h.onDone()
+    })
+
+    const result = await runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, undefined, 3)
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain("frontmatter")
+  })
+
+  it("falls back to largest cluster when targetTag not found", async () => {
+    const children: Array<{ name: string; path: string; is_dir: boolean }> = []
+    makeCluster(children, "robotics", 4)
+    fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
+
+    const result = await runWikiSynthesis("/project", { model: "test" } as never, { provider: "none" } as never, "nonexistent-tag", 3)
+    expect(result.ok).toBe(true)
+    expect(result.topic).toBe("robotics")
   })
 })

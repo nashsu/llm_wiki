@@ -16,6 +16,7 @@ import { readFile, listDirectory, writeFile } from "@/commands/fs"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { getRelativePath, normalizePath } from "@/lib/path-utils"
 import type { FileNode } from "@/types/wiki"
+import { flattenMdFiles } from "@/lib/wiki-utils"
 
 export interface AutofillResult {
   pagesScanned: number
@@ -26,17 +27,6 @@ export interface AutofillResult {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function flattenMdFiles(nodes: FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenMdFiles(node.children))
-    } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
 
 /** Extract wikilink targets from markdown body (case-insensitive). */
 function extractWikilinks(content: string): string[] {

@@ -6,11 +6,12 @@
  * cross-article synthesis reports using LLM.
  */
 
-import { readFile, listDirectory, writeFile } from "@/commands/fs"
+import { readFile, listDirectory, writeFile, createDirectory } from "@/commands/fs"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { getRelativePath, normalizePath } from "@/lib/path-utils"
 import { streamChat } from "@/lib/llm-client"
 import { webSearch, type WebSearchResult } from "@/lib/web-search"
+import { flattenMdFiles } from "@/lib/wiki-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import type { FileNode } from "@/types/wiki"
 import type { LlmConfig, SearchApiConfig } from "@/stores/wiki-store"
@@ -43,17 +44,6 @@ export interface SynthesisResult {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function flattenMdFiles(nodes: FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenMdFiles(node.children))
-    } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
 
 async function scanConceptEntityPages(projectPath: string): Promise<ClusterPage[]> {
   const pp = normalizePath(projectPath)
@@ -249,18 +239,25 @@ export async function runWikiSynthesis(
   const prompt = buildSynthesisPrompt(cluster, externalResults, wikiIndex, languageHint)
 
   let accumulated = ""
+  let streamError: unknown
   await streamChat(
     llmConfig,
     [{ role: "user", content: prompt }],
     {
       onToken: (token) => { accumulated += token },
       onDone: () => {},
-      onError: (err) => { throw err },
+      onError: (err) => { streamError = err },
     },
   )
-
+  if (streamError) throw streamError
   if (!accumulated.trim()) {
     return { ok: false, error: "LLM returned empty response" }
+  }
+
+  // Validate LLM output has valid synthesis frontmatter (PR#35 finding #4)
+  const { frontmatter: synthFm } = parseFrontmatter(accumulated.trim())
+  if (!synthFm || String(synthFm.type || "").toLowerCase() !== "synthesis") {
+    return { ok: false, error: "LLM output missing valid synthesis frontmatter" }
   }
 
   // Step 6: Save synthesis page
@@ -268,6 +265,9 @@ export async function runWikiSynthesis(
   const synthesisPath = `wiki/synthesis/${tagSlug}-synthesis.md`
   const fullPath = `${pp}/${synthesisPath}`
 
+  // Ensure synthesis directory exists (PR#35 finding #1)
+  const synthesisDir = `${pp}/wiki/synthesis`
+  await createDirectory(synthesisDir)
   await writeFile(fullPath, accumulated.trim())
 
   return {
