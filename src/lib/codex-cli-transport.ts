@@ -85,6 +85,12 @@ export async function streamCodexCli(
   let unlistenData: UnlistenFn | undefined
   let unlistenDone: UnlistenFn | undefined
   let finished = false
+  let aborted = signal?.aborted ?? false
+  let emittedAgentMessage = false
+  let resolveCompletion: () => void = () => {}
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve
+  })
 
   const unparsedLines: string[] = []
   let unparsedSize = 0
@@ -106,11 +112,29 @@ export async function streamCodexCli(
     finished = true
     cleanup()
     cb()
+    resolveCompletion()
+  }
+
+  const replayAgentMessagesFromStdout = (stdout: string | undefined) => {
+    if (!stdout) return
+
+    for (const line of stdout.split(/\r?\n/)) {
+      const token = parseCodexCliLine(line)
+      if (token !== null) {
+        emittedAgentMessage = true
+        onToken(token)
+      }
+    }
   }
 
   const abortListener = () => {
+    aborted = true
     void invoke("codex_cli_kill", { streamId }).catch(() => {})
     finishWith(onDone)
+  }
+  if (aborted) {
+    finishWith(onDone)
+    return
   }
   signal?.addEventListener("abort", abortListener)
 
@@ -118,19 +142,25 @@ export async function streamCodexCli(
     unlistenData = await listen<string>(`codex-cli:${streamId}`, (event) => {
       const token = parseCodexCliLine(event.payload)
       if (token !== null) {
+        emittedAgentMessage = true
         onToken(token)
       } else {
         captureUnparsed(event.payload)
       }
     })
+    if (aborted || finished) {
+      cleanup()
+      return
+    }
 
-    unlistenDone = await listen<{ code: number | null; stderr: string }>(
+    unlistenDone = await listen<{ code: number | null; stderr: string; stdout?: string }>(
       `codex-cli:${streamId}:done`,
       (event) => {
         const code = event.payload?.code
         const stderr = event.payload?.stderr?.trim() ?? ""
+        const stdout = event.payload?.stdout ?? ""
         if (code !== null && code !== undefined && code !== 0) {
-          const details = stderr || unparsedLines.join("\n")
+          const details = stderr || stdout.trim() || unparsedLines.join("\n")
           finishWith(() =>
             onError(new Error(
               details
@@ -139,10 +169,28 @@ export async function streamCodexCli(
             )),
           )
         } else {
-          finishWith(onDone)
+          if (!emittedAgentMessage) replayAgentMessagesFromStdout(stdout)
+          if (!emittedAgentMessage) {
+            const details = stdout.trim() || unparsedLines.join("\n").trim()
+            finishWith(() =>
+              onError(new Error(
+                details
+                  ? `Codex CLI completed but did not emit an agent_message. Raw output:\n${details}`
+                  : "Codex CLI completed but did not emit an agent_message. Run `codex exec --json` in a terminal to inspect the provider output.",
+              )),
+            )
+          } else {
+            finishWith(onDone)
+          }
         }
       },
     )
+    if (aborted || finished) {
+      cleanup()
+      return
+    }
+
+    if (aborted) return
 
     const payload: SpawnPayload = {
       streamId,
@@ -150,6 +198,13 @@ export async function streamCodexCli(
       prompt: buildPrompt(messages),
     }
     await invoke("codex_cli_spawn", payload)
+    if (aborted || signal?.aborted) {
+      aborted = true
+      await invoke("codex_cli_kill", { streamId }).catch(() => {})
+      finishWith(onDone)
+      return
+    }
+    await completion
   } catch (err) {
     finishWith(() => {
       const message = err instanceof Error ? err.message : String(err)

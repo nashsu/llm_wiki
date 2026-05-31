@@ -16,7 +16,8 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
-import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
+import { useTranslation } from "react-i18next"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
   contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
@@ -27,6 +28,7 @@ const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label
 }
 
 export function ReviewView() {
+  const { t } = useTranslation()
   const items = useReviewStore((s) => s.items)
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
@@ -36,14 +38,14 @@ export function ReviewView() {
 
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
+    const item = items.find((i) => i.id === id)
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider first.")
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        window.alert(t("research.notConfigured"))
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
@@ -106,25 +108,29 @@ export function ReviewView() {
         console.error("Failed to save to wiki from review:", err)
         resolveItem(id, "Save failed")
       }
-    } else if (action.startsWith("open:") && project) {
-      // Open a page for editing
-      const page = action.slice(5)
-      const candidates = [
-        `${pp}/wiki/${page}`,
-        `${pp}/wiki/${page}.md`,
-      ]
+    } else if ((action.startsWith("open:") || actionLooksLikeOpen(action)) && project) {
+      // Open a page in the right-side preview without resolving the
+      // review item. Viewing is not the same as accepting / fixing it.
+      const page = action.startsWith("open:")
+        ? action.slice(5)
+        : item?.affectedPages?.[0] ?? item?.sourcePath ?? ""
+      if (!page) return
+      const normalizedPage = normalizePath(page)
+      const candidates = normalizedPage.startsWith(pp)
+        ? [normalizedPage]
+        : normalizedPage.startsWith("wiki/") || normalizedPage.startsWith("raw/")
+          ? [`${pp}/${normalizedPage}`, `${pp}/${normalizedPage}.md`]
+          : [`${pp}/wiki/${normalizedPage}`, `${pp}/wiki/${normalizedPage}.md`]
       for (const path of candidates) {
         try {
           const content = await readFile(path)
           useWikiStore.getState().setSelectedFile(path)
           useWikiStore.getState().setFileContent(content)
-          useWikiStore.getState().setActiveView("wiki")
-          break
+          return
         } catch {
           // try next
         }
       }
-      resolveItem(id, action)
     } else if (action.startsWith("delete:") && project) {
       // Delete a file
       const filePath = action.slice(7)
@@ -140,15 +146,13 @@ export function ReviewView() {
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredSearchProvider(searchConfig)) {
-        // No search API — fall through to create a page instead
-        const item = items.find((i) => i.id === id)
+      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+        // No research source — fall through to create a page instead
         if (item) {
           handleResolve(id, "__create_page__:" + action)
         }
         return
       }
-      const item = items.find((i) => i.id === id)
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
@@ -168,7 +172,6 @@ export function ReviewView() {
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
         : action
-      const item = items.find((i) => i.id === id)
       if (item) {
         try {
           const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
@@ -229,7 +232,7 @@ export function ReviewView() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-sm font-semibold">
-          Review
+          {t("review.title")}
           {pending.length > 0 && (
             <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
               {pending.length}
@@ -239,7 +242,7 @@ export function ReviewView() {
         {resolved.length > 0 && (
           <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
             <Trash2 className="mr-1 h-3 w-3" />
-            Clear resolved
+            {t("review.clearResolved")}
           </Button>
         )}
       </div>
@@ -248,7 +251,7 @@ export function ReviewView() {
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
-            <p>All clear — nothing to review</p>
+            <p>{t("review.allClear")}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
@@ -262,7 +265,7 @@ export function ReviewView() {
             ))}
             {resolved.length > 0 && pending.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
-                — Resolved —
+                {t("review.resolvedDivider")}
               </div>
             )}
             {resolved.map((item) => (
@@ -289,6 +292,7 @@ function ReviewCard({
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
 }) {
+  const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
 
@@ -328,7 +332,7 @@ function ReviewCard({
               className="h-7 text-xs gap-1"
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
-              🔍 Deep Research
+              🔍 {t("research.title")}
             </Button>
           )}
           {item.options.map((opt) => (
@@ -366,6 +370,20 @@ function actionLooksLikeResearch(action: string): boolean {
     lower.includes("研究") ||
     lower.includes("调研") ||
     lower.includes("探索")
+  )
+}
+
+function actionLooksLikeOpen(action: string): boolean {
+  const lower = action.trim().toLowerCase()
+  return (
+    lower === "open" ||
+    lower === "view" ||
+    lower === "open page" ||
+    lower === "view page" ||
+    lower === "打开" ||
+    lower === "查看" ||
+    lower === "打开页面" ||
+    lower === "查看页面"
   )
 }
 

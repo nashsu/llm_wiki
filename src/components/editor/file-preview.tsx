@@ -13,7 +13,12 @@ import {
   FileSpreadsheet,
   FileQuestion,
 } from "lucide-react"
-import { getFileCategory, getCodeLanguage } from "@/lib/file-types"
+import {
+  getFileCategory,
+  getCodeLanguage,
+  getFileExtension,
+  isExtractedTextPreviewFile,
+} from "@/lib/file-types"
 import type { FileCategory } from "@/lib/file-types"
 import { getFileName } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -49,9 +54,32 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
     case "document":
+      if (isExtractedTextPreviewFile(filePath)) {
+        return <TextPreview filePath={filePath} content={textContent} label={extractedTextLabel(filePath)} />
+      }
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
     default:
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
+  }
+}
+
+function extractedTextLabel(filePath: string): string {
+  switch (getFileExtension(filePath)) {
+    case "doc":
+      return "Word DOC (extracted text)"
+    case "docx":
+      return "Word DOCX (extracted text)"
+    case "pptx":
+      return "PowerPoint (extracted text)"
+    case "xls":
+    case "xlsx":
+      return "Spreadsheet (extracted text)"
+    case "odt":
+    case "ods":
+    case "odp":
+      return "OpenDocument (extracted text)"
+    default:
+      return "Extracted text"
   }
 }
 

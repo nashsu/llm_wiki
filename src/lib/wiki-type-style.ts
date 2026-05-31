@@ -65,6 +65,12 @@ export const WIKI_TYPE_STYLES: Record<string, WikiTypeStyle> = {
     chipClass: "bg-purple-500/15 text-purple-700 dark:text-purple-300",
     dotClass: "bg-purple-500",
   },
+  methodology: {
+    label: "Methodology",
+    icon: BookOpen,
+    chipClass: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+    dotClass: "bg-teal-500",
+  },
   event: {
     label: "Event",
     icon: Calendar,

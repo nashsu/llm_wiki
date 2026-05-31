@@ -5,13 +5,27 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   useWikiStore,
+  type AnyTxtConfig,
+  type DeepResearchSource,
   type SearchApiConfig,
   type SearchProvider,
   type SearchProviderOverride,
 } from "@/stores/wiki-store"
-import { SEARXNG_CATEGORY_OPTIONS, SERPAPI_ENGINE_OPTIONS, resolveSearchConfig } from "@/lib/web-search"
+import { normalizeAnyTxtConfig } from "@/lib/anytxt-search"
+import {
+  SEARXNG_CATEGORY_OPTIONS,
+  SERPAPI_ENGINE_OPTIONS,
+  resolveSearchConfig,
+} from "@/lib/web-search"
 
 const SEARCH_PROVIDERS = [
+  {
+    id: "ollama",
+    label: "Ollama",
+    hint: "Ollama Web Search API",
+    keyPlaceholder: "Enter your Ollama API key (ollama.com)",
+    needsApiKey: true,
+  },
   {
     id: "tavily",
     label: "Tavily",
@@ -40,6 +54,9 @@ export function WebSearchSection() {
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const setSearchApiConfig = useWikiStore((s) => s.setSearchApiConfig)
   const resolvedConfig = resolveSearchConfig(searchApiConfig)
+  const anyTxtConfig = normalizeAnyTxtConfig(resolvedConfig.anyTxt)
+  const anyTxtFilterDir = resolvedConfig.anyTxt?.filterDir ?? ""
+  const showBroadAnyTxtWarning = isBroadAnyTxtFilterDir(anyTxtFilterDir)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [savedId, setSavedId] = useState<string | null>(null)
 
@@ -67,16 +84,150 @@ export function WebSearchSection() {
     persist(resolveSearchConfig({ ...resolvedConfig, provider: nextProvider })).catch(() => {})
   }
 
+  function updateDeepResearchSource(deepResearchSource: DeepResearchSource) {
+    persist(resolveSearchConfig({ ...resolvedConfig, deepResearchSource })).catch(() => {})
+  }
+
+  function updateAnyTxt(patch: AnyTxtConfig) {
+    const next = resolveSearchConfig({
+      ...resolvedConfig,
+      anyTxt: {
+        ...anyTxtConfig,
+        ...patch,
+      },
+    })
+    persist(next).catch(() => {})
+    setSavedId("anytxt")
+    setTimeout(() => setSavedId((cur) => (cur === "anytxt" ? null : cur)), 1500)
+  }
+
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")} (Deep Research)</h2>
+        <h2 className="text-xl font-semibold">{t("settings.sections.webSearch.title")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {t("settings.sections.webSearch.description")}
         </p>
       </div>
 
+      <div className="space-y-2 rounded-lg border p-3">
+        <div>
+          <Label>{t("settings.sections.webSearch.deepResearchSources")}</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.webSearch.deepResearchSourcesHint")}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {([
+            ["web", t("settings.sections.webSearch.sourceWeb")],
+            ["anytxt", t("settings.sections.webSearch.sourceAnyTxt")],
+            ["both", t("settings.sections.webSearch.sourceBoth")],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => updateDeepResearchSource(value)}
+              className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                (resolvedConfig.deepResearchSource ?? "web") === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border hover:bg-accent"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Label>{t("settings.sections.webSearch.anyTxtTitle")}</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.anyTxtDescription")}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {savedId === "anytxt" && (
+              <span className="text-[10px] text-emerald-600">
+                {t("settings.sections.webSearch.savedBadge")}
+              </span>
+            )}
+            {anyTxtConfig.enabled && (
+              <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                {t("settings.sections.webSearch.activeBadge")}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => updateAnyTxt({ enabled: !anyTxtConfig.enabled })}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
+                anyTxtConfig.enabled
+                  ? "border-primary bg-primary"
+                  : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
+              }`}
+              aria-label={anyTxtConfig.enabled ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
+                  anyTxtConfig.enabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtEndpoint")}</Label>
+            <Input
+              value={anyTxtConfig.endpoint}
+              onChange={(e) => updateAnyTxt({ endpoint: e.target.value })}
+              placeholder="http://127.0.0.1:9920"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtLimit")}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={anyTxtConfig.limit}
+              onChange={(e) => {
+                const value = e.target.value.trim()
+                updateAnyTxt({ limit: value ? Number(value) : undefined })
+              }}
+              placeholder="20"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterDir")}</Label>
+            <Input
+              value={anyTxtFilterDir}
+              onChange={(e) => updateAnyTxt({ filterDir: e.target.value })}
+              placeholder={t("settings.sections.webSearch.anyTxtFilterDirPlaceholder")}
+            />
+            {showBroadAnyTxtWarning && (
+              <p className="text-xs text-destructive">
+                {t("settings.sections.webSearch.anyTxtBroadDirWarning")}
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterExt")}</Label>
+            <Input
+              value={anyTxtConfig.filterExt}
+              onChange={(e) => updateAnyTxt({ filterExt: e.target.value })}
+              placeholder="*"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.webSearch.anyTxtHint")}
+        </p>
+      </div>
+
       <div className="space-y-2">
+        <Label>{t("settings.sections.webSearch.webProviders")}</Label>
         {SEARCH_PROVIDERS.map((provider) => {
           const override = resolvedConfig.providerConfigs?.[provider.id]
           const isActive = resolvedConfig.provider === provider.id
@@ -158,6 +309,11 @@ export function WebSearchSection() {
                         onChange={(e) => updateProvider(provider.id, { apiKey: e.target.value })}
                         placeholder={provider.keyPlaceholder}
                       />
+                      {provider.id === "ollama" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.ollamaHint")}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -194,6 +350,15 @@ export function WebSearchSection() {
       </div>
     </div>
   )
+}
+
+function isBroadAnyTxtFilterDir(value: string): boolean {
+  const trimmed = value.trim().replace(/\\/g, "/")
+  if (!trimmed) return false
+  if (trimmed === "/" || trimmed === "~") return true
+  if (/^\/\/[^/]+\/[^/]+\/?$/.test(trimmed)) return true
+  if (/^[A-Za-z]:\/?$/.test(trimmed)) return true
+  return /^\/(?:Users|home|Volumes|mnt|media)?\/?$/.test(trimmed)
 }
 
 function SearXngCategoryPicker({

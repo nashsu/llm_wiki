@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef } from "react"
 import { X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
-import { getFileCategory, isBinary } from "@/lib/file-types"
+import { getFileCategory, isBinary, isExtractedTextPreviewFile } from "@/lib/file-types"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { getFileName } from "@/lib/path-utils"
@@ -10,6 +10,7 @@ import { getFileName } from "@/lib/path-utils"
 export function PreviewPanel() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
+  const externalPreview = useWikiStore((s) => s.externalPreview)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -26,10 +27,14 @@ export function PreviewPanel() {
       lastLoadedRef.current = ""
       return
     }
+    if (externalPreview?.path === selectedFile) {
+      lastLoadedRef.current = fileContent
+      return
+    }
 
     const category = getFileCategory(selectedFile)
 
-    if (isBinary(category)) {
+    if (isBinary(category) && !isExtractedTextPreviewFile(selectedFile)) {
       setFileContent("")
       lastLoadedRef.current = ""
       return
@@ -44,28 +49,35 @@ export function PreviewPanel() {
         lastLoadedRef.current = ""
         setFileContent(`Error loading file: ${err}`)
       })
-  }, [selectedFile, setFileContent])
+  }, [selectedFile, externalPreview, fileContent, setFileContent])
+
+  const writeNow = useCallback((path: string, markdown: string, syncStore = false) => {
+    writeFile(path, markdown)
+      .then(() => {
+        lastLoadedRef.current = markdown
+        if (syncStore) setFileContent(markdown)
+      })
+      .catch((err) => console.error("Failed to save:", err))
+  }, [setFileContent])
 
   const handleSave = useCallback(
-    (markdown: string) => {
+    (markdown: string, options?: { immediate?: boolean }) => {
       if (!selectedFile) return
       // Ignore no-op saves from the editor's initial re-emit. Only write
       // when the user has actually changed the content relative to the
       // last disk read.
       if (markdown === lastLoadedRef.current) return
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (options?.immediate) {
+        setFileContent(markdown)
+        writeNow(selectedFile, markdown, true)
+        return
+      }
       saveTimerRef.current = setTimeout(() => {
-        writeFile(selectedFile, markdown)
-          .then(() => {
-            // Our own write becomes the new "last loaded" — subsequent
-            // re-emits from Milkdown that match this content must not
-            // trigger another save.
-            lastLoadedRef.current = markdown
-          })
-          .catch((err) => console.error("Failed to save:", err))
+        writeNow(selectedFile, markdown, true)
       }, 1000)
     },
-    [selectedFile]
+    [selectedFile, setFileContent, writeNow]
   )
 
   useEffect(() => {
@@ -83,7 +95,9 @@ export function PreviewPanel() {
   }
 
   const category = getFileCategory(selectedFile)
-  const fileName = getFileName(selectedFile)
+  const fileName = externalPreview?.path === selectedFile
+    ? externalPreview.title
+    : getFileName(selectedFile)
 
   return (
     <div className="flex h-full flex-col">
@@ -99,7 +113,14 @@ export function PreviewPanel() {
         </button>
       </div>
       <div className="flex-1 min-w-0 overflow-auto">
-        {category === "markdown" ? (
+        {externalPreview?.path === selectedFile ? (
+          <ExternalReferencePreview
+            source={externalPreview.source}
+            title={externalPreview.title}
+            path={externalPreview.url}
+            snippet={externalPreview.snippet || fileContent}
+          />
+        ) : category === "markdown" ? (
           <WikiEditor
             key={selectedFile}
             content={fileContent}
@@ -112,6 +133,39 @@ export function PreviewPanel() {
             textContent={fileContent}
           />
         )}
+      </div>
+    </div>
+  )
+}
+
+function ExternalReferencePreview({
+  source,
+  title,
+  path,
+  snippet,
+}: {
+  source: string
+  title: string
+  path: string
+  snippet: string
+}) {
+  return (
+    <div className="flex h-full flex-col overflow-auto p-6">
+      <div className="mb-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+            {source}
+          </span>
+          <h3 className="truncate text-sm font-medium" title={title}>{title}</h3>
+        </div>
+        <div className="break-all rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {path}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border/60 bg-background p-4">
+        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">
+          {snippet || "(No preview fragment returned.)"}
+        </pre>
       </div>
     </div>
   )

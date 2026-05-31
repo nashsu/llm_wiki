@@ -26,6 +26,70 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.4.16",
+    date: "2026-05-29",
+    highlights: {
+      en: [
+        "Improved knowledge graph performance for large projects with worker-based layout and lighter rendering updates.",
+        "Fixed graph search rendering errors and stabilized graph controls during filtering and search.",
+      ],
+      zh: [
+        "优化大型项目的知识图谱性能，使用后台布局计算并减少渲染更新开销。",
+        "修复图谱搜索时的渲染报错，并提升筛选和搜索过程中的图谱稳定性。",
+      ],
+    },
+  },
+  {
+    version: "0.4.15",
+    date: "2026-05-28",
+    highlights: {
+      en: [
+        "Added AnyTXT as an external information source for Chat and Deep Research, with source labels and snippet previews.",
+        "Added legacy Word .doc support for source import, text extraction, ingest, and preview.",
+        "Improved source import, monitoring, chat search controls, graph controls, wiki generation reliability, and Mermaid rendering stability.",
+        "Fixed raw-source preview, scrolling, editing, embedding configuration, and lint persistence issues.",
+      ],
+      zh: [
+        "新增 AnyTXT 作为 AI 对话和 Deep Research 的外部信息源，并支持来源标记和片段预览。",
+        "新增旧版 Word .doc 支持，可用于资料导入、文本提取、摄取和预览。",
+        "改进资料导入与监控、对话搜索开关、关系图控制、Wiki 生成可靠性和 Mermaid 渲染稳定性。",
+        "修复原始资料预览、滚动、编辑保存、Embedding 配置和检查结果持久化相关问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.14",
+    date: "2026-05-26",
+    highlights: {
+      en: [
+        "Deep Research can now use AnyTXT local file search alongside web search, with configurable research sources.",
+        "Improved long-document ingestion with more resilient chunked analysis and follow-up research suggestions.",
+        "Fixed provider compatibility and Windows path handling issues.",
+      ],
+      zh: [
+        "Deep Research 现在可结合 AnyTXT 本地文件搜索和网页搜索，并支持配置研究信息来源。",
+        "改进长文档导入：分块分析更稳，并优化补充研究建议生成。",
+        "修复 Provider 兼容性和 Windows 路径处理相关问题。",
+      ],
+    },
+  },
+  {
+    version: "0.4.13",
+    date: "2026-05-24",
+    highlights: {
+      en: [
+        "Improved local API and search reliability, including shared backend search behavior.",
+        "Fixed source handling edge cases for nested folders, non-English paths, and Windows compatibility.",
+        "Fixed search provider configuration and Codex CLI Windows behavior issues.",
+      ],
+      zh: [
+        "改进本地 API 与搜索稳定性，包括统一后端搜索能力。",
+        "修复嵌套资料文件夹、非英文路径和 Windows 兼容相关的资料处理问题。",
+        "修复搜索 Provider 配置和 Codex CLI 在 Windows 下的体验问题。",
+      ],
+    },
+  },
+  {
     version: "0.4.12",
     date: "2026-05-19",
     highlights: {

@@ -61,6 +61,13 @@ pub struct SearchEmbeddingConfig {
     pub api_key: String,
     pub model: String,
     pub output_dimensionality: Option<u32>,
+    /// Extra HTTP headers to send with every embedding request, e.g.
+    /// `X-Model-Provider-Id: siliconflow` for the mify gateway.
+    /// Reserved names (Authorization, Content-Type, Host,
+    /// Content-Length, x-goog-api-key) are skipped — they're managed
+    /// by the client.
+    #[serde(default)]
+    pub extra_headers: Option<BTreeMap<String, String>>,
 }
 
 #[tauri::command]
@@ -681,6 +688,19 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
             req = req.bearer_auth(cfg.api_key.trim());
         }
     }
+    if let Some(extra) = cfg.extra_headers.as_ref() {
+        for (name, value) in extra {
+            let trimmed = name.trim();
+            let value = value.trim();
+            if trimmed.is_empty() || value.is_empty() || !is_safe_extra_header_name(trimmed) {
+                continue;
+            }
+            if is_reserved_extra_header_name(trimmed) {
+                continue;
+            }
+            req = req.header(trimmed, value);
+        }
+    }
     let body = if is_google {
         google_embedding_body(&cfg.model, text, cfg.output_dimensionality)
     } else {
@@ -728,6 +748,39 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
         return Err("Embedding response vector is empty".to_string());
     }
     Ok(out)
+}
+
+fn is_safe_extra_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|b| {
+            matches!(
+                b,
+                b'!' | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+                    | b'0'..=b'9'
+                    | b'A'..=b'Z'
+                    | b'a'..=b'z'
+            )
+        })
+}
+
+fn is_reserved_extra_header_name(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "authorization" | "content-type" | "host" | "content-length" | "x-goog-api-key"
+    )
 }
 
 fn is_google_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
@@ -940,6 +993,7 @@ mod tests {
             api_key: "HEADER_KEY".to_string(),
             model: "gemini-embedding-001".to_string(),
             output_dimensionality: Some(768),
+            extra_headers: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);
@@ -951,6 +1005,20 @@ mod tests {
         let body = google_embedding_body("gemini-embedding-001", "hello", Some(768));
         assert_eq!(body["model"], "models/gemini-embedding-001");
         assert_eq!(body["output_dimensionality"], 768);
+    }
+
+    #[test]
+    fn extra_embedding_header_names_are_validated_and_reserved_names_are_skipped() {
+        assert!(is_safe_extra_header_name("X-Model-Provider-Id"));
+        assert!(is_safe_extra_header_name("x_trace.id"));
+        assert!(!is_safe_extra_header_name(""));
+        assert!(!is_safe_extra_header_name("Bad Header"));
+        assert!(!is_safe_extra_header_name("中文"));
+
+        assert!(is_reserved_extra_header_name("Authorization"));
+        assert!(is_reserved_extra_header_name("content-type"));
+        assert!(is_reserved_extra_header_name("X-Goog-Api-Key"));
+        assert!(!is_reserved_extra_header_name("X-Model-Provider-Id"));
     }
 
     #[test]

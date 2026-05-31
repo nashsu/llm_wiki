@@ -1,4 +1,9 @@
 import type { LlmConfig, ReasoningConfig } from "@/stores/wiki-store"
+import {
+  AZURE_OPENAI_API_VERSION,
+  buildAzureOpenAiUrl,
+  isAzureOpenAiEndpoint,
+} from "@/lib/azure-openai"
 
 /**
  * One piece of a multimodal message body. Text + image is the only
@@ -245,10 +250,23 @@ function isKimiEndpoint(config: LlmConfig): boolean {
     || /api\.moonshot\.(ai|cn)/i.test(config.customEndpoint)
 }
 
+function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
+  return /(^|[/:.-])mimo([/:.-]|$)/i.test(config.model)
+    || /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
+}
+
 function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
-  if (config.provider !== "openai") return false
+  if ((config.provider === "azure" || (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
+    && config.azureModelFamily === "gpt5") {
+    return true
+  }
+
   const model = config.model.trim().toLowerCase()
-  return /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+  const strictModel =
+    /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
+  if (!strictModel) return false
+  if (config.provider === "openai" || config.provider === "azure") return true
+  return config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)
 }
 
 function adaptOpenAiStrictCompletionBody(config: LlmConfig, body: Record<string, unknown>): void {
@@ -278,6 +296,35 @@ function adaptKimiBody(config: LlmConfig, body: Record<string, unknown>): void {
   delete body.temperature
 }
 
+function adaptXiaomiMimoBody(
+  config: LlmConfig,
+  body: Record<string, unknown>,
+  reasoning: ReasoningConfig,
+): void {
+  if (!isXiaomiMimoEndpoint(config)) return
+
+  // Xiaomi MiMo's OpenAI-compatible examples use
+  // `max_completion_tokens`. Accept callers' provider-agnostic
+  // `max_tokens` override but send the documented field on the wire.
+  if (typeof body.max_tokens === "number") {
+    body.max_completion_tokens = body.max_tokens
+    delete body.max_tokens
+  }
+
+  // Official thinking-mode control documents `thinking.type=disabled`.
+  // Do not invent an enabled/budget shape here; omitting the field lets
+  // the server apply the model default.
+  if (reasoning.mode === "off") {
+    body.thinking = { type: "disabled" }
+  } else {
+    // MiMo v2.5 thinking mode forces temperature=1.0 and rejects
+    // custom temperature. Structured ingest passes temperature=0.1,
+    // but it also passes reasoning off above, so keep deterministic
+    // non-thinking requests intact while protecting thinking requests.
+    delete body.temperature
+  }
+}
+
 function buildOpenAiCompatibleBody(
   config: LlmConfig,
   messages: ChatMessage[],
@@ -287,6 +334,7 @@ function buildOpenAiCompatibleBody(
   const body: Record<string, unknown> = buildOpenAiBody(messages, stripWireAgnosticOverrides(overrides))
   adaptOpenAiStrictCompletionBody(config, body)
   adaptKimiBody(config, body)
+  adaptXiaomiMimoBody(config, body, reasoning)
 
   if (isDeepSeekEndpoint(config)) {
     // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most
@@ -438,7 +486,10 @@ function requiresBearerAuth(url: string): boolean {
     // Alibaba Bailian Coding Plan — issues sk-xxx bearer-style tokens
     // on its /apps/anthropic gateway; behavior matches the other
     // Chinese Anthropic-wire proxies above.
-    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic")
+    normalized.startsWith("https://coding.dashscope.aliyuncs.com/apps/anthropic") ||
+    // Xiaomi MiMo Token Plan Anthropic gateway authenticates with
+    // Authorization Bearer, matching its OpenAI-compatible gateway.
+    /(^https:\/\/|^)token-plan-cn\.xiaomimimo\.com\/anthropic(?:\/|$)/i.test(normalized)
   )
 }
 
@@ -613,6 +664,23 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       }
     }
 
+    case "azure": {
+      return {
+        url: buildAzureOpenAiUrl(
+          customEndpoint,
+          model,
+          config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+        ),
+        headers: {
+          "Content-Type": JSON_CONTENT_TYPE,
+          "api-key": apiKey,
+        },
+        buildBody: (messages, overrides) =>
+          buildOpenAiCompatibleBody(config, messages, overrides),
+        parseStream: parseOpenAiLine,
+      }
+    }
+
     case "ollama": {
       // Defense-in-depth for the same reason as the custom branch: if a
       // user pasted the full path as their Ollama URL, don't tack on
@@ -689,23 +757,35 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       // a pasted "/chat/completions" tail. Don't double-append in that
       // case, or we'd POST to ".../chat/completions/chat/completions".
       const base = customEndpoint.replace(/\/+$/, "")
-      const url = /\/chat\/completions$/i.test(base)
-        ? base
-        : `${base}/chat/completions`
+      const url = isAzureOpenAiEndpoint(base)
+        ? buildAzureOpenAiUrl(
+            base,
+            model,
+            config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+          )
+        : /\/chat\/completions$/i.test(base)
+          ? base
+          : `${base}/chat/completions`
+      const azure = isAzureOpenAiEndpoint(url)
       return {
         url,
         headers: {
           "Content-Type": JSON_CONTENT_TYPE,
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          ...(apiKey
+            ? azure
+              ? { "api-key": apiKey }
+              : { Authorization: `Bearer ${apiKey}` }
+            : {}),
           // Local OpenAI-compatible servers (LM Studio, llama.cpp,
           // vLLM, LocalAI) often share Ollama's CORS sensitivity.
           // Same rationale as the `ollama` branch above.
-          ...localLlmOriginHeader(),
+          ...(azure ? {} : localLlmOriginHeader()),
         },
-        buildBody: (messages, overrides) => ({
-          ...buildOpenAiCompatibleBody(config, messages, overrides),
-          model,
-        }),
+        buildBody: (messages, overrides) => {
+          const body = buildOpenAiCompatibleBody(config, messages, overrides)
+          if (!azure) body.model = model
+          return body
+        },
         parseStream: parseOpenAiLine,
       }
     }

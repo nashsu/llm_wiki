@@ -9,6 +9,7 @@ import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
  * `chat_completions` for backward compatibility with pre-0.3.7 configs.
  */
 export type CustomApiMode = "chat_completions" | "anthropic_messages"
+export type AzureModelFamily = "auto" | "gpt5"
 export type ReasoningMode = "auto" | "off" | "low" | "medium" | "high" | "max" | "custom"
 
 export interface ReasoningConfig {
@@ -17,17 +18,20 @@ export interface ReasoningConfig {
 }
 
 interface LlmConfig {
-  provider: "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
+  provider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
   apiKey: string
   model: string
   ollamaUrl: string
   customEndpoint: string
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
   reasoning?: ReasoningConfig
 }
 
-export type SearchProvider = "tavily" | "serpapi" | "searxng" | "none"
+export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "none"
+export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
   | "google"
   | "google_news"
@@ -57,9 +61,18 @@ export interface SearchProviderOverride {
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
+  ollamaUrl?: string
 }
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
+
+export interface AnyTxtConfig {
+  enabled?: boolean
+  endpoint?: string
+  filterDir?: string
+  filterExt?: string
+  limit?: number
+}
 
 interface SearchApiConfig {
   provider: SearchProvider
@@ -67,7 +80,10 @@ interface SearchApiConfig {
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
+  ollamaUrl?: string
   providerConfigs?: SearchProviderConfigs
+  deepResearchSource?: DeepResearchSource
+  anyTxt?: AnyTxtConfig
 }
 
 interface EmbeddingConfig {
@@ -92,6 +108,14 @@ interface EmbeddingConfig {
    */
   maxChunkChars?: number
   overlapChunkChars?: number
+  /**
+   * Extra HTTP headers to send with every embedding request, e.g.
+   *   { "X-Model-Provider-Id": "siliconflow" }
+   * for gateways like mify that route by header. Reserved names
+   * (Authorization, Content-Type, Host, Content-Length, x-goog-api-key)
+   * are ignored — they're managed by the embedding client itself.
+   */
+  extraHeaders?: Record<string, string>
 }
 
 /**
@@ -182,6 +206,8 @@ interface MultimodalConfig {
   model: string
   ollamaUrl: string
   customEndpoint: string
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
   /** Max parallel caption requests during ingest. >=1. */
   concurrency: number
@@ -226,6 +252,8 @@ export interface ProviderOverride {
   apiKey?: string
   model?: string
   baseUrl?: string           // customEndpoint for custom presets, ollamaUrl for ollama
+  azureApiVersion?: string
+  azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
   maxContextSize?: number
   reasoning?: ReasoningConfig
@@ -233,11 +261,20 @@ export interface ProviderOverride {
 
 export type ProviderConfigs = Record<string, ProviderOverride>
 
+export interface ExternalPreview {
+  title: string
+  path: string
+  source: string
+  url: string
+  snippet: string
+}
+
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
   selectedFile: string | null
   fileContent: string
+  externalPreview: ExternalPreview | null
   /**
    * One-shot scroll target for the markdown preview. When the user
    * clicks an image in search results and chooses "jump to source",
@@ -274,6 +311,7 @@ interface WikiState {
   setFileTree: (tree: FileNode[]) => void
   setSelectedFile: (path: string | null) => void
   setFileContent: (content: string) => void
+  setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
   setChatExpanded: (expanded: boolean) => void
   setActiveView: (view: WikiState["activeView"]) => void
@@ -296,6 +334,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   fileTree: [],
   selectedFile: null,
   fileContent: "",
+  externalPreview: null,
   pendingScrollImageSrc: null,
   chatExpanded: false,
   activeView: "wiki",
@@ -306,6 +345,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
     ollamaUrl: "http://localhost:11434",
     customEndpoint: "",
+    azureApiVersion: "2024-10-21",
     reasoning: { mode: "auto" },
   },
   providerConfigs: {},
@@ -315,8 +355,9 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   setProject: (project) => set({ project }),
   setFileTree: (fileTree) => set({ fileTree }),
-  setSelectedFile: (selectedFile) => set({ selectedFile }),
+  setSelectedFile: (selectedFile) => set({ selectedFile, externalPreview: null }),
   setFileContent: (fileContent) => set({ fileContent }),
+  setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
   setChatExpanded: (chatExpanded) => set({ chatExpanded }),
   setActiveView: (activeView) => set({ activeView }),
@@ -327,6 +368,14 @@ export const useWikiStore = create<WikiState>((set) => ({
     searXngUrl: "",
     searXngCategories: ["general"],
     providerConfigs: {},
+    deepResearchSource: "web",
+    anyTxt: {
+      enabled: false,
+      endpoint: "http://127.0.0.1:9920",
+      filterDir: "",
+      filterExt: "*",
+      limit: 20,
+    },
   },
 
   embeddingConfig: {
@@ -349,6 +398,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
     ollamaUrl: "http://localhost:11434",
     customEndpoint: "",
+    azureApiVersion: "2024-10-21",
     apiMode: "chat_completions",
     concurrency: 4,
   },

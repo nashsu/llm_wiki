@@ -2,19 +2,28 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
-  RotateCcw, X, Clock,
+  RotateCcw, X, Clock, TrendingUp, Target,
 } from "lucide-react"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { normalizePath, getFileName, isAbsolutePath } from "@/lib/path-utils"
-import { getQueue, getQueueSummary, retryTask, cancelTask, cancelAllTasks, type IngestTask } from "@/lib/ingest-queue"
+import {
+  getQueue,
+  getQueueSummary,
+  retryTask,
+  retryAllFailedTasks,
+  cancelTask,
+  cancelAllTasks,
+  type IngestTask,
+} from "@/lib/ingest-queue"
 import {
   ignoreFileChangeTask,
   rescanProjectFiles,
   retryFileChangeTask,
   type FileChangeTask,
 } from "@/commands/file-sync"
+import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 
 const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   sources: BookOpen,
@@ -23,9 +32,31 @@ const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   queries: HelpCircle,
   synthesis: GitMerge,
   comparisons: BarChart3,
+  findings: TrendingUp,
+  thesis: Target,
+  methodology: BookOpen,
+  overview: Layout,
+}
+
+const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
+  entity: "entities",
+  concept: "concepts",
+  source: "sources",
+  query: "queries",
+  synthesis: "synthesis",
+  comparison: "comparisons",
+  finding: "findings",
+  thesis: "thesis",
+  methodology: "methodology",
+  overview: "overview",
 }
 
 function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } {
+  const inferred = inferWikiTypeFromPath(path)
+  if (inferred) {
+    const directoryIcon = FILE_TYPE_ICONS[WIKI_TYPE_ICON_KEYS[inferred]]
+    return { icon: directoryIcon ?? FileText, type: wikiTypeLabel(inferred) }
+  }
   for (const [dir, icon] of Object.entries(FILE_TYPE_ICONS)) {
     if (path.includes(`/${dir}/`) || path.startsWith(`wiki/${dir}/`)) {
       return { icon, type: dir.charAt(0).toUpperCase() + dir.slice(1, -1) }
@@ -74,6 +105,15 @@ export function ActivityPanel() {
   const handleIngestRetry = useCallback((taskId: string) => {
     if (!project) return
     retryTask(taskId)
+  }, [project])
+
+  const handleRetryAllFailed = useCallback(() => {
+    if (!project) return
+    void retryAllFailedTasks()
+      .then(() => setQueueTasks([...getQueue()]))
+      .catch((err) => {
+        console.error("[activity-panel] failed to retry failed ingest tasks:", err)
+      })
   }, [project])
 
   const handleIngestCancel = useCallback((taskId: string) => {
@@ -141,7 +181,7 @@ export function ActivityPanel() {
   // Build status text
   let statusText = ""
   if (queueSummary.processing > 0 || queueSummary.pending > 0) {
-    const done = queueSummary.total - queueSummary.pending - queueSummary.processing
+    const done = queueSummary.completed + queueSummary.failed
     statusText = `Queue: ${done}/${queueSummary.total}`
     if (queueSummary.failed > 0) statusText += ` (${queueSummary.failed} failed)`
   } else if (runningCount > 0) {
@@ -215,7 +255,7 @@ export function ActivityPanel() {
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1 gap-2">
                 <span>Ingest Queue</span>
                 <span className="flex-1 text-right">
-                  {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total} complete
+                  {queueSummary.completed + queueSummary.failed}/{queueSummary.total} complete
                 </span>
                 {queueSummary.pending + queueSummary.processing >= 2 && (
                   <button
@@ -226,12 +266,39 @@ export function ActivityPanel() {
                     Cancel all
                   </button>
                 )}
+                {queueSummary.failed > 0 && (
+                  <button
+                    onClick={handleRetryAllFailed}
+                    className="rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
+                    title="Retry all failed ingest tasks"
+                  >
+                    Retry failed
+                  </button>
+                )}
               </div>
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${((queueSummary.total - queueSummary.pending - queueSummary.processing) / Math.max(queueSummary.total, 1)) * 100}%` }}
+                  style={{ width: `${((queueSummary.completed + queueSummary.failed) / Math.max(queueSummary.total, 1)) * 100}%` }}
                 />
+              </div>
+            </div>
+          )}
+
+          {hasQueue && queueSummary.processing === 0 && queueSummary.pending === 0 && queueSummary.failed > 0 && (
+            <div className="px-3 py-1.5 border-b border-border/50">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground gap-2">
+                <span>Ingest Queue</span>
+                <span className="flex-1 text-right">
+                  {queueSummary.failed} failed
+                </span>
+                <button
+                  onClick={handleRetryAllFailed}
+                  className="rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
+                  title="Retry all failed ingest tasks"
+                >
+                  Retry failed
+                </button>
               </div>
             </div>
           )}

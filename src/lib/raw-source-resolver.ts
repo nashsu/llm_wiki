@@ -3,14 +3,11 @@
  *
  * Image URLs we generate always live under
  *   `<project>/wiki/media/<slug>/img-N.<ext>`
- * — emitted either ABSOLUTE (from the unified Rust extractor that
- * runs at `read_file` time) or WIKI-RELATIVE
- * (`media/<slug>/img-N.png`, or `../media/<slug>/img-N.png` from
- * `wiki/sources/<slug>.md`). The slug equals the basename of
- * the original raw source file (we wrote it that way at extraction
- * time in `extract_pdf_markdown` / fs.rs's raw-sources-layout
- * heuristic), so finding the raw file is a stem match against
- * `<project>/raw/sources/`.
+ * - emitted either ABSOLUTE or WIKI-RELATIVE (`media/<slug>/img-N.png`,
+ * or `../media/<slug>/img-N.png` from `wiki/sources/<slug>.md`).
+ * The slug is the source-summary slug for the raw source identity. Root
+ * sources keep their legacy basename stem slug; nested sources include their
+ * `raw/sources` relative path plus a stable hash.
  *
  * Used in two places that want to "open the original document
  * around this image" rather than its LLM summary:
@@ -24,6 +21,10 @@
  *     the wiki summary). Callers fall back gracefully.
  */
 import { listDirectory } from "@/commands/fs"
+import {
+  sourceIdentityForPath,
+  sourceSummarySlugFromIdentity,
+} from "@/lib/source-identity"
 import type { FileNode } from "@/types/wiki"
 
 export async function findRawSourceForImage(
@@ -38,30 +39,36 @@ export async function findRawSourceForImage(
   const m = imageUrl.replace(/\\/g, "/").match(/(?:^|\/)media\/([^/]+)\//)
   if (!m) return null
   const slug = m[1]
+  const normalizedProjectPath = projectPath.replace(/\/+$/, "")
 
   let tree: FileNode[]
   try {
-    tree = await listDirectory(`${projectPath}/raw/sources`)
+    tree = await listDirectory(`${normalizedProjectPath}/raw/sources`)
   } catch {
     return null
   }
 
-  const findByStem = (nodes: FileNode[]): string | null => {
+  const findByMediaSlug = (nodes: FileNode[]): string | null => {
     for (const node of nodes) {
       if (node.is_dir) {
         if (node.children) {
-          const found = findByStem(node.children)
+          const found = findByMediaSlug(node.children)
           if (found) return found
         }
         continue
       }
+      const identity = sourceIdentityForPath(normalizedProjectPath, node.path)
+      if (sourceSummarySlugFromIdentity(identity) === slug) return node.path
+
+      // Backward compatibility for media folders created before nested source
+      // identities were encoded into the slug.
       const stem = node.name.replace(/\.[^.]+$/, "")
       if (stem === slug) return node.path
     }
     return null
   }
 
-  return findByStem(tree)
+  return findByMediaSlug(tree)
 }
 
 /**

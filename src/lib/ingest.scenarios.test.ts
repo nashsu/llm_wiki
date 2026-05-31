@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest"
 import path from "node:path"
 import fs from "node:fs/promises"
-import { realFs, createTempProject, readFileRaw, fileExists } from "@/test-helpers/fs-temp"
+import { realFs, createTempProject, readFileRaw, writeFileRaw, fileExists } from "@/test-helpers/fs-temp"
 import { materializeScenario, copyDir } from "@/test-helpers/scenarios/materialize"
 import { ingestScenarios } from "@/test-helpers/scenarios/ingest-scenarios"
 import type { IngestScenario } from "@/test-helpers/scenarios/types"
@@ -195,4 +195,92 @@ describe("ingest scenarios (fixture-driven)", () => {
       await assertOutcome(scenario, ctx.tmp.path)
     },
   )
+
+  it("keeps source summaries distinct for same basenames in different source folders", async () => {
+    ctx = { tmp: await createTempProject("ingest-duplicate-source-basenames") }
+    const projectPath = ctx.tmp.path
+
+    await writeFileRaw(`${projectPath}/schema.md`, "")
+    await writeFileRaw(`${projectPath}/purpose.md`, "")
+    await writeFileRaw(`${projectPath}/wiki/index.md`, "# Index\n")
+    await writeFileRaw(`${projectPath}/wiki/overview.md`, "")
+    await writeFileRaw(`${projectPath}/raw/sources/project-a/config.yaml`, "name: project-a\n")
+    await writeFileRaw(`${projectPath}/raw/sources/project-b/config.yaml`, "name: project-b\n")
+
+    useWikiStore.setState({
+      project: {
+        name: "t",
+        path: projectPath,
+        createdAt: 0,
+        purposeText: "",
+        fileTree: [],
+      } as unknown as ReturnType<typeof useWikiStore.getState>["project"],
+    })
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "test-key",
+      model: "gpt-4",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+
+    pendingResponses = [
+      "analysis for project A",
+      [
+        "---FILE: wiki/sources/config.md---",
+        "---",
+        'type: "source"',
+        'title: "Source: config.yaml"',
+        'sources: ["config.yaml"]',
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Project A",
+        "",
+        "analysis for project A",
+        "---END FILE---",
+      ].join("\n"),
+      "analysis for project B",
+      [
+        "---FILE: wiki/sources/config.md---",
+        "---",
+        'type: "source"',
+        'title: "Source: config.yaml"',
+        'sources: ["config.yaml"]',
+        "tags: []",
+        "related: []",
+        "---",
+        "",
+        "# Project B",
+        "",
+        "analysis for project B",
+        "---END FILE---",
+      ].join("\n"),
+    ]
+
+    const cfg = useWikiStore.getState().llmConfig
+    const firstWritten = await autoIngest(
+      projectPath,
+      `${projectPath}/raw/sources/project-a/config.yaml`,
+      cfg,
+    )
+    const secondWritten = await autoIngest(
+      projectPath,
+      `${projectPath}/raw/sources/project-b/config.yaml`,
+      cfg,
+    )
+
+    expect(firstWritten).toContain("wiki/sources/9-project-a--6-config--3eym4.md")
+    expect(secondWritten).toContain("wiki/sources/9-project-b--6-config--177z4nx.md")
+    expect(await fileExists(`${projectPath}/wiki/sources/config.md`)).toBe(false)
+
+    const projectA = await readFileRaw(`${projectPath}/wiki/sources/9-project-a--6-config--3eym4.md`)
+    const projectB = await readFileRaw(`${projectPath}/wiki/sources/9-project-b--6-config--177z4nx.md`)
+    expect(projectA).toContain('sources: ["project-a/config.yaml"]')
+    expect(projectA).toContain("analysis for project A")
+    expect(projectB).toContain('sources: ["project-b/config.yaml"]')
+    expect(projectB).toContain("analysis for project B")
+  })
 })

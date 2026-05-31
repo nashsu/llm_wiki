@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useWikiStore } from "@/stores/wiki-store"
+import type { EmbeddingConfig } from "@/stores/wiki-store"
 import {
   dropLegacyVectorTable,
   embedAllPages,
@@ -11,6 +12,7 @@ import {
   getLastEmbeddingError,
   legacyVectorRowCount,
 } from "@/lib/embedding"
+import { testEmbeddingConnection, testEmbeddingFunction, type ProviderTestResult } from "@/lib/connection-tests"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
 interface Props {
@@ -23,12 +25,47 @@ type ReindexState =
   | { kind: "running"; done: number; total: number }
   | { kind: "done"; count: number }
 
+type TestState =
+  | { kind: "idle" }
+  | { kind: "running"; label: string }
+  | { kind: "done"; result: ProviderTestResult }
+
 function parsePositiveInteger(value: string): number | undefined {
   const trimmed = value.trim()
   if (trimmed === "") return undefined
   const n = Number(trimmed)
   if (!Number.isFinite(n) || n <= 0) return undefined
   return Math.floor(n)
+}
+
+const RESERVED_HEADER_NAMES = new Set([
+  "authorization",
+  "content-type",
+  "host",
+  "content-length",
+  "x-goog-api-key",
+])
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+function headersToText(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+}
+
+function parseHeadersText(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+    const idx = line.indexOf(":")
+    if (idx <= 0) continue
+    const name = line.slice(0, idx).trim()
+    const value = line.slice(idx + 1).trim()
+    if (!name || !value || !HTTP_HEADER_NAME_RE.test(name) || RESERVED_HEADER_NAMES.has(name.toLowerCase())) continue
+    out[name] = value
+  }
+  return out
 }
 
 export function EmbeddingSection({ draft, setDraft }: Props) {
@@ -40,7 +77,9 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
   const [legacyCount, setLegacyCount] = useState<number>(0)
   const [lastError, setLastError] = useState<string | null>(null)
   const [reindex, setReindex] = useState<ReindexState>({ kind: "idle" })
+  const [testState, setTestState] = useState<TestState>({ kind: "idle" })
   const [legacyDropped, setLegacyDropped] = useState(false)
+  const [headersText, setHeadersText] = useState<string>(() => headersToText(draft.embeddingExtraHeaders ?? {}))
 
   const refreshStats = useCallback(async () => {
     if (!project) return
@@ -77,6 +116,31 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     setLegacyCount(0)
     setLegacyDropped(true)
   }, [project])
+
+  const draftEmbeddingConfig: EmbeddingConfig = {
+    enabled: draft.embeddingEnabled,
+    endpoint: draft.embeddingEndpoint,
+    apiKey: draft.embeddingApiKey,
+    model: draft.embeddingModel,
+    outputDimensionality: draft.embeddingOutputDimensionality,
+    maxChunkChars: draft.embeddingMaxChunkChars,
+    overlapChunkChars: draft.embeddingOverlapChunkChars,
+    extraHeaders: draft.embeddingExtraHeaders,
+  }
+
+  async function runEmbeddingTest(kind: "connection" | "function") {
+    setTestState({
+      kind: "running",
+      label: kind === "connection"
+        ? t("settings.sections.embedding.testingConnection")
+        : t("settings.sections.embedding.testingFunction"),
+    })
+    const result = kind === "connection"
+      ? await testEmbeddingConnection(draftEmbeddingConfig)
+      : await testEmbeddingFunction(draftEmbeddingConfig)
+    setTestState({ kind: "done", result })
+    setLastError(getLastEmbeddingError())
+  }
 
   const showLegacyMigration =
     legacyCount > 0 && (chunkCount === null || chunkCount === 0)
@@ -162,6 +226,24 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
             </p>
           </div>
 
+          <div className="space-y-2">
+            <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
+            <textarea
+              value={headersText}
+              onChange={(e) => {
+                const text = e.target.value
+                setHeadersText(text)
+                setDraft("embeddingExtraHeaders", parseHeadersText(text))
+              }}
+              placeholder={"X-Model-Provider-Id: siliconflow\nX-Custom-Header: value"}
+              rows={3}
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.embedding.extraHeadersHint")}
+            </p>
+          </div>
+
           <div className="space-y-3 rounded-md border p-3">
             <div className="text-sm font-medium">
               {t("settings.sections.embedding.chunking")}
@@ -208,6 +290,49 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                 {t("settings.sections.embedding.overlapChunkCharsHint")}
               </p>
             </div>
+          </div>
+
+          <div className="space-y-3 rounded-md border p-3">
+            <div>
+              <div className="text-sm font-medium">
+                {t("settings.sections.embedding.providerTests")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("settings.sections.embedding.providerTestsHint")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void runEmbeddingTest("connection")}
+                disabled={testState.kind === "running"}
+              >
+                {t("settings.sections.embedding.testConnection")}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void runEmbeddingTest("function")}
+                disabled={testState.kind === "running"}
+              >
+                {t("settings.sections.embedding.testFunction")}
+              </Button>
+            </div>
+            {testState.kind === "running" && (
+              <p className="text-xs text-muted-foreground">{testState.label}</p>
+            )}
+            {testState.kind === "done" && (
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  testState.result.ok
+                    ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
+                    : "border-destructive/40 bg-destructive/5 text-destructive"
+                }`}
+              >
+                {testState.result.message}
+              </div>
+            )}
           </div>
 
           {showLegacyMigration && (

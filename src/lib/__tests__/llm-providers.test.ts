@@ -3,7 +3,7 @@ import { buildAnthropicUrl, parseGoogleLine, getProviderConfig } from "../llm-pr
 import type { LlmConfig as RealLlmConfig } from "@/stores/wiki-store"
 
 // Inline minimal types to avoid store/zustand dependencies in unit tests
-type Provider = "openai" | "anthropic" | "google" | "ollama" | "custom" | "minimax"
+type Provider = "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax"
 
 interface LlmConfig {
   provider: Provider

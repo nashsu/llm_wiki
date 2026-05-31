@@ -193,7 +193,7 @@ pub fn start_project_file_watcher(
     project_id: String,
     project_path: String,
     source_watch_config: Option<SourceWatchConfig>,
-) -> Result<FileChangeQueue, String> {
+) -> Result<FileChangeRescanResult, String> {
     run_guarded("start_project_file_watcher", || {
         let root = PathBuf::from(project_path);
         let source_watch_config = normalize_source_watch_config(source_watch_config);
@@ -201,7 +201,7 @@ pub fn start_project_file_watcher(
         ensure_sync_dir(&root)?;
         with_queue_lock(&root, || reset_processing_tasks(&root, &project_id))?;
         enqueue_rescan_changes(&root, &project_id, &source_watch_config)?;
-        process_queue(&app, &root, &project_id)?;
+        let changed_tasks = process_queue(&app, &root, &project_id)?;
 
         let (tx, rx) = mpsc::sync_channel::<PathBuf>(8_192);
         let app_for_thread = app.clone();
@@ -307,7 +307,10 @@ pub fn start_project_file_watcher(
 
         let queue = with_queue_lock(&root, || read_queue(&root))?;
         emit_queue(&app, &project_id, &queue);
-        Ok(queue)
+        Ok(FileChangeRescanResult {
+            queue,
+            changed_tasks,
+        })
     })
 }
 

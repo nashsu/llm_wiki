@@ -69,6 +69,12 @@ export const realFs = {
   deleteFile: async (p: string): Promise<void> => {
     await fs.unlink(p).catch(() => {})
   },
+  fileExists: async (p: string): Promise<boolean> => {
+    return fs.access(p).then(
+      () => true,
+      () => false,
+    )
+  },
   findRelatedWikiPages: async (): Promise<string[]> => {
     return []
   },

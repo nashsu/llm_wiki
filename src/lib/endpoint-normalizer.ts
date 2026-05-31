@@ -1,3 +1,5 @@
+import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
+
 /**
  * Clean up user-entered LLM endpoint URLs. Catches the two most common
  * mistakes:
@@ -17,7 +19,7 @@
  * gateways really do mount the API at a bare host.
  */
 
-export type EndpointMode = "chat_completions" | "anthropic_messages"
+export type EndpointMode = "chat_completions" | "anthropic_messages" | "azure"
 
 export interface NormalizedEndpoint {
   /** The cleaned-up URL to store. Empty string for empty input. */
@@ -94,6 +96,37 @@ export function normalizeEndpoint(raw: string, mode: EndpointMode): NormalizedEn
 
   // Strip trailing slashes (cheap, always safe)
   url = url.replace(/\/+$/, "")
+
+  // Azure OpenAI: keep `/openai/deployments/{name}` on the stored base.
+  if (mode === "azure" || isAzureOpenAiEndpoint(url)) {
+    try {
+      const u = new URL(url.includes("://") ? url : `https://${url}`)
+      let pathname = u.pathname.replace(/\/+$/, "")
+      if (/\/chat\/completions\/?$/i.test(pathname)) {
+        pathname = pathname.replace(/\/chat\/completions\/?$/i, "")
+        notes.push(
+          'stripped trailing "chat/completions" — Azure appends this per request',
+        )
+      }
+      url = `${u.origin}${pathname}`
+      if (u.search) {
+        notes.push("stripped query string — api-version is configured separately")
+      }
+    } catch {
+      if (/\/chat\/completions\/?($|\?)/i.test(url)) {
+        url = url.replace(/\/chat\/completions\/?(?=$|\?)/i, "")
+        notes.push(
+          'stripped trailing "chat/completions" — Azure appends this per request',
+        )
+      }
+    }
+    const changed = url !== trimmed
+    return {
+      normalized: url,
+      changed,
+      warning: notes.length ? notes.join(" ") : undefined,
+    }
+  }
 
   // Strip request-path tails users paste by accident. Works in both
   // modes for /chat/completions and /embeddings (wrong shape for either

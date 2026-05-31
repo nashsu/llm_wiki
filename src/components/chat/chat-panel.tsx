@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next"
 import { BookOpen, Plus, Trash2, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
-import { ChatInput } from "./chat-input"
-import { useChatStore, chatMessagesToLLM } from "@/stores/chat-store"
+import { ChatInput, type ChatSendOptions } from "./chat-input"
+import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { executeIngestWrites } from "@/lib/ingest"
@@ -15,9 +15,24 @@ import { normalizePath, getFileName, getRelativePath } from "@/lib/path-utils"
 import { getOutputLanguage, buildLanguageReminder } from "@/lib/output-language"
 import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
+import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "@/lib/anytxt-search"
+import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
+
+function formatExternalSearchContext(results: WebSearchResult[]): string {
+  if (results.length === 0) return ""
+  return results
+    .map((result, index) => [
+      `### [E${index + 1}] ${result.title}`,
+      `Source: ${result.source}`,
+      `URL: ${result.url}`,
+      "",
+      result.snippet,
+    ].join("\n"))
+    .join("\n\n---\n\n")
+}
 
 function formatDate(timestamp: number): string {
   const d = new Date(timestamp)
@@ -143,6 +158,8 @@ export function ChatPanel() {
 
   const project = useWikiStore((s) => s.project)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
+  const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
   const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
@@ -158,7 +175,7 @@ export function ChatPanel() {
   }, [activeMessages, streamingContent])
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, options: ChatSendOptions = { useWebSearch: false, useAnyTxtSearch: false }) => {
       // Auto-create a conversation if none is active
       let convId = useChatStore.getState().activeConversationId
       if (!convId) {
@@ -170,7 +187,7 @@ export function ChatPanel() {
 
       // Build system prompt with wiki context using graph-enhanced retrieval
       const systemMessages: LLMMessage[] = []
-      let queryRefs: { title: string; path: string }[] = []
+      let queryRefs: MessageReference[] = []
       let langReminder: string | undefined
       // Pure greetings ("hi", "你好", "嗨") don't warrant running the whole
       // retrieval pipeline — it's slow, costs context, and drags in random
@@ -212,6 +229,45 @@ export function ChatPanel() {
         // ── Phase 1: Tokenized search → top 10 ────────────────
         const searchResults = await searchWiki(pp, text)
         const topSearchResults = searchResults.slice(0, 10)
+
+        const resolvedExternalSearchConfig = resolveSearchConfig(searchApiConfig)
+        const externalSearchResults: WebSearchResult[] = []
+        const externalSearchErrors: string[] = []
+        const externalCalls: Promise<WebSearchResult[]>[] = []
+
+        if (options.useWebSearch) {
+          externalCalls.push(
+            webSearch(text, resolvedExternalSearchConfig, 5).catch((err) => {
+              externalSearchErrors.push(
+                `Web Search: ${err instanceof Error ? err.message : String(err)}`,
+              )
+              return []
+            }),
+          )
+        }
+
+        if (options.useAnyTxtSearch) {
+          externalCalls.push(
+            anyTxtSearchSmart(text, resolvedExternalSearchConfig.anyTxt, llmConfig, 5, pp).catch((err) => {
+              externalSearchErrors.push(
+                `AnyTXT: ${err instanceof Error ? err.message : String(err)}`,
+              )
+              return []
+            }),
+          )
+        }
+
+        if (externalCalls.length > 0) {
+          const batches = await Promise.all(externalCalls)
+          const seenExternal = new Set<string>()
+          for (const result of batches.flat()) {
+            const key = result.url || `${result.source}:${result.title}:${result.snippet}`
+            if (seenExternal.has(key)) continue
+            seenExternal.add(key)
+            externalSearchResults.push(result)
+            if (externalSearchResults.length >= 10) break
+          }
+        }
 
         // ── Trim index by relevance if over budget ─────────────
         let index = rawIndex
@@ -308,6 +364,7 @@ export function ChatPanel() {
         const pageList = relevantPages.map((p, i) =>
           `[${i + 1}] ${p.title} (${p.path})`
         ).join("\n")
+        const externalContext = formatExternalSearchContext(externalSearchResults)
 
         const outLang = getOutputLanguage(text)
 
@@ -317,10 +374,14 @@ export function ChatPanel() {
             "You are a knowledgeable wiki assistant. Answer questions based on the wiki content provided below.",
             "",
             "## Rules",
-            "- Answer based ONLY on the numbered wiki pages provided below.",
+            externalContext
+              ? "- Answer based ONLY on the numbered wiki pages and external sources provided below."
+              : "- Answer based ONLY on the numbered wiki pages provided below.",
             "- If the provided pages don't contain enough information, say so honestly.",
             "- Use [[wikilink]] syntax to reference wiki pages.",
-            "- When citing information, use the page number in brackets, e.g. [1], [2].",
+            externalContext
+              ? "- When citing wiki information, use page numbers like [1], [2]. When citing external information, use external source IDs like [E1], [E2]."
+              : "- When citing information, use the page number in brackets, e.g. [1], [2].",
             "- At the VERY END of your response, add a hidden comment listing which page numbers you used:",
             "  <!-- cited: 1, 3, 5 -->",
             "",
@@ -330,6 +391,10 @@ export function ChatPanel() {
             index ? `## Wiki Index\n${index}` : "",
             relevantPages.length > 0 ? `## Page List\n${pageList}` : "",
             `## Wiki Pages\n\n${pagesContext}`,
+            externalContext ? `## External Sources\n\n${externalContext}` : "",
+            externalSearchErrors.length > 0
+              ? `## External Source Errors\n${externalSearchErrors.map((err) => `- ${err}`).join("\n")}`
+              : "",
             "",
             "---",
             "",
@@ -348,7 +413,15 @@ export function ChatPanel() {
         langReminder = buildLanguageReminder(text)
 
         lastQueryPages = relevantPages.map((p) => ({ title: p.title, path: p.path }))
-        queryRefs = [...lastQueryPages]
+        const externalRefs: MessageReference[] = externalSearchResults.map((result) => ({
+          title: result.title,
+          path: result.url,
+          kind: "external",
+          source: result.source,
+          url: result.url,
+          snippet: result.snippet,
+        }))
+        queryRefs = [...lastQueryPages.map((page) => ({ ...page, kind: "wiki" as const })), ...externalRefs]
       }
 
       // ── Conversation history with count limit ────────────────
@@ -426,7 +499,7 @@ export function ChatPanel() {
         controller.signal,
       )
     },
-    [llmConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
+    [llmConfig, searchApiConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
   )
 
   const handleStop = useCallback(() => {
@@ -536,6 +609,7 @@ export function ChatPanel() {
           onSend={handleSend}
           onStop={handleStop}
           isStreaming={isStreaming}
+          anyTxtAvailable={anyTxtAvailable}
           placeholder={
             mode === "ingest"
               ? t("chat.ingestPlaceholder")

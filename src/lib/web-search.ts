@@ -6,6 +6,7 @@ import type {
   SerpApiEngine,
 } from "@/stores/wiki-store"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
+import { hasConfiguredAnyTxt, normalizeAnyTxtConfig } from "@/lib/anytxt-search"
 
 export interface WebSearchResult {
   title: string
@@ -41,7 +42,7 @@ export const SEARXNG_CATEGORY_OPTIONS: { value: SearXngCategory; label: string; 
 
 export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   const providerConfigs: SearchProviderConfigs = config.providerConfigs ?? {
-    ...(config.provider !== "none" && config.apiKey
+    ...(config.provider !== "none" && config.provider !== "ollama" && config.apiKey
       ? {
           [config.provider]: {
             apiKey: config.apiKey,
@@ -59,9 +60,22 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
           },
         }
       : {}),
+    ...(config.provider === "ollama" && config.ollamaUrl
+      ? {
+          ollama: {
+            ollamaUrl: config.ollamaUrl,
+          },
+        }
+      : {}),
   }
 
   const activeProvider = config.provider as SearchProvider
+  const activeOverride = activeProvider === "none" ? undefined : providerConfigs[activeProvider]
+  const resolvedOllamaUrl =
+    activeProvider === "ollama"
+      ? activeOverride?.ollamaUrl ?? config.ollamaUrl ?? "https://ollama.com"
+      : providerConfigs.ollama?.ollamaUrl ?? "https://ollama.com"
+
   if (activeProvider === "none") {
     return {
       ...config,
@@ -70,11 +84,13 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
       serpApiEngine: config.serpApiEngine ?? providerConfigs.serpapi?.serpApiEngine ?? "google",
       searXngUrl: config.searXngUrl ?? providerConfigs.searxng?.searXngUrl ?? "",
       searXngCategories: config.searXngCategories ?? providerConfigs.searxng?.searXngCategories ?? ["general"],
+      ollamaUrl: providerConfigs.ollama?.ollamaUrl ?? "https://ollama.com",
       providerConfigs,
+      deepResearchSource: config.deepResearchSource ?? "web",
+      anyTxt: normalizeAnyTxtConfig(config.anyTxt),
     }
   }
 
-  const activeOverride = providerConfigs[activeProvider]
   return {
     ...config,
     provider: activeProvider,
@@ -82,7 +98,10 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
     serpApiEngine: activeOverride?.serpApiEngine ?? config.serpApiEngine ?? "google",
     searXngUrl: activeOverride?.searXngUrl ?? config.searXngUrl ?? "",
     searXngCategories: activeOverride?.searXngCategories ?? config.searXngCategories ?? ["general"],
+    ollamaUrl: resolvedOllamaUrl,
     providerConfigs,
+    deepResearchSource: config.deepResearchSource ?? "web",
+    anyTxt: normalizeAnyTxtConfig(config.anyTxt),
   }
 }
 
@@ -92,7 +111,21 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "searxng") {
     return Boolean(resolved.searXngUrl?.trim())
   }
+  if (resolved.provider === "ollama") {
+    return Boolean(resolved.apiKey?.trim())
+  }
   return Boolean(resolved.apiKey?.trim())
+}
+
+export function hasConfiguredDeepResearchSources(config: SearchApiConfig): boolean {
+  const resolved = resolveSearchConfig(config)
+  const source = resolved.deepResearchSource ?? "web"
+  const webConfigured = hasConfiguredSearchProvider(resolved)
+  const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
+
+  if (source === "web") return webConfigured
+  if (source === "anytxt") return anyTxtConfigured
+  return webConfigured || anyTxtConfigured
 }
 
 export async function webSearch(
@@ -105,10 +138,13 @@ export async function webSearch(
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
   if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings.")
+    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a different provider.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
+  }
+  if (resolved.provider === "ollama" && !resolved.apiKey?.trim()) {
+    throw new Error("Ollama Web Search API requires an Ollama API key. Add one in Settings.")
   }
 
   switch (resolved.provider) {
@@ -118,6 +154,8 @@ export async function webSearch(
       return serpApiSearch(query, resolved.apiKey, maxResults, resolved.serpApiEngine ?? "google")
     case "searxng":
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
+    case "ollama":
+      return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -340,4 +378,78 @@ function normalizeSerpApiResult(item: unknown): WebSearchResult {
     snippet: r.snippet ?? r.summary ?? r.description ?? "",
     source: hostnameFromUrl(url) || r.source || r.displayed_link || "",
   }
+}
+
+interface OllamaSearchResponse {
+  results?: Array<{
+    title?: string
+    url?: string
+    content?: string
+  }>
+  error?: string
+}
+
+async function ollamaSearch(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  const trimmedApiKey = apiKey.trim()
+  if (!trimmedApiKey) {
+    throw new Error("Ollama Web Search API requires an Ollama API key. Add one in Settings.")
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${trimmedApiKey}`,
+  }
+
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch("https://ollama.com/api/web_search", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        query,
+        max_results: maxResults,
+      }),
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching the Ollama Web Search API. Check your connectivity and whether the Ollama API key is still valid.",
+      )
+    }
+    throw err
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        "Ollama Web Search API authentication failed. Check your Ollama API key.",
+      )
+    }
+    const errorText = await response.text().catch(() => "Unknown error")
+    throw new Error(`Ollama web search failed (${response.status}): ${errorText}`)
+  }
+
+  const data = (await response.json()) as OllamaSearchResponse
+
+  if (data.error) {
+    throw new Error(`Ollama web search error: ${data.error}`)
+  }
+
+  return (data.results ?? [])
+    .slice(0, maxResults)
+    .map((r) => {
+      const url = r.url ?? ""
+      return {
+        title: r.title ?? "Untitled",
+        url,
+        snippet: r.content ?? "",
+        source: hostnameFromUrl(url),
+      }
+    })
 }

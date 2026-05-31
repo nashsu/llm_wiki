@@ -7,7 +7,7 @@ export const DEFAULT_SOURCE_WATCH_CONFIG: SourceWatchConfig = sourceWatchDefault
 export const SOURCE_WATCH_FILE_TYPE_GROUPS = [
   {
     id: "documents",
-    extensions: ["md", "mdx", "txt", "pdf", "docx", "odt", "rtf"],
+    extensions: ["md", "mdx", "txt", "pdf", "doc", "docx", "odt", "rtf"],
   },
   {
     id: "presentations",
@@ -29,12 +29,16 @@ export const SOURCE_WATCH_FILE_TYPE_GROUPS = [
 
 function normalizeExtensions(values: readonly string[] | undefined): string[] {
   return [...new Set((values ?? [])
+    .flatMap((value) => value.split(/[,，\n]/))
     .map((value) => value.trim().replace(/^\./, "").toLowerCase())
     .filter(Boolean))]
 }
 
 function normalizeList(values: readonly string[] | undefined): string[] {
-  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))]
+  return [...new Set((values ?? [])
+    .flatMap((value) => value.split(/[,，\n]/))
+    .map((value) => value.trim())
+    .filter(Boolean))]
 }
 
 export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> | null): SourceWatchConfig {

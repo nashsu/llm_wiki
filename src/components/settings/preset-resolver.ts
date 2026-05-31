@@ -1,5 +1,6 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 import type { ProviderOverride } from "@/stores/wiki-store"
+import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import type { LlmPreset } from "./llm-presets"
 
 /**
@@ -39,6 +40,20 @@ export function resolveConfig(
       model,
       ollamaUrl: ov.baseUrl ?? preset.baseUrl ?? "http://localhost:11434",
       customEndpoint: fallback.customEndpoint,
+      maxContextSize,
+      reasoning,
+    }
+  }
+
+  if (preset.provider === "azure") {
+    return {
+      provider: "azure",
+      apiKey,
+      model,
+      ollamaUrl: fallback.ollamaUrl,
+      customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
+      azureApiVersion: ov.azureApiVersion ?? preset.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
+      azureModelFamily: ov.azureModelFamily ?? preset.azureModelFamily ?? "auto",
       maxContextSize,
       reasoning,
     }

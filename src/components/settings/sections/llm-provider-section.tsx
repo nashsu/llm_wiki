@@ -9,6 +9,8 @@ import { LLM_PRESETS, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
 import { resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
+import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
+import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
 
 export function LlmProviderSection() {
   const { t } = useTranslation()
@@ -101,6 +103,11 @@ interface PresetRowProps {
   onChange: (patch: ProviderOverride) => void
 }
 
+type ProviderTestState =
+  | { kind: "idle" }
+  | { kind: "running"; label: string }
+  | { kind: "done"; result: ProviderTestResult }
+
 function PresetRow({
   preset,
   override,
@@ -117,9 +124,12 @@ function PresetRow({
   const apiKey = ov.apiKey ?? ""
   const apiMode = ov.apiMode ?? preset.apiMode ?? "chat_completions"
   const baseUrl = ov.baseUrl ?? preset.baseUrl ?? ""
+  const azureApiVersion = ov.azureApiVersion ?? preset.azureApiVersion ?? AZURE_OPENAI_API_VERSION
+  const azureModelFamily = ov.azureModelFamily ?? preset.azureModelFamily ?? "auto"
   const context = ov.maxContextSize ?? preset.suggestedContextSize ?? 131072
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
-  const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model
+  const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
+  const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
   // Local CLI providers authenticate via their own existing login state
   // (inherited by the spawned subprocess), so no API key field is shown.
   // Ollama ditto for its local-only model.
@@ -127,6 +137,24 @@ function PresetRow({
     preset.provider !== "ollama" &&
     preset.provider !== "claude-code" &&
     preset.provider !== "codex-cli"
+
+  const resolvedConfig = useMemo(
+    () => resolveConfig(preset, ov, useWikiStore.getState().llmConfig),
+    [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
+  )
+
+  async function runProviderTest(kind: "connection" | "function") {
+    setTestState({
+      kind: "running",
+      label: kind === "connection"
+        ? t("settings.sections.llm.testingConnection")
+        : t("settings.sections.llm.testingFunction"),
+    })
+    const result = kind === "connection"
+      ? await testLlmConnection(resolvedConfig)
+      : await testLlmFunction(resolvedConfig)
+    setTestState({ kind: "done", result })
+  }
 
   return (
     <div
@@ -240,13 +268,43 @@ function PresetRow({
             </div>
           )}
 
-          {(preset.provider === "custom" || preset.provider === "ollama") && (
+          {(preset.provider === "custom" || preset.provider === "ollama" || preset.provider === "azure") && (
             <EndpointField
               value={baseUrl}
-              mode={apiMode}
+              mode={preset.provider === "azure" ? "azure" : apiMode}
               placeholder={preset.baseUrl ?? "https://your-api.example.com/v1"}
               onChange={(v) => onChange({ baseUrl: v })}
             />
+          )}
+
+          {preset.provider === "azure" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t("settings.sections.llm.azureApiVersion")}</Label>
+                <Input
+                  value={azureApiVersion}
+                  onChange={(e) => onChange({ azureApiVersion: e.target.value })}
+                  placeholder="2024-10-21"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.llm.azureApiVersionHint")}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.sections.llm.azureModelFamily")}</Label>
+                <select
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={azureModelFamily}
+                  onChange={(e) => onChange({ azureModelFamily: e.target.value as typeof azureModelFamily })}
+                >
+                  <option value="auto">{t("settings.sections.llm.azureModelFamilyAuto")}</option>
+                  <option value="gpt5">{t("settings.sections.llm.azureModelFamilyGpt5")}</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.llm.azureModelFamilyHint")}
+                </p>
+              </div>
+            </div>
           )}
 
           {preset.provider === "claude-code" && <ClaudeCliStatusPill />}
@@ -269,7 +327,11 @@ function PresetRow({
           )}
 
           <div className="space-y-2">
-            <Label>{t("settings.model")}</Label>
+            <Label>
+              {preset.provider === "azure"
+                ? t("settings.sections.llm.deploymentName", "Deployment name")
+                : t("settings.model")}
+            </Label>
             <ModelPicker
               value={model}
               suggestions={preset.suggestedModels ?? []}
@@ -290,6 +352,49 @@ function PresetRow({
             value={reasoning}
             onChange={(reasoning) => onChange({ reasoning })}
           />
+
+          <div className="space-y-2 rounded-md border p-3">
+            <div>
+              <div className="text-sm font-medium">
+                {t("settings.sections.llm.providerTests")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("settings.sections.llm.providerTestsHint")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void runProviderTest("connection")}
+                disabled={testState.kind === "running"}
+                className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t("settings.sections.llm.testConnection")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void runProviderTest("function")}
+                disabled={testState.kind === "running"}
+                className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t("settings.sections.llm.testFunction")}
+              </button>
+            </div>
+            {testState.kind === "running" && (
+              <p className="text-xs text-muted-foreground">{testState.label}</p>
+            )}
+            {testState.kind === "done" && (
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  testState.result.ok
+                    ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
+                    : "border-destructive/40 bg-destructive/5 text-destructive"
+                }`}
+              >
+                {testState.result.message}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -367,7 +472,7 @@ function ReasoningControls({
 
 interface EndpointFieldProps {
   value: string
-  mode: "chat_completions" | "anthropic_messages"
+  mode: "chat_completions" | "anthropic_messages" | "azure"
   placeholder: string
   onChange: (value: string) => void
 }

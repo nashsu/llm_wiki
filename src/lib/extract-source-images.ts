@@ -14,6 +14,7 @@
  * image and the markdown line uses that instead.
  */
 import { invoke } from "@tauri-apps/api/core"
+import { copyFile, createDirectory, fileExists, readFileAsBase64 } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 
 /** Mirrors `commands::extract_images::SavedImage` on the Rust side. */
@@ -36,10 +37,102 @@ export interface SavedImage {
  *  are XML-rendered shapes, not embedded raster). Adding them later is
  *  a one-line change here. */
 const SUPPORTED_PDF_EXTS = ["pdf"] as const
-const SUPPORTED_OFFICE_EXTS = ["pptx", "docx", "ppt", "doc"] as const
-// Note: ppt / doc (legacy binary formats) won't actually work — they
-// aren't ZIP. Listed for completeness; Rust side will return Err which
-// the caller treats as "no images" gracefully.
+const SUPPORTED_OFFICE_EXTS = ["pptx", "docx"] as const
+// Legacy binary .doc/.ppt text extraction is handled separately; image
+// extraction here is ZIP-based and only supports OOXML files.
+const MARKDOWN_IMAGE_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "tif",
+  "tiff",
+  "svg",
+])
+
+function dirname(path: string): string {
+  const idx = normalizePath(path).lastIndexOf("/")
+  return idx >= 0 ? normalizePath(path).slice(0, idx) : ""
+}
+
+function isRemoteOrDataImageRef(raw: string): boolean {
+  return /^(https?:|data:|blob:|file:|tauri:)/i.test(raw)
+}
+
+function cleanMarkdownImageRef(raw: string): string {
+  const stripped = raw.trim().replace(/^<(.+)>$/, "$1")
+  try {
+    return decodeURIComponent(stripped)
+  } catch {
+    return stripped
+  }
+}
+
+function imageMimeType(path: string): string {
+  const ext = getFileName(path).split(".").pop()?.toLowerCase() ?? ""
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg"
+    case "png":
+      return "image/png"
+    case "gif":
+      return "image/gif"
+    case "webp":
+      return "image/webp"
+    case "bmp":
+      return "image/bmp"
+    case "svg":
+      return "image/svg+xml"
+    case "tif":
+    case "tiff":
+      return "image/tiff"
+    default:
+      return "application/octet-stream"
+  }
+}
+
+function uniqueDestName(index: number, sourcePath: string): string {
+  const name = getFileName(sourcePath).replace(/[<>:"|?*\x00-\x1f]/g, "_")
+  return `${String(index).padStart(3, "0")}-${name}`
+}
+
+async function sha256OfFile(path: string): Promise<string> {
+  const bytes = await readFileAsBase64(path)
+  const raw = Uint8Array.from(atob(bytes.base64), (c) => c.charCodeAt(0))
+  const digest = await crypto.subtle.digest("SHA-256", raw)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+export function findLocalMarkdownImageRefs(markdown: string): string[] {
+  const refs: string[] = []
+  const seen = new Set<string>()
+
+  const add = (raw: string) => {
+    const ref = cleanMarkdownImageRef(raw.split("#")[0].split("|")[0])
+    if (!ref || isRemoteOrDataImageRef(ref)) return
+    const ext = getFileName(ref).split(".").pop()?.toLowerCase() ?? ""
+    if (!MARKDOWN_IMAGE_EXTS.has(ext)) return
+    const key = normalizePath(ref)
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push(ref)
+  }
+
+  for (const match of markdown.matchAll(/!\[\[([^\]]+)\]\]/g)) {
+    add(match[1] ?? "")
+  }
+
+  for (const match of markdown.matchAll(/!\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)) {
+    add(match[1] ?? "")
+  }
+
+  return refs
+}
 
 /**
  * Extract every embedded image from `sourcePath` and save them to
@@ -51,12 +144,14 @@ const SUPPORTED_OFFICE_EXTS = ["pptx", "docx", "ppt", "doc"] as const
  * as an empty array — image extraction failure must NEVER abort the
  * ingest pipeline (which is why this isn't `throws`).
  *
- * `slug` is the basename of the source file without extension. Same
- * convention the rest of ingest uses (see `wiki/sources/<slug>.md`).
+ * By default, `slug` is the basename of the source file without extension.
+ * Callers can pass a slug that includes source-folder context so same-named
+ * files from different `raw/sources` subdirectories do not collide.
  */
 export async function extractAndSaveSourceImages(
   projectPath: string,
   sourcePath: string,
+  slugOverride?: string,
 ): Promise<SavedImage[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -67,7 +162,7 @@ export async function extractAndSaveSourceImages(
   const isOffice = (SUPPORTED_OFFICE_EXTS as readonly string[]).includes(ext)
   if (!isPdf && !isOffice) return []
 
-  const slug = fileName.replace(/\.[^.]+$/, "")
+  const slug = slugOverride ?? fileName.replace(/\.[^.]+$/, "")
   const destDir = `${pp}/wiki/media/${slug}`
   const relTo = `${pp}/wiki`
 
@@ -100,6 +195,62 @@ export async function extractAndSaveSourceImages(
     )
     return []
   }
+}
+
+export async function extractAndSaveMarkdownImages(
+  projectPath: string,
+  sourcePath: string,
+  markdown: string,
+  slugOverride?: string,
+): Promise<SavedImage[]> {
+  const refs = findLocalMarkdownImageRefs(markdown)
+  if (refs.length === 0) return []
+
+  const pp = normalizePath(projectPath)
+  const sp = normalizePath(sourcePath)
+  const sourceDir = dirname(sp)
+  const slug = slugOverride ?? getFileName(sp).replace(/\.[^.]+$/, "")
+  const destDir = `${pp}/wiki/media/${slug}`
+  const images: SavedImage[] = []
+
+  try {
+    await createDirectory(destDir)
+  } catch (err) {
+    console.warn("[ingest:images] failed to create markdown image directory:", err)
+    return []
+  }
+
+  for (const ref of refs) {
+    const abs = normalizePath(
+      ref.startsWith("/") || /^[a-zA-Z]:/.test(ref) || ref.startsWith("\\\\")
+        ? ref
+        : `${sourceDir}/${ref}`,
+    )
+    try {
+      if (!(await fileExists(abs))) continue
+      const destName = uniqueDestName(images.length + 1, abs)
+      const dest = `${destDir}/${destName}`
+      await copyFile(abs, dest)
+      const sha256 = await sha256OfFile(dest)
+      images.push({
+        index: images.length + 1,
+        mimeType: imageMimeType(dest),
+        page: null,
+        width: 0,
+        height: 0,
+        relPath: `media/${slug}/${destName}`,
+        absPath: dest,
+        sha256,
+      })
+    } catch (err) {
+      console.warn(
+        `[ingest:images] markdown image import failed for "${ref}":`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
+  return images
 }
 
 /**

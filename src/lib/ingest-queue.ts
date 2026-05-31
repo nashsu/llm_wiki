@@ -35,12 +35,17 @@ let currentProjectId = ""
 let currentProjectPath = ""
 let currentAbortController: AbortController | null = null
 let lastWrittenFiles: string[] = []  // track files written by current ingest for cleanup
+let completedSinceIdle = 0
 // Track whether any task has been processed since the last drain.
 // Prevents the sweep from running on every idle/no-op call.
 let processedSinceDrain = false
 // Abort controller for the review-sweep LLM call so switching projects
 // cancels a long-running judgment instead of burning tokens.
 let sweepAbortController: AbortController | null = null
+
+function resetQueueAccounting(): void {
+  completedSinceIdle = 0
+}
 
 // ── Persistence ───────────────────────────────────────────────────────────
 
@@ -97,6 +102,9 @@ function upsertQueuedIngestTask(
   sourcePath: string,
   folderContext: string,
 ): string {
+  if (queue.length === 0 && !processing) {
+    resetQueueAccounting()
+  }
   const normalizedSourcePath = normalizeSourcePathForQueue(sourcePath)
   const pendingOrFailed = queue.find((t) =>
     t.projectId === projectId &&
@@ -113,12 +121,12 @@ function upsertQueuedIngestTask(
     return pendingOrFailed.id
   }
 
-  const processing = queue.find((t) =>
+  const processingTask = queue.find((t) =>
     t.projectId === projectId &&
     t.status === "processing" &&
     sameQueuedSourcePath(t.sourcePath, normalizedSourcePath)
   )
-  const pendingRerun = processing
+  const pendingRerun = processingTask
     ? queue.find((t) =>
         t.projectId === projectId &&
         t.status === "pending" &&
@@ -232,8 +240,32 @@ export async function retryTask(taskId: string): Promise<void> {
 
   task.status = "pending"
   task.error = null
+  task.retryCount = 0
   await saveQueue(currentProjectPath)
   processNext(currentProjectId)
+}
+
+/**
+ * Retry every failed task for the active project.
+ * Returns the number of tasks requeued.
+ */
+export async function retryAllFailedTasks(): Promise<number> {
+  if (!currentProjectId) return 0
+
+  let requeued = 0
+  for (const task of queue) {
+    if (task.projectId !== currentProjectId || task.status !== "failed") continue
+    task.status = "pending"
+    task.error = null
+    task.retryCount = 0
+    requeued++
+  }
+
+  if (requeued === 0) return 0
+
+  await saveQueue(currentProjectPath)
+  processNext(currentProjectId)
+  return requeued
 }
 
 /**
@@ -316,12 +348,14 @@ export function getQueue(): readonly IngestTask[] {
 /**
  * Get queue summary.
  */
-export function getQueueSummary(): { pending: number; processing: number; failed: number; total: number } {
+export function getQueueSummary(): { pending: number; processing: number; failed: number; completed: number; total: number } {
+  const activeTotal = queue.length + completedSinceIdle
   return {
     pending: queue.filter((t) => t.status === "pending").length,
     processing: queue.filter((t) => t.status === "processing").length,
     failed: queue.filter((t) => t.status === "failed").length,
-    total: queue.length,
+    completed: completedSinceIdle,
+    total: activeTotal,
   }
 }
 
@@ -346,6 +380,7 @@ export function clearQueueState(): void {
   sweepAbortController = null
   lastWrittenFiles = []
   processedSinceDrain = false
+  resetQueueAccounting()
 }
 
 /**
@@ -391,6 +426,7 @@ export async function pauseQueue(): Promise<void> {
   currentProjectPath = ""
   lastWrittenFiles = []
   processedSinceDrain = false
+  resetQueueAccounting()
 }
 
 // ── Restore on startup ───────────────────────────────────────────────────
@@ -412,6 +448,7 @@ export async function restoreQueue(
   processing = false
   currentAbortController = null
   lastWrittenFiles = []
+  resetQueueAccounting()
   currentProjectId = projectId
   currentProjectPath = pp
 
@@ -555,6 +592,7 @@ async function processNext(projectId: string): Promise<void> {
     currentAbortController = null
     lastWrittenFiles = []
     queue = queue.filter((t) => t.id !== next.id)
+    completedSinceIdle++
     processedSinceDrain = true
     await saveQueue(pp)
 

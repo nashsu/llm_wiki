@@ -15,7 +15,7 @@ export type LlmProvider = LlmConfig["provider"]
  *   - `codex-cli` spawns the Codex CLI subprocess, which authenticates
  *     via the user's existing Codex/ChatGPT login.
  *
- * Hosted providers (openai, anthropic, google, minimax) require a
+ * Hosted providers (openai, anthropic, google, azure, minimax) require a
  * key from the user.
  */
 export const PROVIDERS_WITHOUT_KEY: ReadonlySet<LlmProvider> = new Set<LlmProvider>([
@@ -43,5 +43,5 @@ export function hasUsableLlm(
   cfg: Pick<LlmConfig, "provider" | "apiKey">,
 ): boolean {
   if (PROVIDERS_WITHOUT_KEY.has(cfg.provider)) return true
-  return cfg.apiKey.trim().length > 0
+  return (cfg.apiKey ?? "").trim().length > 0
 }

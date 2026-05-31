@@ -27,6 +27,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRefreshPaths = new Set<string>()
 let pendingChangeTasks = new Map<string, FileChangeTask>()
 let activeSourceWatchConfig = normalizeSourceWatchConfig()
+let handledChangeTaskKeys = new Set<string>()
 
 export async function startProjectFileSync(
   project: WikiProject,
@@ -50,9 +51,24 @@ export async function startProjectFileSync(
   })
 
   try {
-    const queue = await startProjectFileWatcher(project.id, normalizePath(project.path), activeSourceWatchConfig)
+    const result = await startProjectFileWatcher(project.id, normalizePath(project.path), activeSourceWatchConfig)
     if (seq !== startSeq || project.id !== useWikiStore.getState().project?.id) return
-    useFileSyncStore.getState().setTasks(queue.tasks)
+    const startupChangedTasks = mergeChangeTasks([
+      ...result.changedTasks,
+      ...pendingChangeTasks.values(),
+    ].filter((task) => task.projectId === project.id))
+      .filter((task) => !handledChangeTaskKeys.has(changeTaskKey(task)))
+    pendingRefreshPaths.clear()
+    pendingChangeTasks.clear()
+    if (refreshTimer) {
+      clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+    useFileSyncStore.getState().setTasks(result.queue.tasks)
+    if (startupChangedTasks.length > 0) {
+      const paths = [...new Set(startupChangedTasks.map((task) => task.path))]
+      await processFileChangeBatch(project, paths, startupChangedTasks)
+    }
   } catch (err) {
     unlistenQueue?.()
     unlistenChanged?.()
@@ -79,6 +95,7 @@ export async function stopProjectFileSync(): Promise<void> {
   }
   pendingRefreshPaths.clear()
   pendingChangeTasks.clear()
+  handledChangeTaskKeys.clear()
   useFileSyncStore.getState().clear()
   try {
     await stopProjectFileWatcher()
@@ -122,12 +139,30 @@ function scheduleRefreshAfterFileChanges(tasks: FileChangeTask[]): void {
       pendingChangeTasks.clear()
       return
     }
-    const paths = [...pendingRefreshPaths]
-    const tasks = [...pendingChangeTasks.values()]
+    const tasks = mergeChangeTasks([...pendingChangeTasks.values()])
+      .filter((task) => !handledChangeTaskKeys.has(changeTaskKey(task)))
+    const paths = tasks.length > 0
+      ? [...new Set(tasks.map((task) => task.path))]
+      : [...pendingRefreshPaths]
     pendingRefreshPaths.clear()
     pendingChangeTasks.clear()
     void processFileChangeBatch(project, paths, tasks)
   }, 250)
+}
+
+function mergeChangeTasks(tasks: FileChangeTask[]): FileChangeTask[] {
+  const byKey = new Map<string, FileChangeTask>()
+  for (const task of tasks) {
+    byKey.set(changeTaskKey(task), task)
+  }
+  return [...byKey.values()]
+}
+
+function changeTaskKey(task: FileChangeTask): string {
+  const version = task.updatedAt ?? task.createdAt ?? 0
+  return task.id
+    ? `${task.id}:${version}`
+    : `${task.projectId}:${task.path}:${task.kind}:${version}`
 }
 
 async function processFileChangeBatch(
@@ -135,6 +170,12 @@ async function processFileChangeBatch(
   paths: string[],
   tasks: FileChangeTask[],
 ): Promise<void> {
+  for (const task of tasks) {
+    handledChangeTaskKeys.add(changeTaskKey(task))
+  }
+  if (handledChangeTaskKeys.size > 4096) {
+    handledChangeTaskKeys = new Set([...handledChangeTaskKeys].slice(-2048))
+  }
   await cleanupDeletedFiles(project, tasks)
   await enqueueRawSourceChanges(project, tasks)
   await refreshAfterFileChanges(project, paths)

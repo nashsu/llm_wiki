@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { realFs, createTempProject, readFileRaw, writeFileRaw, fileExists } from "@/test-helpers/fs-temp"
 import type { ReviewItem } from "@/stores/review-store"
+import type { LintItem } from "@/stores/lint-store"
 import type { Conversation, DisplayMessage } from "@/stores/chat-store"
 
 vi.mock("@/commands/fs", () => realFs)
@@ -17,6 +18,8 @@ vi.mock("@/commands/fs", () => realFs)
 import {
   saveReviewItems,
   loadReviewItems,
+  saveLintItems,
+  loadLintItems,
   saveChatHistory,
   loadChatHistory,
 } from "./persist"
@@ -31,6 +34,18 @@ function makeReview(overrides: Partial<ReviewItem> = {}): ReviewItem {
     description: "",
     options: [],
     resolved: false,
+    createdAt: 0,
+    ...overrides,
+  }
+}
+
+function makeLint(overrides: Partial<LintItem> = {}): LintItem {
+  return {
+    id: "lint-1",
+    type: "orphan",
+    severity: "info",
+    page: "test.md",
+    detail: "test detail",
     createdAt: 0,
     ...overrides,
   }
@@ -99,6 +114,68 @@ describe("review persistence — round-trip", () => {
     const windowsy = tmp.path.replace(/\//g, "\\")
     await saveReviewItems(windowsy, [makeReview({ id: "r-1" })])
     const loaded = await loadReviewItems(windowsy)
+    expect(loaded).toHaveLength(1)
+  })
+})
+
+describe("lint persistence — round-trip", () => {
+  it("save then load returns identical items", async () => {
+    const items: LintItem[] = [
+      makeLint({ id: "lint-1", page: "page-a.md" }),
+      makeLint({ id: "lint-2", page: "page-b.md", type: "broken-link", severity: "warning" }),
+    ]
+    await saveLintItems(tmp.path, items)
+    const loaded = await loadLintItems(tmp.path)
+    expect(loaded).toEqual(items)
+  })
+
+  it("creates the .llm-wiki directory on first save", async () => {
+    expect(await fileExists(`${tmp.path}/.llm-wiki`)).toBe(false)
+    await saveLintItems(tmp.path, [makeLint()])
+    expect(await fileExists(`${tmp.path}/.llm-wiki/lint.json`)).toBe(true)
+  })
+
+  it("returns empty array when the file is absent", async () => {
+    const loaded = await loadLintItems(tmp.path)
+    expect(loaded).toEqual([])
+  })
+
+  it("returns empty array when the file is corrupted JSON", async () => {
+    await writeFileRaw(`${tmp.path}/.llm-wiki/lint.json`, "{not valid json")
+    const loaded = await loadLintItems(tmp.path)
+    expect(loaded).toEqual([])
+  })
+
+  it("preserves all LintItem fields through JSON round-trip including affectedPages", async () => {
+    const items: LintItem[] = [
+      {
+        id: "lint-semantic-1",
+        type: "semantic",
+        severity: "warning",
+        page: "entities/transformer.md",
+        detail: "contradiction: conflicting claims",
+        affectedPages: ["a.md", "b.md"],
+        createdAt: 1234567890,
+      },
+    ]
+    await saveLintItems(tmp.path, items)
+    const loaded = await loadLintItems(tmp.path)
+    expect(loaded).toEqual(items)
+    expect(loaded[0].affectedPages).toEqual(["a.md", "b.md"])
+  })
+
+  it("overwrites existing file on subsequent saves", async () => {
+    await saveLintItems(tmp.path, [makeLint({ id: "lint-old", page: "old.md" })])
+    await saveLintItems(tmp.path, [makeLint({ id: "lint-new", page: "new.md" })])
+    const loaded = await loadLintItems(tmp.path)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].page).toBe("new.md")
+  })
+
+  it("normalizes Windows-style paths in projectPath", async () => {
+    const windowsy = tmp.path.replace(/\//g, "\\")
+    await saveLintItems(windowsy, [makeLint({ id: "lint-1" })])
+    const loaded = await loadLintItems(windowsy)
     expect(loaded).toHaveLength(1)
   })
 })

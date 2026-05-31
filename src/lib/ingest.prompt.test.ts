@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { buildAnalysisPrompt, buildGenerationPrompt } from "./ingest"
+import {
+  buildAnalysisPrompt,
+  buildGenerationPrompt,
+  computeIngestGenerationMaxTokens,
+  computeIngestReviewMaxTokens,
+  computeIngestSourceBudget,
+  splitSourceIntoSemanticChunks,
+} from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
 
 beforeEach(() => {
@@ -65,6 +72,19 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("my-paper.pdf")
   })
 
+  it("makes project schema routing authoritative over default entity and concept folders", () => {
+    const prompt = buildGenerationPrompt(
+      "Use wiki/people/ for people. Use wiki/technologies/ for technical methods.",
+      "",
+      "",
+      "source.pdf",
+    )
+    expect(prompt).toContain("## Project Schema and Routing (AUTHORITATIVE)")
+    expect(prompt).toContain("write pages into those schema-defined folders")
+    expect(prompt).toContain("otherwise use wiki/entities/")
+    expect(prompt).not.toContain("Entity pages in wiki/entities/ for key entities")
+  })
+
   it("respects user setting regardless of source content language", () => {
     useWikiStore.getState().setOutputLanguage("English")
     const prompt = buildGenerationPrompt("", "", "", "x.pdf", undefined, "私は日本語の文章を書きます")
@@ -91,5 +111,48 @@ describe("analysis + generation prompt consistency", () => {
     const generation = buildGenerationPrompt("", "", "", "f.pdf", undefined, korean)
     expect(analysis).toContain("MANDATORY OUTPUT LANGUAGE: Korean")
     expect(generation).toContain("MANDATORY OUTPUT LANGUAGE: Korean")
+  })
+})
+
+describe("long-source ingest planning", () => {
+  it("scales generation output tokens with the configured context window", () => {
+    expect(computeIngestGenerationMaxTokens(64_000)).toBe(8_192)
+    expect(computeIngestGenerationMaxTokens(128_000)).toBe(16_384)
+    expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
+    expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
+    expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
+  })
+
+  it("scales source budget from the configured context window instead of a fixed 50k cap", () => {
+    const small = computeIngestSourceBudget(64_000, 8_000)
+    const large = computeIngestSourceBudget(1_000_000, 8_000)
+
+    expect(small).toBeGreaterThan(20_000)
+    expect(large).toBeGreaterThan(200_000)
+    expect(large).toBeLessThanOrEqual(300_000)
+  })
+
+  it("splits long sources on heading and paragraph boundaries with overlap", () => {
+    const content = [
+      "# Chapter One",
+      "",
+      "A".repeat(1200),
+      "",
+      "B".repeat(1200),
+      "",
+      "## Section Two",
+      "",
+      "C".repeat(1200),
+      "",
+      "D".repeat(1200),
+    ].join("\n")
+
+    const chunks = splitSourceIntoSemanticChunks(content, 1800, 200)
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks[0].headingPath).toBe("Chapter One")
+    expect(chunks.some((chunk) => chunk.headingPath.includes("Section Two"))).toBe(true)
+    expect(chunks[1].overlapBefore.length).toBeGreaterThan(0)
+    expect(chunks[1].main.startsWith(chunks[0].main.slice(-200))).toBe(false)
   })
 })

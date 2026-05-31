@@ -5,13 +5,14 @@ use std::thread;
 use std::time::Duration;
 
 use calamine::{open_workbook_auto, Data, Reader};
+use office_oxide::Document;
 
 use crate::commands::file_sync;
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::FileNode;
 
 /// Known binary formats that need special extraction
-const OFFICE_EXTS: &[&str] = &["docx", "pptx", "xlsx", "odt", "ods", "odp"];
+const OFFICE_EXTS: &[&str] = &["doc", "docx", "pptx", "xls", "xlsx", "odt", "ods", "odp"];
 const IMAGE_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "avif", "heic", "heif", "svg",
 ];
@@ -19,7 +20,7 @@ const MEDIA_EXTS: &[&str] = &[
     "mp4", "webm", "mov", "avi", "mkv", "flv", "wmv", "m4v", "mp3", "wav", "ogg", "flac", "aac",
     "m4a", "wma",
 ];
-const LEGACY_DOC_EXTS: &[&str] = &["doc", "xls", "ppt", "pages", "numbers", "key", "epub"];
+const LEGACY_DOC_EXTS: &[&str] = &["ppt", "pages", "numbers", "key", "epub"];
 
 #[tauri::command]
 pub async fn read_file(path: String) -> Result<String, String> {
@@ -394,6 +395,11 @@ fn extract_office_text(path: &str, ext: &str) -> Result<String, String> {
         return extract_docx_with_library(path);
     }
 
+    // DOC: use office_oxide for legacy Word binary documents.
+    if ext == "doc" {
+        return extract_doc_with_office_oxide(path);
+    }
+
     // PPTX and ODF: use ZIP-based parsing
     let file = fs::File::open(path).map_err(|e| format!("Failed to open '{}': {}", path, e))?;
     let mut archive = zip::ZipArchive::new(file)
@@ -403,6 +409,23 @@ fn extract_office_text(path: &str, ext: &str) -> Result<String, String> {
         "pptx" => extract_pptx_markdown(&mut archive),
         "odt" | "odp" => extract_odf_text(&mut archive),
         _ => Ok("[Unsupported format]".to_string()),
+    }
+}
+
+/// Extract legacy Word `.doc` text using office_oxide.
+fn extract_doc_with_office_oxide(path: &str) -> Result<String, String> {
+    let doc = Document::open(path).map_err(|e| format!("Failed to parse DOC '{}': {}", path, e))?;
+    let markdown = doc.to_markdown();
+    let text = if markdown.trim().is_empty() {
+        doc.plain_text()
+    } else {
+        markdown
+    };
+
+    if text.trim().is_empty() {
+        Ok("[Document: no extractable text found in .doc file]".to_string())
+    } else {
+        Ok(text)
     }
 }
 
@@ -813,12 +836,6 @@ fn extract_pptx_markdown(archive: &mut zip::ZipArchive<fs::File>) -> Result<Stri
     } else {
         Ok(result)
     }
-}
-
-/// Extract XLSX/XLS/ODS to Markdown tables using calamine.
-fn extract_xlsx_markdown(_archive: &mut zip::ZipArchive<fs::File>) -> Result<String, String> {
-    // calamine needs the file path, not the archive
-    Err("Use extract_spreadsheet instead".to_string())
 }
 
 /// Extract spreadsheet to Markdown using calamine (supports xlsx, xls, ods).
@@ -1568,6 +1585,13 @@ mod tests {
     async fn read_file_returns_err_on_missing_file_instead_of_panicking() {
         let result = read_file("/nonexistent/path/that/does/not/exist.pdf".to_string()).await;
         assert!(result.is_err() || result.is_ok()); // must at least return
+    }
+
+    #[test]
+    fn extract_doc_with_office_oxide_handles_missing_file() {
+        let result = extract_doc_with_office_oxide("/nonexistent/path/that/does/not/exist.doc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to parse DOC"));
     }
 
     /// Ad-hoc probe: run the production PDF extraction path against every

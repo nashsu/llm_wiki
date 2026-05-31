@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.4.12"
+version = "0.4.16"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
@@ -33,6 +33,7 @@ tiny_http = "0.12"
 zip = "2"
 calamine = "0.34.0"
 docx-rs = "0.4.20"
+office_oxide = "=0.1.2"
 lancedb = "0.27.2"
 # tokio provided by tauri runtime for async commands
 arrow-array = "57"

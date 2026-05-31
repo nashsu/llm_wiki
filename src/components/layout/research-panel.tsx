@@ -6,7 +6,7 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import {
   Search, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, X,
-  FileText, Send,
+  FileSearch, FileText, Globe2, Send,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useResearchStore, type ResearchTask } from "@/stores/research-store"
@@ -14,13 +14,15 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
 import { queueResearch } from "@/lib/deep-research"
 import { normalizePath } from "@/lib/path-utils"
-import { hasConfiguredSearchProvider } from "@/lib/web-search"
+import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
+import { useTranslation } from "react-i18next"
 
 export function ResearchPanel() {
+  const { t } = useTranslation()
   const tasks = useResearchStore((s) => s.tasks)
   const removeTask = useResearchStore((s) => s.removeTask)
   const setPanelOpen = useResearchStore((s) => s.setPanelOpen)
@@ -36,8 +38,8 @@ export function ResearchPanel() {
   function handleStartResearch() {
     const topic = inputValue.trim()
     if (!topic || !project) return
-    if (!hasConfiguredSearchProvider(searchApiConfig)) {
-      window.alert("Web Search not configured. Go to Settings → Web Search to configure a provider.")
+    if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
+      window.alert(t("research.notConfigured"))
       return
     }
     queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig)
@@ -49,10 +51,10 @@ export function ResearchPanel() {
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <Search className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">Deep Research</span>
+          <span className="text-sm font-semibold">{t("research.title")}</span>
           {(running.length > 0 || queued.length > 0) && (
             <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-              {running.length} active{queued.length > 0 ? `, ${queued.length} queued` : ""}
+              {t("research.activeBadge", { running: running.length, queued: queued.length })}
             </span>
           )}
         </div>
@@ -74,8 +76,8 @@ export function ResearchPanel() {
             if (isImeComposing(e)) return
             if (e.key === "Enter") handleStartResearch()
           }}
-          placeholder="Enter a research topic..."
           className="flex-1 rounded border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
+          placeholder={t("research.inputPlaceholder")}
         />
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={handleStartResearch} disabled={!inputValue.trim()}>
           <Send className="h-3.5 w-3.5" />
@@ -86,8 +88,8 @@ export function ResearchPanel() {
         {tasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-xs text-muted-foreground">
             <Search className="h-8 w-8 opacity-20" />
-            <p>No research tasks yet</p>
-            <p>Enter a topic above or click "Deep Research" in Review</p>
+            <p>{t("research.emptyTitle")}</p>
+            <p>{t("research.emptyHint")}</p>
           </div>
         ) : (
           <div className="flex flex-col gap-1 p-2">
@@ -216,6 +218,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
 }
 
 function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (id: string) => void }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(
     task.status === "synthesizing" || task.status === "searching"
   )
@@ -233,12 +236,12 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
   }[task.status]
 
   const statusText = {
-    queued: "Queued",
-    searching: "Searching web...",
-    synthesizing: "Synthesizing...",
-    saving: "Saving to wiki...",
-    done: task.savedPath ? "Saved" : "Done",
-    error: "Failed",
+    queued: t("research.status.queued"),
+    searching: t("research.status.searching"),
+    synthesizing: t("research.status.synthesizing"),
+    saving: t("research.status.saving"),
+    done: task.savedPath ? t("research.status.saved") : t("research.status.done"),
+    error: t("research.status.failed"),
   }[task.status]
 
   async function handleOpenSaved() {
@@ -282,18 +285,26 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
           {task.webResults.length > 0 && (
             <div className="mb-2">
               <div className="mb-1 font-medium text-muted-foreground">
-                Sources ({task.webResults.length})
+                {t("research.sourcesCount", { count: task.webResults.length })}
               </div>
               <div className="flex flex-col gap-1">
-                {task.webResults.map((r, i) => (
-                  <div key={i} className="flex items-start gap-1.5 rounded bg-muted/50 px-2 py-1">
-                    <span className="shrink-0 font-mono text-muted-foreground">[{i + 1}]</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{r.title}</div>
-                      <div className="truncate text-muted-foreground">{r.source}</div>
+                {task.webResults.map((r, i) => {
+                  const isAnyTxt = r.source.toLowerCase() === "anytxt"
+                  const SourceIcon = isAnyTxt ? FileSearch : Globe2
+                  return (
+                    <div key={i} className="flex items-start gap-1.5 rounded bg-muted/50 px-2 py-1">
+                      <span className="shrink-0 font-mono text-muted-foreground">[{i + 1}]</span>
+                      <SourceIcon
+                        className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${isAnyTxt ? "text-amber-600" : "text-blue-600"}`}
+                        aria-label={isAnyTxt ? t("research.anyTxtSource") : t("research.webSource")}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{r.title}</div>
+                        <div className="truncate text-muted-foreground">{isAnyTxt ? "AnyTXT" : r.source}</div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -308,7 +319,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
             {task.savedPath && (
               <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={handleOpenSaved}>
                 <FileText className="h-3 w-3" />
-                Open
+                {t("research.open")}
               </Button>
             )}
             {(task.status === "done" || task.status === "error") && (
@@ -319,7 +330,7 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
                 onClick={() => onRemove(task.id)}
               >
                 <X className="h-3 w-3" />
-                Remove
+                {t("research.remove")}
               </Button>
             )}
           </div>

@@ -96,7 +96,7 @@ const EXT_MAP: Record<string, FileCategory> = {
   // PDF
   pdf: "pdf",
 
-  // Documents (binary, not directly previewable)
+  // Documents. Some are previewable through backend text extraction.
   doc: "document",
   docx: "document",
   xls: "document",
@@ -128,6 +128,27 @@ export function getFileCategory(filePath: string): FileCategory {
 
 export function isTextReadable(category: FileCategory): boolean {
   return ["markdown", "text", "code", "data"].includes(category)
+}
+
+export const EXTRACTED_TEXT_PREVIEW_EXTENSIONS = new Set([
+  "pdf",
+  "doc",
+  "docx",
+  "pptx",
+  "xls",
+  "xlsx",
+  "odt",
+  "ods",
+  "odp",
+])
+
+export function getFileExtension(filePath: string): string {
+  const fileName = filePath.split(/[\\/]/).pop() ?? ""
+  return fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : ""
+}
+
+export function isExtractedTextPreviewFile(filePath: string): boolean {
+  return EXTRACTED_TEXT_PREVIEW_EXTENSIONS.has(getFileExtension(filePath))
 }
 
 export function isBinary(category: FileCategory): boolean {

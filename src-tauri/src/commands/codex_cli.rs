@@ -34,6 +34,22 @@ pub struct DetectResult {
 
 const CODEX_SPAWN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const STDERR_LIMIT_BYTES: usize = 1024 * 1024;
+const STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
+
+fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
+    if collected.len() >= limit_bytes {
+        return;
+    }
+    for ch in line.chars() {
+        if collected.len() + ch.len_utf8() > limit_bytes {
+            break;
+        }
+        collected.push(ch);
+    }
+    if collected.len() < limit_bytes {
+        collected.push('\n');
+    }
+}
 
 fn find_codex_command() -> Result<PathBuf, String> {
     #[cfg(windows)]
@@ -47,6 +63,16 @@ fn find_codex_command() -> Result<PathBuf, String> {
     }
 
     which::which("codex").map_err(|_| "`codex` not found on PATH".to_string())
+}
+
+fn suppress_windows_console(_cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        _cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 #[tauri::command]
@@ -64,11 +90,9 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     };
 
     let path_str = path.to_string_lossy().to_string();
-    let output = tokio::time::timeout(
-        Duration::from_secs(3),
-        Command::new(&path).arg("--version").output(),
-    )
-    .await;
+    let mut cmd = Command::new(&path);
+    suppress_windows_console(&mut cmd);
+    let output = tokio::time::timeout(Duration::from_secs(3), cmd.arg("--version").output()).await;
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
@@ -122,6 +146,7 @@ pub async fn codex_cli_spawn(
 
     let codex = find_codex_command()?;
     let mut cmd = Command::new(&codex);
+    suppress_windows_console(&mut cmd);
     cmd.arg("-a")
         .arg("never")
         .arg("exec")
@@ -195,24 +220,16 @@ pub async fn codex_cli_spawn(
             let mut collected = String::new();
             while let Ok(Some(line)) = stderr_reader.next_line().await {
                 eprintln!("[codex-cli stderr] {line}");
-                if collected.len() < STDERR_LIMIT_BYTES {
-                    for ch in line.chars() {
-                        if collected.len() + ch.len_utf8() > STDERR_LIMIT_BYTES {
-                            break;
-                        }
-                        collected.push(ch);
-                    }
-                    if collected.len() < STDERR_LIMIT_BYTES {
-                        collected.push('\n');
-                    }
-                }
+                append_capped_line(&mut collected, &line, STDERR_LIMIT_BYTES);
             }
             collected
         });
 
+        let mut stdout_text = String::new();
         loop {
             match reader.next_line().await {
                 Ok(Some(line)) => {
+                    append_capped_line(&mut stdout_text, &line, STDOUT_LIMIT_BYTES);
                     if app.emit(&topic, line).is_err() {
                         break;
                     }
@@ -244,6 +261,9 @@ pub async fn codex_cli_spawn(
         } else if stderr_text.len() >= STDERR_LIMIT_BYTES {
             stderr_text.push_str("\n[stderr truncated]");
         }
+        if stdout_text.len() >= STDOUT_LIMIT_BYTES {
+            stdout_text.push_str("\n[stdout truncated]");
+        }
 
         let code = if timed_out.load(Ordering::SeqCst) {
             Some(-1)
@@ -256,6 +276,7 @@ pub async fn codex_cli_spawn(
             serde_json::json!({
                 "code": code,
                 "stderr": stderr_text,
+                "stdout": stdout_text,
             }),
         );
     });
@@ -272,4 +293,35 @@ pub async fn codex_cli_kill(
         let _ = child.start_kill();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_capped_line_appends_newline_when_space_remains() {
+        let mut out = String::new();
+        append_capped_line(&mut out, "hello", 16);
+        assert_eq!(out, "hello\n");
+    }
+
+    #[test]
+    fn append_capped_line_never_exceeds_limit() {
+        let mut out = String::new();
+        append_capped_line(&mut out, "abcdef", 4);
+        assert_eq!(out, "abcd");
+        assert_eq!(out.len(), 4);
+        append_capped_line(&mut out, "ignored", 4);
+        assert_eq!(out, "abcd");
+    }
+
+    #[test]
+    fn append_capped_line_preserves_utf8_boundaries() {
+        let mut out = String::new();
+        append_capped_line(&mut out, "é水x", 5);
+        assert_eq!(out, "é水");
+        assert_eq!(out.len(), 5);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
 }

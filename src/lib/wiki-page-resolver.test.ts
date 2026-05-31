@@ -177,6 +177,12 @@ describe("resolveSourceName", () => {
     )
   })
 
+  it("accepts a raw/sources relative source identity", () => {
+    expect(resolveSourceName(TREE, "year-2025/q1.pdf", SOURCES)).toBe(
+      `${SOURCES}/year-2025/q1.pdf`,
+    )
+  })
+
   it("accepts a project-relative wiki/sources path", () => {
     expect(resolveSourceName(TREE, "wiki/sources/paper.md", SOURCES)).toBe(
       `${WIKI}/sources/paper.md`,

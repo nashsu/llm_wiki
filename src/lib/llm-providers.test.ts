@@ -126,6 +126,109 @@ describe("Google buildBody — vision content", () => {
   })
 })
 
+describe("Azure OpenAI provider", () => {
+  it("uses Azure deployment URL and api-key auth", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      apiKey: "azure-key",
+      model: "my-gpt-4o-deployment",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+
+    expect(cfg.url).toBe(
+      "https://example-resource.openai.azure.com/openai/deployments/my-gpt-4o-deployment/chat/completions?api-version=2024-10-21",
+    )
+    expect(cfg.headers["api-key"]).toBe("azure-key")
+    expect(cfg.headers.Authorization).toBeUndefined()
+  })
+
+  it("omits model from the request body because the deployment is in the URL", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "deployment-a",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody([{ role: "user", content: "hi" }]) as Record<string, unknown>
+
+    expect(body.model).toBeUndefined()
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }])
+  })
+
+  it("uses the configured Azure API version", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "deployment-a",
+      customEndpoint: "https://example-resource.openai.azure.com",
+      azureApiVersion: "2025-01-01-preview",
+    }))
+
+    expect(cfg.url).toContain("api-version=2025-01-01-preview")
+  })
+
+  it("maps max_tokens to max_completion_tokens for Azure GPT-5 deployments", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "gpt-5-nano",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(4096)
+  })
+
+  it("omits unsupported non-default temperature for Azure GPT-5 deployments", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "gpt-5-nano",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("uses explicit Azure model family when deployment name does not reveal GPT-5", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "production-chat-deployment",
+      customEndpoint: "https://example-resource.openai.azure.com",
+      azureModelFamily: "gpt5",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 1024, temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(1024)
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("applies explicit Azure model family to custom Azure endpoints", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "custom",
+      model: "wiki-main",
+      customEndpoint: "https://example-resource.openai.azure.com",
+      azureModelFamily: "gpt5",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 512, temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.model).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(512)
+    expect(body.temperature).toBeUndefined()
+  })
+})
+
 describe("Ollama / custom (chat_completions) — vision content", () => {
   it("ollama uses OpenAI-shaped image_url block (works on /v1/chat/completions for vision-capable models)", () => {
     const cfg = mkConfig({
@@ -209,6 +312,57 @@ describe("reasoning controls", () => {
 
     expect(body.thinking).toEqual({ type: "enabled" })
     expect(body.max_reasoning_tokens).toBeUndefined()
+  })
+
+  it("maps Xiaomi MiMo reasoning off to thinking disabled and max_completion_tokens", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "mimo-v2.5-pro",
+      customEndpoint: "https://api.xiaomimimo.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1, max_tokens: 2048, reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "disabled" })
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(2048)
+    expect(body.temperature).toBe(0.1)
+  })
+
+  it("omits custom temperature for Xiaomi MiMo thinking requests on Token Plan OpenAI wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "custom-router-model",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiMode: "chat_completions",
+    })
+    const provider = getProviderConfig(cfg)
+    const body = provider.buildBody(
+      [{ role: "user", content: "hi" }],
+      { temperature: 0.1, max_tokens: 4096, reasoning: { mode: "auto" } },
+    ) as Record<string, unknown>
+
+    expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
+    expect(body.temperature).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(4096)
+  })
+
+  it("uses Bearer auth for Xiaomi MiMo Token Plan Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-mimo",
+      model: "mimo-v2.5-pro",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/anthropic",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-mimo")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
   })
 
   it("disables Qwen3 thinking on OpenAI-compatible local endpoints", () => {

@@ -41,8 +41,8 @@ export function startProjectFileWatcher(
   projectId: string,
   projectPath: string,
   sourceWatchConfig?: SourceWatchConfig,
-): Promise<FileChangeQueue> {
-  return invoke<FileChangeQueue>("start_project_file_watcher", {
+): Promise<FileChangeRescanResult> {
+  return invoke<FileChangeRescanResult>("start_project_file_watcher", {
     projectId,
     projectPath,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatchConfig),

@@ -103,8 +103,20 @@ export function resolveSourceName(
   const wikiSources = `${projectRoot}/wiki/sources`
 
   if (ref.includes("/")) {
-    const target = `${projectRoot}/${ref}`
-    return findInTreeByPath(tree, target)
+    const normalizedRef = ref.replace(/\\/g, "/").replace(/^\/+/, "")
+    const candidates = normalizedRef.startsWith("raw/sources/") ||
+      normalizedRef.startsWith("wiki/")
+      ? [`${projectRoot}/${normalizedRef}`]
+      : [
+          `${sourcesRoot}/${normalizedRef}`,
+          `${projectRoot}/${normalizedRef}`,
+        ]
+
+    for (const target of candidates) {
+      const found = findInTreeByPath(tree, target)
+      if (found) return found
+    }
+    return null
   }
 
   // Bare .md filename → look in wiki/sources/ first (ingest's

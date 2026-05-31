@@ -13,6 +13,7 @@ const PROVIDER_OPTIONS: Array<{ value: SettingsDraft["multimodalProvider"]; labe
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google (Gemini)" },
+  { value: "azure", label: "Azure OpenAI" },
   { value: "ollama", label: "Ollama" },
 ]
 
@@ -174,20 +175,63 @@ export function MultimodalSection({ draft, setDraft }: Props) {
                 </div>
               )}
 
-              {draft.multimodalProvider === "custom" && (
+              {(draft.multimodalProvider === "custom" || draft.multimodalProvider === "azure") && (
                 <div className="space-y-2">
-                  <Label>{t("settings.sections.multimodal.customEndpoint", "Endpoint URL")}</Label>
+                  <Label>
+                    {draft.multimodalProvider === "azure"
+                      ? t("settings.sections.multimodal.azureEndpoint", "Azure endpoint")
+                      : t("settings.sections.multimodal.customEndpoint", "Endpoint URL")}
+                  </Label>
                   <Input
                     value={draft.multimodalCustomEndpoint}
                     onChange={(e) => setDraft("multimodalCustomEndpoint", e.target.value)}
-                    placeholder="http://localhost:1234/v1"
+                    placeholder={
+                      draft.multimodalProvider === "azure"
+                        ? "https://your-resource.openai.azure.com"
+                        : "http://localhost:1234/v1"
+                    }
                   />
                   <p className="text-xs text-muted-foreground">
-                    {t(
-                      "settings.sections.multimodal.customEndpointHint",
-                      "OpenAI-compatible /v1 base. LM Studio, llama.cpp server, vLLM, LocalAI all work.",
-                    )}
+                    {draft.multimodalProvider === "azure"
+                      ? t(
+                          "settings.sections.multimodal.azureEndpointHint",
+                          "Use your Azure OpenAI resource endpoint. The model field is the deployment name.",
+                        )
+                      : t(
+                          "settings.sections.multimodal.customEndpointHint",
+                          "OpenAI-compatible /v1 base. LM Studio, llama.cpp server, vLLM, LocalAI all work.",
+                        )}
                   </p>
+                </div>
+              )}
+
+              {draft.multimodalProvider === "azure" && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>{t("settings.sections.multimodal.azureApiVersion")}</Label>
+                    <Input
+                      value={draft.multimodalAzureApiVersion}
+                      onChange={(e) => setDraft("multimodalAzureApiVersion", e.target.value)}
+                      placeholder="2024-10-21"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.sections.multimodal.azureApiVersionHint")}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t("settings.sections.multimodal.azureModelFamily")}</Label>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={draft.multimodalAzureModelFamily}
+                      onChange={(e) => setDraft("multimodalAzureModelFamily", e.target.value as typeof draft.multimodalAzureModelFamily)}
+                    >
+                      <option value="auto">{t("settings.sections.multimodal.azureModelFamilyAuto")}</option>
+                      <option value="gpt5">{t("settings.sections.multimodal.azureModelFamilyGpt5")}</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.sections.multimodal.azureModelFamilyHint")}
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -205,7 +249,11 @@ export function MultimodalSection({ draft, setDraft }: Props) {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("settings.sections.multimodal.model", "Model")}</Label>
+                <Label>
+                  {draft.multimodalProvider === "azure"
+                    ? t("settings.sections.multimodal.azureDeployment", "Deployment name")
+                    : t("settings.sections.multimodal.model", "Model")}
+                </Label>
                 <Input
                   value={draft.multimodalModel}
                   onChange={(e) => setDraft("multimodalModel", e.target.value)}
