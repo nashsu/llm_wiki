@@ -218,7 +218,6 @@ export async function runQaHook(
   let externalResults: WebSearchResult[] = []
   try {
     // Build search query from the last user message
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")
     if (lastUserMsg) {
       const query = lastUserMsg.content.slice(0, 200)
       externalResults = await webSearch(query, searchConfig, 3)
