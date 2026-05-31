@@ -45,6 +45,10 @@ const connectionTestsMock = vi.hoisted(() => ({
   testLlmConnection: vi.fn(),
 }))
 
+const autofillMock = vi.hoisted(() => ({
+  runAutofill: vi.fn(async () => ({ pagesScanned: 0, statusPromoted: 0, tagsAssigned: 0, details: [] })),
+}))
+
 vi.mock("@/commands/fs", () => ({
   canonicalizePath: vi.fn(async (path: string) => fsMock.canonical.get(path) ?? path),
   listDirectory: vi.fn(async () => fsMock.tree),
@@ -89,6 +93,10 @@ vi.mock("@/lib/connection-tests", () => ({
   testLlmConnection: connectionTestsMock.testLlmConnection,
 }))
 
+vi.mock("@/lib/agent/agent-autofill", () => ({
+  runAutofill: autofillMock.runAutofill,
+}))
+
 describe("runAgentAppTool ingest parity tools", () => {
   beforeEach(() => {
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true }]
@@ -98,6 +106,8 @@ describe("runAgentAppTool ingest parity tools", () => {
       ["/project/purpose.md", "# Purpose"],
     ])
     ingestMock.autoIngest.mockReset()
+    autofillMock.runAutofill.mockClear()
+    autofillMock.runAutofill.mockResolvedValue({ pagesScanned: 0, statusPromoted: 0, tagsAssigned: 0, details: [] })
     ingestMock.captionSourceImages.mockReset()
     deepResearchMock.collectResearchSources.mockReset()
     deepResearchMock.queueResearch.mockReset()
@@ -154,6 +164,7 @@ describe("runAgentAppTool ingest parity tools", () => {
       sourcePath: "/project/raw/sources/source.pdf",
       writtenPaths: ["wiki/sources/source.md", "wiki/entities/topic.md"],
       filesWritten: 2,
+      autofill: { pagesScanned: 0, statusPromoted: 0, tagsAssigned: 0, details: [] },
     })
     expect(response.changedPaths).toBeUndefined()
     expect(response.wikiChanged).toEqual([

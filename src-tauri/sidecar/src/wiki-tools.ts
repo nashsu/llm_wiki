@@ -624,6 +624,16 @@ export function createLlmWikiTools(
 		),
 
 		tool(
+			"autofill_properties",
+			"Scan wiki concept/entity pages and automatically fill missing Status and Tags frontmatter fields. Status promotion: Draft + 7 days + content complete → Under Review; referenced by ≥2 summaries → Reviewed. Tags: empty → extract 1-3 keywords from title and headings.",
+			{},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "autofill_properties", args, { requiresWrite: true }),
+				),
+		),
+
+		tool(
 			"enrich_wikilinks",
 			"Add safe wikilinks to one Wiki page using LLM Wiki's enrichment pipeline.",
 			{

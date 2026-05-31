@@ -12,6 +12,7 @@ import { buildDedupLlmCall, executeMerge, loadAllWikiPages, runDuplicateDetectio
 import { mergeDuplicateGroup, type DuplicateGroup, type MergeResult } from "@/lib/dedup"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { sweepResolvedReviews } from "@/lib/sweep-reviews"
+import { runAutofill } from "@/lib/agent/agent-autofill"
 import { testLlmConnection } from "@/lib/connection-tests"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredDeepResearchSources, resolveSearchConfig } from "@/lib/web-search"
@@ -525,6 +526,8 @@ export async function runAgentAppTool(
     const sourcePath = await normalizeSourcePath(projectPath, stringArg(args, "sourcePath"))
     const folderContext = typeof args.folderContext === "string" ? args.folderContext : undefined
     const writtenPaths = await autoIngest(projectPath, sourcePath, state.llmConfig, undefined, folderContext)
+    // Run property autofill after ingest completes
+    const autofillResult = await runAutofill(projectPath)
     state.setFileTree(await listDirectory(projectPath))
     useWikiStore.getState().bumpDataVersion()
     return {
@@ -533,6 +536,7 @@ export async function runAgentAppTool(
         sourcePath,
         writtenPaths,
         filesWritten: writtenPaths.length,
+        autofill: autofillResult,
       },
       wikiChanged: wikiChangedFromPaths(writtenPaths),
     }
@@ -624,6 +628,17 @@ export async function runAgentAppTool(
       ok: true,
       result: { path: relativePath },
       wikiChanged: [{ path: relativePath, operation: "update" }],
+    }
+  }
+
+  if (toolName === "autofill_properties") {
+    const result = await runAutofill(projectPath)
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true,
+      result,
+      wikiChanged: [],
     }
   }
 

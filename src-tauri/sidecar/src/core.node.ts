@@ -288,6 +288,7 @@ test("query request enables LLM Wiki MCP tools when project context is present",
 		"mcp__llm_wiki__fix_lint_report",
 		"mcp__llm_wiki__run_lint_and_report",
 		"mcp__llm_wiki__enrich_wikilinks",
+		"mcp__llm_wiki__autofill_properties",
 		"mcp__llm_wiki__sweep_reviews",
 	]);
 	assert.ok(capturedInput?.options?.mcpServers);
