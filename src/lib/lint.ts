@@ -324,7 +324,6 @@ export interface LintReport {
 /** Categorize lint result as auto-fixable or human-only.
  *  Matches the logic in lint-fixer.ts isFixable() plus severity filter. */
 function classifyFixability(result: LintResult): "auto" | "human" {
-  if (result.type === "suggestion") return "human"
   if (result.type === "semantic") {
     const detail = result.detail.toLowerCase()
     if (detail.startsWith("[suggestion]")) return "human"
