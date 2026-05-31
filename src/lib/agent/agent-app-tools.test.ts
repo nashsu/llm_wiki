@@ -97,6 +97,10 @@ vi.mock("@/lib/agent/agent-autofill", () => ({
   runAutofill: autofillMock.runAutofill,
 }))
 
+vi.mock("@/lib/wiki-synthesis", () => ({
+  runWikiSynthesis: vi.fn(async () => ({ ok: true, topic: "test", clusterSize: 3, synthesisPath: "wiki/synthesis/test-synthesis.md", externalSources: 0 })),
+}))
+
 vi.mock("@/lib/agent/agent-pipeline", () => ({
   executePipeline: vi.fn(async () => ({ pipelineName: "test", ok: true, steps: [], totalDurationMs: 0 })),
   BUILTIN_PIPELINES: { "full-ingest": { name: "full-ingest", stages: [] }, "lint-fix": { name: "lint-fix", stages: [] } },

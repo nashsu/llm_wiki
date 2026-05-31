@@ -56,8 +56,8 @@ export const SUBAGENT_DEFS: Record<SubagentId, SubagentDef> = {
   "wiki-synthesizer": {
     id: "wiki-synthesizer",
     label: "Wiki Synthesizer",
-    description: "Runs cross-article synthesis and deep research",
-    toolName: "run_deep_research",
+    description: "Discovers tag clusters, searches externally, generates cross-article synthesis reports",
+    toolName: "wiki_synthesis",
     defaultArgs: {},
   },
   "wiki-qa": {

@@ -38,6 +38,7 @@ export const WRITE_WIKI_TOOLS = [
 	"mcp__llm_wiki__fix_lint_report",
 	"mcp__llm_wiki__run_lint_and_report",
 	"mcp__llm_wiki__enrich_wikilinks",
+	"mcp__llm_wiki__wiki_synthesis",
 	"mcp__llm_wiki__run_pipeline",
 	"mcp__llm_wiki__autofill_properties",
 	"mcp__llm_wiki__sweep_reviews",

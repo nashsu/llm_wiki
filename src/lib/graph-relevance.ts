@@ -1,4 +1,5 @@
 import { readFile, listDirectory } from "@/commands/fs"
+import { flattenMdFiles } from "@/lib/wiki-utils"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -52,17 +53,6 @@ let cachedGraph: RetrievalGraph | null = null
 // Helpers (pure)
 // ---------------------------------------------------------------------------
 
-function flattenMdFiles(nodes: readonly FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenMdFiles(node.children))
-    } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
 
 function fileNameToId(fileName: string): string {
   return fileName.replace(/\.md$/, "")
