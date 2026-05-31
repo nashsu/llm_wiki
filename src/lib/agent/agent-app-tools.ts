@@ -13,6 +13,7 @@ import { mergeDuplicateGroup, type DuplicateGroup, type MergeResult } from "@/li
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { sweepResolvedReviews } from "@/lib/sweep-reviews"
 import { executePipeline, BUILTIN_PIPELINES } from "@/lib/agent/agent-pipeline"
+import { runWikiSynthesis } from "@/lib/wiki-synthesis"
 import { runAutofill } from "@/lib/agent/agent-autofill"
 import { testLlmConnection } from "@/lib/connection-tests"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
@@ -654,6 +655,19 @@ export async function runAgentAppTool(
       ok: true as const,
       result,
       wikiChanged: [],
+    }
+  }
+
+  if (toolName === "wiki_synthesis") {
+    const targetTag = typeof args.targetTag === "string" ? args.targetTag : undefined
+    const minClusterSize = typeof args.minClusterSize === "number" ? args.minClusterSize : 3
+    const result = await runWikiSynthesis(projectPath, state.llmConfig, state.searchApiConfig, targetTag, minClusterSize)
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true,
+      result,
+      wikiChanged: result.synthesisPath ? [{ path: result.synthesisPath, operation: "create" as const }] : [],
     }
   }
 

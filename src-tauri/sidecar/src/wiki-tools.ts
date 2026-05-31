@@ -634,6 +634,19 @@ export function createLlmWikiTools(
 		),
 
 		tool(
+			"wiki_synthesis",
+			"Discover thematic clusters by tag analysis, supplement with external web search (EXA.AI etc.), and generate a cross-article synthesis report via LLM. Saves as a synthesis page in wiki.",
+			{
+				targetTag: z.string().optional(),
+				minClusterSize: z.number().optional(),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "wiki_synthesis", args, { requiresWrite: true }),
+				),
+		),
+
+		tool(
 			"run_pipeline",
 			"Execute a built-in multi-agent pipeline by name. Available pipelines: full-ingest (compile→lint→fix), lint-fix (lint→fix). Returns step-by-step results with timing.",
 			{
