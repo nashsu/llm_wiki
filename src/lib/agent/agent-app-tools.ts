@@ -662,6 +662,7 @@ export async function runAgentAppTool(
     const targetTag = typeof args.targetTag === "string" ? args.targetTag : undefined
     const minClusterSize = typeof args.minClusterSize === "number" ? args.minClusterSize : 3
     const result = await runWikiSynthesis(projectPath, state.llmConfig, state.searchApiConfig, targetTag, minClusterSize)
+    if (!result.ok) throw new Error(result.error)
     state.setFileTree(await listDirectory(projectPath))
     useWikiStore.getState().bumpDataVersion()
     return {

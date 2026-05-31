@@ -261,7 +261,7 @@ export async function runWikiSynthesis(
   }
 
   // Step 6: Save synthesis page
-  const tagSlug = cluster.tag.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  const tagSlug = cluster.tag.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "untagged"
   const synthesisPath = `wiki/synthesis/${tagSlug}-synthesis.md`
   const fullPath = `${pp}/${synthesisPath}`
 
