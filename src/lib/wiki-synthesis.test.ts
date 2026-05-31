@@ -6,6 +6,19 @@ const fsMock = vi.hoisted(() => ({
   tree: [] as unknown[],
 }))
 
+const streamChatMock = vi.hoisted(() => vi.fn(async (
+  _config: unknown,
+  _messages: unknown[],
+  handlers: { onToken: (t: string) => void; onDone: () => void; onError?: (e: unknown) => void },
+) => {
+  handlers.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test Synthesis\n\n## Research Question\n\nWhat connects these concepts?\n\n## Key Findings\n\n- Finding 1\n- Finding 2\n")
+  handlers.onDone()
+}))
+
+const webSearchMock = vi.hoisted(() => vi.fn(async () => [
+  { title: "External Source", snippet: "Relevant info", url: "https://example.com", source: "exa" },
+]))
+
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(async (path: string) => {
     const val = fsMock.files.get(path)
@@ -47,25 +60,12 @@ vi.mock("@/lib/output-language", () => ({
   buildLanguageDirective: vi.fn(() => "Respond in the same language as the input."),
 }))
 
-const streamChatMock = vi.fn(async (
-  _config: unknown,
-  _messages: unknown[],
-  handlers: { onToken: (t: string) => void; onDone: () => void; onError?: (e: unknown) => void },
-) => {
-  handlers.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test Synthesis\n\n## Research Question\n\nWhat connects these concepts?\n\n## Key Findings\n\n- Finding 1\n- Finding 2\n")
-  handlers.onDone()
-})
-
 vi.mock("@/lib/llm-client", () => ({
-  streamChat: (config: unknown, messages: unknown[], handlers: unknown) => streamChatMock(config, messages, handlers),
+  streamChat: streamChatMock,
 }))
 
-const webSearchMock = vi.fn(async () => [
-  { title: "External Source", snippet: "Relevant info", url: "https://example.com", source: "exa" },
-])
-
 vi.mock("@/lib/web-search", () => ({
-  webSearch: (query: unknown, config: unknown, limit: unknown) => webSearchMock(query, config, limit),
+  webSearch: webSearchMock,
 }))
 
 /** Helper: create a cluster of N wiki concept pages with the given tag. */
@@ -85,7 +85,7 @@ describe("runWikiSynthesis", () => {
     fsMock.tree = []
     vi.clearAllMocks()
     // Reset streamChat to default behavior
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
+    streamChatMock.mockImplementation(async (_c: unknown, _m: unknown[], h: { onToken: (t: string) => void; onDone: () => void }) => {
       h.onToken("---\ntype: synthesis\ntitle: Test Synthesis\n---\n\n# Test\n\n## Research Question\n\nQ?\n\n## Key Findings\n\n- F1\n")
       h.onDone()
     })
@@ -125,7 +125,7 @@ describe("runWikiSynthesis", () => {
     makeCluster(children, "ml", 4)
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
 
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
+    streamChatMock.mockImplementation(async (_c: unknown, _m: unknown[], h: { onError?: (e: unknown) => void }) => {
       h.onError?.(new Error("LLM rate limited"))
     })
 
@@ -151,7 +151,7 @@ describe("runWikiSynthesis", () => {
     makeCluster(children, "nlp", 4)
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
 
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
+    streamChatMock.mockImplementation(async (_c: unknown, _m: unknown[], h: { onDone: () => void }) => {
       h.onDone()
     })
 
@@ -165,7 +165,7 @@ describe("runWikiSynthesis", () => {
     makeCluster(children, "cv", 4)
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true, children }]
 
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
+    streamChatMock.mockImplementation(async (_c: unknown, _m: unknown[], h: { onToken: (t: string) => void; onDone: () => void }) => {
       h.onToken("# Just a plain markdown response\n\nNo frontmatter here.")
       h.onDone()
     })
