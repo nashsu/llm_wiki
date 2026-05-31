@@ -3,6 +3,7 @@ import { buildWikiAnswerContext } from "@/lib/wiki-answer-context"
 import { saveQueryPage } from "@/lib/save-query-page"
 import { runSemanticLint, runStructuralLint, type LintResult, type LintReport } from "@/lib/lint"
 import { fixLintResult, fixLintReport, runLintAndReport } from "@/lib/lint-fixer"
+import { lintFixMutex } from "@/lib/lint-fix-mutex"
 import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { autoIngest, captionSourceImages } from "@/lib/ingest"
@@ -580,7 +581,8 @@ export async function runAgentAppTool(
     const fileTree = state.fileTree
     const includeStructural = args.includeStructural !== false
     const includeSemantic = args.includeSemantic === true
-    const { report, reportPath } = await runLintAndReport(projectPath, state.llmConfig, fileTree, includeStructural, includeSemantic)
+    const autoFix = args.autoFix === true
+    const { report, reportPath } = await runLintAndReport(projectPath, state.llmConfig, fileTree, includeStructural, includeSemantic, autoFix)
     state.setFileTree(await listDirectory(projectPath))
     useWikiStore.getState().bumpDataVersion()
     return {
@@ -591,20 +593,25 @@ export async function runAgentAppTool(
   }
 
   if (toolName === "fix_lint_report") {
-    const report = args.report as LintReport
-    const reportPath = stringArg(args, "reportPath")
-    const { report: updatedReport, reportPath: updatedPath } = await fixLintReport(
-      projectPath,
-      report,
-      reportPath,
-      state.llmConfig,
-    )
-    state.setFileTree(await listDirectory(projectPath))
-    useWikiStore.getState().bumpDataVersion()
-    return {
-      ok: true,
-      result: { report: updatedReport, reportPath: updatedPath },
-      wikiChanged: [{ path: reportPath, operation: "update" }],
+    const release = await lintFixMutex.acquire()
+    try {
+      const report = args.report as LintReport
+      const reportPath = stringArg(args, "reportPath")
+      const { report: updatedReport, reportPath: updatedPath } = await fixLintReport(
+        projectPath,
+        report,
+        reportPath,
+        state.llmConfig,
+      )
+      state.setFileTree(await listDirectory(projectPath))
+      useWikiStore.getState().bumpDataVersion()
+      return {
+        ok: true,
+        result: { report: updatedReport, reportPath: updatedPath },
+        wikiChanged: [{ path: reportPath, operation: "update" }],
+      }
+    } finally {
+      release()
     }
   }
 

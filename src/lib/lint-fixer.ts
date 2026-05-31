@@ -8,6 +8,7 @@ import { buildLanguageDirective } from "@/lib/output-language";
 import { getRelativePath, normalizePath } from "@/lib/path-utils";
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete";
 import { useActivityStore } from "@/stores/activity-store";
+import { lintFixMutex } from "@/lib/lint-fix-mutex";
 import type { LlmConfig } from "@/stores/wiki-store";
 
 /**
@@ -770,6 +771,7 @@ export async function runLintAndReport(
   fileTree: readonly { name: string; path: string; is_dir: boolean; children?: unknown[] }[],
   includeStructural = true,
   includeSemantic = true,
+  autoFix = false,
 ): Promise<{ report: LintReport; reportPath: string }> {
   const structural = includeStructural ? await runStructuralLint(projectPath) : []
   const semantic = includeSemantic ? await runSemanticLint(projectPath, llmConfig) : []
@@ -800,6 +802,16 @@ export async function runLintAndReport(
   const pp = normalizePath(projectPath)
   const fullPath = `${pp}/${reportPath}`
   await writeFile(fullPath, markdown)
+
+  if (autoFix && report.autoFixItems.length > 0) {
+    const release = await lintFixMutex.acquire()
+    try {
+      const fixedReport = await fixLintReport(projectPath, report, reportPath, llmConfig)
+      return { report: fixedReport.report, reportPath: fixedReport.reportPath }
+    } finally {
+      release()
+    }
+  }
 
   return { report, reportPath }
 }
