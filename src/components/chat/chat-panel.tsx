@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { deleteFile, listDirectory } from "@/commands/fs";
 import { Button } from "@/components/ui/button";
-import { streamAgent } from "@/lib/agent/agent-transport";
 import { runQaHook } from "@/lib/agent/agent-qa-hook";
+import { streamAgent } from "@/lib/agent/agent-transport";
 import { API_SERVER_BASE_URL } from "@/lib/api-server-constants";
 import { executeIngestWrites } from "@/lib/ingest";
 import { type ChatMessage as LLMMessage, streamChat } from "@/lib/llm-client";
@@ -179,7 +179,10 @@ export function ChatPanel() {
 			if (!convId) {
 				convId = createConversation();
 			}
-			addMessage("user", "Search the current wiki for its purpose and cite page paths.");
+			addMessage(
+				"user",
+				"Search the current wiki for its purpose and cite page paths.",
+			);
 			setStreaming(true);
 			setAgentRunning(true);
 			const ctrl = new AbortController();
@@ -223,13 +226,19 @@ export function ChatPanel() {
 						const qaMsgs = useChatStore.getState().messages;
 						const qaStore = useWikiStore.getState();
 						if (qaStore.project && qaMsgs.length > 0) {
-						  runQaHook(
-						    qaStore.project.path,
-						    qaStore.llmConfig,
-						    qaStore.searchApiConfig,
-						    qaMsgs,
-                .then((r) => { if (!r.ok) console.warn("[QA Hook] validation failed:", r.error) })
-                .catch((err) => console.warn("[QA Hook] extraction failed:", err));
+							runQaHook(
+								qaStore.project.path,
+								qaStore.llmConfig,
+								qaStore.searchApiConfig,
+								qaMsgs,
+							)
+								.then((r) => {
+									if (!r.ok)
+										console.warn("[QA Hook] validation failed:", r.error);
+								})
+								.catch((err) =>
+									console.warn("[QA Hook] extraction failed:", err),
+								);
 						}
 						setAgentRunning(false);
 						abortRef.current = null;
