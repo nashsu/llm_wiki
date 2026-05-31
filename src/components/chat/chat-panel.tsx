@@ -228,7 +228,8 @@ export function ChatPanel() {
 						    qaStore.llmConfig,
 						    qaStore.searchApiConfig,
 						    qaMsgs,
-						  ).catch((err) => console.warn("[QA Hook] extraction failed:", err));
+                .then((r) => { if (!r.ok) console.warn("[QA Hook] validation failed:", r.error) })
+                .catch((err) => console.warn("[QA Hook] extraction failed:", err));
 						}
 						setAgentRunning(false);
 						abortRef.current = null;

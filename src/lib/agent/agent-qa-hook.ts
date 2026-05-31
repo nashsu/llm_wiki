@@ -208,6 +208,12 @@ export async function runQaHook(
   // Step 2: Scan existing QA for dedup
   const existingQa = await scanExistingQa(pp)
 
+  // Step 2b: Quick title pre-check — skip LLM if last user question already exists
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")
+  if (lastUserMsg && isDuplicateQa(lastUserMsg.content.trim().slice(0, 120), existingQa)) {
+    return { ok: true, skipped: true, skipReason: "duplicate" }
+  }
+
   // Step 3: External search (supplementary, non-blocking)
   let externalResults: WebSearchResult[] = []
   try {
@@ -230,8 +236,10 @@ export async function runQaHook(
   }
 
   // Step 5: Generate QA via LLM
-  const languageHint = buildLanguageDirective(messages.map((m) => m.content).join("\n"))
-  const prompt = buildQaExtractionPrompt(messages, wikiContext, externalResults, languageHint)
+  // Limit to last 20 messages to keep prompt size manageable
+  const trimmedMessages = messages.slice(-20)
+  const languageHint = buildLanguageDirective(trimmedMessages.map((m) => m.content).join("\n"))
+  const prompt = buildQaExtractionPrompt(trimmedMessages, wikiContext, externalResults, languageHint)
 
   let accumulated = ""
   let streamError: unknown

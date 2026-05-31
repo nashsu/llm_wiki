@@ -8,6 +8,8 @@ function msg(role: "user" | "assistant", content: string): DisplayMessage {
   return { id: `${role}-${Math.random()}`, role, content, timestamp: Date.now(), conversationId: "conv-1" }
 }
 
+const longAnswer = "RAG (Retrieval-Augmented Generation) is a technique that combines retrieval from a knowledge base with language model generation. It works by first retrieving relevant documents from a vector store, then feeding those documents as context to the LLM to generate more accurate and grounded responses."
+
 // ── shouldExtractQa ──────────────────────────────────────────────────────────
 
 describe("shouldExtractQa", () => {
@@ -17,6 +19,10 @@ describe("shouldExtractQa", () => {
 
   it("returns false when only user messages", () => {
     expect(shouldExtractQa([msg("user", "hello")]).extract).toBe(false)
+  })
+
+  it("returns false when only assistant messages", () => {
+    expect(shouldExtractQa([msg("assistant", "Hello!")]).extract).toBe(false)
   })
 
   it("returns false for greeting-only conversations", () => {
@@ -30,7 +36,6 @@ describe("shouldExtractQa", () => {
   })
 
   it("returns true for substantive conversation", () => {
-    const longAnswer = "RAG (Retrieval-Augmented Generation) is a technique that combines retrieval from a knowledge base with language model generation. It works by first retrieving relevant documents from a vector store, then feeding those documents as context to the LLM to generate more accurate and grounded responses. This approach reduces hallucination and allows the model to access up-to-date information beyond its training data."
     const messages = [msg("user", "Explain RAG in detail"), msg("assistant", longAnswer)]
     expect(shouldExtractQa(messages).extract).toBe(true)
   })
@@ -53,15 +58,17 @@ const streamChatMock = vi.hoisted(() => vi.fn(async (
 
 const webSearchMock = vi.hoisted(() => vi.fn(async () => []))
 
+const listDirectoryMock = vi.hoisted(() => vi.fn(async () => {
+  throw new Error("no qa dir")
+}))
+
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(async (path: string) => {
     const val = fsMock.files.get(path)
     if (val === undefined) throw new Error(`missing: ${path}`)
     return val
   }),
-  listDirectory: vi.fn(async () => {
-    throw new Error("no qa dir")
-  }),
+  listDirectory: listDirectoryMock,
   writeFile: vi.fn(async (path: string, content: string) => {
     fsMock.files.set(path, content)
   }),
@@ -110,13 +117,12 @@ describe("runQaHook", () => {
   beforeEach(() => {
     fsMock.files.clear()
     vi.clearAllMocks()
+    listDirectoryMock.mockImplementation(async () => { throw new Error("no qa dir") })
     streamChatMock.mockImplementation(async (_c, _m, h) => {
       h.onToken("---\ntype: qa\ntitle: What is RAG?\ntags: [qa, ai]\ncreated: 2026-05-31\n---\n\n# Q: What is RAG?\n\n## A: RAG is retrieval augmented generation.\n\n## Key Insights\n\n- Combines retrieval with generation\n- Reduces hallucination\n")
       h.onDone()
     })
   })
-
-  const longAnswer = "RAG (Retrieval-Augmented Generation) is a technique that combines retrieval from a knowledge base with language model generation. It works by first retrieving relevant documents from a vector store, then feeding those documents as context to the LLM to generate more accurate and grounded responses."
 
   it("skips greeting-only conversation", async () => {
     const messages = [msg("user", "hi"), msg("assistant", "Hello!")]
@@ -173,5 +179,31 @@ describe("runQaHook", () => {
     const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
     expect(result.ok).toBe(true)
     expect(result.saved).toBe(true)
+  })
+
+  it("skips when existing QA has matching title (dedup)", async () => {
+    listDirectoryMock.mockResolvedValueOnce([
+      { name: "existing.md", path: "/project/wiki/qa/existing.md", is_dir: false },
+    ])
+    fsMock.files.set("/project/wiki/qa/existing.md",
+      "---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\n---\n\n# Q: What is RAG?\n\n## A: existing answer",
+    )
+    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
+    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
+    expect(result.ok).toBe(true)
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe("duplicate")
+  })
+
+  it("produces untagged slug for pure punctuation title", async () => {
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      h.onToken("---\ntype: qa\ntitle: \"???\"\ntags: [qa]\ncreated: 2026-05-31\n---\n\n# Q: ???\n\n## A: answer\n")
+      h.onDone()
+    })
+    const messages = [msg("user", "???"), msg("assistant", longAnswer)]
+    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
+    expect(result.ok).toBe(true)
+    expect(result.saved).toBe(true)
+    expect(result.qaPath).toContain("untagged")
   })
 })
