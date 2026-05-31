@@ -57,7 +57,7 @@ const streamChatMock = vi.fn(async (
 })
 
 vi.mock("@/lib/llm-client", () => ({
-  streamChat: (...args: unknown[]) => streamChatMock(...args),
+  streamChat: (config: unknown, messages: unknown[], handlers: unknown) => streamChatMock(config, messages, handlers),
 }))
 
 const webSearchMock = vi.fn(async () => [
@@ -65,7 +65,7 @@ const webSearchMock = vi.fn(async () => [
 ])
 
 vi.mock("@/lib/web-search", () => ({
-  webSearch: (...args: unknown[]) => webSearchMock(...args),
+  webSearch: (query: unknown, config: unknown, limit: unknown) => webSearchMock(query, config, limit),
 }))
 
 /** Helper: create a cluster of N wiki concept pages with the given tag. */
