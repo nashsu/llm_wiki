@@ -634,6 +634,18 @@ export function createLlmWikiTools(
 		),
 
 		tool(
+			"run_pipeline",
+			"Execute a built-in multi-agent pipeline by name. Available pipelines: full-ingest (compile→lint→fix), lint-fix (lint→fix). Returns step-by-step results with timing.",
+			{
+				pipeline: z.string().min(1),
+			},
+			async (args) =>
+				safe(async () =>
+					appTool(context, "run_pipeline", args, { requiresWrite: true }),
+				),
+		),
+
+		tool(
 			"enrich_wikilinks",
 			"Add safe wikilinks to one Wiki page using LLM Wiki's enrichment pipeline.",
 			{

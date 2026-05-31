@@ -97,6 +97,11 @@ vi.mock("@/lib/agent/agent-autofill", () => ({
   runAutofill: autofillMock.runAutofill,
 }))
 
+vi.mock("@/lib/agent/agent-pipeline", () => ({
+  executePipeline: vi.fn(async () => ({ pipelineName: "test", ok: true, steps: [], totalDurationMs: 0 })),
+  BUILTIN_PIPELINES: { "full-ingest": { name: "full-ingest", stages: [] }, "lint-fix": { name: "lint-fix", stages: [] } },
+}))
+
 describe("runAgentAppTool ingest parity tools", () => {
   beforeEach(() => {
     fsMock.tree = [{ name: "wiki", path: "/project/wiki", is_dir: true }]

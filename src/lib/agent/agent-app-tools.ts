@@ -12,6 +12,7 @@ import { buildDedupLlmCall, executeMerge, loadAllWikiPages, runDuplicateDetectio
 import { mergeDuplicateGroup, type DuplicateGroup, type MergeResult } from "@/lib/dedup"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { sweepResolvedReviews } from "@/lib/sweep-reviews"
+import { executePipeline, BUILTIN_PIPELINES } from "@/lib/agent/agent-pipeline"
 import { runAutofill } from "@/lib/agent/agent-autofill"
 import { testLlmConnection } from "@/lib/connection-tests"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
@@ -637,6 +638,20 @@ export async function runAgentAppTool(
     useWikiStore.getState().bumpDataVersion()
     return {
       ok: true,
+      result,
+      wikiChanged: [],
+    }
+  }
+
+  if (toolName === "run_pipeline") {
+    const pipelineName = stringArg(args, "pipeline")
+    const schema = BUILTIN_PIPELINES[pipelineName]
+    if (!schema) throw new Error(`Unknown pipeline: ${pipelineName}. Available: ${Object.keys(BUILTIN_PIPELINES).join(", ")}`)
+    const result = await executePipeline(schema, runAgentAppTool)
+    state.setFileTree(await listDirectory(projectPath))
+    useWikiStore.getState().bumpDataVersion()
+    return {
+      ok: true as const,
       result,
       wikiChanged: [],
     }
