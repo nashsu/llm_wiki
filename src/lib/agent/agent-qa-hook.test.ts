@@ -58,7 +58,7 @@ const streamChatMock = vi.hoisted(() => vi.fn(async (
 
 const webSearchMock = vi.hoisted(() => vi.fn(async () => []))
 
-const listDirectoryMock = vi.hoisted(() => vi.fn(async () => {
+const listDirectoryMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>(async () => {
   throw new Error("no qa dir")
 }))
 
