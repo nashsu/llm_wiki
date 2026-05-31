@@ -27,6 +27,7 @@ import type {
 	SDKContentBlock,
 	SDKMessage,
 	SDKResultMessage,
+	SubagentConfig,
 } from "./agent-types";
 import { runAgentAppTool } from "./agent-app-tools";
 
@@ -87,16 +88,7 @@ type InvokePayload = Record<string, unknown> & {
 
 	// PR E: subagents + skills + plugins
 	agentName?: string;
-	agents?: Record<string, {
-		description?: string;
-		prompt: string;
-		model?: string;
-		tools?: string[];
-		allowedTools?: string[];
-		disallowedTools?: string[];
-		permissionMode?: string;
-		skills?: "all" | string[];
-	}>;
+	agents?: Record<string, SubagentConfig>;
 	skills?: "all" | string[];
 	plugins?: Array<{
 		name: string;

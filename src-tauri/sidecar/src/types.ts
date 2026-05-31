@@ -1,3 +1,15 @@
+/** Subagent configuration — mirrors the shape in the main app's agent-types.ts. */
+export interface SubagentConfig {
+	description?: string;
+	prompt: string;
+	model?: string;
+	tools?: string[];
+	allowedTools?: string[];
+	disallowedTools?: string[];
+	permissionMode?: string;
+	skills?: "all" | string[];
+}
+
 export interface AgentRequest {
 	type: "query";
 	streamId: string;
@@ -64,16 +76,7 @@ export interface AgentRequest {
 
 		// PR E: subagents + skills + plugins
 		agentName?: string;
-		agents?: Record<string, {
-			description?: string;
-			prompt: string;
-			model?: string;
-			tools?: string[];
-			allowedTools?: string[];
-			disallowedTools?: string[];
-			permissionMode?: string;
-			skills?: "all" | string[];
-		}>;
+		agents?: Record<string, SubagentConfig>;
 		skills?: "all" | string[];
 		plugins?: Array<{
 			name: string;
