@@ -120,12 +120,12 @@ function labelDensity(nodeCount: number): number {
   return 0.4
 }
 
-function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[], graphSpacing: number): string {
+function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): string {
   const nodeIds = nodes.map((n) => n.id).sort()
   const edgeIds = edges
     .map((e) => `${e.source}->${e.target}:${Math.round(e.weight * 1000)}`)
     .sort()
-  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}:${graphSpacing.toFixed(2)}`
+  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}`
 }
 
 function hashParts(parts: readonly string[]): string {
@@ -174,7 +174,7 @@ function GraphLoader({
   const sigma = useSigma()
 
   useEffect(() => {
-    const dataKey = graphDataKey(nodes, edges, graphSpacing)
+    const dataKey = graphDataKey(nodes, edges)
     const needsLayout = dataKey !== lastLayoutDataKey && dataKey !== pendingLayoutDataKey
     let cancelled = false
     let worker: Worker | null = null
@@ -233,7 +233,7 @@ function GraphLoader({
         settings: {
           ...settings,
           gravity: 1,
-          scalingRatio: 2,
+          scalingRatio: graphSpacing * 2,
           strongGravityMode: true,
           barnesHutOptimize: nodes.length > 50,
         },
@@ -377,7 +377,6 @@ function GraphRenderSettings({
         return result
       },
     })
-    sigma.refresh()
   }, [setSettings, sigma, hoverState, highlightedNodes, nodeCount])
 
   return null

@@ -993,6 +993,7 @@ mod tests {
             api_key: "HEADER_KEY".to_string(),
             model: "gemini-embedding-001".to_string(),
             output_dimensionality: Some(768),
+            extra_headers: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);
