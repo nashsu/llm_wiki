@@ -54,7 +54,6 @@ const BASE_NODE_SIZE = 8
 const MAX_NODE_SIZE = 28
 const DEFAULT_NODE_SCALE = 1
 const DEFAULT_GRAPH_SPACING = 1
-const GRAPH_SPACING_DEBOUNCE_MS = 180
 const WORKER_LAYOUT_NODE_THRESHOLD = 220
 
 type HoverState = { node: string; neighbors: Set<string> } | null
@@ -80,10 +79,16 @@ function mixColor(color1: string, color2: string, ratio: number): string {
   return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`
 }
 
-function nodeSize(linkCount: number, maxLinks: number): number {
+function graphDensityScale(nodeCount: number): number {
+  if (nodeCount <= 150) return 1
+  return Math.max(0.35, Math.sqrt(150 / nodeCount))
+}
+
+function nodeSize(linkCount: number, maxLinks: number, nodeCount: number, userScale: number): number {
   if (maxLinks === 0) return BASE_NODE_SIZE
   const ratio = linkCount / maxLinks
-  return BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
+  const size = BASE_NODE_SIZE + Math.sqrt(ratio) * (MAX_NODE_SIZE - BASE_NODE_SIZE)
+  return size * graphDensityScale(nodeCount) * userScale
 }
 
 function layoutIterations(nodeCount: number): number {
@@ -152,7 +157,19 @@ const positionCache = new Map<string, { x: number; y: number }>()
 let lastLayoutDataKey = ""
 let pendingLayoutDataKey = ""
 
-function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: GraphEdge[]; colorMode: ColorMode }) {
+function GraphLoader({
+  nodes,
+  edges,
+  colorMode,
+  nodeScale,
+  graphSpacing,
+}: {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  colorMode: ColorMode
+  nodeScale: number
+  graphSpacing: number
+}) {
   const loadGraph = useLoadGraph()
   const sigma = useSigma()
 
@@ -175,7 +192,7 @@ function GraphLoader({ nodes, edges, colorMode }: { nodes: GraphNode[]; edges: G
         type: "circle",
         x: cached?.x ?? Math.random() * 100,
         y: cached?.y ?? Math.random() * 100,
-        size: nodeSize(node.linkCount, maxLinks),
+        size: nodeSize(node.linkCount, maxLinks, nodes.length, nodeScale),
         color,
         label: node.label,
         nodeType: node.type,
@@ -480,6 +497,8 @@ export function GraphView() {
   const [hoverState, setHoverState] = useState<HoverState>(null)
   const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set())
   const [sigmaKey, setSigmaKey] = useState(0)
+  const nodeScale = DEFAULT_NODE_SCALE
+  const graphSpacing = DEFAULT_GRAPH_SPACING
   const [isResizing, setIsResizing] = useState(false)
   const [legendCollapsed, setLegendCollapsed] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
