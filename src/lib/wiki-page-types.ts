@@ -31,6 +31,8 @@ export function inferWikiTypeFromPath(path: string, fileName?: string): string |
   }
   const name = (fileName ?? normalized.split("/").pop() ?? "").toLowerCase()
   if (name === "overview.md" || normalized.includes("/overview.md")) return "overview"
+  const customDir = normalized.match(/(?:^|\/)wiki\/([^/.][^/]*)\/[^/]+\.md$/)?.[1]
+  if (customDir) return customDir
   return null
 }
 
@@ -38,5 +40,9 @@ export function wikiTypeLabel(type: string): string {
   if (type === "thesis") return "Thesis"
   if (type === "methodology") return "Methodology"
   if (type === "finding") return "Finding"
-  return type.charAt(0).toUpperCase() + type.slice(1)
+  return type
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
 }

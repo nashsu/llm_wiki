@@ -20,7 +20,11 @@ describe("inferWikiTypeFromPath", () => {
   it("handles Windows separators and overview pages", () => {
     expect(inferWikiTypeFromPath("C:\\wiki\\findings\\result.md")).toBe("finding")
     expect(inferWikiTypeFromPath("/project/wiki/overview.md")).toBe("overview")
-    expect(inferWikiTypeFromPath("/project/wiki/misc/foo.md")).toBeNull()
+  })
+
+  it("uses custom wiki subdirectories as dynamic types", () => {
+    expect(inferWikiTypeFromPath("/project/wiki/people/ada-lovelace.md")).toBe("people")
+    expect(inferWikiTypeFromPath("/project/wiki/technologies/vector-db.md")).toBe("technologies")
   })
 })
 
@@ -29,6 +33,7 @@ describe("wikiTypeLabel", () => {
     expect(wikiTypeLabel("finding")).toBe("Finding")
     expect(wikiTypeLabel("thesis")).toBe("Thesis")
     expect(wikiTypeLabel("methodology")).toBe("Methodology")
+    expect(wikiTypeLabel("custom-topic")).toBe("Custom Topic")
   })
 
   it("keeps generation prompt type list aligned with research-template types", () => {

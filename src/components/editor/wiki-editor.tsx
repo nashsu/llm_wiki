@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Editor, rootCtx, defaultValueCtx } from "@milkdown/kit/core"
 import { commonmark } from "@milkdown/kit/preset/commonmark"
 import { gfm } from "@milkdown/kit/preset/gfm"
@@ -16,10 +16,11 @@ import { WikiReader } from "@/components/editor/wiki-reader"
 
 interface WikiEditorInnerProps {
   content: string
-  onSave: (markdown: string) => void
+  onSave: (markdown: string, options?: { immediate?: boolean }) => void
+  onMarkdownChange: (markdown: string) => void
 }
 
-function WikiEditorInner({ content, onSave }: WikiEditorInnerProps) {
+function WikiEditorInner({ content, onSave, onMarkdownChange }: WikiEditorInnerProps) {
   // Milkdown fires `markdownUpdated` once on initial parse before any
   // user interaction. That one emit must not be forwarded as a save,
   // otherwise just opening a file can overwrite its content with
@@ -40,6 +41,7 @@ function WikiEditorInner({ content, onSave }: WikiEditorInnerProps) {
               initialEmitConsumedRef.current = true
               return
             }
+            onMarkdownChange(markdown)
             onSave(markdown)
           })
         })
@@ -56,7 +58,7 @@ function WikiEditorInner({ content, onSave }: WikiEditorInnerProps) {
 
 interface WikiEditorProps {
   content: string
-  onSave: (markdown: string) => void
+  onSave: (markdown: string, options?: { immediate?: boolean }) => void
 }
 
 function wrapBareMathBlocks(text: string): string {
@@ -92,17 +94,39 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
   )
 
   const processedBody = useMemo(() => wrapBareMathBlocks(body), [body])
+  const latestBodyRef = useRef(processedBody)
+
+  useEffect(() => {
+    latestBodyRef.current = processedBody
+  }, [processedBody])
 
   const handleSave = useMemo(
-    () => (markdown: string) => onSave(rawBlock + markdown),
+    () => (markdown: string, options?: { immediate?: boolean }) => onSave(rawBlock + markdown, options),
     [onSave, rawBlock],
   )
 
+  const saveLatestNow = useCallback(() => {
+    onSave(rawBlock + latestBodyRef.current, { immediate: true })
+  }, [onSave, rawBlock])
+
   return (
-    <div className="relative h-full overflow-auto">
+    <div
+      className="relative h-full overflow-auto"
+      tabIndex={-1}
+      onKeyDownCapture={(event) => {
+        if (mode !== "edit") return
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+          event.preventDefault()
+          saveLatestNow()
+        }
+      }}
+    >
       <button
         type="button"
-        onClick={() => setMode((m) => (m === "read" ? "edit" : "read"))}
+        onClick={() => {
+          if (mode === "edit") saveLatestNow()
+          setMode((m) => (m === "read" ? "edit" : "read"))
+        }}
         title={mode === "read" ? "Edit (raw markdown)" : "Done editing"}
         className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
       >
@@ -119,7 +143,13 @@ export function WikiEditor({ content, onSave }: WikiEditorProps) {
         <MilkdownProvider>
           <div className="prose prose-invert min-w-0 max-w-none overflow-hidden p-6">
             {frontmatter && <FrontmatterPanel data={frontmatter} />}
-            <WikiEditorInner content={processedBody} onSave={handleSave} />
+            <WikiEditorInner
+              content={processedBody}
+              onSave={handleSave}
+              onMarkdownChange={(markdown) => {
+                latestBodyRef.current = markdown
+              }}
+            />
           </div>
         </MilkdownProvider>
       )}

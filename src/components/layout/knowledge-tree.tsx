@@ -9,7 +9,7 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
-import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 
 interface WikiPageInfo {
   path: string
@@ -32,7 +32,9 @@ const TYPE_CONFIG: Record<string, { icon: typeof FileText; label: string; color:
   query:       { icon: HelpCircle,  label: "Queries",      color: "text-green-500",  order: 9 },
 }
 
-const DEFAULT_CONFIG = { icon: FileText, label: "Other", color: "text-muted-foreground", order: 99 }
+function typeConfig(type: string): { icon: typeof FileText; label: string; color: string; order: number } {
+  return TYPE_CONFIG[type] ?? { icon: FileText, label: wikiTypeLabel(type), color: "text-muted-foreground", order: 99 }
+}
 
 export function KnowledgeTree() {
   const project = useWikiStore((s) => s.project)
@@ -135,8 +137,9 @@ export function KnowledgeTree() {
 
   // Sort groups by configured order
   const sortedGroups = [...grouped.entries()].sort((a, b) => {
-    const orderA = TYPE_CONFIG[a[0]]?.order ?? DEFAULT_CONFIG.order
-    const orderB = TYPE_CONFIG[b[0]]?.order ?? DEFAULT_CONFIG.order
+    const orderA = typeConfig(a[0]).order
+    const orderB = typeConfig(b[0]).order
+    if (orderA === orderB) return wikiTypeLabel(a[0]).localeCompare(wikiTypeLabel(b[0]))
     return orderA - orderB
   })
 
@@ -163,7 +166,7 @@ export function KnowledgeTree() {
         )}
 
         {sortedGroups.map(([type, items]) => {
-          const config = TYPE_CONFIG[type] ?? DEFAULT_CONFIG
+          const config = typeConfig(type)
           const Icon = config.icon
           const isExpanded = expandedTypes.has(type)
 

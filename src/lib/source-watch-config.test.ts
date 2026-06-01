@@ -34,4 +34,18 @@ describe("source watch config", () => {
     expect(isPathAllowedBySourceWatch("raw/sources/plan.private.md", config)).toBe(false)
     expect(isPathAllowedBySourceWatch("raw/sources/~$Document.docx", config)).toBe(false)
   })
+
+  it("normalizes comma-separated exclusion values from text fields", () => {
+    const config = normalizeSourceWatchConfig({
+      includeExtensions: ["md, pdf", "docx"],
+      excludeExtensions: ["json, yaml\nxml，dll"],
+      excludeDirs: [".git, node_modules", "drafts，wip"],
+      excludeGlobs: ["*.private.*, ~$*"],
+    })
+
+    expect(config.includeExtensions).toEqual(["md", "pdf", "docx"])
+    expect(config.excludeExtensions).toEqual(["json", "yaml", "xml", "dll"])
+    expect(config.excludeDirs).toEqual([".git", "node_modules", "drafts", "wip"])
+    expect(config.excludeGlobs).toEqual(["*.private.*", "~$*"])
+  })
 })

@@ -181,7 +181,7 @@ export function ActivityPanel() {
   // Build status text
   let statusText = ""
   if (queueSummary.processing > 0 || queueSummary.pending > 0) {
-    const done = queueSummary.total - queueSummary.pending - queueSummary.processing
+    const done = queueSummary.completed + queueSummary.failed
     statusText = `Queue: ${done}/${queueSummary.total}`
     if (queueSummary.failed > 0) statusText += ` (${queueSummary.failed} failed)`
   } else if (runningCount > 0) {
@@ -255,7 +255,7 @@ export function ActivityPanel() {
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1 gap-2">
                 <span>Ingest Queue</span>
                 <span className="flex-1 text-right">
-                  {queueSummary.total - queueSummary.pending - queueSummary.processing}/{queueSummary.total} complete
+                  {queueSummary.completed + queueSummary.failed}/{queueSummary.total} complete
                 </span>
                 {queueSummary.pending + queueSummary.processing >= 2 && (
                   <button
@@ -279,7 +279,7 @@ export function ActivityPanel() {
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${((queueSummary.total - queueSummary.pending - queueSummary.processing) / Math.max(queueSummary.total, 1)) * 100}%` }}
+                  style={{ width: `${((queueSummary.completed + queueSummary.failed) / Math.max(queueSummary.total, 1)) * 100}%` }}
                 />
               </div>
             </div>

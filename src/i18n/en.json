@@ -617,7 +617,11 @@
 			"thesis": "Thesis",
 			"methodology": "Methodology",
 			"other": "Other"
-		}
+		},
+		"displayTuning": "Display tuning",
+		"nodeSize": "Node size",
+		"spacing": "Spacing",
+		"displayTuningHint": "Use these controls to keep dense graphs readable on smaller screens."
 	},
 	"time": {
 		"justNow": "just now",

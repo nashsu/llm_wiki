@@ -617,7 +617,11 @@
 			"thesis": "论点",
 			"methodology": "方法论",
 			"other": "其他"
-		}
+		},
+		"displayTuning": "显示调节",
+		"nodeSize": "节点大小",
+		"spacing": "间距",
+		"displayTuningHint": "用这些控制项让大型关系图在小屏幕上更容易阅读。"
 	},
 	"time": {
 		"justNow": "刚刚",

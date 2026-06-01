@@ -33,7 +33,16 @@
  *      — semantically what the model wanted (a list of wikilinks),
  *      but not valid YAML flow syntax.
  *
- * This sanitizer rewrites all three shapes into the standard
+ *   4. A frontmatter payload whose opening `---` is missing but whose
+ *      closing `---` is present, e.g.
+ *
+ *          type: entity
+ *          title: Foo
+ *          ---
+ *
+ *      — common when the model starts "inside" the YAML block.
+ *
+ * This sanitizer rewrites these shapes into the standard
  * `---\n…\n---\n` frontmatter form before write. It's deliberately
  * conservative: each pattern is anchored at the very start of the
  * document (or at top-level frontmatter scope), so a legitimate
@@ -63,6 +72,10 @@ export function sanitizeIngestedFileContent(content: string): string {
   // key" rather than "produce a markdown document with a
   // frontmatter block".
   cleaned = stripFrontmatterKeyPrefix(cleaned)
+
+  // (2.5) Repair a missing opening frontmatter fence when the model
+  // clearly emitted frontmatter lines followed by a closing fence.
+  cleaned = addMissingOpeningFrontmatterFence(cleaned)
 
   // (3) Repair `key: [[a]], [[b]], [[c]]` lines inside the
   // frontmatter block so they're valid YAML. Body wikilinks are
@@ -96,6 +109,30 @@ function stripFrontmatterKeyPrefix(content: string): string {
   const m = content.match(/^[ \t]*frontmatter\s*:\s*\r?\n(?=[ \t]*---\s*\r?\n)/)
   if (!m) return content
   return content.slice(m[0].length)
+}
+
+function addMissingOpeningFrontmatterFence(content: string): string {
+  if (/^[ \t]*---\s*(\r?\n|$)/.test(content)) return content
+
+  const lines = content.split(/\r?\n/)
+  const firstContentIdx = lines.findIndex((line) => line.trim().length > 0)
+  if (firstContentIdx < 0) return content
+
+  const first = lines[firstContentIdx].trim()
+  if (!/^(type|title|created|updated|tags|related|sources)\s*:/i.test(first)) {
+    return content
+  }
+
+  const searchEnd = Math.min(lines.length, firstContentIdx + 30)
+  for (let i = firstContentIdx + 1; i < searchEnd; i += 1) {
+    const trimmed = lines[i].trim()
+    if (trimmed === "---") {
+      return `---\n${lines.slice(firstContentIdx).join("\n")}`
+    }
+    if (/^#{1,6}\s+/.test(trimmed)) break
+  }
+
+  return content
 }
 
 /**
