@@ -26,7 +26,7 @@ const APP_WRITE_IGNORE_MS: i64 = 4_000;
 const QUEUE_EMIT_EVERY: usize = 25;
 const LINUX_RESCAN_INTERVAL_MS: i64 = 10_000;
 const DEFAULT_SOURCE_WATCH_CONFIG_JSON: &str =
-    include_str!("../../../src/lib/source-watch-defaults.json");
+    include_str!("../../../../src/lib/source-watch-defaults.json");
 
 static QUEUE_LOCKS: OnceLock<Mutex<BTreeMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
 static APP_WRITE_IGNORES: OnceLock<Mutex<BTreeMap<String, i64>>> = OnceLock::new();

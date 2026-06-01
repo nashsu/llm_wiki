@@ -1,9 +1,10 @@
 pub mod agent;
 pub mod claude_cli;
 pub mod codex_cli;
-pub mod extract_images;
-pub mod file_sync;
-pub mod fs;
+pub mod file_ops;
 pub mod project;
 pub mod search;
-pub mod vectorstore;
+
+// Backward-compatible re-exports for lib.rs / api_server.rs paths
+pub use file_ops::{extract_images, file_sync, fs};
+pub use search::vectorstore;

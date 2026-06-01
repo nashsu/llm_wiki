@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
-use crate::commands::vectorstore;
+use super::vectorstore;
 use crate::panic_guard::run_guarded_async;
 
 const DEFAULT_RESULTS: usize = 20;
