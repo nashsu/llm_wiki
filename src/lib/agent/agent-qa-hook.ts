@@ -1,18 +1,17 @@
 /**
- * QA Hook Agent (Phase 3.65-E — Issue #34)
+ * QA Hook Agent (Phase 3.65-E — Issue #34, refined by #37)
  *
  * Automatically extracts key insights from agent conversations and saves
- * them as QA pages in the wiki. Triggered fire-and-forget from the
- * onDone callback after a conversation ends.
+ * them as QA pages in the wiki.
  *
- * Data flow:
- *   conversation ends → onDone → runQaHook()
- *     1. Read messages from useChatStore
- *     2. shouldExtractQa() — skip greetings / too short
- *     3. Scan wiki/qa/ for dedup
- *     4. webSearch for external context (optional)
- *     5. LLM extracts structured QA
- *     6. Validate frontmatter → writeFile
+ * Trigger mechanism (Issue #37 — dirty flag + delayed flush):
+ *   1. onDone → markConversationDirty(convId) — just marks, no LLM call
+ *   2. activeConversationId changes → flush old conversation QA
+ *   3. beforeunload → persist pending set to localStorage
+ *   4. App startup → loadPendingQa() + flush stale entries
+ *
+ * Data flow per conversation:
+ *   mark dirty → flush → shouldExtractQa → dedup → LLM → validate → writeFile
  */
 
 import { readFile, listDirectory, writeFile, createDirectory } from "@/commands/fs"
@@ -35,6 +34,126 @@ export interface QaHookResult {
   skipped?: boolean
   skipReason?: string
   error?: string
+}
+
+// ── Pending Queue (dirty flag) ───────────────────────────────────────────────
+
+const pendingQa = new Set<string>()
+const STORAGE_KEY = "llm-wiki:pendingQa"
+
+/** Mark a conversation as needing QA extraction (called on each onDone). */
+export function markConversationDirty(convId: string): void {
+  pendingQa.add(convId)
+  persistPendingQa()
+}
+
+/** Remove a conversation from the pending queue (e.g. when deleted). */
+export function unmarkConversation(convId: string): void {
+  pendingQa.delete(convId)
+  persistPendingQa()
+}
+
+/** Check if a conversation has pending QA. */
+export function isConversationPending(convId: string): boolean {
+  return pendingQa.has(convId)
+}
+
+/** Get all pending conversation IDs (for testing). */
+export function getPendingQaIds(): string[] {
+  return [...pendingQa]
+}
+
+/** Persist pending set to localStorage. */
+function persistPendingQa(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...pendingQa]))
+  } catch {
+    // localStorage unavailable (SSR, private browsing edge case)
+  }
+}
+
+/**
+ * Load pending QA set from localStorage on app startup.
+ * Returns the loaded conversation IDs for the caller to decide what to do.
+ */
+export function loadPendingQa(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return []
+    const ids = JSON.parse(raw) as string[]
+    for (const id of ids) {
+      pendingQa.add(id)
+    }
+    return ids
+  } catch {
+    return []
+  }
+}
+
+/** Clear localStorage after all pending QAs are flushed. */
+function clearPersistedPendingQa(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+// ── Flush (actual QA extraction) ─────────────────────────────────────────────
+
+/**
+ * Flush a single conversation: run QA extraction and remove from pending.
+ * Designed to be called fire-and-forget.
+ */
+export async function flushQaForConversation(
+  convId: string,
+  messages: DisplayMessage[],
+  projectPath: string,
+  llmConfig: LlmConfig,
+  searchConfig: SearchApiConfig,
+): Promise<QaHookResult> {
+  // Only process if actually pending
+  if (!pendingQa.has(convId)) {
+    return { ok: true, skipped: true, skipReason: "not-pending" }
+  }
+
+  // Get messages for this specific conversation
+  const convMessages = messages.filter((m) => m.conversationId === convId)
+  if (convMessages.length === 0) {
+    pendingQa.delete(convId)
+    persistPendingQa()
+    return { ok: true, skipped: true, skipReason: "no-messages" }
+  }
+
+  try {
+    const result = await runQaExtraction(projectPath, llmConfig, searchConfig, convMessages)
+    return result
+  } finally {
+    pendingQa.delete(convId)
+    persistPendingQa()
+    if (pendingQa.size === 0) {
+      clearPersistedPendingQa()
+    }
+  }
+}
+
+/**
+ * Flush all pending conversations. Called on app startup for stale entries.
+ * Returns results for each flushed conversation.
+ */
+export async function flushAllPendingQa(
+  messages: DisplayMessage[],
+  projectPath: string,
+  llmConfig: LlmConfig,
+  searchConfig: SearchApiConfig,
+): Promise<QaHookResult[]> {
+  const results: QaHookResult[] = []
+  const ids = [...pendingQa]
+  for (const convId of ids) {
+    const r = await flushQaForConversation(convId, messages, projectPath, llmConfig, searchConfig)
+    results.push(r)
+  }
+  return results
 }
 
 // ── Skip Logic ───────────────────────────────────────────────────────────────
@@ -185,13 +304,13 @@ Rules:
 - Output ONLY the wiki page content or "SKIP", nothing else.`
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ── Core Extraction ──────────────────────────────────────────────────────────
 
 /**
- * Run the QA extraction hook on a finished conversation.
- * Designed to be called fire-and-forget from onDone.
+ * Run the QA extraction on a set of messages.
+ * This is the internal implementation — callers should use flushQaForConversation.
  */
-export async function runQaHook(
+async function runQaExtraction(
   projectPath: string,
   llmConfig: LlmConfig,
   searchConfig: SearchApiConfig,
@@ -217,7 +336,6 @@ export async function runQaHook(
   // Step 3: External search (supplementary, non-blocking)
   let externalResults: WebSearchResult[] = []
   try {
-    // Build search query from the last user message
     if (lastUserMsg) {
       const query = lastUserMsg.content.slice(0, 200)
       externalResults = await webSearch(query, searchConfig, 3)

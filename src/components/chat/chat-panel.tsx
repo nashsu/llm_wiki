@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { deleteFile, listDirectory } from "@/commands/fs";
 import { Button } from "@/components/ui/button";
-import { runQaHook } from "@/lib/agent/agent-qa-hook";
+import { markConversationDirty, flushQaForConversation, unmarkConversation } from "@/lib/agent/agent-qa-hook";
 import { streamAgent } from "@/lib/agent/agent-transport";
 import { API_SERVER_BASE_URL } from "@/lib/api-server-constants";
 import { executeIngestWrites } from "@/lib/ingest";
@@ -52,7 +52,18 @@ function ConversationSidebar() {
 					variant="outline"
 					size="sm"
 					className="w-full gap-2"
-					onClick={() => createConversation()}
+					onClick={() => {
+							const oldId = useChatStore.getState().activeConversationId;
+							if (oldId) {
+								const msgs = useChatStore.getState().messages;
+								const s = useWikiStore.getState();
+								if (s.project && msgs.length > 0) {
+									flushQaForConversation(oldId, msgs, s.project.path, s.llmConfig, s.searchApiConfig)
+										.catch((err) => console.warn("[QA Hook] flush failed:", err));
+								}
+							}
+							createConversation();
+						}}
 				>
 					<Plus className="h-3.5 w-3.5" />
 					{t("chat.newChat")}
@@ -76,7 +87,18 @@ function ConversationSidebar() {
 										? "bg-primary/10 text-primary"
 										: "hover:bg-accent text-foreground"
 								}`}
-								onClick={() => setActiveConversation(conv.id)}
+								onClick={() => {
+								const oldId = useChatStore.getState().activeConversationId;
+								if (oldId && oldId !== conv.id) {
+									const msgs = useChatStore.getState().messages;
+									const s = useWikiStore.getState();
+									if (s.project && msgs.length > 0) {
+										flushQaForConversation(oldId, msgs, s.project.path, s.llmConfig, s.searchApiConfig)
+											.catch((err) => console.warn("[QA Hook] flush failed:", err));
+									}
+								}
+								setActiveConversation(conv.id);
+							}}
 								onMouseEnter={() => setHoveredId(conv.id)}
 								onMouseLeave={() => setHoveredId(null)}
 							>
@@ -89,7 +111,8 @@ function ConversationSidebar() {
 											className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
 											onClick={(e) => {
 												e.stopPropagation();
-												deleteConversation(conv.id);
+												unmarkConversation(conv.id);
+											deleteConversation(conv.id);
 												// Delete persisted chat file
 												const proj = useWikiStore.getState().project;
 												if (proj) {
@@ -222,24 +245,9 @@ export function ChatPanel() {
 					onDone: () => {
 						const text = useChatStore.getState().streamingContent;
 						finalizeStream(text || "");
-						// QA Hook: fire-and-forget extraction after conversation ends
-						const qaMsgs = useChatStore.getState().messages;
-						const qaStore = useWikiStore.getState();
-						if (qaStore.project && qaMsgs.length > 0) {
-							runQaHook(
-								qaStore.project.path,
-								qaStore.llmConfig,
-								qaStore.searchApiConfig,
-								qaMsgs,
-							)
-								.then((r) => {
-									if (!r.ok)
-										console.warn("[QA Hook] validation failed:", r.error);
-								})
-								.catch((err) =>
-									console.warn("[QA Hook] extraction failed:", err),
-								);
-						}
+						// QA Hook: mark conversation dirty (defer extraction to conversation switch)
+						const qaConvId = useChatStore.getState().activeConversationId;
+						if (qaConvId) markConversationDirty(qaConvId);
 						setAgentRunning(false);
 						abortRef.current = null;
 					},
