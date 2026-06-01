@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use calamine::{open_workbook_auto, Data, Reader};
 
-use crate::commands::file_sync;
+use super::file_sync;
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::FileNode;
 
@@ -133,7 +133,7 @@ fn write_cache(original: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent).ok();
     }
-    crate::commands::file_sync::mark_app_write_path(&cache_path);
+    super::file_sync::mark_app_write_path(&cache_path);
     fs::write(&cache_path, text).map_err(|e| format!("Failed to write cache: {}", e))
 }
 
@@ -333,7 +333,7 @@ pub(crate) fn pdfium() -> Result<&'static pdfium_render::prelude::Pdfium, String
 /// pdfium lock internally. We must NOT take it here too —
 /// `std::sync::Mutex` is non-reentrant.
 fn extract_pdf_text(path: &str) -> Result<String, String> {
-    use crate::commands::extract_images::{extract_pdf_markdown, ExtractOptions};
+    use super::extract_images::{extract_pdf_markdown, ExtractOptions};
 
     let p = Path::new(path);
     let parent = p.parent();
