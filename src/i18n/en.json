@@ -301,7 +301,9 @@
 				"legacyPromptTitle": "Legacy per-page index detected",
 				"legacyPromptBody": "Your project has {{count}} entries in the old per-page vector store. The new per-chunk index gives better retrieval but needs a one-time re-embed. Run \"Re-index all pages\" to upgrade.",
 				"dropLegacy": "Drop legacy index",
-				"dropLegacyDone": "Legacy index removed."
+				"dropLegacyDone": "Legacy index removed.",
+				"extraHeaders": "Custom request headers",
+				"extraHeadersHint": "Optional. One per line, formatted `Header-Name: value`. Used for gateways that route by request header — e.g. mify needs `X-Model-Provider-Id: siliconflow`. Authorization, Content-Type, Host, Content-Length, and x-goog-api-key are managed by the client and will be ignored."
 			},
 			"multimodal": {
 				"title": "Image Captioning",

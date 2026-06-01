@@ -131,6 +131,14 @@ interface EmbeddingConfig {
 	 */
 	maxChunkChars?: number;
 	overlapChunkChars?: number;
+	/**
+	 * Extra HTTP headers to send with every embedding request, e.g.
+	 *   { "X-Model-Provider-Id": "siliconflow" }
+	 * for gateways like mify that route by header. Reserved names
+	 * (Authorization, Content-Type, Host, Content-Length, x-goog-api-key)
+	 * are ignored — they're managed by the embedding client itself.
+	 */
+	extraHeaders?: Record<string, string>;
 }
 
 /**

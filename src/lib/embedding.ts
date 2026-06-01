@@ -28,6 +28,26 @@ import { normalizePath } from "@/lib/path-utils"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
 
+const RESERVED_EMBEDDING_HEADER_NAMES = new Set([
+  "authorization",
+  "content-type",
+  "host",
+  "content-length",
+  "x-goog-api-key",
+])
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+function isSafeExtraHeader(name: string, value: string): boolean {
+  const trimmedName = name.trim()
+  const trimmedValue = value.trim()
+  return (
+    trimmedName.length > 0 &&
+    trimmedValue.length > 0 &&
+    HTTP_HEADER_NAME_RE.test(trimmedName) &&
+    !RESERVED_EMBEDDING_HEADER_NAMES.has(trimmedName.toLowerCase())
+  )
+}
+
 // ── Error surfacing ──────────────────────────────────────────────────────
 
 /**
@@ -92,6 +112,14 @@ export async function fetchEmbedding(
       headers["x-goog-api-key"] = cfg.apiKey
     } else {
       headers.Authorization = `Bearer ${cfg.apiKey}`
+    }
+  }
+  if (cfg.extraHeaders) {
+    for (const [k, v] of Object.entries(cfg.extraHeaders)) {
+      const name = k.trim()
+      const value = v.trim()
+      if (!isSafeExtraHeader(name, value)) continue
+      headers[name] = value
     }
   }
 

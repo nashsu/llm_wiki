@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react"
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -64,7 +64,7 @@ interface ChatMessageProps {
   onRegenerate?: () => void
 }
 
-export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -123,6 +123,12 @@ export function ChatMessage({ message, isLastAssistant, onRegenerate }: ChatMess
     </div>
   )
 }
+
+export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
+  prev.message === next.message
+  && prev.isLastAssistant === next.isLastAssistant
+  && prev.onRegenerate === next.onRegenerate
+)
 
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)
