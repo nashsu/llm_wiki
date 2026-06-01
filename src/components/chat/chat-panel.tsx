@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { deleteFile, listDirectory } from "@/commands/fs";
 import { Button } from "@/components/ui/button";
-import { markConversationDirty, flushQaForConversation, unmarkConversation } from "@/lib/agent/agent-qa-hook";
+import { markConversationDirty, flushQaForConversation, flushAllPendingQa, unmarkConversation, loadPendingQa } from "@/lib/agent/agent-qa-hook";
 import { streamAgent } from "@/lib/agent/agent-transport";
 import { API_SERVER_BASE_URL } from "@/lib/api-server-constants";
 import { executeIngestWrites } from "@/lib/ingest";
@@ -168,6 +168,19 @@ export function ChatPanel() {
 	const activeMessages = activeConversationId
 		? allMessages.filter((m) => m.conversationId === activeConversationId)
 		: [];
+
+	// Startup: flush any QA pending from last session
+	useEffect(() => {
+		const pendingIds = loadPendingQa();
+		if (pendingIds.length > 0) {
+			const msgs = useChatStore.getState().messages;
+			const s = useWikiStore.getState();
+			if (s.project && msgs.length > 0) {
+				flushAllPendingQa(msgs, s.project.path, s.llmConfig, s.searchApiConfig)
+					.catch((err) => console.warn("[QA Hook] startup flush failed:", err));
+			}
+		}
+	}, []);
 
 	const project = useWikiStore((s) => s.project);
 	const llmConfig = useWikiStore((s) => s.llmConfig);

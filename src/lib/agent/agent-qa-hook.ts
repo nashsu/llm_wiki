@@ -150,8 +150,13 @@ export async function flushAllPendingQa(
   const results: QaHookResult[] = []
   const ids = [...pendingQa]
   for (const convId of ids) {
-    const r = await flushQaForConversation(convId, messages, projectPath, llmConfig, searchConfig)
-    results.push(r)
+    try {
+      const r = await flushQaForConversation(convId, messages, projectPath, llmConfig, searchConfig)
+      results.push(r)
+    } catch (err) {
+      // Capture per-conversation errors so one failure doesn't block others
+      results.push({ ok: false, error: err instanceof Error ? err.message : String(err) })
+    }
   }
   return results
 }

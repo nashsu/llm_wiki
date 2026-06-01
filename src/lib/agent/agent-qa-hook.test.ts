@@ -3,10 +3,10 @@ import {
   shouldExtractQa,
   markConversationDirty,
   flushQaForConversation,
+  flushAllPendingQa,
   unmarkConversation,
   isConversationPending,
   getPendingQaIds,
-  flushAllPendingQa,
 } from "./agent-qa-hook"
 import type { DisplayMessage } from "@/stores/chat-store"
 
@@ -53,7 +53,6 @@ describe("shouldExtractQa", () => {
 
 describe("dirty flag management", () => {
   beforeEach(() => {
-    // Clear all pending before each test
     for (const id of getPendingQaIds()) {
       unmarkConversation(id)
     }
@@ -83,7 +82,7 @@ describe("dirty flag management", () => {
   })
 })
 
-// ── flushQaForConversation — mock setup ──────────────────────────────────────
+// ── Mock setup ───────────────────────────────────────────────────────────────
 
 const fsMock = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -217,6 +216,22 @@ describe("flushQaForConversation", () => {
     ).rejects.toThrow("LLM error")
     expect(isConversationPending("conv-err")).toBe(false)
   })
+
+  it("skips when existing QA has matching title (dedup)", async () => {
+    markConversationDirty("conv-dedup")
+    listDirectoryMock.mockResolvedValueOnce([
+      { name: "existing.md", path: "/project/wiki/qa/existing.md", is_dir: false },
+    ])
+    fsMock.files.set("/project/wiki/qa/existing.md",
+      "---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\n---\n\n# Q: What is RAG?\n\n## A: existing answer",
+    )
+    const messages = [msg("user", "What is RAG?", "conv-dedup"), msg("assistant", longAnswer, "conv-dedup")]
+    const result = await flushQaForConversation("conv-dedup", messages, "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(result.ok).toBe(true)
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe("duplicate")
+    expect(isConversationPending("conv-dedup")).toBe(false)
+  })
 })
 
 // ── flushAllPendingQa ────────────────────────────────────────────────────────
@@ -246,6 +261,35 @@ describe("flushAllPendingQa", () => {
     ]
     const results = await flushAllPendingQa(messages, "/project", { model: "test" } as never, { provider: "none" } as never)
     expect(results).toHaveLength(2)
+    expect(getPendingQaIds()).toHaveLength(0)
+  })
+
+  it("handles mixed results: success + error + skip", async () => {
+    markConversationDirty("conv-ok")
+    markConversationDirty("conv-err")
+    markConversationDirty("conv-skip")
+    const messages = [
+      msg("user", "What is RAG?", "conv-ok"),
+      msg("assistant", longAnswer, "conv-ok"),
+      msg("user", "hi", "conv-skip"),
+      msg("assistant", "Hello!", "conv-skip"),
+      msg("user", "What is RAG?", "conv-err"),
+      msg("assistant", longAnswer, "conv-err"),
+    ]
+    let callCount = 0
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      callCount++
+      if (callCount === 2) {
+        h.onError?.(new Error("LLM error"))
+        return
+      }
+      h.onToken("---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\ncreated: 2026-05-31\n---\n\n# Q: What is RAG?\n\n## A: answer\n\n## Key Insights\n\n- Insight 1\n")
+      h.onDone()
+    })
+
+    const results = await flushAllPendingQa(messages, "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(results).toHaveLength(3)
+    // All removed from pending despite mixed results (finally block)
     expect(getPendingQaIds()).toHaveLength(0)
   })
 })
