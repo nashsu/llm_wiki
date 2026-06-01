@@ -637,12 +637,10 @@ export function GraphView() {
     [dismissedInsights, knowledgeGaps, knowledgeGapKey],
   )
 
-  const dismissInsight = useCallback((key: string, ids?: Set<string>) => {
+  const dismissInsight = useCallback((key: string, _ids?: Set<string>) => {
     setDismissedInsights((prev) => new Set([...prev, key]))
-    if (ids && highlightedNodes.size === ids.size && [...ids].every((id) => highlightedNodes.has(id))) {
-      setHighlightedNodes(new Set())
-    }
-  }, [highlightedNodes])
+    setHighlightedNodes(new Set())
+  }, [])
 
   const handleResearchClick = useCallback(async (gapTitle: string, gapDescription: string, gapType: string, dismissKey?: string) => {
     const store = useWikiStore.getState()

@@ -64,7 +64,6 @@ export function PreviewPanel() {
       if (markdown === lastLoadedRef.current) return
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       if (options?.immediate) {
-        setFileContent(markdown)
         writeNow(selectedFile, markdown, true)
         return
       }
