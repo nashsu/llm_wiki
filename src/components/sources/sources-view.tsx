@@ -30,6 +30,7 @@ export function SourcesView() {
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
   const [sources, setSources] = useState<FileNode[]>([])
   const [importing, setImporting] = useState(false)
@@ -137,7 +138,7 @@ export function SourcesView() {
     setImporting(true)
     const paths = Array.isArray(selected) ? selected : [selected]
     try {
-      await importSourceFiles(project, paths, llmConfig)
+      await importSourceFiles(project, paths, llmConfig, sourceWatchConfig)
       await loadSources()
     } finally {
       setImporting(false)
@@ -156,7 +157,7 @@ export function SourcesView() {
 
     setImporting(true)
     try {
-      await importSourceFolder(project, selected, llmConfig)
+      await importSourceFolder(project, selected, llmConfig, sourceWatchConfig)
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)

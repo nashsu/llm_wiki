@@ -72,6 +72,19 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("my-paper.pdf")
   })
 
+  it("makes project schema routing authoritative over default entity and concept folders", () => {
+    const prompt = buildGenerationPrompt(
+      "Use wiki/people/ for people. Use wiki/technologies/ for technical methods.",
+      "",
+      "",
+      "source.pdf",
+    )
+    expect(prompt).toContain("## Project Schema and Routing (AUTHORITATIVE)")
+    expect(prompt).toContain("write pages into those schema-defined folders")
+    expect(prompt).toContain("otherwise use wiki/entities/")
+    expect(prompt).not.toContain("Entity pages in wiki/entities/ for key entities")
+  })
+
   it("respects user setting regardless of source content language", () => {
     useWikiStore.getState().setOutputLanguage("English")
     const prompt = buildGenerationPrompt("", "", "", "x.pdf", undefined, "私は日本語の文章を書きます")

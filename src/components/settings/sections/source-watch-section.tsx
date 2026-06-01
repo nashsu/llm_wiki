@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { FolderSync, ShieldAlert } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
@@ -28,9 +28,35 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
   const { t } = useTranslation()
   const config = normalizeSourceWatchConfig(draft.sourceWatchConfig)
   const selected = useMemo(() => new Set(config.includeExtensions), [config.includeExtensions])
+  const [editingList, setEditingList] = useState<"dirs" | "extensions" | "globs" | null>(null)
+  const [excludeDirsText, setExcludeDirsText] = useState(() => joinList(config.excludeDirs))
+  const [excludeExtensionsText, setExcludeExtensionsText] = useState(() => joinList(config.excludeExtensions))
+  const [excludeGlobsText, setExcludeGlobsText] = useState(() => joinList(config.excludeGlobs))
+  const excludeDirsKey = config.excludeDirs.join("\0")
+  const excludeExtensionsKey = config.excludeExtensions.join("\0")
+  const excludeGlobsKey = config.excludeGlobs.join("\0")
+
+  useEffect(() => {
+    if (editingList !== "dirs") setExcludeDirsText(joinList(config.excludeDirs))
+    if (editingList !== "extensions") setExcludeExtensionsText(joinList(config.excludeExtensions))
+    if (editingList !== "globs") setExcludeGlobsText(joinList(config.excludeGlobs))
+  }, [editingList, excludeDirsKey, excludeExtensionsKey, excludeGlobsKey])
 
   const updateConfig = (patch: Partial<typeof config>) => {
     setDraft("sourceWatchConfig", normalizeSourceWatchConfig({ ...config, ...patch }))
+  }
+
+  const finishListEdit = (field: "dirs" | "extensions" | "globs", value: string) => {
+    const normalized = normalizeSourceWatchConfig({
+      ...config,
+      ...(field === "dirs" ? { excludeDirs: updateListValue(value) } : {}),
+      ...(field === "extensions" ? { excludeExtensions: updateListValue(value) } : {}),
+      ...(field === "globs" ? { excludeGlobs: updateListValue(value) } : {}),
+    })
+    setEditingList(null)
+    if (field === "dirs") setExcludeDirsText(joinList(normalized.excludeDirs))
+    if (field === "extensions") setExcludeExtensionsText(joinList(normalized.excludeExtensions))
+    if (field === "globs") setExcludeGlobsText(joinList(normalized.excludeGlobs))
   }
 
   const toggleExtension = (ext: string, checked: boolean) => {
@@ -179,8 +205,13 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             {t("settings.sections.sourceWatch.excludeDirs", { defaultValue: "Excluded folders" })}
           </span>
           <textarea
-            value={joinList(config.excludeDirs)}
-            onChange={(event) => updateConfig({ excludeDirs: updateListValue(event.target.value) })}
+            value={excludeDirsText}
+            onFocus={() => setEditingList("dirs")}
+            onChange={(event) => {
+              setExcludeDirsText(event.target.value)
+              updateConfig({ excludeDirs: updateListValue(event.target.value) })
+            }}
+            onBlur={() => finishListEdit("dirs", excludeDirsText)}
             placeholder={t("settings.sections.sourceWatch.excludeDirsPlaceholder", {
               defaultValue: ".git, node_modules, drafts, subdir/drafts",
             })}
@@ -200,8 +231,13 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             {t("settings.sections.sourceWatch.excludeExtensions", { defaultValue: "Excluded file extensions" })}
           </span>
           <textarea
-            value={joinList(config.excludeExtensions)}
-            onChange={(event) => updateConfig({ excludeExtensions: updateListValue(event.target.value) })}
+            value={excludeExtensionsText}
+            onFocus={() => setEditingList("extensions")}
+            onChange={(event) => {
+              setExcludeExtensionsText(event.target.value)
+              updateConfig({ excludeExtensions: updateListValue(event.target.value) })
+            }}
+            onBlur={() => finishListEdit("extensions", excludeExtensionsText)}
             placeholder={t("settings.sections.sourceWatch.excludeExtensionsPlaceholder", {
               defaultValue: "tmp, bak, exe, dll, iso, dmg",
             })}
@@ -221,8 +257,13 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
             {t("settings.sections.sourceWatch.excludeGlobs", { defaultValue: "Excluded filename patterns" })}
           </span>
           <textarea
-            value={joinList(config.excludeGlobs)}
-            onChange={(event) => updateConfig({ excludeGlobs: updateListValue(event.target.value) })}
+            value={excludeGlobsText}
+            onFocus={() => setEditingList("globs")}
+            onChange={(event) => {
+              setExcludeGlobsText(event.target.value)
+              updateConfig({ excludeGlobs: updateListValue(event.target.value) })
+            }}
+            onBlur={() => finishListEdit("globs", excludeGlobsText)}
             disabled={!projectReady || !config.enabled}
             rows={2}
             className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"

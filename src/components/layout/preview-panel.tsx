@@ -46,26 +46,32 @@ export function PreviewPanel() {
       })
   }, [selectedFile, setFileContent])
 
+  const writeNow = useCallback((path: string, markdown: string, syncStore = false) => {
+    writeFile(path, markdown)
+      .then(() => {
+        lastLoadedRef.current = markdown
+        if (syncStore) setFileContent(markdown)
+      })
+      .catch((err) => console.error("Failed to save:", err))
+  }, [setFileContent])
+
   const handleSave = useCallback(
-    (markdown: string) => {
+    (markdown: string, options?: { immediate?: boolean }) => {
       if (!selectedFile) return
       // Ignore no-op saves from the editor's initial re-emit. Only write
       // when the user has actually changed the content relative to the
       // last disk read.
       if (markdown === lastLoadedRef.current) return
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (options?.immediate) {
+        writeNow(selectedFile, markdown, true)
+        return
+      }
       saveTimerRef.current = setTimeout(() => {
-        writeFile(selectedFile, markdown)
-          .then(() => {
-            // Our own write becomes the new "last loaded" — subsequent
-            // re-emits from Milkdown that match this content must not
-            // trigger another save.
-            lastLoadedRef.current = markdown
-          })
-          .catch((err) => console.error("Failed to save:", err))
+        writeNow(selectedFile, markdown, true)
       }, 1000)
     },
-    [selectedFile]
+    [selectedFile, setFileContent, writeNow]
   )
 
   useEffect(() => {

@@ -51,6 +51,19 @@ describe("sanitizeIngestedFileContent", () => {
     )
   })
 
+  it("repairs a missing opening frontmatter fence when the closing fence is present", () => {
+    const input =
+      "\n\ntype: entity\ntitle: \"Foo: Bar\"\nsources: [foo.pdf]\n---\n\n# Foo\n\nBody"
+    expect(sanitizeIngestedFileContent(input)).toBe(
+      "---\ntype: entity\ntitle: \"Foo: Bar\"\nsources: [foo.pdf]\n---\n\n# Foo\n\nBody",
+    )
+  })
+
+  it("does NOT invent frontmatter when a body line only looks like metadata", () => {
+    const input = "title: A research question\n\n# Notes\n\nBody"
+    expect(sanitizeIngestedFileContent(input)).toBe(input)
+  })
+
   it("does NOT strip the word `frontmatter:` when it appears mid-document (in prose)", () => {
     const input = "---\ntype: x\n---\n\nThe frontmatter: of this doc is above."
     expect(sanitizeIngestedFileContent(input)).toBe(input)

@@ -121,6 +121,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     // Task should have been processed and removed
     expect(mockAutoIngest).toHaveBeenCalledOnce()
     expect(getQueue()).toHaveLength(0)
+    expect(getQueueSummary()).toMatchObject({ completed: 1, total: 1 })
   })
 
   it("persists queue to disk on enqueue", async () => {
@@ -332,8 +333,25 @@ describe("ingest-queue — clearCompletedTasks & summary", () => {
 
     const summary = getQueueSummary()
     expect(summary.failed).toBe(1)
+    expect(summary.completed).toBe(0)
     expect(summary.pending).toBe(0)
     expect(summary.total).toBe(1)
+  })
+
+  it("tracks successful completions until a new idle queue starts", async () => {
+    mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "a.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+    ])
+    await flushMicrotasks(40)
+
+    expect(getQueueSummary()).toMatchObject({ completed: 2, failed: 0, total: 2 })
+
+    await enqueueIngest(TEST_ID, "c.md")
+    await flushMicrotasks(20)
+
+    expect(getQueueSummary()).toMatchObject({ completed: 1, failed: 0, total: 1 })
   })
 
   it("clearCompletedTasks drops failed tasks", async () => {
