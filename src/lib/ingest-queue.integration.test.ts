@@ -86,15 +86,15 @@ async function readQueueFile(): Promise<string> {
 describe("ingest-queue persistence — write", () => {
   it("writes .llm-wiki/ingest-queue.json after enqueue", async () => {
     await enqueueIngest(TEST_ID_A, "raw/sources/a.md")
+    let parsed: any[] = []
     await waitFor(async () => {
       try {
-        const c = await readQueueFile()
-        return JSON.parse(c).length === 1
+        parsed = JSON.parse(await readQueueFile())
+        return parsed.length === 1
       } catch {
         return false
       }
     })
-    const parsed = JSON.parse(await readQueueFile())
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
   })
 
@@ -103,15 +103,15 @@ describe("ingest-queue persistence — write", () => {
       { sourcePath: "raw/sources/a.md", folderContext: "" },
       { sourcePath: `${tmp.path}/raw/sources/a.md`, folderContext: "" },
     ])
+    let parsed: any[] = []
     await waitFor(async () => {
       try {
-        const parsed = JSON.parse(await readQueueFile())
+        parsed = JSON.parse(await readQueueFile())
         return parsed.length === 1
       } catch {
         return false
       }
     })
-    const parsed = JSON.parse(await readQueueFile())
     expect(parsed).toHaveLength(1)
     expect(parsed[0].sourcePath).toBe("raw/sources/a.md")
   })
@@ -121,15 +121,15 @@ describe("ingest-queue persistence — write", () => {
       { sourcePath: "raw/sources/注意力机制.pdf", folderContext: "AI研究 > 论文" },
       { sourcePath: "raw/日本語.md", folderContext: "" },
     ])
+    let parsed: Array<{ sourcePath: string; folderContext: string }> = []
     await waitFor(async () => {
       try {
-        const c = await readQueueFile()
-        return JSON.parse(c).length === 2
+        parsed = JSON.parse(await readQueueFile())
+        return parsed.length === 2
       } catch {
         return false
       }
     })
-    const parsed = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string; folderContext: string }>
     const paths = parsed.map((p) => p.sourcePath)
     expect(paths).toContain("raw/sources/注意力机制.pdf")
     expect(paths).toContain("raw/日本語.md")
@@ -153,15 +153,16 @@ describe("ingest-queue persistence — write", () => {
     })
 
     await enqueueIngest(TEST_ID_A, "second.md")
+    let arr: Array<{ sourcePath: string }> = []
     await waitFor(async () => {
       try {
-        return JSON.parse(await readQueueFile()).length === 2
+        arr = JSON.parse(await readQueueFile())
+        return arr.length === 2
       } catch {
         return false
       }
     })
 
-    const arr = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string }>
     expect(arr.map((t) => t.sourcePath)).toEqual(
       expect.arrayContaining(["first.md", "second.md"]),
     )
@@ -262,15 +263,15 @@ describe("ingest-queue persistence — restore round-trip", () => {
     await enqueueBatch(TEST_ID_A, [
       { sourcePath: "raw/sources/注意力.pdf", folderContext: "研究 > 深度学习" },
     ])
+    let onDisk: Array<{ sourcePath: string; folderContext: string }> = []
     await waitFor(async () => {
       try {
-        return JSON.parse(await readQueueFile()).length === 1
+        onDisk = JSON.parse(await readQueueFile())
+        return onDisk.length === 1
       } catch {
         return false
       }
     })
-    // Verify on-disk state before we blow away memory
-    const onDisk = JSON.parse(await readQueueFile()) as Array<{ sourcePath: string; folderContext: string }>
     expect(onDisk[0].sourcePath).toBe("raw/sources/注意力.pdf")
     expect(onDisk[0].folderContext).toBe("研究 > 深度学习")
 

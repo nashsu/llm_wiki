@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { ApiConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, GeneralConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -155,6 +155,23 @@ export async function saveApiConfig(config: ApiConfig): Promise<void> {
 export async function loadApiConfig(): Promise<ApiConfig | null> {
   const store = await getStore()
   return (await store.get<ApiConfig>(API_CONFIG_KEY)) ?? null
+}
+
+const GENERAL_CONFIG_KEY = "generalConfig"
+
+export async function saveGeneralConfig(config: GeneralConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(GENERAL_CONFIG_KEY, config)
+  // Force-flush. The Rust close handler and setup hook read
+  // app-state.json directly on disk; autoSave's 100ms debounce
+  // isn't fast enough if the user saves and immediately closes.
+  await store.save()
+}
+
+export async function loadGeneralConfig(): Promise<GeneralConfig> {
+  const store = await getStore()
+  const config = await store.get<GeneralConfig>(GENERAL_CONFIG_KEY)
+  return config ?? { autostart: false, closeBehavior: "ask" }
 }
 
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"

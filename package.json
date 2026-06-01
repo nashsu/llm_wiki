@@ -23,6 +23,7 @@
     "@react-sigma/core": "^5.0.6",
     "@tailwindcss/vite": "^4.2.2",
     "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-opener": "^2.5.4",

@@ -73,6 +73,10 @@ export interface SettingsDraft {
   apiEnabled: boolean
   apiAllowUnauthenticated: boolean
   apiToken: string
+
+  // General — autostart + close behavior
+  autostart: boolean
+  closeBehavior: "ask" | "exit" | "minimize"
 }
 
 export type DraftSetter = <K extends keyof SettingsDraft>(

@@ -213,6 +213,7 @@
       "sourceWatch": "Source Watch",
       "scheduledImport": "Scheduled Import",
       "apiServer": "API Server",
+      "general": "General",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",
@@ -478,6 +479,19 @@
         "endpointGraphNote": "?q=…&nodeType=…&limit=N — wikilinks graph derived from wiki/*.md.",
         "endpointRescanNote": "Triggers a backend rescan using your Source Watch config.",
         "endpointChatNote": "Not implemented yet (returns 501)."
+      },
+      "general": {
+        "title": "General",
+        "description": "Startup behavior and window close action. Changes apply on Save.",
+        "autostart": "Start on system boot",
+        "autostartHint": "Registers this app in the OS startup list. Disable to require manual launch.",
+        "closeBehavior": "Window close behavior",
+        "closeBehaviorSubtitle": "Default action when clicking the close button",
+        "closeBehaviorOptions": {
+          "ask": "Ask each time",
+          "exit": "Exit directly",
+          "minimize": "Minimize to tray"
+        }
       },
       "output": {
         "title": "Output Preferences",

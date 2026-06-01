@@ -7,6 +7,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { sourceSummarySlugFromIdentity } from "./source-identity"
+import { joinPath } from "@/lib/path-utils"
 
 vi.mock("@/commands/fs", () => realFs)
 
@@ -522,8 +523,8 @@ describe("autoIngest source summary paths", () => {
     )
 
     const canonicalSummary = `wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
-    const canonicalSummaryPath = path.join(tmp.path, canonicalSummary)
-    const staleSummaryPath = path.join(tmp.path, "wiki", "sources", "config.md")
+    const canonicalSummaryPath = joinPath(tmp.path, canonicalSummary)
+    const staleSummaryPath = joinPath(tmp.path, "wiki", "sources", "config.md")
     const content = await fs.readFile(canonicalSummaryPath, "utf8")
 
     expect(writtenPaths).toEqual([canonicalSummaryPath])

@@ -3,9 +3,23 @@ mod clip_server;
 mod commands;
 mod panic_guard;
 mod proxy;
+mod tray;
 mod types;
 
 use panic_guard::run_guarded;
+use std::sync::Mutex;
+
+pub struct CloseBehaviorState(pub Mutex<String>);
+
+#[tauri::command]
+fn set_close_behavior(state: tauri::State<CloseBehaviorState>, value: String) -> Result<(), String> {
+    if matches!(value.as_str(), "ask" | "exit" | "minimize") {
+        *state.0.lock().unwrap() = value;
+        Ok(())
+    } else {
+        Err(format!("Invalid close behavior: {value}"))
+    }
+}
 
 #[tauri::command]
 fn clip_server_status() -> String {
@@ -61,7 +75,22 @@ pub fn run() {
         // Ark's api/coding/v3, etc.) still work. Requests leave the app
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None::<Vec<&str>>,
+        ))
         .setup(|app| {
+            // Single instance — registered first in setup() so it
+            // activates before any other setup-time plugin init.
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }))?;
+
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
             use tauri::Manager;
@@ -87,6 +116,22 @@ pub fn run() {
             } else {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }
+            // Close behavior: read persisted preference from
+            // app-state.json so the close handler starts with the
+            // correct value before the frontend has a chance to
+            // push it via set_close_behavior IPC.
+            let close_behavior = if let Ok(dir) = app.path().app_data_dir() {
+                let store_path = dir.join("app-state.json");
+                std::fs::read_to_string(&store_path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("generalConfig")?.get("closeBehavior")?.as_str().map(String::from))
+                    .filter(|s| matches!(s.as_str(), "ask" | "exit" | "minimize"))
+                    .unwrap_or_else(|| "ask".to_string())
+            } else {
+                "ask".to_string()
+            };
+            app.manage(CloseBehaviorState(Mutex::new(close_behavior)));
             // Registry of running `claude` subprocesses, keyed by the
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.
@@ -94,6 +139,7 @@ pub fn run() {
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
             api_server::start_api_server(app.handle().clone());
+            tray::create_tray(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -146,6 +192,7 @@ pub fn run() {
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,
             set_proxy_env,
+            set_close_behavior,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -159,19 +206,85 @@ pub fn run() {
                 {
                     use tauri::Manager;
                     api.prevent_close();
+
+                    let behavior = {
+                        let state = window.state::<CloseBehaviorState>();
+                        let guard = state.0.lock().unwrap();
+                        let val = guard.clone();
+                        drop(guard);
+                        val
+                    };
+
                     let win = window.clone();
                     let app = window.app_handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_dialog::DialogExt;
-                        let confirmed = app
-                            .dialog()
-                            .message("Are you sure you want to quit LLM Wiki?")
-                            .title("Confirm Exit")
-                            .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
-                            .blocking_show();
+                        match behavior.as_str() {
+                            "exit" => {
+                                let _ = win.destroy();
+                                app.exit(0);
+                            }
+                            "minimize" => {
+                                let _ = win.hide();
+                            }
+                            _ => {
+                                // "ask" — first time: show dialog, remember choice
+                                use tauri_plugin_dialog::DialogExt;
+                                let confirmed = app
+                                    .dialog()
+                                    .message("选择「确定」将完全退出 LLM Wiki。\n选择「取消」将最小化到系统托盘，应用继续在后台运行。\n\n你的选择会被自动记住，之后不再弹窗。\n可在「设置 → 常规」中恢复询问。")
+                                    .title("LLM Wiki")
+                                    .kind(tauri_plugin_dialog::MessageDialogKind::Info)
+                                    .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
+                                    .blocking_show();
 
-                        if confirmed {
-                            let _ = win.destroy();
+                                let new_behavior = if confirmed { "exit" } else { "minimize" };
+
+                                // Persist the choice to app-state.json
+                                if let Ok(dir) = app.path().app_data_dir() {
+                                    let store_path = dir.join("app-state.json");
+                                    if let Ok(content) = std::fs::read_to_string(&store_path) {
+                                        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+                                            if let Some(obj) = json.as_object_mut() {
+                                                if let Some(gc) = obj.get_mut("generalConfig").and_then(|v| v.as_object_mut()) {
+                                                    gc.insert(
+                                                        "closeBehavior".to_string(),
+                                                        serde_json::Value::String(new_behavior.to_string()),
+                                                    );
+                                                } else {
+                                                    let mut gc = serde_json::Map::new();
+                                                    gc.insert(
+                                                        "closeBehavior".to_string(),
+                                                        serde_json::Value::String(new_behavior.to_string()),
+                                                    );
+                                                    obj.insert(
+                                                        "generalConfig".to_string(),
+                                                        serde_json::Value::Object(gc),
+                                                    );
+                                                }
+                                                let _ = std::fs::write(
+                                                    &store_path,
+                                                    serde_json::to_string_pretty(&json).unwrap_or_default(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Update in-memory state so subsequent
+                                // close requests use the remembered
+                                // behavior without showing the dialog.
+                                {
+                                    let state = app.state::<CloseBehaviorState>();
+                                    *state.0.lock().unwrap() = new_behavior.to_string();
+                                }
+
+                                if confirmed {
+                                    let _ = win.destroy();
+                                    app.exit(0);
+                                } else {
+                                    let _ = win.hide();
+                                }
+                            }
                         }
                     });
                 }

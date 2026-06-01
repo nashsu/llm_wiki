@@ -6,7 +6,9 @@ import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig } from "@/lib/project-store"
+import { invoke } from "@tauri-apps/api/core"
+import { enable as autostartEnable, disable as autostartDisable, isEnabled as autostartIsEnabled } from "@tauri-apps/plugin-autostart"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -238,6 +240,25 @@ function App() {
                 : false,
             token: typeof savedApi.token === "string" ? savedApi.token : "",
           })
+        }
+        // General settings — autostart + minimize-to-tray.
+        // Hydrate the Zustand store and sync the Rust-side state
+        // so the close-handler and OS-level autostart match what
+        // the user last saved in Settings.
+        const savedGeneral = await loadGeneralConfig()
+        useWikiStore.getState().setGeneralConfig(savedGeneral)
+        try {
+          const osEnabled = await autostartIsEnabled()
+          if (savedGeneral.autostart !== osEnabled) {
+            savedGeneral.autostart ? await autostartEnable() : await autostartDisable()
+          }
+        } catch {
+          // autostart plugin unavailable — silent ignore
+        }
+        try {
+          await invoke("set_close_behavior", { value: savedGeneral.closeBehavior })
+        } catch {
+          // close behavior sync failed — Rust side will use its own persisted default
         }
         const savedLang = await loadLanguage()
         if (savedLang) {

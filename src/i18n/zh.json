@@ -213,6 +213,7 @@
       "sourceWatch": "资料文件夹监控",
       "scheduledImport": "定时导入",
       "apiServer": "API 服务",
+      "general": "常规",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",
@@ -478,6 +479,19 @@
         "endpointGraphNote": "?q=…&nodeType=…&limit=N —— 基于 wiki/*.md 的双链图谱。",
         "endpointRescanNote": "使用你的资料文件夹监控配置触发后端重新扫描。",
         "endpointChatNote": "尚未实现（返回 501）。"
+      },
+      "general": {
+        "title": "常规",
+        "description": "启动行为与窗口关闭动作。保存后生效。",
+        "autostart": "开机自动启动",
+        "autostartHint": "将应用注册到系统启动项。关闭后需手动启动。",
+        "closeBehavior": "关闭窗口行为",
+        "closeBehaviorSubtitle": "点击窗口关闭按钮时的默认操作",
+        "closeBehaviorOptions": {
+          "ask": "每次询问",
+          "exit": "直接退出",
+          "minimize": "最小化到托盘"
+        }
       },
       "output": {
         "title": "输出偏好",

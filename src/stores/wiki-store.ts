@@ -186,6 +186,13 @@ interface ApiConfig {
   token: string
 }
 
+export type CloseBehavior = "ask" | "exit" | "minimize"
+
+export interface GeneralConfig {
+  autostart: boolean
+  closeBehavior: CloseBehavior
+}
+
 interface SourceWatchConfig {
   enabled: boolean
   autoIngest: boolean
@@ -305,6 +312,7 @@ interface WikiState {
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   apiConfig: ApiConfig
+  generalConfig: GeneralConfig
   dataVersion: number
 
   setProject: (project: WikiProject | null) => void
@@ -326,6 +334,7 @@ interface WikiState {
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setApiConfig: (config: ApiConfig) => void
+  setGeneralConfig: (config: GeneralConfig) => void
   bumpDataVersion: () => void
 }
 
@@ -430,6 +439,10 @@ export const useWikiStore = create<WikiState>((set) => ({
     allowUnauthenticated: false,
     token: "",
   },
+  generalConfig: {
+    autostart: false,
+    closeBehavior: "ask",
+  },
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
@@ -442,6 +455,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
+  setGeneralConfig: (generalConfig) => set({ generalConfig }),
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
