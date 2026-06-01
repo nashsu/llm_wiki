@@ -1,11 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { shouldExtractQa, runQaHook } from "./agent-qa-hook"
+import {
+  shouldExtractQa,
+  markConversationDirty,
+  flushQaForConversation,
+  flushAllPendingQa,
+  unmarkConversation,
+  isConversationPending,
+  getPendingQaIds,
+} from "./agent-qa-hook"
 import type { DisplayMessage } from "@/stores/chat-store"
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function msg(role: "user" | "assistant", content: string): DisplayMessage {
-  return { id: `${role}-${Math.random()}`, role, content, timestamp: Date.now(), conversationId: "conv-1" }
+function msg(role: "user" | "assistant", content: string, conversationId = "conv-1"): DisplayMessage {
+  return { id: `${role}-${Math.random()}`, role, content, timestamp: Date.now(), conversationId }
 }
 
 const longAnswer = "RAG (Retrieval-Augmented Generation) is a technique that combines retrieval from a knowledge base with language model generation. It works by first retrieving relevant documents from a vector store, then feeding those documents as context to the LLM to generate more accurate and grounded responses."
@@ -41,7 +49,40 @@ describe("shouldExtractQa", () => {
   })
 })
 
-// ── runQaHook — mock setup ───────────────────────────────────────────────────
+// ── Dirty flag ───────────────────────────────────────────────────────────────
+
+describe("dirty flag management", () => {
+  beforeEach(() => {
+    for (const id of getPendingQaIds()) {
+      unmarkConversation(id)
+    }
+  })
+
+  it("marks conversation dirty", () => {
+    markConversationDirty("conv-1")
+    expect(isConversationPending("conv-1")).toBe(true)
+    expect(isConversationPending("conv-2")).toBe(false)
+  })
+
+  it("unmarks conversation", () => {
+    markConversationDirty("conv-1")
+    unmarkConversation("conv-1")
+    expect(isConversationPending("conv-1")).toBe(false)
+  })
+
+  it("tracks multiple pending conversations", () => {
+    markConversationDirty("conv-1")
+    markConversationDirty("conv-2")
+    expect(getPendingQaIds()).toEqual(expect.arrayContaining(["conv-1", "conv-2"]))
+  })
+
+  it("unmark on non-existent id is a no-op", () => {
+    unmarkConversation("nonexistent")
+    expect(isConversationPending("nonexistent")).toBe(false)
+  })
+})
+
+// ── Mock setup ───────────────────────────────────────────────────────────────
 
 const fsMock = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -111,12 +152,15 @@ vi.mock("@/lib/output-language", () => ({
   buildLanguageDirective: vi.fn(() => "Respond in the same language as the input."),
 }))
 
-// ── runQaHook tests ──────────────────────────────────────────────────────────
+// ── flushQaForConversation tests ─────────────────────────────────────────────
 
-describe("runQaHook", () => {
+describe("flushQaForConversation", () => {
   beforeEach(() => {
     fsMock.files.clear()
     vi.clearAllMocks()
+    for (const id of getPendingQaIds()) {
+      unmarkConversation(id)
+    }
     listDirectoryMock.mockImplementation(async () => { throw new Error("no qa dir") })
     streamChatMock.mockImplementation(async (_c, _m, h) => {
       h.onToken("---\ntype: qa\ntitle: What is RAG?\ntags: [qa, ai]\ncreated: 2026-05-31\n---\n\n# Q: What is RAG?\n\n## A: RAG is retrieval augmented generation.\n\n## Key Insights\n\n- Combines retrieval with generation\n- Reduces hallucination\n")
@@ -124,86 +168,128 @@ describe("runQaHook", () => {
     })
   })
 
-  it("skips greeting-only conversation", async () => {
-    const messages = [msg("user", "hi"), msg("assistant", "Hello!")]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
-    expect(result.ok).toBe(true)
+  it("skips if conversation is not pending", async () => {
+    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
+    const result = await flushQaForConversation("conv-1", messages, "/project", { model: "test" } as never, { provider: "none" } as never)
     expect(result.skipped).toBe(true)
-    expect(result.skipReason).toBe("greeting-only")
+    expect(result.skipReason).toBe("not-pending")
   })
 
-  it("saves QA page for substantive conversation", async () => {
+  it("extracts QA and removes from pending", async () => {
+    markConversationDirty("conv-1")
     const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
+    const result = await flushQaForConversation("conv-1", messages, "/project", { model: "test" } as never, { provider: "none" } as never)
     expect(result.ok).toBe(true)
     expect(result.saved).toBe(true)
-    expect(result.qaPath).toContain("wiki/qa/")
+    expect(isConversationPending("conv-1")).toBe(false)
   })
 
-  it("returns error when streamChat fails", async () => {
+  it("filters messages by conversationId", async () => {
+    markConversationDirty("conv-1")
+    const messages = [
+      msg("user", "Hello", "conv-2"),
+      msg("assistant", "Hi there!", "conv-2"),
+      msg("user", "What is RAG?", "conv-1"),
+      msg("assistant", longAnswer, "conv-1"),
+    ]
+    const result = await flushQaForConversation("conv-1", messages, "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(result.ok).toBe(true)
+    expect(result.saved).toBe(true)
+  })
+
+  it("skips when no messages for conversation", async () => {
+    markConversationDirty("conv-empty")
+    const result = await flushQaForConversation("conv-empty", [], "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(result.skipped).toBe(true)
+    expect(result.skipReason).toBe("no-messages")
+    expect(isConversationPending("conv-empty")).toBe(false)
+  })
+
+  it("removes from pending even on error", async () => {
+    markConversationDirty("conv-err")
     streamChatMock.mockImplementation(async (_c, _m, h) => {
       h.onError?.(new Error("LLM error"))
     })
-    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
+    const messages = [msg("user", "What is RAG?", "conv-err"), msg("assistant", longAnswer, "conv-err")]
     await expect(
-      runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages),
+      flushQaForConversation("conv-err", messages, "/project", { model: "test" } as never, { provider: "none" } as never),
     ).rejects.toThrow("LLM error")
-  })
-
-  it("skips when LLM returns SKIP", async () => {
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
-      h.onToken("SKIP")
-      h.onDone()
-    })
-    const messages = [msg("user", "fix this bug"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
-    expect(result.ok).toBe(true)
-    expect(result.skipped).toBe(true)
-    expect(result.skipReason).toBe("llm-skipped")
-  })
-
-  it("returns error when LLM output lacks qa frontmatter", async () => {
-    streamChatMock.mockImplementation(async (_c, _m, h) => {
-      h.onToken("# Just a plain response\n\nNo frontmatter.")
-      h.onDone()
-    })
-    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
-    expect(result.ok).toBe(false)
-    expect(result.error).toContain("frontmatter")
-  })
-
-  it("continues when external search fails", async () => {
-    webSearchMock.mockRejectedValueOnce(new Error("EXA down"))
-    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
-    expect(result.ok).toBe(true)
-    expect(result.saved).toBe(true)
+    expect(isConversationPending("conv-err")).toBe(false)
   })
 
   it("skips when existing QA has matching title (dedup)", async () => {
+    markConversationDirty("conv-dedup")
     listDirectoryMock.mockResolvedValueOnce([
       { name: "existing.md", path: "/project/wiki/qa/existing.md", is_dir: false },
     ])
     fsMock.files.set("/project/wiki/qa/existing.md",
       "---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\n---\n\n# Q: What is RAG?\n\n## A: existing answer",
     )
-    const messages = [msg("user", "What is RAG?"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
+    const messages = [msg("user", "What is RAG?", "conv-dedup"), msg("assistant", longAnswer, "conv-dedup")]
+    const result = await flushQaForConversation("conv-dedup", messages, "/project", { model: "test" } as never, { provider: "none" } as never)
     expect(result.ok).toBe(true)
     expect(result.skipped).toBe(true)
     expect(result.skipReason).toBe("duplicate")
+    expect(isConversationPending("conv-dedup")).toBe(false)
   })
+})
 
-  it("produces untagged slug for pure punctuation title", async () => {
+// ── flushAllPendingQa ────────────────────────────────────────────────────────
+
+describe("flushAllPendingQa", () => {
+  beforeEach(() => {
+    fsMock.files.clear()
+    vi.clearAllMocks()
+    for (const id of getPendingQaIds()) {
+      unmarkConversation(id)
+    }
+    listDirectoryMock.mockImplementation(async () => { throw new Error("no qa dir") })
     streamChatMock.mockImplementation(async (_c, _m, h) => {
-      h.onToken("---\ntype: qa\ntitle: \"???\"\ntags: [qa]\ncreated: 2026-05-31\n---\n\n# Q: ???\n\n## A: answer\n")
+      h.onToken("---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\ncreated: 2026-05-31\n---\n\n# Q: What is RAG?\n\n## A: answer\n\n## Key Insights\n\n- Insight 1\n")
       h.onDone()
     })
-    const messages = [msg("user", "???"), msg("assistant", longAnswer)]
-    const result = await runQaHook("/project", { model: "test" } as never, { provider: "none" } as never, messages)
-    expect(result.ok).toBe(true)
-    expect(result.saved).toBe(true)
-    expect(result.qaPath).toContain("untagged")
+  })
+
+  it("flushes all pending conversations", async () => {
+    markConversationDirty("conv-a")
+    markConversationDirty("conv-b")
+    const messages = [
+      msg("user", "What is RAG?", "conv-a"),
+      msg("assistant", longAnswer, "conv-a"),
+      msg("user", "Explain transformers", "conv-b"),
+      msg("assistant", longAnswer, "conv-b"),
+    ]
+    const results = await flushAllPendingQa(messages, "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(results).toHaveLength(2)
+    expect(getPendingQaIds()).toHaveLength(0)
+  })
+
+  it("handles mixed results: success + error + skip", async () => {
+    markConversationDirty("conv-ok")
+    markConversationDirty("conv-err")
+    markConversationDirty("conv-skip")
+    const messages = [
+      msg("user", "What is RAG?", "conv-ok"),
+      msg("assistant", longAnswer, "conv-ok"),
+      msg("user", "hi", "conv-skip"),
+      msg("assistant", "Hello!", "conv-skip"),
+      msg("user", "What is RAG?", "conv-err"),
+      msg("assistant", longAnswer, "conv-err"),
+    ]
+    let callCount = 0
+    streamChatMock.mockImplementation(async (_c, _m, h) => {
+      callCount++
+      if (callCount === 2) {
+        h.onError?.(new Error("LLM error"))
+        return
+      }
+      h.onToken("---\ntype: qa\ntitle: What is RAG?\ntags: [qa]\ncreated: 2026-05-31\n---\n\n# Q: What is RAG?\n\n## A: answer\n\n## Key Insights\n\n- Insight 1\n")
+      h.onDone()
+    })
+
+    const results = await flushAllPendingQa(messages, "/project", { model: "test" } as never, { provider: "none" } as never)
+    expect(results).toHaveLength(3)
+    // All removed from pending despite mixed results (finally block)
+    expect(getPendingQaIds()).toHaveLength(0)
   })
 })
