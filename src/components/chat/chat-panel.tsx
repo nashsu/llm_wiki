@@ -112,7 +112,7 @@ function ConversationSidebar() {
 											onClick={(e) => {
 												e.stopPropagation();
 												unmarkConversation(conv.id);
-											deleteConversation(conv.id);
+												deleteConversation(conv.id);
 												// Delete persisted chat file
 												const proj = useWikiStore.getState().project;
 												if (proj) {
