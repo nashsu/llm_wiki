@@ -482,9 +482,3 @@ export async function analyzeLongSourceInChunks(
   return { chunked: true, analysis, sourceContext, checkpointPath }
 }
 
-/**
- * Build a MergeFn for a given LLM config. The returned function asks
- * the model to merge two versions of the same wiki page into one.
- * Page-merge.ts handles all the sanity-checking and fallback paths;
- * this is just the "stream the LLM" wrapper.
- */

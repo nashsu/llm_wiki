@@ -77,6 +77,7 @@ import {
   backupExistingPage,
   injectImagesIntoSourceSummary,
   reembedSourceSummary,
+  tryReadFile,
 } from "./ingest-write"
 
 // Re-export prompt builders so existing callers' import paths are unchanged
@@ -1387,13 +1388,7 @@ function getStore() {
   return useChatStore.getState()
 }
 
-async function tryReadFile(path: string): Promise<string> {
-  try {
-    return await readFile(path)
-  } catch {
-    return ""
-  }
-}
+
 
 
 export async function startIngest(

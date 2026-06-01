@@ -14,7 +14,7 @@ import { loadCaptionCache } from "@/lib/image-caption-pipeline"
 import { buildImageMarkdownSection } from "@/lib/extract-source-images"
 import type { MergeFn } from "@/lib/page-merge"
 
-async function tryReadFile(path: string): Promise<string> {
+export async function tryReadFile(path: string): Promise<string> {
   try {
     return await readFile(path)
   } catch {
