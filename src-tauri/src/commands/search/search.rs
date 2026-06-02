@@ -766,7 +766,6 @@ fn is_safe_extra_header_name(name: &str) -> bool {
                     | b'.'
                     | b'^'
                     | b'_'
-                    | b'`'
                     | b'|'
                     | b'~'
                     | b'0'..=b'9'

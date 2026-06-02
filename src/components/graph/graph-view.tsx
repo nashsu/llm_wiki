@@ -66,6 +66,7 @@ const BASE_NODE_SIZE = 8
 const MAX_NODE_SIZE = 28
 const DEFAULT_NODE_SCALE = 1
 const DEFAULT_GRAPH_SPACING = 1
+const GRAPH_SPACING_DEBOUNCE_MS = 180
 const WORKER_LAYOUT_NODE_THRESHOLD = 220
 
 type HoverState = { node: string; neighbors: Set<string> } | null
@@ -135,12 +136,12 @@ function labelDensity(nodeCount: number): number {
   return 0.4
 }
 
-function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): string {
+function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[], graphSpacing: number): string {
   const nodeIds = nodes.map((n) => n.id).sort()
   const edgeIds = edges
     .map((e) => `${e.source}->${e.target}:${Math.round(e.weight * 1000)}`)
     .sort()
-  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}`
+  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}:${Math.round(graphSpacing * 100)}`
 }
 
 function hashParts(parts: readonly string[]): string {
@@ -189,7 +190,7 @@ function GraphLoader({
   const sigma = useSigma()
 
   useEffect(() => {
-    const dataKey = graphDataKey(nodes, edges)
+    const dataKey = graphDataKey(nodes, edges, graphSpacing)
     const needsLayout = dataKey !== lastLayoutDataKey && dataKey !== pendingLayoutDataKey
     let cancelled = false
     let worker: Worker | null = null
@@ -511,8 +512,9 @@ export function GraphView() {
   const [hoverState, setHoverState] = useState<HoverState>(null)
   const [dismissedInsights, setDismissedInsights] = useState<Set<string>>(new Set())
   const [sigmaKey, setSigmaKey] = useState(0)
-  const nodeScale = DEFAULT_NODE_SCALE
-  const graphSpacing = DEFAULT_GRAPH_SPACING
+  const [nodeScale, setNodeScale] = useState(DEFAULT_NODE_SCALE)
+  const [graphSpacingDraft, setGraphSpacingDraft] = useState(DEFAULT_GRAPH_SPACING)
+  const [graphSpacing, setGraphSpacing] = useState(DEFAULT_GRAPH_SPACING)
   const [isResizing, setIsResizing] = useState(false)
   const [legendCollapsed, setLegendCollapsed] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
@@ -590,6 +592,13 @@ export function GraphView() {
     const id = window.requestAnimationFrame(() => graphSearchInputRef.current?.focus())
     return () => window.cancelAnimationFrame(id)
   }, [graphSearchOpen])
+
+  // Spacing changes trigger ForceAtlas2 layout through GraphLoader's dataKey.
+  // Keep the slider responsive while debouncing the expensive relayout.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setGraphSpacing(graphSpacingDraft), GRAPH_SPACING_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [graphSpacingDraft])
 
   const handleNodeClick = useCallback(
     async (nodeId: string) => {
@@ -1064,6 +1073,39 @@ export function GraphView() {
 
                 <div className="space-y-2">
                   <div className="font-medium text-muted-foreground">{t("graph.displayTuning")}</div>
+                  <label className="block space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span>{t("graph.nodeSize")}</span>
+                      <span className="text-muted-foreground">{Math.round(nodeScale * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={1.5}
+                      step={0.05}
+                      value={nodeScale}
+                      onChange={(e) => setNodeScale(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span>{t("graph.spacing")}</span>
+                      <span className="text-muted-foreground">{Math.round(graphSpacingDraft * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.6}
+                      max={2.2}
+                      step={0.05}
+                      value={graphSpacingDraft}
+                      onChange={(e) => setGraphSpacingDraft(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  </label>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {t("graph.displayTuningHint")}
+                  </p>
                 </div>
 
                 <div className="space-y-1.5">
