@@ -141,6 +141,19 @@
     "sendMessage": "发送消息",
     "stopGeneration": "停止生成"
   },
+  "agent": {
+    "mode": {
+      "chat": "对话",
+      "agent": "Agent",
+      "ingest": "提取"
+    },
+    "status": {
+      "pending": "等待中",
+      "running": "运行中",
+      "done": "完成",
+      "failed": "失败"
+    }
+  },
   "search": {
     "title": "搜索",
     "placeholder": "搜索 Wiki 页面...",
