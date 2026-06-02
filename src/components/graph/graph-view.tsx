@@ -136,12 +136,12 @@ function labelDensity(nodeCount: number): number {
   return 0.4
 }
 
-function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[]): string {
+function graphDataKey(nodes: readonly GraphNode[], edges: readonly GraphEdge[], graphSpacing: number): string {
   const nodeIds = nodes.map((n) => n.id).sort()
   const edgeIds = edges
     .map((e) => `${e.source}->${e.target}:${Math.round(e.weight * 1000)}`)
     .sort()
-  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}`
+  return `${hashParts(nodeIds)}:${hashParts(edgeIds)}:${nodes.length}:${edges.length}:${Math.round(graphSpacing * 100)}`
 }
 
 function hashParts(parts: readonly string[]): string {
@@ -190,7 +190,7 @@ function GraphLoader({
   const sigma = useSigma()
 
   useEffect(() => {
-    const dataKey = graphDataKey(nodes, edges)
+    const dataKey = graphDataKey(nodes, edges, graphSpacing)
     const needsLayout = dataKey !== lastLayoutDataKey && dataKey !== pendingLayoutDataKey
     let cancelled = false
     let worker: Worker | null = null
