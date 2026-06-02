@@ -7,6 +7,7 @@ export interface Conversation {
   title: string
   createdAt: number
   updatedAt: number
+  agentSessionId?: string
 }
 
 export interface MessageReference {
@@ -25,6 +26,41 @@ export interface DisplayMessage {
   timestamp: number
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
+  mode?: "chat" | "agent"
+  agentSessionId?: string
+  toolCalls?: AgentToolCallRecord[]
+  costUsd?: number
+  inputTokens?: number
+  outputTokens?: number
+  durationMs?: number
+  numTurns?: number
+}
+
+/** Agent tool-call event snapshot persisted on an assistant message. */
+export interface AgentToolCallRecord {
+  toolName: string
+  toolUseId?: string
+  phase: "pre" | "post" | "failure" | "batch"
+  ok?: boolean
+  durationMs?: number
+  inputPreview?: Record<string, unknown>
+  error?: string
+}
+
+/** Final per-message Agent run statistics emitted by the sidecar result event. */
+export interface AgentStreamStats {
+  agentSessionId?: string
+  costUsd?: number
+  inputTokens?: number
+  outputTokens?: number
+  durationMs?: number
+  numTurns?: number
+}
+
+interface AddMessageOptions {
+  mode?: DisplayMessage["mode"]
+  agentSessionId?: string
+  references?: MessageReference[]
 }
 
 interface ChatState {
@@ -33,7 +69,7 @@ interface ChatState {
   messages: DisplayMessage[]
   isStreaming: boolean
   streamingContent: string
-  mode: "chat" | "ingest"
+  mode: "chat" | "agent" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
 
@@ -44,12 +80,15 @@ interface ChatState {
   renameConversation: (id: string, title: string) => void
 
   // Message management
-  addMessage: (role: DisplayMessage["role"], content: string) => void
+  addMessage: (role: DisplayMessage["role"], content: string, options?: AddMessageOptions) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
   finalizeStream: (content: string, references?: MessageReference[]) => void
+  finalizeAgentStream: (content: string, stats?: AgentStreamStats) => void
+  setAgentToolCalls: (messageId: string, toolCalls: AgentToolCallRecord[]) => void
+  updateAgentProgress: (messageId: string, event: AgentToolCallRecord) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -117,7 +156,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
-  addMessage: (role, content) =>
+  addMessage: (role, content, options) =>
     set((state) => {
       const { activeConversationId, conversations } = state
       if (!activeConversationId) return state
@@ -128,6 +167,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content,
         timestamp: Date.now(),
         conversationId: activeConversationId,
+        references: options?.references,
+        mode: options?.mode,
+        agentSessionId: options?.agentSessionId,
       }
 
       // Auto-set title from first user message (first 50 chars)
@@ -194,6 +236,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }
     }),
+
+  finalizeAgentStream: (content, stats) =>
+    set((state) => {
+      const { activeConversationId, conversations } = state
+      if (!activeConversationId) {
+        return {
+          isStreaming: false,
+          streamingContent: "",
+        }
+      }
+
+      const newMessage: DisplayMessage = {
+        id: nextId(),
+        role: "assistant" as const,
+        content,
+        timestamp: Date.now(),
+        conversationId: activeConversationId,
+        mode: "agent",
+        agentSessionId: stats?.agentSessionId,
+        costUsd: stats?.costUsd,
+        inputTokens: stats?.inputTokens,
+        outputTokens: stats?.outputTokens,
+        durationMs: stats?.durationMs,
+        numTurns: stats?.numTurns,
+      }
+
+      return {
+        isStreaming: false,
+        streamingContent: "",
+        messages: [...state.messages, newMessage],
+        conversations: conversations.map((c) =>
+          c.id === activeConversationId
+            ? {
+                ...c,
+                agentSessionId: stats?.agentSessionId ?? c.agentSessionId,
+                updatedAt: Date.now(),
+              }
+            : c
+        ),
+      }
+    }),
+
+  setAgentToolCalls: (messageId, toolCalls) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId ? { ...m, toolCalls } : m
+      ),
+    })),
+
+  updateAgentProgress: (messageId, event) =>
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== messageId) return m
+        const toolCalls = m.toolCalls ?? []
+        const normalizedEvent =
+          event.phase === "failure" && event.ok === undefined
+            ? { ...event, ok: false }
+            : event
+        const eventKey = normalizedEvent.toolUseId ?? normalizedEvent.toolName
+        const idx = toolCalls.findIndex(
+          (call) => (call.toolUseId ?? call.toolName) === eventKey
+        )
+        if (idx === -1) {
+          return { ...m, toolCalls: [...toolCalls, normalizedEvent] }
+        }
+        const nextToolCalls = [...toolCalls]
+        nextToolCalls[idx] = { ...nextToolCalls[idx], ...normalizedEvent }
+        return { ...m, toolCalls: nextToolCalls }
+      }),
+    })),
 
   setMode: (mode) => set({ mode }),
 

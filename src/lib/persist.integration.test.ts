@@ -142,6 +142,56 @@ describe("chat persistence — round-trip (new format)", () => {
     expect(loaded.messages).toHaveLength(2)
   })
 
+  it("round-trips agent session metadata on conversations", async () => {
+    const convs: Conversation[] = [
+      { ...makeConv("c1", "Agent Conv"), agentSessionId: "agent-session-1" },
+    ]
+    const msgs = [makeMsg("m1", "c1", "hi")]
+
+    await saveChatHistory(tmp.path, convs, msgs)
+    const loaded = await loadChatHistory(tmp.path)
+
+    expect(loaded.conversations).toEqual(convs)
+  })
+
+  it("round-trips agent metadata and tool calls on messages", async () => {
+    const convs = [makeConv("c1", "Agent Conv")]
+    const msgs: DisplayMessage[] = [
+      {
+        ...makeMsg("m1", "c1", "agent answer"),
+        role: "assistant",
+        mode: "agent",
+        agentSessionId: "agent-session-1",
+        costUsd: 0.42,
+        inputTokens: 1000,
+        outputTokens: 250,
+        durationMs: 1234,
+        numTurns: 2,
+        toolCalls: [
+          {
+            toolName: "wiki_read",
+            toolUseId: "tool-1",
+            phase: "post",
+            ok: true,
+            durationMs: 30,
+            inputPreview: { path: "wiki/index.md" },
+          },
+          {
+            toolName: "wiki_write",
+            phase: "failure",
+            ok: false,
+            error: "denied",
+          },
+        ],
+      },
+    ]
+
+    await saveChatHistory(tmp.path, convs, msgs)
+    const loaded = await loadChatHistory(tmp.path)
+
+    expect(loaded.messages).toEqual(msgs)
+  })
+
   it("caps each conversation's persisted messages at 100 (oldest dropped)", async () => {
     const convs = [makeConv("c1")]
     const msgs = Array.from({ length: 150 }, (_, i) =>

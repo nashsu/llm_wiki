@@ -141,6 +141,19 @@
     "sendMessage": "Send message",
     "stopGeneration": "Stop generation"
   },
+  "agent": {
+    "mode": {
+      "chat": "Chat",
+      "agent": "Agent",
+      "ingest": "Ingest"
+    },
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "done": "Done",
+      "failed": "Failed"
+    }
+  },
   "search": {
     "title": "Search",
     "placeholder": "Search wiki pages...",
