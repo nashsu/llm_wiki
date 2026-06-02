@@ -107,7 +107,8 @@ Claude Agent SDK sandbox 可作为以后增强 Claude Code 内置工具隔离的
 - 纯结构搬迁，不改业务逻辑，保持公共 API 表面不变
 - 详见 [Phase 3.7 计划](./agent-sidecar-phase3.7.md)
 
-### Phase 4: Agent UI 集成
+### Phase 4: Agent UI 集成 — 待开始
+- 详见 [Phase 4 计划](./agent-sidecar-phase4.md)
 - 替换临时 Test Agent 按钮为正式 UI
 - Agent 对话模式切换（普通 LLM / Agent）
 - 工具调用过程可视化（展示 Agent 正在做什么）
