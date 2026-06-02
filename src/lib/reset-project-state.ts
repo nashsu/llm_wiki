@@ -15,6 +15,7 @@ import { useResearchStore } from "@/stores/research-store"
 
 export async function resetProjectState(): Promise<void> {
   // Zustand stores — clear all per-project data (synchronous)
+  useChatStore.getState().clearAgentPermissionRequests()
   useChatStore.setState({
     conversations: [],
     messages: [],
@@ -23,6 +24,8 @@ export async function resetProjectState(): Promise<void> {
     ingestSource: null,
     isStreaming: false,
     streamingContent: "",
+    activeAgentPermissionRequest: null,
+    queuedAgentPermissionRequests: [],
   })
 
   useReviewStore.setState({

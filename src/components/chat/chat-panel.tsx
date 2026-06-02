@@ -4,6 +4,7 @@ import { BookOpen, Plus, Trash2, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
+import { AgentPermissionDialogHost } from "./agent-permission-dialog"
 import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
@@ -529,6 +530,7 @@ export let lastQueryPages: { title: string; path: string }[] = []
 	const showWriteButton = mode === "ingest" && !isStreaming && hasAssistantMessages
  	return (
 		<div className="flex h-full flex-row overflow-hidden">
+			<AgentPermissionDialogHost />
 			<ConversationSidebar />
  			<div className="flex flex-1 flex-col overflow-hidden">
 				{!activeConversationId ? (

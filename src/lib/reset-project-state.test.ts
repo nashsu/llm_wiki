@@ -58,6 +58,24 @@ describe("resetProjectState — Zustand stores", () => {
     expect(chat.ingestSource).toBeNull()
   })
 
+  it("clears pending agent permission requests", async () => {
+    const decision = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-1",
+      toolName: "Bash",
+      inputPreview: {},
+      toolUseID: "tool-1",
+    })
+
+    await resetProjectState()
+
+    await expect(decision).resolves.toMatchObject({
+      behavior: "deny",
+      interrupt: true,
+    })
+    expect(useChatStore.getState().activeAgentPermissionRequest).toBeNull()
+    expect(useChatStore.getState().queuedAgentPermissionRequests).toEqual([])
+  })
+
   it("clears review store items", async () => {
     useReviewStore.setState({
       items: [
