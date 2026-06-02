@@ -58,6 +58,7 @@ export function LintView() {
 	const addLintItems = useLintStore((s) => s.addItems);
 	const removeLintItem = useLintStore((s) => s.removeItem);
 	const clearLintItems = useLintStore((s) => s.clearItems);
+	const setLintItems = useLintStore((s) => s.setItems);
 
 	const [running, setRunning] = useState(false);
 	const [hasRun, setHasRun] = useState(false);
@@ -68,8 +69,8 @@ export function LintView() {
 	const typeConfig = useMemo(
 		() => ({
 			orphan: { icon: Link2Off, label: t("lint.typeLabels.orphan") },
-			"broken-link": { icon: Unlink, label: t("lint.typeLabels.brokenLink") },
-			"no-outlinks": { icon: ArrowUpRight, label: t("lint.typeLabels.noOutlinks") },
+			"broken-link": { icon: Unlink, label: t("lint.typeLabels.broken-link") },
+			"no-outlinks": { icon: ArrowUpRight, label: t("lint.typeLabels.no-outlinks") },
 			semantic: { icon: BrainCircuit, label: t("lint.typeLabels.semantic") },
 		}),
 		[t],
@@ -237,11 +238,8 @@ export function LintView() {
 			const { fixed } = await fixAllLintResults(pp, fixableItems, llmConfig);
 			if (fixed.length > 0) {
 				const fixedPages = new Set(fixed.map((r) => `${r.type}:${r.page}`));
-				for (const item of items) {
-					if (fixedPages.has(`${item.type}:${item.page}`)) {
-						removeLintItem(item.id);
-					}
-				}
+				const remaining = items.filter(item => !fixedPages.has(`${item.type}:${item.page}`));
+				setLintItems(remaining);
 				await refreshTree();
 			}
 		} catch (err) {
