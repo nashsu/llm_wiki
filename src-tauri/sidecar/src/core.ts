@@ -196,14 +196,14 @@ export function createRequestHandler({
 			});
 
 			for await (const message of q) {
-				const msg = message as SDKMessage;
+				const msg = message;
 
 				// PR D: emit SDK native events separately so frontend can route them
 				if (req.options.promptSuggestions && msg.type === "prompt_suggestion" && "suggestion" in msg) {
 					send({ streamId: req.streamId, type: "prompt_suggestion", data: msg });
 				}
 				if (req.options.agentProgressSummaries && msg.type === "result" && "agentProgressSummaries" in msg) {
-					send({ streamId: req.streamId, type: "agent_progress_summary", data: (msg as any).agentProgressSummaries });
+					send({ streamId: req.streamId, type: "agent_progress_summary", data: msg.agentProgressSummaries });
 				}
 
 				if (req.options.includePartialMessages && msg?.type === "partial_message") {
