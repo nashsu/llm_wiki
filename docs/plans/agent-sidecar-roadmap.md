@@ -71,7 +71,7 @@ Claude Agent SDK sandbox 可作为以后增强 Claude Code 内置工具隔离的
 - 写工具默认允许真实写入 `wiki/**/*.md`，内容质量交给 Lint/Fixer，安全只限制路径和操作边界
 - 详见 [Phase 2 计划](./agent-sidecar-phase2.md)
 
-### Phase 3: Hooks & 权限控制 — 已完成
+### Phase 3: Hooks、权限策略与写入后治理 — 已完成
 - PreToolUse hook — 工具执行前补强路径/操作策略，不做默认人审
 - PostToolUse hook — 工具执行后记录变更，触发 Lint/Fixer 提示
 - Stop hook — Agent 完成后自动总结
@@ -94,7 +94,14 @@ Claude Agent SDK sandbox 可作为以后增强 Claude Code 内置工具隔离的
 - Subagents、skills、plugins 透传
 - 详见 [Phase 3.6 计划](./agent-sidecar-phase3.6.md)
 
-### Phase 3.7: 代码结构重构
+### Phase 3.65: Agent 产品化能力补齐 — 已完成
+- Ingest dedup 强化
+- Lint 闭环 + auto-fix trigger
+- Property Autofill Agent
+- Multi-Agent Pipeline
+- 详见 [Phase 3.65 计划](./agent-sidecar-phase3.65.md)
+
+### Phase 3.7: 代码结构重构 — 已完成
 - Commands 模块拆分为 file_ops/、search/、agent_cli/ 三个子模块
 - ingest.ts 拆分为 ingest-prompts.ts、ingest-chunk.ts、ingest-write.ts + 入口编排
 - 纯结构搬迁，不改业务逻辑，保持公共 API 表面不变
