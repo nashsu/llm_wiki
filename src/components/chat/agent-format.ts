@@ -1,4 +1,5 @@
 import type { AgentToolCallRecord } from "@/stores/chat-store"
+import type { SDKContentBlock } from "@/lib/agent/agent-types"
 
 export type AgentToolStatus = "pending" | "running" | "done" | "failed"
 
@@ -41,4 +42,14 @@ export function safeStringify(value: unknown): string {
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
   }
+}
+
+/** Extract assistant-visible text blocks for copy/save/reference fallbacks. */
+export function extractAgentTextContent(blocks?: SDKContentBlock[]): string {
+  if (!blocks || blocks.length === 0) return ""
+  return blocks
+    .filter((block) => block.type === "text")
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
 }

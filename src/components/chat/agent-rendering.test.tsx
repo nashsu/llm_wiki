@@ -121,4 +121,21 @@ describe("agent message rendering", () => {
     expect(html).toContain("Tool calls")
     expect(html).toContain("Agent run")
   })
+
+  it("uses agent block text as a fallback for references when content is empty", () => {
+    const html = renderToStaticMarkup(
+      <ChatMessage
+        message={assistantMessage({
+          content: "",
+          mode: "agent",
+          agentBlocks: [
+            { type: "text", text: "See [[Phase 4 Notes]]" },
+          ],
+        })}
+      />,
+    )
+
+    expect(html).toContain("wikilink:Phase 4 Notes")
+    expect(html).toContain("References (1)")
+  })
 })
