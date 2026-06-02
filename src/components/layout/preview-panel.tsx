@@ -49,7 +49,7 @@ export function PreviewPanel() {
         lastLoadedRef.current = ""
         setFileContent(`Error loading file: ${err}`)
       })
-  }, [selectedFile, externalPreview, fileContent, setFileContent])
+  }, [selectedFile, setFileContent])
 
   const writeNow = useCallback((path: string, markdown: string, syncStore = false) => {
     writeFile(path, markdown)

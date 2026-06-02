@@ -17,7 +17,7 @@ import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
-import { markConversationDirty, flushQaForConversation, flushAllPendingQa, loadPendingQa } from "@/lib/agent/agent-qa-hook"
+import { markConversationDirty, flushQaForConversation, flushAllPendingQa, unmarkConversation, loadPendingQa } from "@/lib/agent/agent-qa-hook"
  // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
  function formatExternalSearchContext(results: WebSearchResult[]): string {
@@ -105,7 +105,8 @@ export let lastQueryPages: { title: string; path: string }[] = []
 											className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
 											onClick={(e) => {
 												e.stopPropagation()
-												deleteConversation(conv.id)
+												unmarkConversation(conv.id)
+											deleteConversation(conv.id)
 												// Delete persisted chat file
 												const proj = useWikiStore.getState().project
 												if (proj) {
@@ -479,7 +480,7 @@ export let lastQueryPages: { title: string; path: string }[] = []
 				controller.signal,
 			)
 		},
-		[llmConfig, searchApiConfig, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
+		[llmConfig, searchApiConfig, project, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
 	)
  	const handleStop = useCallback(() => {
 		abortRef.current?.abort()
