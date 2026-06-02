@@ -3,10 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog"
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
+import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { listDirectory, openProject } from "@/commands/fs"
 import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig } from "@/lib/project-store"
-import { loadReviewItems, loadChatHistory } from "@/lib/persist"
+import { loadReviewItems, loadLintItems, loadChatHistory } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { AppLayout } from "@/components/layout/app-layout"
@@ -371,6 +372,14 @@ function App() {
       }
     } catch {
       // ignore, start fresh
+    }
+    // Load persisted lint items
+    useLintStore.getState().setItems([])
+    try {
+      const savedLint = await loadLintItems(proj.path)
+      useLintStore.getState().setItems(savedLint)
+    } catch {
+      useLintStore.getState().setItems([])
     }
     // Load persisted chat history
     try {

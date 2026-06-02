@@ -1,37 +1,42 @@
 import { describe, expect, it } from "vitest"
-import type { LintResult } from "@/lib/lint"
+import type { LintItem } from "@/stores/lint-store"
 import { groupLintResultsForDisplay } from "./lint-view"
 
-function lintResult(
+let counter = 0
+
+function lintItem(
   page: string,
-  severity: LintResult["severity"],
-): LintResult {
+  severity: LintItem["severity"],
+): LintItem {
   return {
+    id: `lint-${++counter}`,
     type: severity === "warning" ? "broken-link" : "orphan",
     severity,
     page,
     detail: `${page} detail`,
+    createdAt: Date.now(),
   }
 }
 
 describe("groupLintResultsForDisplay", () => {
-  it("keeps original result indices when warnings and infos are interleaved", () => {
-    const results = [
-      lintResult("info-a.md", "info"),
-      lintResult("warning-b.md", "warning"),
-      lintResult("info-c.md", "info"),
-      lintResult("warning-d.md", "warning"),
+  it("separates warnings and infos correctly", () => {
+    counter = 0
+    const items = [
+      lintItem("info-a.md", "info"),
+      lintItem("warning-b.md", "warning"),
+      lintItem("info-c.md", "info"),
+      lintItem("warning-d.md", "warning"),
     ]
 
-    const grouped = groupLintResultsForDisplay(results)
+    const grouped = groupLintResultsForDisplay(items)
 
-    expect(grouped.warnings.map(({ index, result }) => [index, result.page])).toEqual([
-      [1, "warning-b.md"],
-      [3, "warning-d.md"],
+    expect(grouped.warnings.map((item) => item.page)).toEqual([
+      "warning-b.md",
+      "warning-d.md",
     ])
-    expect(grouped.infos.map(({ index, result }) => [index, result.page])).toEqual([
-      [0, "info-a.md"],
-      [2, "info-c.md"],
+    expect(grouped.infos.map((item) => item.page)).toEqual([
+      "info-a.md",
+      "info-c.md",
     ])
   })
 })
