@@ -255,20 +255,13 @@ describe("runAgentAppTool ingest parity tools", () => {
       sourceMode: "both",
     })
 
-    expect(deepResearchMock.rewriteAnyTxtQueries).toHaveBeenCalledWith(
-      ["winter ammonia"],
-      expect.objectContaining({ model: "gpt-test" }),
-    )
     expect(deepResearchMock.collectResearchSources).toHaveBeenCalledWith(
       ["winter ammonia"],
       expect.objectContaining({ deepResearchSource: "both" }),
       "/project",
-      undefined,
-      { anyTxtQueries: ["local keywords"] },
     )
     expect(response.result).toEqual({
       queries: ["winter ammonia"],
-      anyTxtQueries: ["local keywords"],
       sourceMode: "both",
       results: [{ title: "Source", url: "https://example.com", snippet: "hit", source: "web" }],
       errors: ["provider leaked REDACTED in body"],
@@ -306,8 +299,6 @@ describe("runAgentAppTool ingest parity tools", () => {
       ["fallback"],
       expect.objectContaining({ deepResearchSource: "anytxt" }),
       "/project",
-      undefined,
-      { anyTxtQueries: undefined },
     )
   })
 

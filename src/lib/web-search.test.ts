@@ -283,23 +283,26 @@ describe("webSearch", () => {
 	});
 
 	it("tracks Deep Research source configuration independently from the active web provider", () => {
-		expect(
-			hasConfiguredDeepResearchSources({
-				provider: "none",
-				apiKey: "",
-				deepResearchSource: "anytxt",
-				anyTxt: { endpoint: "http://127.0.0.1:9920" },
-			}),
-		).toBe(true);
+	  expect(hasConfiguredDeepResearchSources({
+	    provider: "none",
+	    apiKey: "",
+	    deepResearchSource: "anytxt",
+	    anyTxt: { enabled: true, endpoint: "http://127.0.0.1:9920" },
+	  })).toBe(true)
 
-		expect(
-			hasConfiguredDeepResearchSources({
-				provider: "none",
-				apiKey: "",
-				deepResearchSource: "web",
-				anyTxt: { endpoint: "http://127.0.0.1:9920" },
-			}),
-		).toBe(false);
+	  expect(hasConfiguredDeepResearchSources({
+	    provider: "none",
+	    apiKey: "",
+	    deepResearchSource: "anytxt",
+	    anyTxt: { enabled: false, endpoint: "http://127.0.0.1:9920" },
+	  })).toBe(false)
+
+	  expect(hasConfiguredDeepResearchSources({
+	    provider: "none",
+	    apiKey: "",
+	    deepResearchSource: "web",
+	    anyTxt: { endpoint: "http://127.0.0.1:9920" },
+	  })).toBe(false)
 
 		expect(
 			resolveSearchConfig({

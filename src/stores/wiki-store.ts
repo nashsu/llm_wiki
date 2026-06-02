@@ -91,10 +91,11 @@ export type SearchProviderConfigs = Partial<
 >;
 
 export interface AnyTxtConfig {
-	endpoint?: string;
-	filterDir?: string;
-	filterExt?: string;
-	limit?: number;
+	enabled?: boolean
+	endpoint?: string
+	filterDir?: string
+	filterExt?: string
+	limit?: number
 }
 
 interface SearchApiConfig {
@@ -284,69 +285,72 @@ export interface ProviderOverride {
 
 export type ProviderConfigs = Record<string, ProviderOverride>;
 
-interface WikiState {
-	project: WikiProject | null;
-	fileTree: FileNode[];
-	selectedFile: string | null;
-	fileContent: string;
-	/**
-	 * One-shot scroll target for the markdown preview. When the user
-	 * clicks an image in search results and chooses "jump to source",
-	 * we set this to the image URL alongside `selectedFile`. The
-	 * markdown preview consumes it on its next render — finds the
-	 * `<img data-mdsrc="..."/>` whose attribute matches and scrolls
-	 * it into view, then clears this back to null so a stale target
-	 * doesn't fire on the NEXT page open.
-	 *
-	 * Match by raw URL (the literal `src` from the markdown) rather
-	 * than the resolved `convertFileSrc` URL — same image referenced
-	 * across two pages with different URL conventions (one absolute,
-	 * one wiki-relative) still works.
-	 */
-	pendingScrollImageSrc: string | null;
-	chatExpanded: boolean;
-	activeView:
-		| "wiki"
-		| "sources"
-		| "search"
-		| "graph"
-		| "lint"
-		| "review"
-		| "settings";
-	llmConfig: LlmConfig;
-	/** Per-provider-preset stored overrides (API key, model, endpoint, …). */
-	providerConfigs: ProviderConfigs;
-	/** Which preset is currently active. `null` = no LLM configured. */
-	activePresetId: string | null;
-	searchApiConfig: SearchApiConfig;
-	embeddingConfig: EmbeddingConfig;
-	multimodalConfig: MultimodalConfig;
-	outputLanguage: OutputLanguage;
-	proxyConfig: ProxyConfig;
-	scheduledImportConfig: ScheduledImportConfig;
-	sourceWatchConfig: SourceWatchConfig;
-	apiConfig: ApiConfig;
-	dataVersion: number;
+export interface ExternalPreview {
+  title: string
+  path: string
+  source: string
+  url: string
+  snippet: string
+}
 
-	setProject: (project: WikiProject | null) => void;
-	setFileTree: (tree: FileNode[]) => void;
-	setSelectedFile: (path: string | null) => void;
-	setFileContent: (content: string) => void;
-	setPendingScrollImageSrc: (src: string | null) => void;
-	setChatExpanded: (expanded: boolean) => void;
-	setActiveView: (view: WikiState["activeView"]) => void;
-	setLlmConfig: (config: LlmConfig) => void;
-	setProviderConfigs: (configs: ProviderConfigs) => void;
-	setActivePresetId: (id: string | null) => void;
-	setSearchApiConfig: (config: SearchApiConfig) => void;
-	setEmbeddingConfig: (config: EmbeddingConfig) => void;
-	setMultimodalConfig: (config: MultimodalConfig) => void;
-	setOutputLanguage: (lang: OutputLanguage) => void;
-	setProxyConfig: (config: ProxyConfig) => void;
-	setScheduledImportConfig: (config: ScheduledImportConfig) => void;
-	setSourceWatchConfig: (config: SourceWatchConfig) => void;
-	setApiConfig: (config: ApiConfig) => void;
-	bumpDataVersion: () => void;
+interface WikiState {
+	project: WikiProject | null
+	fileTree: FileNode[]
+	selectedFile: string | null
+	fileContent: string
+	externalPreview: ExternalPreview | null
+	/**
+   * One-shot scroll target for the markdown preview. When the user
+   * clicks an image in search results and chooses "jump to source",
+   * we set this to the image URL alongside `selectedFile`. The
+   * markdown preview consumes it on its next render — finds the
+   * `<img data-mdsrc="..."/>` whose attribute matches and scrolls
+   * it into view, then clears this back to null so a stale target
+   * doesn't fire on the NEXT page open.
+   *
+   * Match by raw URL (the literal `src` from the markdown) rather
+   * than the resolved `convertFileSrc` URL — same image referenced
+   * across two pages with different URL conventions (one absolute,
+   * one wiki-relative) still works.
+   */
+	pendingScrollImageSrc: string | null
+	chatExpanded: boolean
+	activeView: "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "settings"
+	llmConfig: LlmConfig
+	/** Per-provider-preset stored overrides (API key, model, endpoint, …). */
+	providerConfigs: ProviderConfigs
+	/** Which preset is currently active. `null` = no LLM configured. */
+	activePresetId: string | null
+	searchApiConfig: SearchApiConfig
+	embeddingConfig: EmbeddingConfig
+	multimodalConfig: MultimodalConfig
+	outputLanguage: OutputLanguage
+	proxyConfig: ProxyConfig
+	scheduledImportConfig: ScheduledImportConfig
+	sourceWatchConfig: SourceWatchConfig
+	apiConfig: ApiConfig
+	dataVersion: number
+
+	setProject: (project: WikiProject | null) => void
+	setFileTree: (tree: FileNode[]) => void
+	setSelectedFile: (path: string | null) => void
+	setFileContent: (content: string) => void
+	setExternalPreview: (preview: ExternalPreview | null) => void
+	setPendingScrollImageSrc: (src: string | null) => void
+	setChatExpanded: (expanded: boolean) => void
+	setActiveView: (view: WikiState["activeView"]) => void
+	setLlmConfig: (config: LlmConfig) => void
+	setProviderConfigs: (configs: ProviderConfigs) => void
+	setActivePresetId: (id: string | null) => void
+	setSearchApiConfig: (config: SearchApiConfig) => void
+	setEmbeddingConfig: (config: EmbeddingConfig) => void
+	setMultimodalConfig: (config: MultimodalConfig) => void
+	setOutputLanguage: (lang: OutputLanguage) => void
+	setProxyConfig: (config: ProxyConfig) => void
+	setScheduledImportConfig: (config: ScheduledImportConfig) => void
+	setSourceWatchConfig: (config: SourceWatchConfig) => void
+	setApiConfig: (config: ApiConfig) => void
+	bumpDataVersion: () => void
 }
 
 export const useWikiStore = create<WikiState>((set) => ({
@@ -354,18 +358,19 @@ export const useWikiStore = create<WikiState>((set) => ({
 	fileTree: [],
 	selectedFile: null,
 	fileContent: "",
+	externalPreview: null,
 	pendingScrollImageSrc: null,
 	chatExpanded: false,
 	activeView: "wiki",
 	llmConfig: {
-		provider: "openai",
-		apiKey: "",
-		maxContextSize: 204800,
-		model: "",
-		ollamaUrl: "http://localhost:11434",
-		customEndpoint: "",
-		azureApiVersion: "2024-10-21",
-		reasoning: { mode: "auto" },
+    provider: "openai",
+    apiKey: "",
+    maxContextSize: 204800,
+    model: "",
+    ollamaUrl: "http://localhost:11434",
+    customEndpoint: "",
+    azureApiVersion: "2024-10-21",
+    reasoning: { mode: "auto" },
 	},
 	providerConfigs: {},
 	activePresetId: null,
@@ -374,26 +379,27 @@ export const useWikiStore = create<WikiState>((set) => ({
 
 	setProject: (project) => set({ project }),
 	setFileTree: (fileTree) => set({ fileTree }),
-	setSelectedFile: (selectedFile) => set({ selectedFile }),
+	setSelectedFile: (selectedFile) => set({ selectedFile, externalPreview: null }),
 	setFileContent: (fileContent) => set({ fileContent }),
-	setPendingScrollImageSrc: (pendingScrollImageSrc) =>
-		set({ pendingScrollImageSrc }),
+	setExternalPreview: (externalPreview) => set({ externalPreview }),
+	setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
 	setChatExpanded: (chatExpanded) => set({ chatExpanded }),
 	setActiveView: (activeView) => set({ activeView }),
 	searchApiConfig: {
-		provider: "none",
-		apiKey: "",
-		serpApiEngine: "google",
-		searXngUrl: "",
-		searXngCategories: ["general"],
-		providerConfigs: {},
-		deepResearchSource: "web",
-		anyTxt: {
-			endpoint: "http://127.0.0.1:9920",
-			filterDir: "",
-			filterExt: "*",
-			limit: 20,
-		},
+    provider: "none",
+    apiKey: "",
+    serpApiEngine: "google",
+    searXngUrl: "",
+    searXngCategories: ["general"],
+    providerConfigs: {},
+    deepResearchSource: "web",
+    anyTxt: {
+      enabled: false,
+      endpoint: "http://127.0.0.1:9920",
+      filterDir: "",
+      filterExt: "*",
+      limit: 20,
+    },
 	},
 
 	embeddingConfig: {
