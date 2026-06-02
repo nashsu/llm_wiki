@@ -45,7 +45,7 @@ const RESERVED_HEADER_NAMES = new Set([
   "content-length",
   "x-goog-api-key",
 ])
-const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_~0-9A-Za-z-]+$/
 
 function headersToText(headers: Record<string, string>): string {
   return Object.entries(headers)
