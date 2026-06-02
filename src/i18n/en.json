@@ -152,6 +152,28 @@
       "running": "Running",
       "done": "Done",
       "failed": "Failed"
+    },
+    "timeline": {
+      "title": "Tool calls",
+      "input": "Input",
+      "error": "Error",
+      "empty": "No tool calls"
+    },
+    "blocks": {
+      "toolUse": "Tool use",
+      "toolResult": "Tool result"
+    },
+    "cost": {
+      "title": "Agent run",
+      "cost": "Cost",
+      "inputTokens": "Input",
+      "outputTokens": "Output",
+      "turns": "Turns",
+      "duration": "Duration"
+    },
+    "actions": {
+      "expand": "Expand",
+      "collapse": "Collapse"
     }
   },
   "search": {

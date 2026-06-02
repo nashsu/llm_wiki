@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
+import type { SDKContentBlock } from "@/lib/agent/agent-types"
 import i18n from "@/i18n"
 
 export interface Conversation {
@@ -28,6 +29,7 @@ export interface DisplayMessage {
   references?: MessageReference[]  // pages cited in this response, saved at creation time
   mode?: "chat" | "agent"
   agentSessionId?: string
+  agentBlocks?: SDKContentBlock[]
   toolCalls?: AgentToolCallRecord[]
   costUsd?: number
   inputTokens?: number
