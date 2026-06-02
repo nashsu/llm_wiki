@@ -174,6 +174,21 @@
     "actions": {
       "expand": "展开",
       "collapse": "折叠"
+    },
+    "permission": {
+      "title": "Agent 需要权限",
+      "tool": "工具",
+      "description": "说明",
+      "input": "输入预览",
+      "blockedPath": "受限路径",
+      "expiresIn": "{{seconds}} 秒后自动拒绝",
+      "allowTemporary": "临时允许",
+      "allowPermanent": "永久允许",
+      "deny": "拒绝",
+      "denyInterrupt": "拒绝并中断",
+      "timeoutDenied": "权限请求已超时",
+      "keyboardHint": "Enter 临时允许，Escape 拒绝。",
+      "noDescription": "允许前请检查请求的工具调用。"
     }
   },
   "search": {

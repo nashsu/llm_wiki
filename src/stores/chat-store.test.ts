@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { chatMessagesToLLM, useChatStore, type DisplayMessage } from "./chat-store"
 
 function resetChatStore(): void {
+  useChatStore.getState().clearAgentPermissionRequests()
   useChatStore.setState({
     conversations: [],
     activeConversationId: null,
@@ -11,6 +12,8 @@ function resetChatStore(): void {
     mode: "chat",
     ingestSource: null,
     maxHistoryMessages: 10,
+    activeAgentPermissionRequest: null,
+    queuedAgentPermissionRequests: [],
   })
 }
 
@@ -27,6 +30,11 @@ function makeAssistantMessage(id: string, conversationId: string): DisplayMessag
 
 describe("chat store agent data model", () => {
   beforeEach(() => {
+    resetChatStore()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
     resetChatStore()
   })
 
@@ -227,5 +235,117 @@ describe("chat store agent data model", () => {
         content: "answer",
       },
     ])
+  })
+
+  it("starts with no pending agent permission request", () => {
+    expect(useChatStore.getState().activeAgentPermissionRequest).toBeNull()
+    expect(useChatStore.getState().queuedAgentPermissionRequests).toEqual([])
+  })
+
+  it("resolves the active agent permission request", async () => {
+    const promise = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-1",
+      toolName: "Bash",
+      inputPreview: { command: "pwd" },
+      toolUseID: "tool-1",
+    })
+
+    expect(useChatStore.getState().activeAgentPermissionRequest).toMatchObject({
+      requestId: "permission-1",
+      toolName: "Bash",
+    })
+
+    useChatStore.getState().resolveAgentPermission("permission-1", {
+      behavior: "allow",
+      decisionClassification: "user_temporary",
+    })
+
+    await expect(promise).resolves.toEqual({
+      behavior: "allow",
+      decisionClassification: "user_temporary",
+    })
+    expect(useChatStore.getState().activeAgentPermissionRequest).toBeNull()
+  })
+
+  it("queues concurrent agent permission requests serially", async () => {
+    const first = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-1",
+      toolName: "Bash",
+      inputPreview: {},
+      toolUseID: "tool-1",
+    })
+    const second = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-2",
+      toolName: "Edit",
+      inputPreview: {},
+      toolUseID: "tool-2",
+    })
+
+    expect(useChatStore.getState().activeAgentPermissionRequest?.requestId).toBe("permission-1")
+    expect(useChatStore.getState().queuedAgentPermissionRequests).toHaveLength(1)
+
+    useChatStore.getState().resolveAgentPermission("permission-1", {
+      behavior: "deny",
+      message: "no",
+    })
+
+    await expect(first).resolves.toMatchObject({ behavior: "deny" })
+    expect(useChatStore.getState().activeAgentPermissionRequest?.requestId).toBe("permission-2")
+
+    useChatStore.getState().resolveAgentPermission("permission-2", {
+      behavior: "allow",
+    })
+    await expect(second).resolves.toMatchObject({ behavior: "allow" })
+  })
+
+  it("auto-denies an active agent permission request after the timeout", async () => {
+    vi.useFakeTimers()
+    const promise = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-1",
+      toolName: "Bash",
+      inputPreview: {},
+      toolUseID: "tool-1",
+    }, 1_000)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    await expect(promise).resolves.toMatchObject({
+      behavior: "deny",
+      decisionClassification: "user_reject",
+    })
+    expect(useChatStore.getState().activeAgentPermissionRequest).toBeNull()
+  })
+
+  it("clears active and queued permission requests without touching chat data", async () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.getState().addMessage("user", "hello")
+    const first = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-1",
+      toolName: "Bash",
+      inputPreview: {},
+      toolUseID: "tool-1",
+    })
+    const second = useChatStore.getState().requestAgentPermission({
+      requestId: "permission-2",
+      toolName: "Edit",
+      inputPreview: {},
+      toolUseID: "tool-2",
+    })
+
+    useChatStore.getState().clearAgentPermissionRequests({
+      behavior: "deny",
+      interrupt: true,
+      message: "stopped",
+    })
+
+    await expect(first).resolves.toMatchObject({ behavior: "deny", interrupt: true })
+    await expect(second).resolves.toMatchObject({ behavior: "deny", interrupt: true })
+    expect(useChatStore.getState().activeAgentPermissionRequest).toBeNull()
+    expect(useChatStore.getState().queuedAgentPermissionRequests).toEqual([])
+    expect(useChatStore.getState().conversations[0].id).toBe(convId)
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+    })
   })
 })

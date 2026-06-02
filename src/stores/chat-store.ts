@@ -1,6 +1,10 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
-import type { SDKContentBlock } from "@/lib/agent/agent-types"
+import type {
+  AgentPermissionDecision,
+  AgentPermissionRequestPayload,
+  SDKContentBlock,
+} from "@/lib/agent/agent-types"
 import i18n from "@/i18n"
 
 export interface Conversation {
@@ -59,6 +63,13 @@ export interface AgentStreamStats {
   numTurns?: number
 }
 
+/** Runtime-only Agent permission request shown in the approval dialog. */
+export interface AgentPermissionRequestRecord extends AgentPermissionRequestPayload {
+  receivedAt: number
+  expiresAt: number
+  timeoutMs: number
+}
+
 interface AddMessageOptions {
   mode?: DisplayMessage["mode"]
   agentSessionId?: string
@@ -74,6 +85,8 @@ interface ChatState {
   mode: "chat" | "agent" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
+  activeAgentPermissionRequest: AgentPermissionRequestRecord | null
+  queuedAgentPermissionRequests: AgentPermissionRequestRecord[]
 
   // Conversation management
   createConversation: () => string
@@ -91,6 +104,15 @@ interface ChatState {
   finalizeAgentStream: (content: string, stats?: AgentStreamStats) => void
   setAgentToolCalls: (messageId: string, toolCalls: AgentToolCallRecord[]) => void
   updateAgentProgress: (messageId: string, event: AgentToolCallRecord) => void
+  /** Queue an Agent permission request and resolve when the user decides or timeout denies it. */
+  requestAgentPermission: (
+    payload: AgentPermissionRequestPayload,
+    timeoutMs?: number
+  ) => Promise<AgentPermissionDecision>
+  /** Resolve one pending Agent permission request and promote the next queued request. */
+  resolveAgentPermission: (requestId: string, decision: AgentPermissionDecision) => void
+  /** Deny and clear all active/queued Agent permission requests. */
+  clearAgentPermissionRequests: (decision?: AgentPermissionDecision) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -109,6 +131,40 @@ function generateConversationId(): string {
   return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+const DEFAULT_AGENT_PERMISSION_TIMEOUT_MS = 60_000
+
+const pendingAgentPermissionResolvers = new Map<
+  string,
+  {
+    resolve: (decision: AgentPermissionDecision) => void
+    timer: ReturnType<typeof setTimeout> | null
+  }
+>()
+
+function defaultDenyPermissionDecision(message: string): AgentPermissionDecision {
+  return {
+    behavior: "deny",
+    message,
+    decisionClassification: "user_reject",
+  }
+}
+
+function startAgentPermissionTimer(request: AgentPermissionRequestRecord): AgentPermissionRequestRecord {
+  const pending = pendingAgentPermissionResolvers.get(request.requestId)
+  if (pending?.timer) clearTimeout(pending.timer)
+  const expiresAt = Date.now() + request.timeoutMs
+  const activeRequest = { ...request, expiresAt }
+  if (pending) {
+    pending.timer = setTimeout(() => {
+      useChatStore.getState().resolveAgentPermission(
+        request.requestId,
+        defaultDenyPermissionDecision(i18n.t("agent.permission.timeoutDenied"))
+      )
+    }, request.timeoutMs)
+  }
+  return activeRequest
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
@@ -118,6 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
+  activeAgentPermissionRequest: null,
+  queuedAgentPermissionRequests: [],
 
   createConversation: () => {
     const id = generateConversationId()
@@ -308,6 +366,77 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { ...m, toolCalls: nextToolCalls }
       }),
     })),
+
+  requestAgentPermission: (payload, timeoutMs = DEFAULT_AGENT_PERMISSION_TIMEOUT_MS) =>
+    new Promise<AgentPermissionDecision>((resolve) => {
+      const now = Date.now()
+      const request: AgentPermissionRequestRecord = {
+        ...payload,
+        receivedAt: now,
+        expiresAt: 0,
+        timeoutMs,
+      }
+      pendingAgentPermissionResolvers.set(request.requestId, { resolve, timer: null })
+
+      if (!get().activeAgentPermissionRequest) {
+        set({ activeAgentPermissionRequest: startAgentPermissionTimer(request) })
+        return
+      }
+
+      set((state) => ({
+        queuedAgentPermissionRequests: [
+          ...state.queuedAgentPermissionRequests,
+          request,
+        ],
+      }))
+    }),
+
+  resolveAgentPermission: (requestId, decision) => {
+    const pending = pendingAgentPermissionResolvers.get(requestId)
+    if (pending) {
+      pendingAgentPermissionResolvers.delete(requestId)
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.resolve(decision)
+    }
+
+    const state = get()
+    const activeMatches = state.activeAgentPermissionRequest?.requestId === requestId
+    const remainingQueue = state.queuedAgentPermissionRequests.filter(
+      (request) => request.requestId !== requestId
+    )
+    if (!activeMatches) {
+      set({ queuedAgentPermissionRequests: remainingQueue })
+      return
+    }
+    const [nextRequest, ...nextQueue] = remainingQueue
+    set({
+      activeAgentPermissionRequest: nextRequest
+        ? startAgentPermissionTimer(nextRequest)
+        : null,
+      queuedAgentPermissionRequests: nextQueue,
+    })
+  },
+
+  clearAgentPermissionRequests: (decision) => {
+    const fallbackDecision =
+      decision ??
+      {
+        behavior: "deny" as const,
+        message: i18n.t("agent.permission.timeoutDenied"),
+        interrupt: true,
+        decisionClassification: "user_reject" as const,
+      }
+
+    for (const [requestId, pending] of pendingAgentPermissionResolvers) {
+      pendingAgentPermissionResolvers.delete(requestId)
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.resolve(fallbackDecision)
+    }
+    set({
+      activeAgentPermissionRequest: null,
+      queuedAgentPermissionRequests: [],
+    })
+  },
 
   setMode: (mode) => set({ mode }),
 
