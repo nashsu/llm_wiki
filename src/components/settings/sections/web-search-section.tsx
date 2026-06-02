@@ -160,71 +160,92 @@ export function WebSearchSection() {
 				</div>
 			</div>
 
-			<div className="space-y-3 rounded-lg border p-3">
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<Label>{t("settings.sections.webSearch.anyTxtTitle")}</Label>
-						<p className="mt-1 text-xs text-muted-foreground">
-							{t("settings.sections.webSearch.anyTxtDescription")}
-						</p>
-					</div>
-					{savedId === "anytxt" && (
-						<span className="shrink-0 text-[10px] text-emerald-600">
-							{t("settings.sections.webSearch.savedBadge")}
-						</span>
-					)}
-				</div>
-				<div className="grid gap-3 md:grid-cols-2">
-					<div className="space-y-2">
-						<Label>{t("settings.sections.webSearch.anyTxtEndpoint")}</Label>
-						<Input
-							value={anyTxtConfig.endpoint}
-							onChange={(e) => updateAnyTxt({ endpoint: e.target.value })}
-							placeholder="http://127.0.0.1:9920"
-						/>
-					</div>
-					<div className="space-y-2">
-						<Label>{t("settings.sections.webSearch.anyTxtLimit")}</Label>
-						<Input
-							type="number"
-							min={1}
-							max={100}
-							value={anyTxtConfig.limit}
-							onChange={(e) => {
-								const value = e.target.value.trim();
-								updateAnyTxt({ limit: value ? Number(value) : undefined });
-							}}
-							placeholder="20"
-						/>
-					</div>
-					<div className="space-y-2">
-						<Label>{t("settings.sections.webSearch.anyTxtFilterDir")}</Label>
-						<Input
-							value={anyTxtFilterDir}
-							onChange={(e) => updateAnyTxt({ filterDir: e.target.value })}
-							placeholder={t(
-								"settings.sections.webSearch.anyTxtFilterDirPlaceholder",
-							)}
-						/>
-						{showBroadAnyTxtWarning && (
-							<p className="text-xs text-destructive">
-								{t("settings.sections.webSearch.anyTxtBroadDirWarning")}
-							</p>
-						)}
-					</div>
-					<div className="space-y-2">
-						<Label>{t("settings.sections.webSearch.anyTxtFilterExt")}</Label>
-						<Input
-							value={anyTxtConfig.filterExt}
-							onChange={(e) => updateAnyTxt({ filterExt: e.target.value })}
-							placeholder="*"
-						/>
-					</div>
-				</div>
-				<p className="text-xs text-muted-foreground">
-					{t("settings.sections.webSearch.anyTxtHint")}
-				</p>
-			</div>
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Label>{t("settings.sections.webSearch.anyTxtTitle")}</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.anyTxtDescription")}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {savedId === "anytxt" && (
+              <span className="text-[10px] text-emerald-600">
+                {t("settings.sections.webSearch.savedBadge")}
+              </span>
+            )}
+            {anyTxtConfig.enabled && (
+              <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                {t("settings.sections.webSearch.activeBadge")}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => updateAnyTxt({ enabled: !anyTxtConfig.enabled })}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
+                anyTxtConfig.enabled
+                  ? "border-primary bg-primary"
+                  : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
+              }`}
+              aria-label={anyTxtConfig.enabled ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
+                  anyTxtConfig.enabled ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtEndpoint")}</Label>
+            <Input
+              value={anyTxtConfig.endpoint}
+              onChange={(e) => updateAnyTxt({ endpoint: e.target.value })}
+              placeholder="http://127.0.0.1:9920"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtLimit")}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={anyTxtConfig.limit}
+              onChange={(e) => {
+                const value = e.target.value.trim()
+                updateAnyTxt({ limit: value ? Number(value) : undefined })
+              }}
+              placeholder="20"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterDir")}</Label>
+            <Input
+              value={anyTxtFilterDir}
+              onChange={(e) => updateAnyTxt({ filterDir: e.target.value })}
+              placeholder={t("settings.sections.webSearch.anyTxtFilterDirPlaceholder")}
+            />
+            {showBroadAnyTxtWarning && (
+              <p className="text-xs text-destructive">
+                {t("settings.sections.webSearch.anyTxtBroadDirWarning")}
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.anyTxtFilterExt")}</Label>
+            <Input
+              value={anyTxtConfig.filterExt}
+              onChange={(e) => updateAnyTxt({ filterExt: e.target.value })}
+              placeholder="*"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.webSearch.anyTxtHint")}
+        </p>
+      </div>
 
 			<div className="space-y-2">
 				<Label>{t("settings.sections.webSearch.webProviders")}</Label>

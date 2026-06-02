@@ -1,4 +1,4 @@
-import { anyTxtSearch } from "./anytxt-search"
+import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "./anytxt-search"
 import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
 import { autoIngest } from "./ingest"
@@ -12,11 +12,11 @@ const MAX_RESEARCH_SOURCES = 20
 
 interface ResearchSourceDeps {
   webSearch: typeof webSearch
-  anyTxtSearch: typeof anyTxtSearch
+  anyTxtSearch: typeof anyTxtSearchSmart
 }
 
 interface CollectResearchSourceOptions {
-  anyTxtQueries?: string[]
+  llmConfig?: LlmConfig
 }
 
 interface ResearchSourceCollection {
@@ -53,13 +53,13 @@ export async function collectResearchSources(
   queries: string[],
   searchConfig: SearchApiConfig,
   projectPath: string,
-  deps: ResearchSourceDeps = { webSearch, anyTxtSearch },
+  deps: ResearchSourceDeps = { webSearch, anyTxtSearch: anyTxtSearchSmart },
   options: CollectResearchSourceOptions = {},
 ): Promise<ResearchSourceCollection> {
   const resolvedSearchConfig = resolveSearchConfig(searchConfig)
   const sourceMode = resolvedSearchConfig.deepResearchSource ?? "web"
   const useWeb = sourceMode === "web" || sourceMode === "both"
-  const useAnyTxt = hasAnyTxtSource(resolvedSearchConfig)
+  const useAnyTxt = hasAnyTxtSource(resolvedSearchConfig) && hasConfiguredAnyTxt(resolvedSearchConfig.anyTxt)
   const webConfigured = hasConfiguredSearchProvider(resolvedSearchConfig)
   const allResults: import("./web-search").WebSearchResult[] = []
   const errors: string[] = []
@@ -84,31 +84,25 @@ export async function collectResearchSources(
   }
 
   const webQueries = queries.map((q) => q.trim()).filter(Boolean)
-  const anyTxtQueries = uniqueQueries([
-    ...(options.anyTxtQueries ?? []),
-    ...queries,
-  ])
-  const maxQueryCount = Math.max(webQueries.length, anyTxtQueries.length)
+  const calls: Array<Promise<{ results: import("./web-search").WebSearchResult[] }>> = []
 
-  for (let i = 0; i < maxQueryCount; i++) {
-    const webQuery = webQueries[i]
-    const anyTxtQuery = anyTxtQueries[i]
-    const calls: Array<Promise<{ results: import("./web-search").WebSearchResult[] }>> = []
+  for (const webQuery of webQueries) {
     if (useWeb && webConfigured && webQuery) {
       calls.push(deps.webSearch(webQuery, resolvedSearchConfig, 5).then((results) => ({ results })))
     }
-    if (useAnyTxt && anyTxtQuery) {
-      calls.push(deps.anyTxtSearch(anyTxtQuery, resolvedSearchConfig.anyTxt, 5, projectPath).then((results) => ({ results })))
-    }
-    const settled = await Promise.allSettled(calls)
-    for (const item of settled) {
-      if (item.status === "fulfilled") {
-        addResults(item.value.results)
-      } else {
-        const message = item.reason instanceof Error ? item.reason.message : String(item.reason)
-        errors.push(message)
-        console.warn("[DeepResearch] source search failed:", message)
-      }
+  }
+  if (useAnyTxt) {
+    calls.push(deps.anyTxtSearch(queries, resolvedSearchConfig.anyTxt, options.llmConfig, 15, projectPath).then((results) => ({ results })))
+  }
+
+  const settled = await Promise.allSettled(calls)
+  for (const item of settled) {
+    if (item.status === "fulfilled") {
+      addResults(item.value.results)
+    } else {
+      const message = item.reason instanceof Error ? item.reason.message : String(item.reason)
+      errors.push(message)
+      console.warn("[DeepResearch] source search failed:", message)
     }
   }
 
@@ -118,80 +112,6 @@ export async function collectResearchSources(
 function hasAnyTxtSource(searchConfig: SearchApiConfig): boolean {
   const sourceMode = searchConfig.deepResearchSource ?? "web"
   return sourceMode === "anytxt" || sourceMode === "both"
-}
-
-export async function rewriteAnyTxtQueries(queries: string[], llmConfig: LlmConfig): Promise<string[]> {
-  const cleanQueries = queries.map((q) => q.trim()).filter(Boolean)
-  if (cleanQueries.length === 0) return []
-
-  const prompt = [
-    "Convert the user's research topics into concise AnyTXT local file search keyword queries.",
-    "",
-    "AnyTXT searches local indexed file text. Natural-language questions often fail, so produce keyword-style searches.",
-    "Rules:",
-    "- Return ONLY a JSON array of strings.",
-    "- Produce 1-3 search queries total.",
-    "- Keep proper nouns, filenames, technical terms, dates, abbreviations, and non-English terms.",
-    "- Prefer compact keyword phrases over full questions.",
-    "- Do not add explanations, markdown, comments, or code fences.",
-    "",
-    "User research topics:",
-    JSON.stringify(cleanQueries, null, 2),
-  ].join("\n")
-
-  let output = ""
-  await streamChat(
-    llmConfig,
-    [{ role: "user", content: prompt }],
-    {
-      onToken: (token) => { output += token },
-      onDone: () => {},
-      onError: () => {},
-    },
-    undefined,
-    { temperature: 0.1, max_tokens: 512, reasoning: { mode: "off" } },
-  )
-
-  const rewritten = parseAnyTxtQueryRewrite(output)
-  return rewritten.length > 0 ? rewritten : cleanQueries
-}
-
-export function parseAnyTxtQueryRewrite(output: string): string[] {
-  const stripped = output
-    .replace(/```(?:json)?/gi, "")
-    .replace(/```/g, "")
-    .trim()
-
-  const jsonMatch = stripped.match(/\[[\s\S]*\]/)
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0])
-      if (Array.isArray(parsed)) {
-        return uniqueQueries(parsed.map((item) => typeof item === "string" ? item : ""))
-      }
-    } catch {
-      // fall through to line parser
-    }
-  }
-
-  return uniqueQueries(stripped
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)]|QUERY:)\s*/i, "").trim()))
-}
-
-function uniqueQueries(queries: string[]): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const raw of queries) {
-    const query = raw.replace(/^["']|["']$/g, "").trim()
-    if (!query) continue
-    const key = query.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(query)
-    if (out.length >= 3) break
-  }
-  return out
 }
 
 /**
@@ -232,21 +152,12 @@ async function executeResearch(
     const queries = task?.searchQueries && task.searchQueries.length > 0
       ? task.searchQueries
       : [topic]
-    let anyTxtQueries: string[] | undefined
-    if (hasAnyTxtSource(resolveSearchConfig(searchConfig))) {
-      try {
-        anyTxtQueries = await rewriteAnyTxtQueries(queries, llmConfig)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.warn("[DeepResearch] AnyTXT query rewrite failed, using original queries:", message)
-      }
-    }
     const { results: allResults, errors: sourceErrors } = await collectResearchSources(
       queries,
       searchConfig,
       pp,
-      { webSearch, anyTxtSearch },
-      { anyTxtQueries },
+      { webSearch, anyTxtSearch: anyTxtSearchSmart },
+      { llmConfig },
     )
 
     const webResults = allResults

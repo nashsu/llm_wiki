@@ -1,7 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { anyTxtSearch, normalizeAnyTxtConfig } from "./anytxt-search"
+import type { LlmConfig } from "@/stores/wiki-store"
+import {
+  anyTxtSearch,
+  anyTxtSearchSmart,
+  normalizeAnyTxtConfig,
+  parseAnyTxtQueryRewrite,
+  prepareAnyTxtQueries,
+} from "./anytxt-search"
+
+const streamChatMock = vi.hoisted(() => vi.fn())
+
+vi.mock("@/lib/llm-client", () => ({
+  streamChat: streamChatMock,
+}))
 
 const fetchMock = vi.fn<typeof fetch>()
+
+const llmConfig: LlmConfig = {
+  provider: "custom",
+  apiKey: "test",
+  model: "test-model",
+  ollamaUrl: "",
+  customEndpoint: "http://localhost/v1/chat/completions",
+  maxContextSize: 128000,
+}
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -14,6 +36,7 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
 describe("anyTxtSearch", () => {
   beforeEach(() => {
     fetchMock.mockReset()
+    streamChatMock.mockReset()
     vi.stubGlobal("fetch", fetchMock)
   })
 
@@ -199,6 +222,16 @@ describe("anyTxtSearch", () => {
     expect(out).toEqual([])
   })
 
+  it("returns no results when AnyTXT is disabled", async () => {
+    const out = await anyTxtSearch("alpha", {
+      enabled: false,
+      endpoint: "http://127.0.0.1:9920",
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(out).toEqual([])
+  })
+
   it("surfaces JSON-RPC errors", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({
       jsonrpc: "2.0",
@@ -254,5 +287,70 @@ describe("anyTxtSearch", () => {
 
     await expect(anyTxtSearch("alpha", { endpoint: "http://127.0.0.1:9920" }))
       .rejects.toThrow("Check that ATGUI.exe is running")
+  })
+})
+
+describe("AnyTXT query rewrite", () => {
+  it("parses JSON-array query rewrites and deduplicates them", () => {
+    expect(parseAnyTxtQueryRewrite('```json\n["MBR ammonia", "winter nitrification", "MBR ammonia"]\n```'))
+      .toEqual(["MBR ammonia", "winter nitrification"])
+  })
+
+  it("falls back to line-based query parsing", () => {
+    expect(parseAnyTxtQueryRewrite("QUERY: 反硝化除磷\n- 污水处理 冬季 氨氮\n3. MBR nitrification"))
+      .toEqual(["反硝化除磷", "污水处理 冬季 氨氮", "MBR nitrification"])
+  })
+
+  it("prefers rewritten AnyTXT queries when original queries would fill the cap", async () => {
+    streamChatMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const handlers = args[2] as { onToken?: (token: string) => void; onDone?: () => void }
+      handlers.onToken?.('["kw1", "kw2", "kw3"]')
+      handlers.onDone?.()
+    })
+
+    const queries = await prepareAnyTxtQueries(
+      ["q1 long natural language", "q2 long natural language", "q3 long natural language"],
+      llmConfig,
+    )
+
+    expect(queries).toEqual(["kw1", "kw2", "kw3"])
+  })
+
+  it("falls back to original queries when rewrite fails", async () => {
+    streamChatMock.mockRejectedValueOnce(new Error("model offline"))
+
+    const queries = await prepareAnyTxtQueries(["how did the project handle winter ammonia?"], llmConfig)
+
+    expect(queries).toEqual(["how did the project handle winter ammonia?"])
+  })
+
+  it("searches rewritten queries through the smart AnyTXT entry point", async () => {
+    fetchMock.mockReset()
+    vi.stubGlobal("fetch", fetchMock)
+    streamChatMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const handlers = args[2] as { onToken?: (token: string) => void; onDone?: () => void }
+      handlers.onToken?.('["煤矿 安全"]')
+      handlers.onDone?.()
+    })
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      result: {
+        items: [
+          { path: "/docs/coal.md", snippet: "煤矿安全 local match" },
+        ],
+      },
+    }))
+
+    const out = await anyTxtSearchSmart("请帮我找一下煤矿安全相关资料", {
+      endpoint: "http://127.0.0.1:9920",
+    }, llmConfig, 1, "/Users/me/wiki")
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      params: { input: { pattern: "煤矿 安全" } },
+    })
+    expect(out[0]).toMatchObject({
+      title: "coal.md",
+      source: "AnyTXT",
+    })
   })
 })

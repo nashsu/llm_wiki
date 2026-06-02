@@ -7,7 +7,7 @@ import { lintFixMutex } from "@/lib/lint-fix-mutex"
 import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { autoIngest, captionSourceImages } from "@/lib/ingest"
-import { collectResearchSources, queueResearch, rewriteAnyTxtQueries } from "@/lib/deep-research"
+import { collectResearchSources, queueResearch } from "@/lib/deep-research"
 import { buildDedupLlmCall, executeMerge, loadAllWikiPages, runDuplicateDetection } from "@/lib/dedup-runner"
 import { mergeDuplicateGroup, type DuplicateGroup, type MergeResult } from "@/lib/dedup"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
@@ -365,21 +365,15 @@ export async function runAgentAppTool(
         },
       }
     }
-    const anyTxtQueries = resolved.deepResearchSource === "anytxt" || resolved.deepResearchSource === "both"
-      ? await rewriteAnyTxtQueries(queries, state.llmConfig).catch(() => undefined)
-      : undefined
     const collected = await collectResearchSources(
       queries,
       searchConfig,
       projectPath,
-      undefined,
-      { anyTxtQueries },
     )
     return {
       ok: true,
       result: {
         queries,
-        anyTxtQueries,
         sourceMode: resolved.deepResearchSource ?? "web",
         results: collected.results,
         errors: redactErrors(collected.errors, state),
