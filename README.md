@@ -1,5 +1,8 @@
 # LLM Wiki
 
+> **Fork:** Enhanced from [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) with Agent Sidecar, Multi-Agent Pipeline, code refactoring, and more.
+
+
 <p align="center">
   <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
@@ -43,6 +46,13 @@
 - **Async Review System** — LLM flags items for human judgment, predefined actions, pre-generated search queries
 - **Chrome Web Clipper** — one-click web page capture with auto-ingest into knowledge base
 - **Local HTTP API + AI Agent Skill** — built-in `127.0.0.1:19828` JSON API (token-protected) for hybrid search, file read, graph traversal, and source rescan; ready-made [agent skill](https://github.com/nashsu/llm_wiki_skill) installs into Claude Code / Codex with one command (`npx skills add …`)
+- **Agent Sidecar** — built-in intelligent agent based on Claude Agent SDK with tool calling, multi-turn dialog, hooks permission control, session management (resume/fork/continue)
+- **Multi-Agent Pipeline** — 5 built-in agents (compiler/linter/fixer/synthesizer/qa) for orchestrated execution
+- **Property Autofill Agent** — auto-fill status and tags for concepts/entities during ingest
+- **Lint Loop** — Agent-driven auto-detection and fix with concurrency control
+- **Graph Display Tuning** — node size and spacing sliders for real-time layout adjustment
+- **Embedding ExtraHeaders** — custom HTTP headers for embedding requests, supporting gateway routing
+
 
 ## What is this?
 
@@ -367,12 +377,13 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | State | Zustand |
 | LLM | Streaming fetch (OpenAI, Anthropic, Google, Ollama, Custom) |
 | Web Search | Tavily, SerpApi, SearXNG JSON API |
+| Agent | Claude Agent SDK + Node.js Sidecar |
 
 ## Installation
 
 ### Pre-built Binaries
 
-Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
+Download from [Releases](https://github.com/6tizer/llm_wiki/releases):
 - **macOS**: `.dmg` (Apple Silicon + Intel)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
@@ -381,7 +392,7 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 
 ```bash
 # Prerequisites: Node.js 20+, Rust 1.70+
-git clone https://github.com/nashsu/llm_wiki.git
+git clone https://github.com/6tizer/llm_wiki.git
 cd llm_wiki
 npm install
 npm run tauri dev      # Development
@@ -407,7 +418,7 @@ npm run tauri build    # Production build
 8. Check **Review** for items needing your attention
 9. Run **Lint** periodically to maintain wiki health
 
-## Local HTTP API + AI Agent Skill
+## Local HTTP API + AI Agent
 
 LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-protected, `127.0.0.1`-only) so external tools — including AI agents like **Claude Code**, **Codex**, or any HTTP-capable script — can query your wiki:
 
@@ -420,20 +431,55 @@ LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-prot
 
 Enable + generate a token in **Settings → API Server**.
 
-### Plug your AI agent in with one command
+### Built-in Agent Sidecar
 
-A ready-made **agent skill** for LLM Wiki lives in its own repo. Install it into Claude Code / Codex / any skills-compatible runtime:
+LLM Wiki includes a built-in intelligent agent powered by **Claude Agent SDK**:
+
+- **Wiki MCP Tools** — read_page, search_pages, update_page, create_entity/concept, get_graph
+- **Hooks & Permissions** — Wiki tools auto-allowed, built-in tools use SDK permission mechanism
+- **Session Management** — resume/fork/continue conversations
+- **Cost Controls** — maxTurns, maxBudgetUsd limits
+- **Multi-Agent Pipeline** — 5 built-in agents (compiler/linter/fixer/synthesizer/qa) for orchestrated workflows
+
+The agent runs as a Node.js sidecar process communicating via stdin/stdout JSON-lines with the Rust backend.
+
+### External Agent Integration
+
+For external tools, use the Local HTTP API or install the community agent skill:
 
 ```bash
 npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm_wiki_skill
 ```
 
-After install, the agent can answer prompts like "what does my LLM Wiki say about X", "search my 知识库 for Y", "show the neighborhood of node Z in my wiki graph", and "rescan my wiki sources" by talking to your locally-running app — read-only by default, citing wiki page paths so you can verify in-app.
-
-- **Skill repo**: <https://github.com/nashsu/llm_wiki_skill>
-- **Trigger discipline**: it intentionally does **not** trigger on generic "search my notes" / "check my Obsidian / Notion / Logseq" — only when you explicitly name LLM Wiki / `my wiki` / `知识库`.
-
 ## Project Structure
+## Codebase Structure
+
+```
+src-tauri/
+├── src/
+│   ├── commands/           # Rust Tauri commands
+│   │   ├── file_ops/       # File sync, extract images, filesystem
+│   │   ├── search/         # Keyword/vector/hybrid search, vectorstore
+│   │   └── agent_cli/      # Agent, Claude CLI, Codex CLI transport
+│   ├── api_server.rs       # Local HTTP API server
+│   └── lib.rs              # Main entry point
+└── sidecar/                # Agent Sidecar (Node.js)
+    └── src/
+        ├── main.ts         # Sidecar entry point
+        ├── core.ts         # SDK query() handler
+        ├── wiki-tools.ts   # MCP tool definitions
+        ├── agent-hooks.ts  # PreToolUse/PostToolUse/Stop hooks
+        └── agent-policy.ts # Permission policy helpers
+
+src/                        # Frontend (React + TypeScript)
+├── components/             # UI components
+├── lib/                    # Core logic (ingest, search, agent, etc.)
+├── stores/                 # Zustand state stores
+└── i18n/                   # Internationalization
+```
+
+## Wiki Project Structure
+
 
 ```
 my-wiki/
@@ -458,7 +504,7 @@ my-wiki/
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=6tizer%2Fllm_wiki&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&legend=top-left" />
