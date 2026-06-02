@@ -25,6 +25,10 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { AgentBlockList } from "./agent-block-list"
+import { AgentCostCard, hasAgentCostData } from "./agent-cost-card"
+import { extractAgentTextContent } from "./agent-format"
+import { AgentToolTimeline } from "./agent-tool-timeline"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -69,8 +73,20 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
+  const isAgent = isAssistant && message.mode === "agent"
+  const hasAgentBlocks = isAgent && (message.agentBlocks?.length ?? 0) > 0
   const content = message.content ?? ""
   const [hovered, setHovered] = useState(false)
+  const agentTextContent = useMemo(
+    () => isAgent ? extractAgentTextContent(message.agentBlocks) : "",
+    [isAgent, message.agentBlocks],
+  )
+  const actionContent = content || agentTextContent
+  const shouldRenderReferences = useMemo(() => {
+    if (!isAssistant) return false
+    if ((message.references?.length ?? 0) > 0) return true
+    return extractCitedPages(actionContent).length > 0
+  }, [actionContent, isAssistant, message.references])
 
   return (
     <div
@@ -99,15 +115,34 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
         >
           {isUser ? (
             <p dir="auto" className="whitespace-pre-wrap break-words">{content}</p>
+          ) : hasAgentBlocks ? (
+            <AgentBlockList
+              blocks={message.agentBlocks ?? []}
+              renderText={(text) => <MarkdownContent content={text} />}
+            />
           ) : (
             <MarkdownContent content={content} />
           )}
         </div>
-        {isAssistant && <CitedReferencesPanel content={content} savedReferences={message.references} />}
+        {shouldRenderReferences && (
+          <CitedReferencesPanel content={actionContent} savedReferences={message.references} />
+        )}
+        {isAgent && message.toolCalls && message.toolCalls.length > 0 && (
+          <AgentToolTimeline toolCalls={message.toolCalls} />
+        )}
+        {isAgent && hasAgentCostData(message) && (
+          <AgentCostCard
+            costUsd={message.costUsd}
+            inputTokens={message.inputTokens}
+            outputTokens={message.outputTokens}
+            durationMs={message.durationMs}
+            numTurns={message.numTurns}
+          />
+        )}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
-            <CopyButton content={content} />
-            <SaveToWikiButton content={content} visible={true} />
+            <CopyButton content={actionContent} />
+            <SaveToWikiButton content={actionContent} visible={true} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"

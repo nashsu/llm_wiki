@@ -213,6 +213,9 @@ describe("chat store agent data model", () => {
         conversationId: "conv-1",
         mode: "agent",
         agentSessionId: "session-1",
+        agentBlocks: [
+          { type: "tool_use", id: "tool-1", name: "wiki_read", input: { path: "wiki/index.md" } },
+        ],
         toolCalls: [{ toolName: "wiki_read", phase: "post", ok: true }],
         costUsd: 0.1,
       },

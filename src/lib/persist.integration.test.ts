@@ -162,6 +162,20 @@ describe("chat persistence — round-trip (new format)", () => {
         role: "assistant",
         mode: "agent",
         agentSessionId: "agent-session-1",
+        agentBlocks: [
+          { type: "text", text: "Agent text" },
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "wiki_read",
+            input: { path: "wiki/index.md" },
+          },
+          {
+            type: "tool_result",
+            tool_use_id: "tool-1",
+            content: [{ type: "text", text: "Read OK" }],
+          },
+        ],
         costUsd: 0.42,
         inputTokens: 1000,
         outputTokens: 250,

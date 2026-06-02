@@ -152,6 +152,28 @@
       "running": "运行中",
       "done": "完成",
       "failed": "失败"
+    },
+    "timeline": {
+      "title": "工具调用",
+      "input": "输入",
+      "error": "错误",
+      "empty": "无工具调用"
+    },
+    "blocks": {
+      "toolUse": "工具调用",
+      "toolResult": "工具结果"
+    },
+    "cost": {
+      "title": "Agent 运行",
+      "cost": "成本",
+      "inputTokens": "输入",
+      "outputTokens": "输出",
+      "turns": "轮次",
+      "duration": "耗时"
+    },
+    "actions": {
+      "expand": "展开",
+      "collapse": "折叠"
     }
   },
   "search": {
