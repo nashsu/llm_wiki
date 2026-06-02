@@ -1,4 +1,4 @@
-import type { CanUseTool, query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, query as sdkQuery, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AppToolBridge } from "./app-tool-bridge.js";
 import type { PermissionBridge } from "./permission-bridge.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest } from "./types.js";
@@ -13,7 +13,7 @@ import {
 import { createLlmWikiMcpServer } from "./wiki-tools.js";
 
 type QueryInput = Parameters<typeof sdkQuery>[0];
-export type QueryFn = (input: QueryInput) => AsyncIterable<unknown>;
+export type QueryFn = (input: QueryInput) => AsyncIterable<SDKMessage>;
 
 interface RequestHandlerDeps {
 	queryFn: QueryFn;
@@ -196,19 +196,16 @@ export function createRequestHandler({
 			});
 
 			for await (const message of q) {
-				const msg = message as Record<string, unknown> | undefined;
+				const msg = message as SDKMessage;
 
 				// PR D: emit SDK native events separately so frontend can route them
-				if (req.options.promptSuggestions && msg?.type === "result") {
-					const suggestions = msg.promptSuggestions;
-					if (suggestions) {
-						send({ streamId: req.streamId, type: "prompt_suggestion", data: suggestions });
-					}
+				if (req.options.promptSuggestions && msg.type === "prompt_suggestion") {
+					send({ streamId: req.streamId, type: "prompt_suggestion", data: msg });
 				}
-				if (req.options.agentProgressSummaries && msg?.type === "result") {
-					const summaries = msg.agentProgressSummaries;
-					if (summaries) {
-						send({ streamId: req.streamId, type: "agent_progress_summary", data: summaries });
+				if (req.options.agentProgressSummaries && msg.type === "result") {
+					const resultMsg = msg as SDKResultMessage;
+					if ("agentProgressSummaries" in resultMsg) {
+						send({ streamId: req.streamId, type: "agent_progress_summary", data: (resultMsg as any).agentProgressSummaries });
 					}
 				}
 
