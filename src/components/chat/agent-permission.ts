@@ -42,3 +42,28 @@ export function buildAgentPermissionDecision(
 export function formatAgentPermissionInputPreview(value: unknown): string {
   return safeStringify(value)
 }
+
+export function isAgentPermissionInteractiveElement(
+  tagName?: string | null,
+  role?: string | null,
+): boolean {
+  const tag = tagName?.toUpperCase()
+  return tag === "BUTTON"
+    || tag === "INPUT"
+    || tag === "TEXTAREA"
+    || tag === "SELECT"
+    || tag === "A"
+    || role === "button"
+}
+
+export function isAgentPermissionShortcutInteractiveTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false
+  }
+  const interactiveTarget = target.closest("button,input,textarea,select,a,[role='button']")
+  if (!(interactiveTarget instanceof HTMLElement)) return false
+  return isAgentPermissionInteractiveElement(
+    interactiveTarget.tagName,
+    interactiveTarget.getAttribute("role"),
+  )
+}

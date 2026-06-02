@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import {
   buildAgentPermissionDecision,
   formatAgentPermissionInputPreview,
+  isAgentPermissionShortcutInteractiveTarget,
   type AgentPermissionAction,
 } from "./agent-permission"
 import { useChatStore, type AgentPermissionRequestRecord } from "@/stores/chat-store"
@@ -140,6 +141,7 @@ export function AgentPermissionDialog({ request, onDecision }: AgentPermissionDi
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === "Enter") {
+        if (isAgentPermissionShortcutInteractiveTarget(event.target)) return
         event.preventDefault()
         decide("allow_temporary")
       }

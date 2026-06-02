@@ -16,6 +16,7 @@ vi.mock("@/components/ui/dialog", () => ({
 import {
   buildAgentPermissionDecision,
   formatAgentPermissionInputPreview,
+  isAgentPermissionInteractiveElement,
 } from "./agent-permission"
 import {
   AgentPermissionDialogBody,
@@ -69,6 +70,13 @@ describe("agent permission helpers", () => {
     value.self = value
 
     expect(formatAgentPermissionInputPreview(value)).toContain("[Circular]")
+  })
+
+  it("detects interactive elements that should keep native Enter behavior", () => {
+    expect(isAgentPermissionInteractiveElement("button")).toBe(true)
+    expect(isAgentPermissionInteractiveElement("input")).toBe(true)
+    expect(isAgentPermissionInteractiveElement("div", "button")).toBe(true)
+    expect(isAgentPermissionInteractiveElement("div")).toBe(false)
   })
 })
 
