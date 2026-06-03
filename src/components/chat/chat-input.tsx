@@ -16,9 +16,17 @@ interface ChatInputProps {
   isStreaming: boolean
   anyTxtAvailable?: boolean
   placeholder?: string
+  showSearchToggles?: boolean
 }
 
-export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true, placeholder }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  onStop,
+  isStreaming,
+  anyTxtAvailable = true,
+  placeholder,
+  showSearchToggles = true,
+}: ChatInputProps) {
   const { t } = useTranslation()
   const [value, setValue] = useState("")
   const [useWebSearch, setUseWebSearch] = useState(false)
@@ -85,51 +93,55 @@ export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true,
         />
         <div className="mt-1 flex items-center justify-between gap-3 border-t border-border/50 pt-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              aria-pressed={useWebSearch}
-              onClick={() => setUseWebSearch((v) => !v)}
-              disabled={isStreaming}
-              className={searchToggleClass(useWebSearch)}
-            >
-              <Globe2 className="h-3.5 w-3.5" />
-              {t("chat.useWebSearch")}
-              <span
-                className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
-                  useWebSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
-                }`}
-              />
-            </button>
-            <TooltipProvider delay={0}>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex" />
-                  }
+            {showSearchToggles && (
+              <>
+                <button
+                  type="button"
+                  aria-pressed={useWebSearch}
+                  onClick={() => setUseWebSearch((v) => !v)}
+                  disabled={isStreaming}
+                  className={searchToggleClass(useWebSearch)}
                 >
-                  <button
-                    type="button"
-                    aria-pressed={useAnyTxtSearch}
-                    onClick={() => setUseAnyTxtSearch((v) => !v)}
-                    disabled={isStreaming || !anyTxtAvailable}
-                    className={searchToggleClass(useAnyTxtSearch)}
-                  >
-                    <FileSearch className="h-3.5 w-3.5" />
-                    {t("chat.useAnyTxtSearch")}
-                    <span
-                      className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
-                        useAnyTxtSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
-                      }`}
-                    />
-                  </button>
-                </TooltipTrigger>
-                {!anyTxtAvailable && (
-                  <TooltipContent side="top" className="max-w-64 whitespace-normal leading-relaxed">
-                    {t("chat.enableAnyTxtInSettings")}
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </TooltipProvider>
+                  <Globe2 className="h-3.5 w-3.5" />
+                  {t("chat.useWebSearch")}
+                  <span
+                    className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
+                      useWebSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
+                    }`}
+                  />
+                </button>
+                <TooltipProvider delay={0}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="inline-flex" />
+                      }
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={useAnyTxtSearch}
+                        onClick={() => setUseAnyTxtSearch((v) => !v)}
+                        disabled={isStreaming || !anyTxtAvailable}
+                        className={searchToggleClass(useAnyTxtSearch)}
+                      >
+                        <FileSearch className="h-3.5 w-3.5" />
+                        {t("chat.useAnyTxtSearch")}
+                        <span
+                          className={`ml-0.5 h-1.5 w-1.5 rounded-full ${
+                            useAnyTxtSearch ? "bg-emerald-500" : "bg-muted-foreground/30"
+                          }`}
+                        />
+                      </button>
+                    </TooltipTrigger>
+                    {!anyTxtAvailable && (
+                      <TooltipContent side="top" className="max-w-64 whitespace-normal leading-relaxed">
+                        {t("chat.enableAnyTxtInSettings")}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+              </>
+            )}
           </div>
           {isStreaming ? (
             <Button

@@ -76,6 +76,16 @@ interface AddMessageOptions {
   references?: MessageReference[]
 }
 
+interface StartAgentStreamMessageOptions {
+  agentSessionId?: string
+}
+
+interface AgentStreamMessagePatch {
+  content?: string
+  agentBlocks?: SDKContentBlock[]
+  toolCalls?: AgentToolCallRecord[]
+}
+
 interface ChatState {
   conversations: Conversation[]
   activeConversationId: string | null
@@ -102,6 +112,9 @@ interface ChatState {
   appendStreamToken: (token: string) => void
   finalizeStream: (content: string, references?: MessageReference[]) => void
   finalizeAgentStream: (content: string, stats?: AgentStreamStats) => void
+  startAgentStreamMessage: (options?: StartAgentStreamMessageOptions) => string | null
+  updateAgentStreamMessage: (messageId: string, patch: AgentStreamMessagePatch) => void
+  finishAgentStreamMessage: (messageId: string, content: string, stats?: AgentStreamStats) => void
   setAgentToolCalls: (messageId: string, toolCalls: AgentToolCallRecord[]) => void
   updateAgentProgress: (messageId: string, event: AgentToolCallRecord) => void
   /** Queue an Agent permission request and resolve when the user decides or timeout denies it. */
@@ -326,6 +339,81 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isStreaming: false,
         streamingContent: "",
         messages: [...state.messages, newMessage],
+        conversations: conversations.map((c) =>
+          c.id === activeConversationId
+            ? {
+                ...c,
+                agentSessionId: stats?.agentSessionId ?? c.agentSessionId,
+                updatedAt: Date.now(),
+              }
+            : c
+        ),
+      }
+    }),
+
+  startAgentStreamMessage: (options) => {
+    const messageId = nextId()
+    set((state) => {
+      const { activeConversationId, conversations } = state
+      if (!activeConversationId) {
+        return {
+          isStreaming: false,
+          streamingContent: "",
+        }
+      }
+
+      const newMessage: DisplayMessage = {
+        id: messageId,
+        role: "assistant" as const,
+        content: "",
+        timestamp: Date.now(),
+        conversationId: activeConversationId,
+        mode: "agent",
+        agentSessionId: options?.agentSessionId,
+      }
+
+      return {
+        isStreaming: true,
+        streamingContent: "",
+        messages: [...state.messages, newMessage],
+        conversations: conversations.map((c) =>
+          c.id === activeConversationId
+            ? { ...c, updatedAt: Date.now() }
+            : c
+        ),
+      }
+    })
+    return get().messages.some((message) => message.id === messageId) ? messageId : null
+  },
+
+  updateAgentStreamMessage: (messageId, patch) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId ? { ...m, ...patch } : m
+      ),
+    })),
+
+  finishAgentStreamMessage: (messageId, content, stats) =>
+    set((state) => {
+      const { activeConversationId, conversations } = state
+      return {
+        isStreaming: false,
+        streamingContent: "",
+        messages: state.messages.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                content,
+                mode: "agent" as const,
+                agentSessionId: stats?.agentSessionId ?? m.agentSessionId,
+                costUsd: stats?.costUsd,
+                inputTokens: stats?.inputTokens,
+                outputTokens: stats?.outputTokens,
+                durationMs: stats?.durationMs,
+                numTurns: stats?.numTurns,
+              }
+            : m
+        ),
         conversations: conversations.map((c) =>
           c.id === activeConversationId
             ? {

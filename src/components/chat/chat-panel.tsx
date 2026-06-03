@@ -1,6 +1,6 @@
-import { useRef, useEffect, useCallback, useState } from "react"
+import { useRef, useEffect, useCallback, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
-import { BookOpen, Plus, Trash2, MessageSquare } from "lucide-react"
+import { BookOpen, Bot, MessageSquare, Plus, Trash2, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
@@ -8,6 +8,8 @@ import { AgentPermissionDialogHost } from "./agent-permission-dialog"
 import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
+import { streamAgent } from "@/lib/agent/agent-transport"
+import type { AgentTransportOptions } from "@/lib/agent/agent-types"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile, deleteFile } from "@/commands/fs"
 import { searchWiki } from "@/lib/search"
@@ -18,7 +20,14 @@ import { isGreeting } from "@/lib/greeting-detector"
 import { computeContextBudget } from "@/lib/context-budget"
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
+import { API_SERVER_PORT } from "@/lib/api-server-constants"
 import { markConversationDirty, flushQaForConversation, flushAllPendingQa, unmarkConversation, loadPendingQa } from "@/lib/agent/agent-qa-hook"
+import {
+	agentResultToStats,
+	agentToolBatchToRecords,
+	agentToolEventToRecord,
+	isSdkAssistantMessage,
+} from "./agent-stream-integration"
  // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
  function formatExternalSearchContext(results: WebSearchResult[]): string {
@@ -33,7 +42,7 @@ export let lastQueryPages: { title: string; path: string }[] = []
 		].join("\n"))
 		.join("\n\n---\n\n")
 }
- function formatDate(timestamp: number): string {
+function formatDate(timestamp: number): string {
 	const d = new Date(timestamp)
 	const now = new Date()
 	const isToday = d.toDateString() === now.toDateString()
@@ -41,6 +50,71 @@ export let lastQueryPages: { title: string; path: string }[] = []
 		return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 	}
 	return d.toLocaleDateString([], { month: "short", day: "numeric" })
+}
+
+function agentBaseUrl(config: ReturnType<typeof useWikiStore.getState>["llmConfig"]): string | undefined {
+	if (config.provider === "custom") return config.customEndpoint || undefined
+	if (config.provider === "ollama") return config.ollamaUrl || undefined
+	return undefined
+}
+
+function agentApiServerBaseUrl(): string {
+	return `http://127.0.0.1:${API_SERVER_PORT}`
+}
+
+function buildAgentTransportOptions(): AgentTransportOptions | null {
+	const wikiState = useWikiStore.getState()
+	const chatState = useChatStore.getState()
+	const project = wikiState.project
+	if (!project) return null
+	const activeConversation = chatState.conversations.find(
+		(conversation) => conversation.id === chatState.activeConversationId,
+	)
+	const agentSessionId = activeConversation?.agentSessionId
+
+	return {
+		cwd: project.path,
+		projectId: project.id,
+		projectPath: project.path,
+		model: wikiState.llmConfig.model || undefined,
+		apiKey: wikiState.llmConfig.apiKey || undefined,
+		baseUrl: agentBaseUrl(wikiState.llmConfig),
+		resume: agentSessionId,
+		persistSession: true,
+		permissionPolicy: "default",
+		enableWikiTools: true,
+		enableWriteTools: true,
+		apiServerBaseUrl: agentApiServerBaseUrl(),
+		apiToken: wikiState.apiConfig.token || undefined,
+	}
+}
+
+function ModeButton({
+	active,
+	children,
+	disabled = false,
+	onClick,
+}: {
+	active: boolean
+	children: ReactNode
+	disabled?: boolean
+	onClick: () => void
+}) {
+	return (
+		<button
+			type="button"
+			aria-pressed={active}
+			disabled={disabled}
+			onClick={onClick}
+			className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${
+				active
+					? "bg-background text-foreground shadow-sm"
+					: "text-muted-foreground hover:bg-background/70 hover:text-foreground"
+			} disabled:pointer-events-none disabled:opacity-50`}
+		>
+			{children}
+		</button>
+	)
 }
  function ConversationSidebar() {
 	const { t } = useTranslation()
@@ -145,11 +219,19 @@ export let lastQueryPages: { title: string; path: string }[] = []
 	const mode = useChatStore((s) => s.mode)
 	const addMessage = useChatStore((s) => s.addMessage)
 	const setStreaming = useChatStore((s) => s.setStreaming)
+	const setMode = useChatStore((s) => s.setMode)
 	const appendStreamToken = useChatStore((s) => s.appendStreamToken)
 	const finalizeStream = useChatStore((s) => s.finalizeStream)
 	const createConversation = useChatStore((s) => s.createConversation)
 	const removeLastAssistantMessage = useChatStore((s) => s.removeLastAssistantMessage)
 	const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
+	const startAgentStreamMessage = useChatStore((s) => s.startAgentStreamMessage)
+	const updateAgentStreamMessage = useChatStore((s) => s.updateAgentStreamMessage)
+	const finishAgentStreamMessage = useChatStore((s) => s.finishAgentStreamMessage)
+	const setAgentToolCalls = useChatStore((s) => s.setAgentToolCalls)
+	const updateAgentProgress = useChatStore((s) => s.updateAgentProgress)
+	const requestAgentPermission = useChatStore((s) => s.requestAgentPermission)
+	const clearAgentPermissionRequests = useChatStore((s) => s.clearAgentPermissionRequests)
  	// Derive active messages via selector to re-render on message changes
 	const allMessages = useChatStore((s) => s.messages)
 	const activeMessages = activeConversationId
@@ -160,6 +242,7 @@ export let lastQueryPages: { title: string; path: string }[] = []
 	const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
 	const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
 	const setFileTree = useWikiStore((s) => s.setFileTree)
+	const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
  	const abortRef = useRef<AbortController | null>(null)
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
 	const bottomRef = useRef<HTMLDivElement>(null)
@@ -183,8 +266,129 @@ export let lastQueryPages: { title: string; path: string }[] = []
 			}
 		}
 	}, []);
+
+	const handleAgentSend = useCallback(
+		async (text: string) => {
+			let convId = useChatStore.getState().activeConversationId
+			if (!convId) {
+				convId = createConversation()
+			}
+
+			const activeConversation = useChatStore.getState().conversations.find(
+				(conversation) => conversation.id === convId,
+			)
+			const agentSessionId = activeConversation?.agentSessionId
+			addMessage("user", text, {
+				mode: "agent",
+				agentSessionId,
+			})
+
+			const messageId = startAgentStreamMessage({ agentSessionId })
+			if (!messageId) return
+
+			const options = buildAgentTransportOptions()
+			if (!options) {
+				finishAgentStreamMessage(messageId, t("agent.error.unavailable"))
+				return
+			}
+
+			const controller = new AbortController()
+			abortRef.current = controller
+			let accumulated = ""
+			let settled = false
+			const finishAgentMessage = (content: string, stats = agentResultToStats(null)) => {
+				if (settled) return
+				settled = true
+				finishAgentStreamMessage(messageId, content, stats)
+				abortRef.current = null
+			}
+
+			try {
+				await streamAgent(
+					text,
+					options,
+					{
+						onToken: (token) => {
+							accumulated += token
+							updateAgentStreamMessage(messageId, { content: accumulated })
+						},
+						onMessage: (message) => {
+							if (!isSdkAssistantMessage(message)) return
+							updateAgentStreamMessage(messageId, {
+								agentBlocks: message.message.content,
+							})
+						},
+						onDone: (result) => {
+							const stats = agentResultToStats(result)
+							const finalContent = accumulated || result?.result || ""
+							finishAgentMessage(finalContent, stats)
+						},
+						onError: (err) => {
+							finishAgentMessage(t("agent.error.failed", { error: err.message }))
+						},
+						onToolEvent: (event) => {
+							if (event.phase === "batch") {
+								const records = agentToolBatchToRecords(event)
+								if (records.length > 0) setAgentToolCalls(messageId, records)
+								return
+							}
+							updateAgentProgress(messageId, agentToolEventToRecord(event))
+						},
+						onPermissionRequest: (payload) => requestAgentPermission(payload),
+						onWikiChanged: (payload) => {
+							const key =
+								payload.operation === "create"
+									? "agent.wikiChanged.created"
+									: payload.operation === "delete"
+										? "agent.wikiChanged.deleted"
+										: "agent.wikiChanged.updated"
+							console.info(t(key, { path: payload.path }))
+							listDirectory(options.projectPath ?? options.cwd ?? project?.path ?? "")
+								.then((tree) => {
+									setFileTree(tree)
+									bumpDataVersion()
+								})
+								.catch((err) => {
+									console.warn("[agent] failed to refresh file tree:", err)
+								})
+						},
+						onAgentSummary: (payload) => {
+							console.debug("[agent] summary:", payload)
+						},
+						onActionRequired: (payload) => {
+							console.debug("[agent] action required:", payload)
+						},
+					},
+					controller.signal,
+				)
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				finishAgentMessage(t("agent.error.failed", { error: message }))
+			}
+		},
+		[
+			addMessage,
+			bumpDataVersion,
+			createConversation,
+			finishAgentStreamMessage,
+			project?.path,
+			requestAgentPermission,
+			setAgentToolCalls,
+			setFileTree,
+			startAgentStreamMessage,
+			t,
+			updateAgentProgress,
+			updateAgentStreamMessage,
+		],
+	)
+
  	const handleSend = useCallback(
 		async (text: string, options: ChatSendOptions = { useWebSearch: false, useAnyTxtSearch: false }) => {
+			if (mode === "agent") {
+				await handleAgentSend(text)
+				return
+			}
+
 			// Auto-create a conversation if none is active
 			let convId = useChatStore.getState().activeConversationId
 			if (!convId) {
@@ -481,12 +685,18 @@ export let lastQueryPages: { title: string; path: string }[] = []
 				controller.signal,
 			)
 		},
-		[llmConfig, searchApiConfig, project, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
+		[mode, handleAgentSend, llmConfig, searchApiConfig, project, addMessage, setStreaming, appendStreamToken, finalizeStream, createConversation, maxHistoryMessages],
 	)
  	const handleStop = useCallback(() => {
 		abortRef.current?.abort()
 		abortRef.current = null
-	}, [])
+		clearAgentPermissionRequests({
+			behavior: "deny",
+			interrupt: true,
+			message: t("agent.permission.stopped"),
+			decisionClassification: "user_reject",
+		})
+	}, [clearAgentPermissionRequests, t])
  	const handleRegenerate = useCallback(async () => {
 		if (isStreaming) return
 		// Find the last user message in active conversation
@@ -561,7 +771,7 @@ export let lastQueryPages: { title: string; path: string }[] = []
 										/>
 									)
 								})}
-								{isStreaming && <StreamingMessage content={streamingContent} />}
+								{isStreaming && mode !== "agent" && <StreamingMessage content={streamingContent} />}
 								<div ref={bottomRef} />
 							</div>
 						</div>
@@ -580,13 +790,63 @@ export let lastQueryPages: { title: string; path: string }[] = []
 						)}
 					</>
 				)}
+				<div className="border-t bg-muted/20 px-3 py-2">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div className="inline-flex rounded-lg bg-muted p-0.5">
+							<ModeButton
+								active={mode === "chat"}
+								disabled={isStreaming}
+								onClick={() => setMode("chat")}
+							>
+								<MessageSquare className="h-3.5 w-3.5" />
+								{t("agent.mode.chat")}
+							</ModeButton>
+							<ModeButton
+								active={mode === "agent"}
+								disabled={isStreaming}
+								onClick={() => setMode("agent")}
+							>
+								<Bot className="h-3.5 w-3.5" />
+								{t("agent.mode.agent")}
+							</ModeButton>
+							<ModeButton
+								active={mode === "ingest"}
+								disabled={isStreaming}
+								onClick={() => setMode("ingest")}
+							>
+								<Upload className="h-3.5 w-3.5" />
+								{t("agent.mode.ingest")}
+							</ModeButton>
+						</div>
+						{mode === "agent" && (
+							<div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+								{project ? (
+									<>
+										<span className="truncate">
+											{t("agent.config.model")}: {llmConfig.model || "-"}
+										</span>
+										<span className="hidden sm:inline">·</span>
+										<span>
+											{t("agent.config.permissionPolicy")}: {t("agent.config.defaultPolicy")}
+										</span>
+									</>
+								) : (
+									<span>{t("agent.config.noProject")}</span>
+								)}
+							</div>
+						)}
+					</div>
+				</div>
  				<ChatInput
 					onSend={handleSend}
 					onStop={handleStop}
 					isStreaming={isStreaming}
 					anyTxtAvailable={anyTxtAvailable}
+					showSearchToggles={mode === "chat"}
 					placeholder={
-						mode === "ingest"
+						mode === "agent"
+							? t("agent.placeholder")
+							: mode === "ingest"
 							? t("chat.ingestPlaceholder")
 							: t("chat.typeAMessage")
 					}

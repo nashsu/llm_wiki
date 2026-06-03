@@ -171,6 +171,22 @@
       "turns": "Turns",
       "duration": "Duration"
     },
+    "config": {
+      "model": "Model",
+      "permissionPolicy": "Permission",
+      "defaultPolicy": "Default",
+      "noProject": "Open a project to use Agent"
+    },
+    "placeholder": "Ask Agent to inspect, edit, or operate on this wiki...",
+    "error": {
+      "unavailable": "Agent is unavailable: no project is open.",
+      "failed": "Agent failed: {{error}}"
+    },
+    "wikiChanged": {
+      "updated": "Agent updated {{path}}",
+      "created": "Agent created {{path}}",
+      "deleted": "Agent deleted {{path}}"
+    },
     "actions": {
       "expand": "Expand",
       "collapse": "Collapse"
@@ -187,6 +203,7 @@
       "deny": "Deny",
       "denyInterrupt": "Deny + Interrupt",
       "timeoutDenied": "Permission request timed out",
+      "stopped": "Agent run was stopped",
       "keyboardHint": "Enter allows temporarily. Escape denies.",
       "noDescription": "Review the requested tool call before allowing it."
     }

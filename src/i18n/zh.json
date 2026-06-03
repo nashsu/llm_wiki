@@ -171,6 +171,22 @@
       "turns": "轮次",
       "duration": "耗时"
     },
+    "config": {
+      "model": "模型",
+      "permissionPolicy": "权限",
+      "defaultPolicy": "默认",
+      "noProject": "打开项目后可使用 Agent"
+    },
+    "placeholder": "让 Agent 检查、编辑或操作这个 Wiki...",
+    "error": {
+      "unavailable": "Agent 不可用：当前未打开项目。",
+      "failed": "Agent 失败：{{error}}"
+    },
+    "wikiChanged": {
+      "updated": "Agent 已更新 {{path}}",
+      "created": "Agent 已创建 {{path}}",
+      "deleted": "Agent 已删除 {{path}}"
+    },
     "actions": {
       "expand": "展开",
       "collapse": "折叠"
@@ -187,6 +203,7 @@
       "deny": "拒绝",
       "denyInterrupt": "拒绝并中断",
       "timeoutDenied": "权限请求已超时",
+      "stopped": "Agent 运行已停止",
       "keyboardHint": "Enter 临时允许，Escape 拒绝。",
       "noDescription": "允许前请检查请求的工具调用。"
     }

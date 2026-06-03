@@ -126,6 +126,91 @@ describe("chat store agent data model", () => {
     expect(useChatStore.getState().streamingContent).toBe("")
   })
 
+  it("starts an agent stream placeholder message and returns its id", () => {
+    const convId = useChatStore.getState().createConversation()
+
+    const messageId = useChatStore.getState().startAgentStreamMessage({
+      agentSessionId: "session-1",
+    })
+
+    expect(messageId).toEqual(expect.any(String))
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      id: messageId,
+      role: "assistant",
+      content: "",
+      conversationId: convId,
+      mode: "agent",
+      agentSessionId: "session-1",
+    })
+    expect(useChatStore.getState().isStreaming).toBe(true)
+    expect(useChatStore.getState().streamingContent).toBe("")
+  })
+
+  it("updates one agent stream message without touching other messages", () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      messages: [
+        makeAssistantMessage("m1", convId),
+        makeAssistantMessage("m2", convId),
+      ],
+    })
+
+    useChatStore.getState().updateAgentStreamMessage("m1", {
+      content: "partial",
+      agentBlocks: [
+        { type: "text", text: "partial" },
+      ],
+    })
+
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      id: "m1",
+      content: "partial",
+      agentBlocks: [
+        { type: "text", text: "partial" },
+      ],
+    })
+    expect(useChatStore.getState().messages[1]).toMatchObject({
+      id: "m2",
+      content: "working",
+    })
+  })
+
+  it("finishes an existing agent stream message with stats and session", () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      isStreaming: true,
+      streamingContent: "partial",
+      messages: [makeAssistantMessage("m1", convId)],
+    })
+
+    useChatStore.getState().finishAgentStreamMessage("m1", "done", {
+      agentSessionId: "session-2",
+      costUsd: 0.2,
+      inputTokens: 12,
+      outputTokens: 8,
+      durationMs: 900,
+      numTurns: 2,
+    })
+
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      id: "m1",
+      content: "done",
+      mode: "agent",
+      agentSessionId: "session-2",
+      costUsd: 0.2,
+      inputTokens: 12,
+      outputTokens: 8,
+      durationMs: 900,
+      numTurns: 2,
+    })
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      id: convId,
+      agentSessionId: "session-2",
+    })
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    expect(useChatStore.getState().streamingContent).toBe("")
+  })
+
   it("setAgentToolCalls replaces one message's tool calls only", () => {
     const convId = useChatStore.getState().createConversation()
     useChatStore.setState({
