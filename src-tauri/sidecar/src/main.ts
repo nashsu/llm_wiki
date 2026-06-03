@@ -1,15 +1,17 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
 import { createAppToolBridge, type AppToolResponseMessage } from "./app-tool-bridge.js";
-import { createRequestHandler } from "./core.js";
+import { createRequestHandler, type QueryControl } from "./core.js";
 import {
 	createPermissionBridge,
 	type AgentPermissionResponseMessage,
 } from "./permission-bridge.js";
+import { handleRewindFilesRequest } from "./rewind-bridge.js";
 import type { AgentKillRequest, AgentMessage, AgentRequest, RewindFilesRequest } from "./types.js";
 
 const rl = createInterface({ input: process.stdin });
 const activeQueries = new Map<string, AbortController>();
+const activeSdkQueries = new Map<string, QueryControl>();
 let exitTimer: NodeJS.Timeout | undefined;
 
 function send(msg: AgentMessage): void {
@@ -23,10 +25,10 @@ function cancelScheduledExit(): void {
 }
 
 function scheduleExitIfIdle(): void {
-	if (activeQueries.size !== 0 || exitTimer) return;
+	if (activeQueries.size !== 0 || activeSdkQueries.size !== 0 || exitTimer) return;
 	exitTimer = setTimeout(() => {
 		exitTimer = undefined;
-		if (activeQueries.size === 0) process.exit(0);
+		if (activeQueries.size === 0 && activeSdkQueries.size === 0) process.exit(0);
 	}, 250);
 }
 
@@ -37,8 +39,10 @@ const handleRequest = createRequestHandler({
 	send,
 	error: console.error,
 	activeQueries,
+	activeSdkQueries,
 	appToolBridge,
 	permissionBridge,
+	onActiveSdkQueryReleased: scheduleExitIfIdle,
 });
 
 rl.on("line", (line) => {
@@ -59,12 +63,12 @@ rl.on("line", (line) => {
 			return;
 		}
 		if (parsed.type === "rewind_files") {
-			send({
-				streamId: parsed.streamId,
-				type: "rewind_files",
-				data: { messageId: parsed.messageId },
+			handleRewindFilesRequest({
+				request: parsed,
+				activeSdkQueries,
+				send,
+				onSettled: scheduleExitIfIdle,
 			});
-			scheduleExitIfIdle();
 			return;
 		}
 		handleRequest(parsed).catch((err) => {
@@ -84,7 +88,7 @@ rl.on("close", () => {
 	// This setInterval prevents Node from exiting while queries are running.
 	const keepAlive = setInterval(() => {}, 60000);
 	const check = setInterval(() => {
-		if (activeQueries.size === 0) {
+		if (activeQueries.size === 0 && activeSdkQueries.size === 0) {
 			clearInterval(keepAlive);
 			clearInterval(check);
 			scheduleExitIfIdle();

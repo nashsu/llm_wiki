@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { LintItem } from "@/stores/lint-store"
-import { groupLintResultsForDisplay } from "./lint-view"
+import { groupLintResultsForDisplay, shouldShowLintResults } from "./lint-view"
 
 let counter = 0
 
@@ -38,5 +38,15 @@ describe("groupLintResultsForDisplay", () => {
       "info-a.md",
       "info-c.md",
     ])
+  })
+})
+
+describe("shouldShowLintResults", () => {
+  it("shows results when agent lint has populated items before a manual run", () => {
+    expect(shouldShowLintResults(false, 1)).toBe(true)
+  })
+
+  it("keeps the initial hint when no lint has run and no items exist", () => {
+    expect(shouldShowLintResults(false, 0)).toBe(false)
   })
 })

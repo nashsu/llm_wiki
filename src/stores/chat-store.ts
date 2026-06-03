@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { ChatMessage } from "@/lib/llm-client"
 import type {
+  AgentWikiChangedPayload,
   AgentPermissionDecision,
   AgentPermissionRequestPayload,
   SDKContentBlock,
@@ -13,6 +14,7 @@ export interface Conversation {
   createdAt: number
   updatedAt: number
   agentSessionId?: string
+  agentForkSessionPending?: boolean
 }
 
 export interface MessageReference {
@@ -33,7 +35,10 @@ export interface DisplayMessage {
   references?: MessageReference[]  // pages cited in this response, saved at creation time
   mode?: "chat" | "agent"
   agentSessionId?: string
+  agentUserMessageId?: string
+  agentAssistantMessageId?: string
   agentBlocks?: SDKContentBlock[]
+  wikiChanges?: AgentWikiChangeRecord[]
   toolCalls?: AgentToolCallRecord[]
   costUsd?: number
   inputTokens?: number
@@ -63,11 +68,25 @@ export interface AgentStreamStats {
   numTurns?: number
 }
 
+/** Wiki file change emitted during an Agent run and persisted with the message. */
+export interface AgentWikiChangeRecord extends AgentWikiChangedPayload {
+  timestamp: number
+}
+
 /** Runtime-only Agent permission request shown in the approval dialog. */
 export interface AgentPermissionRequestRecord extends AgentPermissionRequestPayload {
   receivedAt: number
   expiresAt: number
   timeoutMs: number
+}
+
+/** Runtime-only rewind target; live stream ids are intentionally not persisted. */
+export interface AgentRewindRequestRecord {
+  chatMessageId: string
+  streamId: string
+  userMessageId: string
+  assistantMessageId?: string
+  requestedAt: number
 }
 
 interface AddMessageOptions {
@@ -84,6 +103,15 @@ interface AgentStreamMessagePatch {
   content?: string
   agentBlocks?: SDKContentBlock[]
   toolCalls?: AgentToolCallRecord[]
+  agentUserMessageId?: string
+  agentAssistantMessageId?: string
+  wikiChanges?: AgentWikiChangeRecord[]
+}
+
+interface AgentRewindablePatch {
+  streamId?: string
+  userMessageId?: string
+  assistantMessageId?: string
 }
 
 interface ChatState {
@@ -97,9 +125,12 @@ interface ChatState {
   maxHistoryMessages: number
   activeAgentPermissionRequest: AgentPermissionRequestRecord | null
   queuedAgentPermissionRequests: AgentPermissionRequestRecord[]
+  agentRewindTargets: Record<string, AgentRewindRequestRecord>
+  activeAgentRewindRequest: AgentRewindRequestRecord | null
 
   // Conversation management
   createConversation: () => string
+  forkAgentConversation: (sourceId: string) => string | null
   deleteConversation: (id: string) => void
   setActiveConversation: (id: string | null) => void
   renameConversation: (id: string, title: string) => void
@@ -117,6 +148,10 @@ interface ChatState {
   finishAgentStreamMessage: (messageId: string, content: string, stats?: AgentStreamStats) => void
   setAgentToolCalls: (messageId: string, toolCalls: AgentToolCallRecord[]) => void
   updateAgentProgress: (messageId: string, event: AgentToolCallRecord) => void
+  appendAgentWikiChange: (messageId: string, payload: AgentWikiChangedPayload) => void
+  markAgentMessageRewindable: (messageId: string, payload: AgentRewindablePatch) => void
+  requestAgentRewind: (messageId: string) => void
+  clearAgentRewindRequest: () => void
   /** Queue an Agent permission request and resolve when the user decides or timeout denies it. */
   requestAgentPermission: (
     payload: AgentPermissionRequestPayload,
@@ -189,6 +224,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maxHistoryMessages: 10,
   activeAgentPermissionRequest: null,
   queuedAgentPermissionRequests: [],
+  agentRewindTargets: {},
+  activeAgentRewindRequest: null,
 
   createConversation: () => {
     const id = generateConversationId()
@@ -206,9 +243,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return id
   },
 
+  forkAgentConversation: (sourceId) => {
+    const source = get().conversations.find((conversation) => conversation.id === sourceId)
+    if (!source?.agentSessionId) return null
+    const id = generateConversationId()
+    const now = Date.now()
+    const newConversation: Conversation = {
+      id,
+      title: `${i18n.t("agent.session.forkPrefix")} ${source.title}`,
+      createdAt: now,
+      updatedAt: now,
+      agentSessionId: source.agentSessionId,
+      agentForkSessionPending: true,
+    }
+    set((state) => ({
+      conversations: [newConversation, ...state.conversations],
+      activeConversationId: id,
+      activeAgentRewindRequest: null,
+    }))
+    return id
+  },
+
   deleteConversation: (id) =>
     set((state) => {
       const remaining = state.conversations.filter((c) => c.id !== id)
+      const removedMessageIds = new Set(
+        state.messages
+          .filter((m) => m.conversationId === id)
+          .map((m) => m.id)
+      )
+      const nextRewindTargets = Object.fromEntries(
+        Object.entries(state.agentRewindTargets).filter(
+          ([messageId]) => !removedMessageIds.has(messageId)
+        )
+      )
       const newActiveId =
         state.activeConversationId === id
           ? (remaining[0]?.id ?? null)
@@ -217,10 +285,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: remaining,
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
+        agentRewindTargets: nextRewindTargets,
+        activeAgentRewindRequest:
+          state.activeAgentRewindRequest &&
+          removedMessageIds.has(state.activeAgentRewindRequest.chatMessageId)
+            ? null
+            : state.activeAgentRewindRequest,
       }
     }),
 
-  setActiveConversation: (id) => set({ activeConversationId: id }),
+  setActiveConversation: (id) =>
+    set({ activeConversationId: id, activeAgentRewindRequest: null }),
 
   renameConversation: (id, title) =>
     set((state) => ({
@@ -344,6 +419,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? {
                 ...c,
                 agentSessionId: stats?.agentSessionId ?? c.agentSessionId,
+                agentForkSessionPending: stats?.agentSessionId
+                  ? undefined
+                  : c.agentForkSessionPending,
                 updatedAt: Date.now(),
               }
             : c
@@ -419,6 +497,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ? {
                 ...c,
                 agentSessionId: stats?.agentSessionId ?? c.agentSessionId,
+                agentForkSessionPending: stats?.agentSessionId
+                  ? undefined
+                  : c.agentForkSessionPending,
                 updatedAt: Date.now(),
               }
             : c
@@ -454,6 +535,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { ...m, toolCalls: nextToolCalls }
       }),
     })),
+
+  appendAgentWikiChange: (messageId, payload) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              wikiChanges: [
+                ...(m.wikiChanges ?? []),
+                {
+                  ...payload,
+                  timestamp: Date.now(),
+                },
+              ],
+            }
+          : m
+      ),
+    })),
+
+  markAgentMessageRewindable: (messageId, payload) =>
+    set((state) => {
+      const existingMessage = state.messages.find((m) => m.id === messageId)
+      const userMessageId = payload.userMessageId ?? existingMessage?.agentUserMessageId
+      const assistantMessageId =
+        payload.assistantMessageId ?? existingMessage?.agentAssistantMessageId
+      const nextMessages = state.messages.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              agentUserMessageId: userMessageId ?? m.agentUserMessageId,
+              agentAssistantMessageId: assistantMessageId ?? m.agentAssistantMessageId,
+            }
+          : m
+      )
+      if (!payload.streamId || !userMessageId) {
+        return { messages: nextMessages }
+      }
+      const target: AgentRewindRequestRecord = {
+        chatMessageId: messageId,
+        streamId: payload.streamId,
+        userMessageId,
+        assistantMessageId,
+        requestedAt: Date.now(),
+      }
+      return {
+        messages: nextMessages,
+        agentRewindTargets: {
+          ...state.agentRewindTargets,
+          [messageId]: target,
+        },
+      }
+    }),
+
+  requestAgentRewind: (messageId) =>
+    set((state) => ({
+      activeAgentRewindRequest: state.agentRewindTargets[messageId] ?? null,
+    })),
+
+  clearAgentRewindRequest: () => set({ activeAgentRewindRequest: null }),
 
   requestAgentPermission: (payload, timeoutMs = DEFAULT_AGENT_PERMISSION_TIMEOUT_MS) =>
     new Promise<AgentPermissionDecision>((resolve) => {

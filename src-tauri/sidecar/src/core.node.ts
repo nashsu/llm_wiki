@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRequestHandler, omitNullish, type QueryFn } from "./core.js";
+import { createRequestHandler, omitNullish, type QueryControl, type QueryFn } from "./core.js";
+import { handleRewindFilesRequest } from "./rewind-bridge.js";
 import type { AgentMessage, AgentRequest } from "./types.js";
 
 const baseRequest: AgentRequest = {
@@ -462,4 +463,61 @@ test("query request forwards enableFileCheckpointing and sandbox to SDK", async 
 		autoAllowBashIfSandboxed: false,
 		failIfUnavailable: true,
 	});
+});
+
+test("rewind bridge calls retained query rewindFiles and emits result", async () => {
+	const sent: AgentMessage[] = [];
+	const rewindFiles = async (userMessageId: string) => ({
+		canRewind: true,
+		filesChanged: [`${userMessageId}.md`],
+	});
+	const query = (async function* () {})() as QueryControl;
+	query.rewindFiles = rewindFiles;
+	const activeSdkQueries = new Map<string, QueryControl>([["stream-1", query]]);
+
+	handleRewindFilesRequest({
+		request: {
+			type: "rewind_files",
+			streamId: "stream-1",
+			messageId: "user-sdk-1",
+		},
+		activeSdkQueries,
+		send: (msg) => sent.push(msg),
+	});
+
+	await new Promise((resolve) => setImmediate(resolve));
+
+	assert.deepEqual(sent, [
+		{
+			streamId: "stream-1",
+			type: "rewind_files",
+			data: {
+				messageId: "user-sdk-1",
+				ok: true,
+				result: {
+					canRewind: true,
+					filesChanged: ["user-sdk-1.md"],
+				},
+				error: undefined,
+			},
+		},
+	]);
+});
+
+test("rewind bridge reports missing active query", () => {
+	const sent: AgentMessage[] = [];
+
+	handleRewindFilesRequest({
+		request: {
+			type: "rewind_files",
+			streamId: "missing-stream",
+			messageId: "user-sdk-1",
+		},
+		activeSdkQueries: new Map(),
+		send: (msg) => sent.push(msg),
+	});
+
+	assert.equal(sent[0]?.type, "rewind_files");
+	assert.equal((sent[0]?.data as { ok?: boolean }).ok, false);
+	assert.match(String((sent[0]?.data as { error?: string }).error), /no longer active/);
 });

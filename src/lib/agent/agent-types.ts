@@ -37,6 +37,15 @@ export interface SDKAssistantMessage {
 			output_tokens: number;
 		};
 	};
+	uuid?: string;
+	session_id?: string;
+}
+
+export interface SDKUserMessage {
+	type: "user";
+	message: unknown;
+	uuid?: string;
+	session_id?: string;
 }
 
 export interface SDKResultMessage {
@@ -69,6 +78,7 @@ export interface SDKErrorMessage {
 
 export type SDKMessage =
 	| SDKAssistantMessage
+	| SDKUserMessage
 	| SDKResultMessage
 	| SDKSystemMessage
 	| SDKErrorMessage
@@ -141,8 +151,21 @@ export type AgentPermissionDecision =
 			decisionClassification?: "user_temporary" | "user_permanent" | "user_reject";
 	  };
 
+export interface AgentRewindFilesResult {
+	canRewind: boolean;
+	error?: string;
+	filesChanged?: string[];
+	insertions?: number;
+	deletions?: number;
+}
+
 export interface AgentRewindFilesPayload {
 	messageId?: string;
+	streamId?: string;
+	userMessageId?: string;
+	ok?: boolean;
+	result?: AgentRewindFilesResult;
+	error?: string;
 }
 
 export interface AgentSummaryPayload {
@@ -249,6 +272,7 @@ export interface AgentTransportOptions {
 }
 
 export interface AgentCallbacks {
+	onStreamStart?: (streamId: string) => void;
 	onMessage: (msg: SDKMessage) => void;
 	onToken: (text: string) => void;
 	onDone: (result: SDKResultMessage | null) => void;

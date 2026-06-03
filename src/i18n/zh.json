@@ -153,6 +153,10 @@
       "done": "完成",
       "failed": "失败"
     },
+    "session": {
+      "fork": "Fork Session",
+      "forkPrefix": "Fork:"
+    },
     "timeline": {
       "title": "工具调用",
       "input": "输入",
@@ -183,9 +187,26 @@
       "failed": "Agent 失败：{{error}}"
     },
     "wikiChanged": {
+      "title": "Wiki 变更",
+      "empty": "暂无 Wiki 变更",
       "updated": "Agent 已更新 {{path}}",
       "created": "Agent 已创建 {{path}}",
       "deleted": "Agent 已删除 {{path}}"
+    },
+    "rewind": {
+      "action": "回滚文件",
+      "title": "回滚 Agent 文件改动",
+      "description": "将文件回滚到这条消息前的状态。此操作会修改当前项目文件。",
+      "confirm": "确认回滚",
+      "cancel": "取消",
+      "success": "文件已回滚",
+      "failed": "回滚失败：{{error}}"
+    },
+    "lint": {
+      "queued": "Agent 检查已排队",
+      "running": "Agent 检查中",
+      "done": "Agent 检查完成",
+      "failed": "Agent 检查失败"
     },
     "actions": {
       "expand": "展开",

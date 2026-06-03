@@ -8,12 +8,18 @@ import type {
   SDKContentBlock,
   SDKMessage,
   SDKResultMessage,
+  SDKUserMessage,
 } from "@/lib/agent/agent-types"
 
 /** Return true when an SDK message is an assistant content-block message. */
 export function isSdkAssistantMessage(message: SDKMessage): message is SDKAssistantMessage {
   return message.type === "assistant"
     && Array.isArray((message as SDKAssistantMessage).message?.content)
+}
+
+/** Return true when an SDK message is a user transcript message with an optional rewind UUID. */
+export function isSdkUserMessage(message: SDKMessage): message is SDKUserMessage {
+  return message.type === "user"
 }
 
 /** Extract only text blocks from SDK content for fallback markdown rendering. */

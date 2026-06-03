@@ -7,13 +7,14 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  TrendingUp, Target, Image as ImageIcon, FileSearch,
+  TrendingUp, Target, Image as ImageIcon, FileSearch, RotateCcw,
 } from "lucide-react"
 import { openUrl } from "@tauri-apps/plugin-opener"
+import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory, readFile } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
-import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
+import type { AgentWikiChangeRecord, DisplayMessage, MessageReference } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
@@ -67,9 +68,18 @@ interface ChatMessageProps {
   message: DisplayMessage
   isLastAssistant?: boolean
   onRegenerate?: () => void
+  canRewind?: boolean
+  onRewind?: (messageId: string) => void
 }
 
-function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+function ChatMessageImpl({
+  message,
+  isLastAssistant,
+  onRegenerate,
+  canRewind = false,
+  onRewind,
+}: ChatMessageProps) {
+  const { t } = useTranslation()
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -130,6 +140,9 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
         {isAgent && message.toolCalls && message.toolCalls.length > 0 && (
           <AgentToolTimeline toolCalls={message.toolCalls} />
         )}
+        {isAgent && message.wikiChanges && message.wikiChanges.length > 0 && (
+          <AgentWikiChangeList changes={message.wikiChanges} />
+        )}
         {isAgent && hasAgentCostData(message) && (
           <AgentCostCard
             costUsd={message.costUsd}
@@ -138,6 +151,16 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
             durationMs={message.durationMs}
             numTurns={message.numTurns}
           />
+        )}
+        {isAgent && canRewind && onRewind && (
+          <button
+            type="button"
+            onClick={() => onRewind(message.id)}
+            className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+            title={t("agent.rewind.action")}
+          >
+            <RotateCcw className="h-3 w-3" /> {t("agent.rewind.action")}
+          </button>
         )}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
@@ -164,7 +187,40 @@ export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
   prev.message === next.message
   && prev.isLastAssistant === next.isLastAssistant
   && prev.onRegenerate === next.onRegenerate
+  && prev.canRewind === next.canRewind
+  && prev.onRewind === next.onRewind
 )
+
+function AgentWikiChangeList({ changes }: { changes: AgentWikiChangeRecord[] }) {
+  const { t } = useTranslation()
+
+  return (
+    <div className="rounded-md border border-border/60 bg-background/80 px-2 py-1.5 text-xs">
+      <div className="mb-1 flex items-center gap-1.5 font-medium text-muted-foreground">
+        <BookOpen className="h-3 w-3" />
+        {t("agent.wikiChanged.title")}
+      </div>
+      <div className="space-y-1">
+        {changes.map((change, index) => {
+          const key =
+            change.operation === "create"
+              ? "agent.wikiChanged.created"
+              : change.operation === "delete"
+                ? "agent.wikiChanged.deleted"
+                : "agent.wikiChanged.updated"
+          return (
+            <div
+              key={`${change.path}-${change.timestamp}-${index}`}
+              className="break-all text-muted-foreground"
+            >
+              {t(key, { path: change.path })}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 function CopyButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)

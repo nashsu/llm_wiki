@@ -144,7 +144,11 @@ describe("chat persistence — round-trip (new format)", () => {
 
   it("round-trips agent session metadata on conversations", async () => {
     const convs: Conversation[] = [
-      { ...makeConv("c1", "Agent Conv"), agentSessionId: "agent-session-1" },
+      {
+        ...makeConv("c1", "Agent Conv"),
+        agentSessionId: "agent-session-1",
+        agentForkSessionPending: true,
+      },
     ]
     const msgs = [makeMsg("m1", "c1", "hi")]
 
@@ -162,6 +166,8 @@ describe("chat persistence — round-trip (new format)", () => {
         role: "assistant",
         mode: "agent",
         agentSessionId: "agent-session-1",
+        agentUserMessageId: "user-sdk-1",
+        agentAssistantMessageId: "assistant-sdk-1",
         agentBlocks: [
           { type: "text", text: "Agent text" },
           {
@@ -181,6 +187,15 @@ describe("chat persistence — round-trip (new format)", () => {
         outputTokens: 250,
         durationMs: 1234,
         numTurns: 2,
+        wikiChanges: [
+          {
+            path: "wiki/page.md",
+            operation: "update",
+            oldSha256: "old",
+            newSha256: "new",
+            timestamp: 123,
+          },
+        ],
         toolCalls: [
           {
             toolName: "wiki_read",

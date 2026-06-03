@@ -46,6 +46,78 @@ beforeEach(() => {
 });
 
 describe("streamAgent", () => {
+	it("calls onStreamStart with the generated stream id", async () => {
+		const callbacks = {
+			onStreamStart: vi.fn(),
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+		};
+
+		const stream = streamAgent("run agent", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+		expect(callbacks.onStreamStart).toHaveBeenCalledWith(payload.args.streamId);
+
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+		await stream;
+	});
+
+	it("passes rewind result events through with the stream id", async () => {
+		const callbacks = {
+			onMessage: vi.fn(),
+			onToken: vi.fn(),
+			onDone: vi.fn(),
+			onError: vi.fn(),
+			onRewindFiles: vi.fn(),
+		};
+
+		const stream = streamAgent("run agent", { apiKey: "test-key" }, callbacks);
+
+		await vi.waitFor(() => {
+			expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+		});
+
+		const payload = tauriMocks.invoke.mock.calls[0]?.[1] as {
+			args: { streamId: string };
+		};
+
+		tauriMocks.emitString(
+			`agent:${payload.args.streamId}`,
+			JSON.stringify({
+				streamId: payload.args.streamId,
+				type: "rewind_files",
+				data: {
+					messageId: "user-sdk-1",
+					ok: true,
+					result: { canRewind: true, filesChanged: ["wiki/page.md"] },
+				},
+			}),
+		);
+		tauriMocks.emit(`agent:${payload.args.streamId}:done`, {
+			code: 0,
+			stderr: "",
+		});
+		await stream;
+
+		expect(callbacks.onRewindFiles).toHaveBeenCalledWith({
+			streamId: payload.args.streamId,
+			messageId: "user-sdk-1",
+			ok: true,
+			result: { canRewind: true, filesChanged: ["wiki/page.md"] },
+		});
+	});
+
 	it("passes session options to agent_spawn", async () => {
 		const callbacks = {
 			onMessage: vi.fn(),

@@ -1,15 +1,17 @@
 import { useRef, useEffect, useCallback, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
-import { BookOpen, Bot, MessageSquare, Plus, Trash2, Upload } from "lucide-react"
+import { BookOpen, Bot, GitFork, MessageSquare, Plus, Trash2, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
 import { AgentPermissionDialogHost } from "./agent-permission-dialog"
+import { AgentRewindDialogHost } from "./agent-rewind-dialog"
 import { useChatStore, chatMessagesToLLM, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage as LLMMessage } from "@/lib/llm-client"
 import { streamAgent } from "@/lib/agent/agent-transport"
-import type { AgentTransportOptions } from "@/lib/agent/agent-types"
+import type { AgentActionRequiredPayload, AgentRewindFilesPayload, AgentTransportOptions } from "@/lib/agent/agent-types"
+import { enqueueAgentStructuralLint } from "@/lib/agent/agent-lint-queue"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, readFile, deleteFile } from "@/commands/fs"
 import { searchWiki } from "@/lib/search"
@@ -27,6 +29,7 @@ import {
 	agentToolBatchToRecords,
 	agentToolEventToRecord,
 	isSdkAssistantMessage,
+	isSdkUserMessage,
 } from "./agent-stream-integration"
  // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -62,6 +65,23 @@ function agentApiServerBaseUrl(): string {
 	return `http://127.0.0.1:${API_SERVER_PORT}`
 }
 
+async function refreshAgentFileTree(projectPath?: string): Promise<void> {
+	if (!projectPath) return
+	const tree = await listDirectory(projectPath)
+	const wikiStore = useWikiStore.getState()
+	wikiStore.setFileTree(tree)
+	wikiStore.bumpDataVersion()
+}
+
+function enqueueAgentLintFromPaths(projectPath: string | undefined, paths: readonly string[]): void {
+	if (!projectPath || paths.length === 0) return
+	enqueueAgentStructuralLint(projectPath, paths)
+}
+
+function changedPathsFromAction(payload: AgentActionRequiredPayload): string[] {
+	return payload.kind === "lint_recommended" ? payload.paths : []
+}
+
 function buildAgentTransportOptions(): AgentTransportOptions | null {
 	const wikiState = useWikiStore.getState()
 	const chatState = useChatStore.getState()
@@ -80,10 +100,12 @@ function buildAgentTransportOptions(): AgentTransportOptions | null {
 		apiKey: wikiState.llmConfig.apiKey || undefined,
 		baseUrl: agentBaseUrl(wikiState.llmConfig),
 		resume: agentSessionId,
+		forkSession: activeConversation?.agentForkSessionPending === true,
 		persistSession: true,
 		permissionPolicy: "default",
 		enableWikiTools: true,
 		enableWriteTools: true,
+		enableFileCheckpointing: true,
 		apiServerBaseUrl: agentApiServerBaseUrl(),
 		apiToken: wikiState.apiConfig.token || undefined,
 	}
@@ -124,11 +146,23 @@ function ModeButton({
 	const createConversation = useChatStore((s) => s.createConversation)
 	const deleteConversation = useChatStore((s) => s.deleteConversation)
 	const setActiveConversation = useChatStore((s) => s.setActiveConversation)
+	const forkAgentConversation = useChatStore((s) => s.forkAgentConversation)
  	const [hoveredId, setHoveredId] = useState<string | null>(null)
+	const [menu, setMenu] = useState<{ conversationId: string; x: number; y: number } | null>(null)
  	const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
  	function getMessageCount(convId: string): number {
 		return messages.filter((m) => m.conversationId === convId).length
 	}
+	useEffect(() => {
+		if (!menu) return
+		const close = () => setMenu(null)
+		window.addEventListener("click", close)
+		window.addEventListener("keydown", close)
+		return () => {
+			window.removeEventListener("click", close)
+			window.removeEventListener("keydown", close)
+		}
+	}, [menu])
  	return (
 		<div className="flex h-full w-[200px] flex-shrink-0 flex-col border-r bg-muted/30">
 			<div className="border-b p-2">
@@ -167,6 +201,14 @@ function ModeButton({
 										if (s.project) flushQaForConversation(prevId, msgs, s.project.path, s.llmConfig, s.searchApiConfig).catch(() => {});
 									}
 									setActiveConversation(conv.id);
+								}}
+								onContextMenu={(event) => {
+									event.preventDefault()
+									setMenu({
+										conversationId: conv.id,
+										x: event.clientX,
+										y: event.clientY,
+									})
 								}}
 								onMouseEnter={() => setHoveredId(conv.id)}
 								onMouseLeave={() => setHoveredId(null)}
@@ -207,6 +249,26 @@ function ModeButton({
 					})
 				)}
 			</div>
+			{menu && (
+				<div
+					className="fixed z-50 min-w-36 rounded-md border bg-popover p-1 text-xs text-popover-foreground shadow-md"
+					style={{ left: menu.x, top: menu.y }}
+					onClick={(event) => event.stopPropagation()}
+				>
+					<button
+						type="button"
+						disabled={!conversations.find((conv) => conv.id === menu.conversationId)?.agentSessionId}
+						className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+						onClick={() => {
+							forkAgentConversation(menu.conversationId)
+							setMenu(null)
+						}}
+					>
+						<GitFork className="h-3.5 w-3.5" />
+						{t("agent.session.fork")}
+					</button>
+				</div>
+			)}
 		</div>
 	)
 }
@@ -230,8 +292,12 @@ function ModeButton({
 	const finishAgentStreamMessage = useChatStore((s) => s.finishAgentStreamMessage)
 	const setAgentToolCalls = useChatStore((s) => s.setAgentToolCalls)
 	const updateAgentProgress = useChatStore((s) => s.updateAgentProgress)
+	const appendAgentWikiChange = useChatStore((s) => s.appendAgentWikiChange)
+	const markAgentMessageRewindable = useChatStore((s) => s.markAgentMessageRewindable)
+	const requestAgentRewind = useChatStore((s) => s.requestAgentRewind)
 	const requestAgentPermission = useChatStore((s) => s.requestAgentPermission)
 	const clearAgentPermissionRequests = useChatStore((s) => s.clearAgentPermissionRequests)
+	const agentRewindTargets = useChatStore((s) => s.agentRewindTargets)
  	// Derive active messages via selector to re-render on message changes
 	const allMessages = useChatStore((s) => s.messages)
 	const activeMessages = activeConversationId
@@ -242,7 +308,6 @@ function ModeButton({
 	const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
 	const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
 	const setFileTree = useWikiStore((s) => s.setFileTree)
-	const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
  	const abortRef = useRef<AbortController | null>(null)
 	const scrollContainerRef = useRef<HTMLDivElement>(null)
 	const bottomRef = useRef<HTMLDivElement>(null)
@@ -296,6 +361,7 @@ function ModeButton({
 			abortRef.current = controller
 			let accumulated = ""
 			let settled = false
+			let streamId: string | undefined
 			const finishAgentMessage = (content: string, stats = agentResultToStats(null)) => {
 				if (settled) return
 				settled = true
@@ -308,14 +374,28 @@ function ModeButton({
 					text,
 					options,
 					{
+						onStreamStart: (id) => {
+							streamId = id
+						},
 						onToken: (token) => {
 							accumulated += token
 							updateAgentStreamMessage(messageId, { content: accumulated })
 						},
 						onMessage: (message) => {
+							if (isSdkUserMessage(message) && message.uuid) {
+								markAgentMessageRewindable(messageId, {
+									streamId,
+									userMessageId: message.uuid,
+								})
+								return
+							}
 							if (!isSdkAssistantMessage(message)) return
 							updateAgentStreamMessage(messageId, {
 								agentBlocks: message.message.content,
+							})
+							markAgentMessageRewindable(messageId, {
+								streamId,
+								assistantMessageId: message.uuid,
 							})
 						},
 						onDone: (result) => {
@@ -336,27 +416,31 @@ function ModeButton({
 						},
 						onPermissionRequest: (payload) => requestAgentPermission(payload),
 						onWikiChanged: (payload) => {
-							const key =
-								payload.operation === "create"
-									? "agent.wikiChanged.created"
-									: payload.operation === "delete"
-										? "agent.wikiChanged.deleted"
-										: "agent.wikiChanged.updated"
-							console.info(t(key, { path: payload.path }))
-							listDirectory(options.projectPath ?? options.cwd ?? project?.path ?? "")
-								.then((tree) => {
-									setFileTree(tree)
-									bumpDataVersion()
-								})
-								.catch((err) => {
-									console.warn("[agent] failed to refresh file tree:", err)
-								})
+							appendAgentWikiChange(messageId, payload)
+							const projectPath = options.projectPath ?? options.cwd ?? project?.path
+							enqueueAgentLintFromPaths(projectPath, [payload.path])
+							refreshAgentFileTree(projectPath).catch((err) => {
+								console.warn("[agent] failed to refresh file tree:", err)
+							})
 						},
 						onAgentSummary: (payload) => {
 							console.debug("[agent] summary:", payload)
 						},
 						onActionRequired: (payload) => {
-							console.debug("[agent] action required:", payload)
+							const paths = changedPathsFromAction(payload)
+							enqueueAgentLintFromPaths(options.projectPath ?? options.cwd ?? project?.path, paths)
+						},
+						onRewindFiles: (payload: AgentRewindFilesPayload) => {
+							if (!payload.ok) {
+								console.warn("[agent] rewind failed:", payload.error)
+								return
+							}
+							const paths = payload.result?.filesChanged ?? []
+							const projectPath = options.projectPath ?? options.cwd ?? project?.path
+							enqueueAgentLintFromPaths(projectPath, paths)
+							refreshAgentFileTree(projectPath).catch((err) => {
+								console.warn("[agent] failed to refresh file tree after rewind:", err)
+							})
 						},
 					},
 					controller.signal,
@@ -368,13 +452,13 @@ function ModeButton({
 		},
 		[
 			addMessage,
-			bumpDataVersion,
+			appendAgentWikiChange,
 			createConversation,
 			finishAgentStreamMessage,
+			markAgentMessageRewindable,
 			project?.path,
 			requestAgentPermission,
 			setAgentToolCalls,
-			setFileTree,
 			startAgentStreamMessage,
 			t,
 			updateAgentProgress,
@@ -741,6 +825,7 @@ function ModeButton({
  	return (
 		<div className="flex h-full flex-row overflow-hidden">
 			<AgentPermissionDialogHost />
+			<AgentRewindDialogHost />
 			<ConversationSidebar />
  			<div className="flex flex-1 flex-col overflow-hidden">
 				{!activeConversationId ? (
@@ -768,6 +853,8 @@ function ModeButton({
 											message={msg}
 											isLastAssistant={isLastAssistant && !isStreaming}
 											onRegenerate={isLastAssistant ? handleRegenerate : undefined}
+											canRewind={Boolean(agentRewindTargets[msg.id])}
+											onRewind={requestAgentRewind}
 										/>
 									)
 								})}

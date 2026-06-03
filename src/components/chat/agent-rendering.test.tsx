@@ -87,6 +87,8 @@ describe("agent message rendering", () => {
     expect(html).toContain("Plain answer")
     expect(html).not.toContain("Tool calls")
     expect(html).not.toContain("Agent run")
+    expect(html).not.toContain("Wiki changes")
+    expect(html).not.toContain("Rewind files")
   })
 
   it("renders agent blocks, timeline, and cost for agent messages", () => {
@@ -120,6 +122,29 @@ describe("agent message rendering", () => {
     expect(html).toContain("Tool use")
     expect(html).toContain("Tool calls")
     expect(html).toContain("Agent run")
+  })
+
+  it("renders agent wiki changes and rewind action for rewindable agent messages", () => {
+    const html = renderToStaticMarkup(
+      <ChatMessage
+        message={assistantMessage({
+          mode: "agent",
+          wikiChanges: [
+            {
+              path: "wiki/page.md",
+              operation: "update",
+              timestamp: 123,
+            },
+          ],
+        })}
+        canRewind
+        onRewind={() => undefined}
+      />,
+    )
+
+    expect(html).toContain("Wiki changes")
+    expect(html).toContain("Agent updated wiki/page.md")
+    expect(html).toContain("Rewind files")
   })
 
   it("uses agent block text as a fallback for references when content is empty", () => {

@@ -14,6 +14,8 @@ function resetChatStore(): void {
     maxHistoryMessages: 10,
     activeAgentPermissionRequest: null,
     queuedAgentPermissionRequests: [],
+    agentRewindTargets: {},
+    activeAgentRewindRequest: null,
   })
 }
 
@@ -126,6 +128,33 @@ describe("chat store agent data model", () => {
     expect(useChatStore.getState().streamingContent).toBe("")
   })
 
+  it("forks only conversations with an agent session and marks fork pending", () => {
+    const convId = useChatStore.getState().createConversation()
+    expect(useChatStore.getState().forkAgentConversation(convId)).toBeNull()
+    useChatStore.setState({
+      conversations: [
+        {
+          id: convId,
+          title: "Agent work",
+          createdAt: 0,
+          updatedAt: 1,
+          agentSessionId: "session-1",
+        },
+      ],
+      activeConversationId: convId,
+    })
+
+    const forkId = useChatStore.getState().forkAgentConversation(convId)
+
+    expect(forkId).toEqual(expect.any(String))
+    const fork = useChatStore.getState().conversations.find((conv) => conv.id === forkId)
+    expect(fork).toMatchObject({
+      agentSessionId: "session-1",
+      agentForkSessionPending: true,
+    })
+    expect(useChatStore.getState().activeConversationId).toBe(forkId)
+  })
+
   it("starts an agent stream placeholder message and returns its id", () => {
     const convId = useChatStore.getState().createConversation()
 
@@ -209,6 +238,35 @@ describe("chat store agent data model", () => {
     })
     expect(useChatStore.getState().isStreaming).toBe(false)
     expect(useChatStore.getState().streamingContent).toBe("")
+  })
+
+  it("clears fork pending when an agent stream returns a new session", () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      isStreaming: true,
+      streamingContent: "partial",
+      conversations: [
+        {
+          id: convId,
+          title: "Fork",
+          createdAt: 0,
+          updatedAt: 1,
+          agentSessionId: "old-session",
+          agentForkSessionPending: true,
+        },
+      ],
+      activeConversationId: convId,
+      messages: [makeAssistantMessage("m1", convId)],
+    })
+
+    useChatStore.getState().finishAgentStreamMessage("m1", "done", {
+      agentSessionId: "new-session",
+    })
+
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      agentSessionId: "new-session",
+    })
+    expect(useChatStore.getState().conversations[0].agentForkSessionPending).toBeUndefined()
   })
 
   it("setAgentToolCalls replaces one message's tool calls only", () => {
@@ -296,6 +354,58 @@ describe("chat store agent data model", () => {
     ])
   })
 
+  it("appends wiki changes to one agent message only", () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      messages: [
+        makeAssistantMessage("m1", convId),
+        makeAssistantMessage("m2", convId),
+      ],
+    })
+
+    useChatStore.getState().appendAgentWikiChange("m1", {
+      path: "wiki/page.md",
+      operation: "update",
+      oldSha256: "old",
+      newSha256: "new",
+    })
+
+    expect(useChatStore.getState().messages[0].wikiChanges).toMatchObject([
+      {
+        path: "wiki/page.md",
+        operation: "update",
+        oldSha256: "old",
+        newSha256: "new",
+      },
+    ])
+    expect(useChatStore.getState().messages[1].wikiChanges).toBeUndefined()
+  })
+
+  it("marks an agent message rewindable with runtime-only stream data", () => {
+    const convId = useChatStore.getState().createConversation()
+    useChatStore.setState({
+      messages: [makeAssistantMessage("m1", convId)],
+    })
+
+    useChatStore.getState().markAgentMessageRewindable("m1", {
+      streamId: "stream-1",
+      userMessageId: "user-sdk-1",
+      assistantMessageId: "assistant-sdk-1",
+    })
+    useChatStore.getState().requestAgentRewind("m1")
+
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      agentUserMessageId: "user-sdk-1",
+      agentAssistantMessageId: "assistant-sdk-1",
+    })
+    expect(useChatStore.getState().activeAgentRewindRequest).toMatchObject({
+      chatMessageId: "m1",
+      streamId: "stream-1",
+      userMessageId: "user-sdk-1",
+      assistantMessageId: "assistant-sdk-1",
+    })
+  })
+
   it("chatMessagesToLLM drops agent metadata", () => {
     const messages: DisplayMessage[] = [
       {
@@ -311,6 +421,9 @@ describe("chat store agent data model", () => {
         ],
         toolCalls: [{ toolName: "wiki_read", phase: "post", ok: true }],
         costUsd: 0.1,
+        wikiChanges: [{ path: "wiki/page.md", operation: "update", timestamp: 1 }],
+        agentUserMessageId: "user-sdk-1",
+        agentAssistantMessageId: "assistant-sdk-1",
       },
     ]
 

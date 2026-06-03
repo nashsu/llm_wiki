@@ -138,6 +138,7 @@ export async function streamAgent(
 	signal?: AbortSignal,
 ): Promise<void> {
 	const streamId = crypto.randomUUID();
+	callbacks.onStreamStart?.(streamId);
 	let unlistenData: UnlistenFn | undefined;
 	let unlistenDone: UnlistenFn | undefined;
 	let finished = false;
@@ -246,7 +247,10 @@ export async function streamAgent(
 				}
 
 				if (wrapper.type === "rewind_files") {
-					callbacks.onRewindFiles?.(msg as AgentRewindFilesPayload);
+					callbacks.onRewindFiles?.({
+						...(msg as AgentRewindFilesPayload),
+						streamId: wrapper.streamId,
+					});
 					return;
 				}
 

@@ -26,6 +26,8 @@ export async function resetProjectState(): Promise<void> {
     streamingContent: "",
     activeAgentPermissionRequest: null,
     queuedAgentPermissionRequests: [],
+    agentRewindTargets: {},
+    activeAgentRewindRequest: null,
   })
 
   useReviewStore.setState({
@@ -43,12 +45,13 @@ export async function resetProjectState(): Promise<void> {
 
   // Module-level caches — load in parallel and clear each, surfacing any
   // failure instead of swallowing it.
-  const [queueMod, dedupQueueMod, graphMod, fileSyncMod, scheduledImportMod] = await Promise.allSettled([
+  const [queueMod, dedupQueueMod, graphMod, fileSyncMod, scheduledImportMod, agentLintQueueMod] = await Promise.allSettled([
     import("@/lib/ingest-queue"),
     import("@/lib/dedup-queue"),
     import("@/lib/graph-relevance"),
     import("@/lib/project-file-sync"),
     import("@/lib/scheduled-import"),
+    import("@/lib/agent/agent-lint-queue"),
   ])
 
   if (scheduledImportMod.status === "fulfilled") {
@@ -103,6 +106,16 @@ export async function resetProjectState(): Promise<void> {
     }
   } else {
     console.warn("[Reset Project State] Failed to load project-file-sync:", fileSyncMod.reason)
+  }
+
+  if (agentLintQueueMod.status === "fulfilled") {
+    try {
+      agentLintQueueMod.value.clearAgentStructuralLintQueue()
+    } catch (err) {
+      console.warn("[Reset Project State] clearAgentStructuralLintQueue failed:", err)
+    }
+  } else {
+    console.warn("[Reset Project State] Failed to load agent-lint-queue:", agentLintQueueMod.reason)
   }
 
 }

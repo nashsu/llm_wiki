@@ -55,6 +55,7 @@ export function LintView() {
 	const setSelectedFile = useWikiStore((s) => s.setSelectedFile);
 	const setFileContent = useWikiStore((s) => s.setFileContent);
 	const items = useLintStore((s) => s.items);
+	const agentLint = useLintStore((s) => s.agentLint);
 	const addLintItems = useLintStore((s) => s.addItems);
 	const removeLintItem = useLintStore((s) => s.removeItem);
 	const clearLintItems = useLintStore((s) => s.clearItems);
@@ -274,6 +275,8 @@ export function LintView() {
 		() => groupLintResultsForDisplay(items),
 		[items],
 	);
+	const shouldRenderResults = shouldShowLintResults(hasRun, items.length);
+	const showAgentLintStatus = agentLint.status !== "idle";
 
 	const canAutoFix =
 		hasRun &&
@@ -286,11 +289,16 @@ export function LintView() {
 			<div className="shrink-0 flex items-center justify-between border-b px-4 py-3">
 				<div className="flex items-center gap-2">
 					<h2 className="text-sm font-semibold">{t("lint.title")}</h2>
-					{hasRun && items.length > 0 && (
+					{items.length > 0 && (
 						<span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
 							{items.length === 1
 								? t("lint.issues", { count: items.length })
 								: t("lint.issues_plural", { count: items.length })}
+						</span>
+					)}
+					{showAgentLintStatus && (
+						<span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+							{t(`agent.lint.${agentLint.status}`)}
 						</span>
 					)}
 				</div>
@@ -330,7 +338,7 @@ export function LintView() {
 			</div>
 
 			<div className="flex-1 overflow-y-auto">
-				{!hasRun ? (
+				{!shouldRenderResults ? (
 					<div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
 						<CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
 						<p>{t("lint.runLintHint")}</p>

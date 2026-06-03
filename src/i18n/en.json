@@ -153,6 +153,10 @@
       "done": "Done",
       "failed": "Failed"
     },
+    "session": {
+      "fork": "Fork Session",
+      "forkPrefix": "Fork:"
+    },
     "timeline": {
       "title": "Tool calls",
       "input": "Input",
@@ -183,9 +187,26 @@
       "failed": "Agent failed: {{error}}"
     },
     "wikiChanged": {
+      "title": "Wiki changes",
+      "empty": "No wiki changes yet",
       "updated": "Agent updated {{path}}",
       "created": "Agent created {{path}}",
       "deleted": "Agent deleted {{path}}"
+    },
+    "rewind": {
+      "action": "Rewind files",
+      "title": "Rewind Agent file changes",
+      "description": "Rewind files to the state before this message. This will modify files in the current project.",
+      "confirm": "Rewind files",
+      "cancel": "Cancel",
+      "success": "Files rewound",
+      "failed": "Rewind failed: {{error}}"
+    },
+    "lint": {
+      "queued": "Agent lint queued",
+      "running": "Agent lint running",
+      "done": "Agent lint done",
+      "failed": "Agent lint failed"
     },
     "actions": {
       "expand": "Expand",

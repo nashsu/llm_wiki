@@ -13,7 +13,19 @@ import {
 import { createLlmWikiMcpServer } from "./wiki-tools.js";
 
 type QueryInput = Parameters<typeof sdkQuery>[0];
-export type QueryFn = (input: QueryInput) => AsyncIterable<SDKMessage | { type: string; [k: string]: unknown }>;
+export interface RewindFilesResult {
+	canRewind: boolean;
+	error?: string;
+	filesChanged?: string[];
+	insertions?: number;
+	deletions?: number;
+}
+
+export type QueryControl = AsyncIterable<SDKMessage | { type: string; [k: string]: unknown }> & {
+	close?: () => void;
+	rewindFiles?: (userMessageId: string, options?: { dryRun?: boolean }) => Promise<RewindFilesResult>;
+};
+export type QueryFn = (input: QueryInput) => QueryControl;
 
 interface RequestHandlerDeps {
 	queryFn: QueryFn;
@@ -23,6 +35,9 @@ interface RequestHandlerDeps {
 	env?: NodeJS.ProcessEnv;
 	appToolBridge?: AppToolBridge;
 	permissionBridge?: PermissionBridge;
+	activeSdkQueries?: Map<string, QueryControl>;
+	activeSdkQueryRetentionMs?: number;
+	onActiveSdkQueryReleased?: () => void;
 }
 
 export function omitNullish<T extends Record<string, unknown>>(
@@ -41,7 +56,40 @@ export function createRequestHandler({
 	env: baseEnv = process.env,
 	appToolBridge,
 	permissionBridge,
+	activeSdkQueries = new Map<string, QueryControl>(),
+	activeSdkQueryRetentionMs = 5 * 60_000,
+	onActiveSdkQueryReleased,
 }: RequestHandlerDeps) {
+	const activeSdkQueryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	function releaseActiveSdkQuery(streamId: string): void {
+		const timer = activeSdkQueryTimers.get(streamId);
+		if (timer) clearTimeout(timer);
+		activeSdkQueryTimers.delete(streamId);
+		activeSdkQueries.delete(streamId);
+		onActiveSdkQueryReleased?.();
+	}
+
+	function retainActiveSdkQuery(streamId: string, query: QueryControl): void {
+		const previousTimer = activeSdkQueryTimers.get(streamId);
+		if (previousTimer) clearTimeout(previousTimer);
+		activeSdkQueries.set(streamId, query);
+	}
+
+	function scheduleActiveSdkQueryRelease(streamId: string, query: QueryControl): void {
+		if (!query.rewindFiles || activeSdkQueryRetentionMs <= 0) {
+			releaseActiveSdkQuery(streamId);
+			return;
+		}
+
+		const timer = setTimeout(() => {
+			activeSdkQueryTimers.delete(streamId);
+			activeSdkQueries.delete(streamId);
+			onActiveSdkQueryReleased?.();
+		}, activeSdkQueryRetentionMs);
+		activeSdkQueryTimers.set(streamId, timer);
+	}
+
 	return async function handleRequest(
 		req: AgentRequest | AgentKillRequest,
 	): Promise<void> {
@@ -50,6 +98,8 @@ export function createRequestHandler({
 			if (ctrl) {
 				ctrl.abort();
 				activeQueries.delete(req.streamId);
+				activeSdkQueries.get(req.streamId)?.close?.();
+				releaseActiveSdkQuery(req.streamId);
 				appToolBridge?.rejectStream(req.streamId, "Agent stream was killed");
 				permissionBridge?.rejectStream(req.streamId, "Agent stream was killed");
 			}
@@ -194,6 +244,7 @@ export function createRequestHandler({
 				prompt: req.prompt,
 				options,
 			});
+			retainActiveSdkQuery(req.streamId, q);
 
 			for await (const message of q) {
 				const msg = message;
@@ -235,6 +286,8 @@ export function createRequestHandler({
 			});
 		} finally {
 			activeQueries.delete(req.streamId);
+			const q = activeSdkQueries.get(req.streamId);
+			if (q) scheduleActiveSdkQueryRelease(req.streamId, q);
 		}
 	};
 }
