@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { buildAnthropicUrl, parseGoogleLine, getProviderConfig } from "../llm-providers"
+import { buildAnthropicUrl, parseGoogleLine, parseAnthropicLine, getProviderConfig } from "../llm-providers"
 import type { LlmConfig as RealLlmConfig } from "@/stores/wiki-store"
 
 const makeConfig = (overrides: Partial<RealLlmConfig> = {}): RealLlmConfig => ({
@@ -155,6 +155,42 @@ describe("parseGoogleLine — Gemini SSE parsing", () => {
 
   it("returns null for malformed JSON", () => {
     expect(parseGoogleLine("data: {not json")).toBeNull()
+  })
+})
+
+describe("parseAnthropicLine — Anthropic SSE parsing", () => {
+  it("extracts text from a standard text_delta event (with space)", () => {
+    const line = 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}'
+    expect(parseAnthropicLine(line)).toBe("Hello")
+  })
+
+  it("extracts text when delta.type is omitted (no-space SSE)", () => {
+    // Some third-party Anthropic-compatible gateways (e.g. Kimi Coding Plan)
+    // emit content_block_delta with a bare `text` field and no `type` inside
+    // delta, and sometimes omit the space after `data:`.
+    const line = 'data:{"type":"content_block_delta","index":0,"delta":{"text":"world"}}'
+    expect(parseAnthropicLine(line)).toBe("world")
+  })
+
+  it("extracts text from a complete message event (single-shot SSE)", () => {
+    const line =
+      'data: {"type":"message","id":"msg_01","role":"assistant","content":[{"type":"text","text":"Hello world"}]}'
+    expect(parseAnthropicLine(line)).toBe("Hello world")
+  })
+
+  it("falls back to OpenAI-shaped delta.content when present", () => {
+    const line = 'data: {"choices":[{"delta":{"content":"fallback"}}]}'
+    expect(parseAnthropicLine(line)).toBe("fallback")
+  })
+
+  it("returns null for non-content-block-delta events without extractable text", () => {
+    const line = 'data: {"type":"message_start","message":{"id":"msg_01"}}'
+    expect(parseAnthropicLine(line)).toBeNull()
+  })
+
+  it("returns null for non-data lines", () => {
+    expect(parseAnthropicLine("event: start")).toBeNull()
+    expect(parseAnthropicLine("")).toBeNull()
   })
 })
 

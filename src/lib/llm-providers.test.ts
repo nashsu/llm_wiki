@@ -387,6 +387,39 @@ describe("reasoning controls", () => {
     expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages")
     expect(provider.headers.Authorization).toBe("Bearer sk-mimo")
     expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
+  })
+
+  it("uses Bearer auth for Kimi Coding Plan Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-kimi-test",
+      model: "kimi-for-coding",
+      customEndpoint: "https://api.kimi.com/coding/",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://api.kimi.com/coding/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-kimi-test")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
+  })
+
+  it("uses Bearer auth for Moonshot Anthropic wire", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiKey: "sk-moonshot",
+      model: "kimi-k2.6",
+      customEndpoint: "https://api.moonshot.ai/anthropic",
+      apiMode: "anthropic_messages",
+    })
+    const provider = getProviderConfig(cfg)
+
+    expect(provider.url).toBe("https://api.moonshot.ai/anthropic/v1/messages")
+    expect(provider.headers.Authorization).toBe("Bearer sk-moonshot")
+    expect(provider.headers["x-api-key"]).toBeUndefined()
+    expect(provider.headers["anthropic-version"]).toBe("2023-06-01")
   })
 
   it("uses cacheable system blocks for custom Anthropic-wire providers", () => {

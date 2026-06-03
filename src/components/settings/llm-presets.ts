@@ -300,6 +300,22 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 256000,
   },
   {
+    id: "kimi-coding-plan",
+    label: "Kimi (Coding Plan)",
+    hint: "api.kimi.com",
+    provider: "custom",
+    baseUrl: "https://api.kimi.com/coding/",
+    defaultModel: "kimi-for-coding",
+    apiMode: "chat_completions",
+    // Kimi Coding Plan is a separate subscription service from the
+    // Moonshot open platform. It supports both OpenAI-compatible
+    // (chat_completions) and Anthropic-compatible (anthropic_messages)
+    // wires on the same base URL. The Anthropic wire requires Bearer
+    // auth (see requiresBearerAuth in llm-providers.ts).
+    suggestedModels: ["kimi-for-coding"],
+    suggestedContextSize: 256000,
+  },
+  {
     id: "zhipu",
     label: "智谱 GLM (Zhipu)",
     hint: "open.bigmodel.cn",
