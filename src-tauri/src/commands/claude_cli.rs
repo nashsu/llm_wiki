@@ -201,7 +201,7 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
         Duration::from_secs(3),
         Command::new(&path).arg("--version").output(),
     )
-        .await;
+    .await;
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
@@ -464,7 +464,7 @@ mod tests {
             { "type": "text", "text": "describe this" },
             { "type": "image", "mediaType": "image/png", "dataBase64": "abc123" }
         ]))
-            .expect("content block payload should deserialize");
+        .expect("content block payload should deserialize");
 
         let blocks = claude_content_blocks(&content);
 
@@ -490,7 +490,7 @@ mod tests {
             { "type": "text", "text": "system rule" },
             { "type": "image", "mediaType": "image/png", "dataBase64": "abc123" }
         ]))
-            .expect("content block payload should deserialize");
+        .expect("content block payload should deserialize");
 
         assert_eq!(claude_content_text_only(&content), "system rule");
     }
