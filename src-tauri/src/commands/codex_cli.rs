@@ -5,6 +5,8 @@
 //! spawn this fixed command; it cannot execute arbitrary shell commands.
 
 use std::collections::HashMap;
+use std::env;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{
@@ -36,6 +38,11 @@ const CODEX_SPAWN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 const STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
 
+struct CodexCandidate {
+    label: String,
+    path: PathBuf,
+}
+
 fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
     if collected.len() >= limit_bytes {
         return;
@@ -51,6 +58,57 @@ fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
     }
 }
 
+fn is_existing_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn push_candidate(
+    candidates: &mut Vec<CodexCandidate>,
+    label: impl Into<String>,
+    path: impl Into<PathBuf>,
+) {
+    candidates.push(CodexCandidate {
+        label: label.into(),
+        path: path.into(),
+    });
+}
+
+fn candidate_error_message(tried: &[String]) -> String {
+    format!("`codex` not found. Tried: {}", tried.join(" | "))
+}
+
+#[cfg(not(windows))]
+fn non_windows_codex_candidates() -> Vec<CodexCandidate> {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = env::var("CODEX_BINARY_PATH") {
+        if !path.trim().is_empty() {
+            push_candidate(&mut candidates, "CODEX_BINARY_PATH", PathBuf::from(path));
+        }
+    }
+
+    if let Some(home) = env::var_os("HOME") {
+        push_candidate(
+            &mut candidates,
+            "HOME/.local/bin/codex",
+            PathBuf::from(home).join(".local/bin/codex"),
+        );
+    }
+
+    push_candidate(
+        &mut candidates,
+        "/opt/homebrew/bin/codex",
+        PathBuf::from("/opt/homebrew/bin/codex"),
+    );
+    push_candidate(
+        &mut candidates,
+        "/usr/local/bin/codex",
+        PathBuf::from("/usr/local/bin/codex"),
+    );
+
+    candidates
+}
+
 fn find_codex_command() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -60,9 +118,33 @@ fn find_codex_command() -> Result<PathBuf, String> {
         if let Ok(path) = which::which("codex.exe") {
             return Ok(path);
         }
+        return Err("`codex` not found on PATH".to_string());
     }
 
-    which::which("codex").map_err(|_| "`codex` not found on PATH".to_string())
+    #[cfg(not(windows))]
+    {
+        let mut tried = Vec::new();
+
+        for candidate in non_windows_codex_candidates() {
+            let summary = format!("{}={}", candidate.label, candidate.path.display());
+            if is_existing_file(&candidate.path) {
+                return Ok(candidate.path);
+            }
+            tried.push(format!("{summary} (missing)"));
+        }
+
+        match which::which("codex") {
+            Ok(path) if is_existing_file(&path) => Ok(path),
+            Ok(path) => {
+                tried.push(format!("PATH: {} (missing)", path.display()));
+                Err(candidate_error_message(&tried))
+            }
+            Err(_) => {
+                tried.push("PATH: codex (not found)".to_string());
+                Err(candidate_error_message(&tried))
+            }
+        }
+    }
 }
 
 fn suppress_windows_console(_cmd: &mut Command) {
