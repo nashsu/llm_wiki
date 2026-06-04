@@ -51,7 +51,33 @@ fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
     }
 }
 
-fn find_codex_command() -> Result<PathBuf, String> {
+fn codex_common_paths(home: &str) -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from(format!("{home}/.bun/bin/codex")),
+        PathBuf::from(format!("{home}/.npm-global/bin/codex")),
+        PathBuf::from(format!("{home}/.local/bin/codex")),
+        PathBuf::from(format!("{home}/Library/pnpm/codex")),
+    ]
+}
+
+fn command_path_from_shell_output(raw: &str, binary_name: &str) -> Option<PathBuf> {
+    for line in raw.lines().rev() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let candidate = PathBuf::from(line);
+        let name_matches = candidate.file_name().is_some_and(|n| n == binary_name);
+        if name_matches && candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+async fn find_codex_command() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
         if let Ok(path) = which::which("codex.cmd") {
@@ -62,7 +88,39 @@ fn find_codex_command() -> Result<PathBuf, String> {
         }
     }
 
-    which::which("codex").map_err(|_| "`codex` not found on PATH".to_string())
+    if let Ok(path) = which::which("codex") {
+        return Ok(path);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        for candidate in codex_common_paths(&home) {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let resolved = tokio::time::timeout(
+            Duration::from_secs(2),
+            Command::new(&shell)
+                .args(["-ilc", "command -v codex"])
+                .output(),
+        )
+        .await;
+
+        if let Ok(Ok(out)) = resolved {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout);
+                if let Some(path) = command_path_from_shell_output(&raw, "codex") {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    Err("`codex` not found on PATH or in common install locations".to_string())
 }
 
 fn suppress_windows_console(_cmd: &mut Command) {
@@ -77,7 +135,7 @@ fn suppress_windows_console(_cmd: &mut Command) {
 
 #[tauri::command]
 pub async fn codex_cli_detect() -> Result<DetectResult, String> {
-    let path = match find_codex_command() {
+    let path = match find_codex_command().await {
         Ok(p) => p,
         Err(error) => {
             return Ok(DetectResult {
@@ -144,7 +202,7 @@ pub async fn codex_cli_spawn(
         return Err("No prompt to send to codex CLI".to_string());
     }
 
-    let codex = find_codex_command()?;
+    let codex = find_codex_command().await?;
     let mut cmd = Command::new(&codex);
     suppress_windows_console(&mut cmd);
     cmd.arg("-a")
@@ -298,6 +356,42 @@ pub async fn codex_cli_kill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_common_paths_cover_gui_app_install_locations() {
+        assert_eq!(
+            codex_common_paths("/Users/alice"),
+            vec![
+                PathBuf::from("/opt/homebrew/bin/codex"),
+                PathBuf::from("/usr/local/bin/codex"),
+                PathBuf::from("/Users/alice/.bun/bin/codex"),
+                PathBuf::from("/Users/alice/.npm-global/bin/codex"),
+                PathBuf::from("/Users/alice/.local/bin/codex"),
+                PathBuf::from("/Users/alice/Library/pnpm/codex"),
+            ]
+        );
+    }
+
+    #[test]
+    fn command_path_from_shell_output_skips_banners_and_missing_paths() {
+        let dir =
+            std::env::temp_dir().join(format!("llm-wiki-codex-path-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("test dir should be created");
+        let codex = dir.join("codex");
+        std::fs::write(&codex, "").expect("test codex file should be created");
+
+        let output = format!(
+            "loading shell profile\n{}\n/definitely/not/installed/codex\n",
+            codex.display()
+        );
+
+        assert_eq!(
+            command_path_from_shell_output(&output, "codex"),
+            Some(codex)
+        );
+
+        std::fs::remove_dir_all(&dir).expect("test dir should be removed");
+    }
 
     #[test]
     fn append_capped_line_appends_newline_when_space_remains() {
