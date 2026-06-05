@@ -7,7 +7,7 @@ use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::table::{CompactionOptions, OptimizeAction};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
+use chrono::TimeDelta;
 
 use crate::panic_guard::run_guarded_async;
 
@@ -680,7 +680,7 @@ pub async fn vector_optimize_table(project_path: String) -> Result<(), String> {
         //  no concurrent readers during bulk indexing).
         table
             .optimize(OptimizeAction::Prune {
-                older_than: Some(Duration::from_secs(0)),
+                older_than: Some(TimeDelta::seconds(0)),
                 delete_unverified: Some(true),
                 error_if_tagged_old_versions: None,
             })
