@@ -75,6 +75,24 @@ fn suppress_windows_console(_cmd: &mut Command) {
     }
 }
 
+fn codex_cli_args(model: &str) -> Vec<String> {
+    vec![
+        "-a".to_string(),
+        "never".to_string(),
+        "exec".to_string(),
+        "--json".to_string(),
+        "--skip-git-repo-check".to_string(),
+        "--sandbox".to_string(),
+        "read-only".to_string(),
+        "--ephemeral".to_string(),
+        "--ignore-user-config".to_string(),
+        "--ignore-rules".to_string(),
+        "--model".to_string(),
+        model.to_string(),
+        "-".to_string(),
+    ]
+}
+
 #[tauri::command]
 pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     let path = match find_codex_command() {
@@ -147,17 +165,7 @@ pub async fn codex_cli_spawn(
     let codex = find_codex_command()?;
     let mut cmd = Command::new(&codex);
     suppress_windows_console(&mut cmd);
-    cmd.arg("-a")
-        .arg("never")
-        .arg("exec")
-        .arg("--json")
-        .arg("--skip-git-repo-check")
-        .arg("--sandbox")
-        .arg("read-only")
-        .arg("--ephemeral")
-        .arg("--model")
-        .arg(&model)
-        .arg("-");
+    cmd.args(codex_cli_args(&model));
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -298,6 +306,31 @@ pub async fn codex_cli_kill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_cli_args_ignore_user_config_and_rules() {
+        let args = codex_cli_args("gpt-5.2");
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-a",
+                "never",
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--model",
+                "gpt-5.2",
+                "-",
+            ]
+        );
+    }
 
     #[test]
     fn append_capped_line_appends_newline_when_space_remains() {

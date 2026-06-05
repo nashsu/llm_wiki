@@ -178,6 +178,30 @@ fn find_claude_command() -> Result<PathBuf, String> {
     Err("`claude` not found on PATH".to_string())
 }
 
+fn claude_cli_args(model: &str) -> Vec<String> {
+    vec![
+        "-p".to_string(),
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--input-format".to_string(),
+        "stream-json".to_string(),
+        "--verbose".to_string(),
+        "--setting-sources".to_string(),
+        "project".to_string(),
+        "--strict-mcp-config".to_string(),
+        "--mcp-config".to_string(),
+        "{}".to_string(),
+        "--disable-slash-commands".to_string(),
+        "--tools".to_string(),
+        "".to_string(),
+        "--no-session-persistence".to_string(),
+        "--prompt-suggestions".to_string(),
+        "false".to_string(),
+        "--model".to_string(),
+        model.to_string(),
+    ]
+}
+
 /// Locate `claude` on PATH and confirm it's runnable by calling
 /// `claude --version` with a short timeout. Cheap — safe to call on
 /// mount of the settings panel.
@@ -249,12 +273,11 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
     }
 }
 
-/// Spawn `claude -p --output-format stream-json --input-format stream-json
-/// --verbose --model <model>` and pipe stdout back to the frontend as
-/// `claude-cli:{stream_id}` events (one line per event). Closes stdin
-/// after writing the serialized history so claude starts processing.
-/// Emits a final `claude-cli:{stream_id}:done` event with `{ code }`
-/// when the child exits.
+/// Spawn `claude` in print/stream-json mode and pipe stdout back to the
+/// frontend as `claude-cli:{stream_id}` events (one line per event).
+/// Closes stdin after writing the serialized history so claude starts
+/// processing. Emits a final `claude-cli:{stream_id}:done` event with
+/// `{ code }` when the child exits.
 #[tauri::command]
 pub async fn claude_cli_spawn(
     app: AppHandle,
@@ -303,14 +326,7 @@ pub async fn claude_cli_spawn(
 
     let claude = find_claude_command()?;
     let mut cmd = Command::new(&claude);
-    cmd.arg("-p")
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--input-format")
-        .arg("stream-json")
-        .arg("--verbose")
-        .arg("--model")
-        .arg(&model);
+    cmd.args(claude_cli_args(&model));
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -457,6 +473,37 @@ pub async fn claude_cli_kill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_cli_args_disable_user_customizations() {
+        let args = claude_cli_args("claude-sonnet-4-5");
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--input-format",
+                "stream-json",
+                "--verbose",
+                "--setting-sources",
+                "project",
+                "--strict-mcp-config",
+                "--mcp-config",
+                "{}",
+                "--disable-slash-commands",
+                "--tools",
+                "",
+                "--no-session-persistence",
+                "--prompt-suggestions",
+                "false",
+                "--model",
+                "claude-sonnet-4-5",
+            ]
+        );
+    }
 
     #[test]
     fn claude_content_blocks_maps_frontend_image_blocks_to_anthropic_shape() {
