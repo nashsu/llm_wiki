@@ -226,6 +226,8 @@ pub fn run() {
             commands::vectorstore::vector_count_chunks,
             commands::vectorstore::vector_legacy_row_count,
             commands::vectorstore::vector_drop_legacy,
+            commands::vectorstore::vector_optimize_table,
+            commands::vectorstore::vector_bulk_add,
             commands::claude_cli::claude_cli_detect,
             commands::claude_cli::claude_cli_spawn,
             commands::claude_cli::claude_cli_kill,

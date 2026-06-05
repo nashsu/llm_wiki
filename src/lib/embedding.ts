@@ -278,6 +278,7 @@ async function vectorUpsertChunks(
   projectPath: string,
   pageId: string,
   chunks: ChunkUpsertInput[],
+  skipDelete = false,
 ): Promise<void> {
   await invoke("vector_upsert_chunks", {
     projectPath: normalizePath(projectPath),
@@ -288,6 +289,7 @@ async function vectorUpsertChunks(
       heading_path: c.headingPath,
       embedding: c.embedding.map((v) => Math.fround(v)),
     })),
+    skipDelete,
   })
 }
 
@@ -376,6 +378,7 @@ export async function embedPage(
   title: string,
   content: string,
   cfg: EmbeddingConfig,
+  skipDelete = false,
 ): Promise<void> {
   if (!cfg.enabled || !cfg.model) return
 
@@ -410,7 +413,7 @@ export async function embedPage(
     return
   }
 
-  await vectorUpsertChunks(projectPath, pageId, rows)
+  await vectorUpsertChunks(projectPath, pageId, rows, skipDelete)
   const elapsed = Math.round(performance.now() - t0)
   console.log(
     `[Embedding] Indexed "${pageId}": ${rows.length}/${chunks.length} chunks (${failedChunks} skipped) in ${elapsed}ms`,
@@ -422,7 +425,15 @@ export async function embedPage(
  * all when `force === true`). Driven from Settings → Embedding or on
  * first enable. Skips structural pages (index / log / overview /
  * purpose / schema) — they're aggregate views, not retrieval targets.
+ *
+ * Writes one page at a time via `vector_upsert_chunks` (skipDelete=true
+ * so no per-page delete-version), then calls `vector_optimize_table`
+ * every OPTIMIZE_INTERVAL pages to compact the accumulated add-versions
+ * back down to 1. Without periodic compaction, ~80 add-versions make
+ * `open_table` extremely slow and the indexing stalls.
  */
+const OPTIMIZE_INTERVAL = 40
+
 export async function embedAllPages(
   projectPath: string,
   cfg: EmbeddingConfig,
@@ -460,12 +471,31 @@ export async function embedAllPages(
       const content = await readFile(file.path)
       const titleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
       const title = titleMatch ? titleMatch[1].trim() : file.id
-      await embedPage(pp, file.id, title, content, cfg)
+      await embedPage(pp, file.id, title, content, cfg, /* skipDelete */ true)
     } catch {
       // skip — individual file failure doesn't halt the batch
     }
     done++
     if (onProgress) onProgress(done, mdFiles.length)
+
+    // Periodic compaction: every OPTIMIZE_INTERVAL pages, merge all
+    // add-versions into one so the version count stays low.
+    if (done % OPTIMIZE_INTERVAL === 0) {
+      try {
+        await invoke("vector_optimize_table", { projectPath: pp })
+        console.log(`[Embedding] Table optimized at page ${done}.`)
+      } catch (e) {
+        console.warn("[Embedding] Periodic optimize failed:", e)
+      }
+    }
+  }
+
+  // Final compaction after the full loop.
+  try {
+    await invoke("vector_optimize_table", { projectPath: pp })
+    console.log("[Embedding] Table optimized after bulk index.")
+  } catch (e) {
+    console.warn("[Embedding] Post-index optimize failed:", e)
   }
 
   return done

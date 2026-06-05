@@ -4,8 +4,10 @@ use arrow_array::{
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::connect;
 use lancedb::query::{ExecutableQuery, QueryBase};
+use lancedb::table::{CompactionOptions, OptimizeAction};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::panic_guard::run_guarded_async;
 
@@ -39,6 +41,13 @@ pub struct ChunkUpsertInput {
     pub chunk_text: String,
     pub heading_path: String,
     pub embedding: Vec<f32>,
+}
+
+/// A single page's worth of chunks for `vector_bulk_add`.
+#[derive(Debug, Deserialize)]
+pub struct BulkPageChunks {
+    pub page_id: String,
+    pub chunks: Vec<ChunkUpsertInput>,
 }
 
 fn db_path(project_path: &str) -> String {
@@ -425,6 +434,7 @@ pub async fn vector_upsert_chunks(
     project_path: String,
     page_id: String,
     chunks: Vec<ChunkUpsertInput>,
+    skip_delete: Option<bool>,
 ) -> Result<(), String> {
     run_guarded_async("vector_upsert_chunks", async move {
         validate_page_id_for_v2(&page_id)?;
@@ -460,11 +470,17 @@ pub async fn vector_upsert_chunks(
                 .await
                 .map_err(|e| format!("Open table error: {e}"))?;
 
-            if let Err(e) = table.delete(&format!("page_id = '{}'", page_id)).await {
-                eprintln!(
-                    "[vectorstore v2] Warning: delete before upsert failed for page '{}': {}",
-                    page_id, e
-                );
+            // Only delete existing rows when updating a page that may already
+            // be indexed.  During bulk "Reindex All" the caller passes
+            // skip_delete=true to avoid creating a delete-version per page
+            // (which causes MVCC version explosion after ~80 pages).
+            if !skip_delete.unwrap_or(false) {
+                if let Err(e) = table.delete(&format!("page_id = '{}'", page_id)).await {
+                    eprintln!(
+                        "[vectorstore v2] Warning: delete before upsert failed for page '{}': {}",
+                        page_id, e
+                    );
+                }
             }
 
             table
@@ -472,6 +488,11 @@ pub async fn vector_upsert_chunks(
                 .execute()
                 .await
                 .map_err(|e| format!("Add error: {e}"))?;
+
+            // NOTE: per-page optimize() REMOVED — it creates extra MVCC
+            // versions and actually makes the problem worse.  The caller
+            // should invoke vector_optimize_table once after the bulk
+            // indexing loop completes.
         } else {
             db.create_table(TABLE_V2, data)
                 .execute()
@@ -606,6 +627,209 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
             .delete(&format!("page_id = '{}'", page_id))
             .await
             .map_err(|e| format!("Delete error: {e}"))?;
+
+        Ok(())
+    })
+    .await
+}
+
+/// Compact and prune LanceDB versions.  Call periodically during a
+/// bulk `embedAllPages` loop (every ~40 pages) so the MVCC version
+/// count stays low and `open_table` remains fast.
+///
+/// Unlike `OptimizeAction::All` (which only prunes versions older than
+/// 7 days), this forces an immediate prune of **all** old versions,
+/// keeping only the latest compacted snapshot.  This is safe because
+/// during indexing there are no concurrent readers relying on old
+/// versions for time-travel.
+#[tauri::command]
+pub async fn vector_optimize_table(project_path: String) -> Result<(), String> {
+    run_guarded_async("vector_optimize_table", async move {
+        let db = connect(&db_path(&project_path))
+            .execute()
+            .await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        if !tables.contains(&TABLE_V2.to_string()) {
+            return Ok(()); // nothing to optimize
+        }
+
+        let table = db
+            .open_table(TABLE_V2)
+            .execute()
+            .await
+            .map_err(|e| format!("Open table error: {e}"))?;
+
+        // Step 1: merge small data files into larger ones.
+        table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .map_err(|e| format!("Compact error: {e}"))?;
+
+        // Step 2: delete all old version manifests immediately
+        // (older_than = 0, delete_unverified = true — safe because
+        //  no concurrent readers during bulk indexing).
+        table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(Duration::from_secs(0)),
+                delete_unverified: Some(true),
+                error_if_tagged_old_versions: None,
+            })
+            .await
+            .map_err(|e| format!("Prune error: {e}"))?;
+
+        Ok(())
+    })
+    .await
+}
+
+/// Bulk-add chunks for **multiple** pages in a single LanceDB `add`
+/// call.  Each `BulkPageChunks` holds one page's worth of chunks.
+/// This avoids the MVCC version explosion that happens when you call
+/// `vector_upsert_chunks` once per page (each `add` creates a new
+/// version; after ~80 versions `open_table` becomes extremely slow).
+///
+/// Called from `embedAllPages` every N pages (default 50) so the total
+/// number of versions stays small (~18 for 896 pages).
+#[tauri::command]
+pub async fn vector_bulk_add(
+    project_path: String,
+    pages: Vec<BulkPageChunks>,
+    drop_if_exists: Option<bool>,
+) -> Result<(), String> {
+    run_guarded_async("vector_bulk_add", async move {
+        if pages.is_empty() {
+            return Ok(());
+        }
+
+        // Determine embedding dimension from first available chunk.
+        let dim = pages
+            .iter()
+            .find_map(|p| p.chunks.first())
+            .map(|c| c.embedding.len() as i32)
+            .unwrap_or(0);
+        if dim == 0 {
+            return Err("No chunks with embeddings found".to_string());
+        }
+
+        let db = connect(&db_path(&project_path))
+            .execute()
+            .await
+            .map_err(|e| format!("DB connect error: {e}"))?;
+
+        let schema = make_schema_v2(dim);
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        let table_exists = tables.contains(&TABLE_V2.to_string());
+
+        // On the first bulk batch, drop the existing v2 table so we
+        // start with zero MVCC versions. Subsequent batches just append.
+        if drop_if_exists.unwrap_or(false) && table_exists {
+            db.drop_table(TABLE_V2, &[])
+                .await
+                .map_err(|e| format!("Drop table error: {e}"))?;
+        }
+
+        // Flatten all pages' chunks into a single RecordBatch.
+        let mut chunk_ids: Vec<String> = Vec::new();
+        let mut page_ids: Vec<String> = Vec::new();
+        let mut indexes: Vec<u32> = Vec::new();
+        let mut texts: Vec<String> = Vec::new();
+        let mut heading_paths: Vec<String> = Vec::new();
+        let mut flat_vectors: Vec<f32> = Vec::new();
+
+        for page in &pages {
+            validate_page_id_for_v2(&page.page_id)?;
+            for c in &page.chunks {
+                if c.embedding.len() as i32 != dim {
+                    return Err(format!(
+                        "Chunk #{} of page '{}' has embedding dim {} but batch dim is {}",
+                        c.chunk_index,
+                        page.page_id,
+                        c.embedding.len(),
+                        dim
+                    ));
+                }
+                chunk_ids.push(format!("{}#{}", page.page_id, c.chunk_index));
+                page_ids.push(page.page_id.clone());
+                indexes.push(c.chunk_index);
+                texts.push(c.chunk_text.clone());
+                heading_paths.push(c.heading_path.clone());
+                flat_vectors.extend_from_slice(&c.embedding);
+            }
+        }
+
+        if chunk_ids.is_empty() {
+            return Ok(());
+        }
+
+        let chunk_ids_arr: ArrayRef = Arc::new(StringArray::from(chunk_ids));
+        let page_ids_arr: ArrayRef = Arc::new(StringArray::from(page_ids));
+        let indexes_arr: ArrayRef = Arc::new(UInt32Array::from(indexes));
+        let texts_arr: ArrayRef = Arc::new(StringArray::from(texts));
+        let heading_paths_arr: ArrayRef = Arc::new(StringArray::from(heading_paths));
+
+        let values = Float32Array::from(flat_vectors);
+        let vector_arr: ArrayRef = Arc::new(FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, true)),
+            dim,
+            Arc::new(values),
+            None,
+        ));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                chunk_ids_arr,
+                page_ids_arr,
+                indexes_arr,
+                texts_arr,
+                heading_paths_arr,
+                vector_arr,
+            ],
+        )
+        .map_err(|e| format!("Batch error: {e}"))?;
+
+        let data = vec![batch];
+
+        let tables = db
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| format!("List tables error: {e}"))?;
+
+        if tables.contains(&TABLE_V2.to_string()) {
+            let table = db
+                .open_table(TABLE_V2)
+                .execute()
+                .await
+                .map_err(|e| format!("Open table error: {e}"))?;
+
+            table
+                .add(data)
+                .execute()
+                .await
+                .map_err(|e| format!("Add error: {e}"))?;
+        } else {
+            db.create_table(TABLE_V2, data)
+                .execute()
+                .await
+                .map_err(|e| format!("Create table error: {e}"))?;
+        }
 
         Ok(())
     })
@@ -781,7 +1005,7 @@ mod tests_v2 {
         let pp = p.to_string_lossy().to_string();
 
         let chunks = make_chunks("my-page", 3, 16);
-        vector_upsert_chunks(pp.clone(), "my-page".into(), chunks)
+        vector_upsert_chunks(pp.clone(), "my-page".into(), chunks, None)
             .await
             .unwrap();
 
@@ -796,12 +1020,12 @@ mod tests_v2 {
         let p = tmp_project();
         let pp = p.to_string_lossy().to_string();
 
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 5, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 5, 16), None)
             .await
             .unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 5);
 
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 2, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 2, 16), None)
             .await
             .unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 2);
@@ -812,10 +1036,10 @@ mod tests_v2 {
         let p = tmp_project();
         let pp = p.to_string_lossy().to_string();
 
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16), None)
             .await
             .unwrap();
-        vector_upsert_chunks(pp.clone(), "page-b".into(), make_chunks("page-b", 4, 16))
+        vector_upsert_chunks(pp.clone(), "page-b".into(), make_chunks("page-b", 4, 16), None)
             .await
             .unwrap();
 
@@ -827,10 +1051,10 @@ mod tests_v2 {
         let p = tmp_project();
         let pp = p.to_string_lossy().to_string();
 
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16), None)
             .await
             .unwrap();
-        vector_upsert_chunks(pp.clone(), "page-b".into(), make_chunks("page-b", 2, 16))
+        vector_upsert_chunks(pp.clone(), "page-b".into(), make_chunks("page-b", 2, 16), None)
             .await
             .unwrap();
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 5);
@@ -846,7 +1070,7 @@ mod tests_v2 {
         let p = tmp_project();
         let pp = p.to_string_lossy().to_string();
 
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16), None)
             .await
             .unwrap();
 
@@ -869,10 +1093,10 @@ mod tests_v2 {
 
         // Upserting [] should succeed and NOT wipe existing rows — this
         // is the "transient ingest failure shouldn't nuke index" contract.
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 3, 16), None)
             .await
             .unwrap();
-        vector_upsert_chunks(pp.clone(), "page-a".into(), vec![])
+        vector_upsert_chunks(pp.clone(), "page-a".into(), vec![], None)
             .await
             .unwrap();
 
@@ -908,7 +1132,7 @@ mod tests_v2 {
             .unwrap();
 
         // Insert + delete + delete again: ok.
-        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 2, 16))
+        vector_upsert_chunks(pp.clone(), "page-a".into(), make_chunks("page-a", 2, 16), None)
             .await
             .unwrap();
         vector_delete_page(pp.clone(), "page-a".into())
@@ -941,7 +1165,7 @@ mod tests_v2 {
                 embedding: fake_embedding(1, 8),
             },
         ];
-        let result = vector_upsert_chunks(pp, "page-a".into(), bad).await;
+        let result = vector_upsert_chunks(pp, "page-a".into(), bad, None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_lowercase().contains("dim"));
     }
@@ -952,7 +1176,7 @@ mod tests_v2 {
         let pp = p.to_string_lossy().to_string();
 
         // Quote would be a SQL-injection footgun for the delete filter.
-        let result = vector_upsert_chunks(pp, "bad'; DROP".into(), make_chunks("x", 1, 16)).await;
+        let result = vector_upsert_chunks(pp, "bad'; DROP".into(), make_chunks("x", 1, 16), None).await;
         assert!(result.is_err());
     }
 
@@ -994,6 +1218,7 @@ mod tests_v2 {
             pp.clone(),
             "new-page".into(),
             make_chunks("new-page", 2, 16),
+            None,
         )
         .await
         .unwrap();
