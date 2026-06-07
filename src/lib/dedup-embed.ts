@@ -8,13 +8,16 @@
  * CANDIDATES cheaply, then runs the SAME LLM detector (`detectDuplicateGroups`,
  * same prompt + parsing + notDuplicates whitelist) on the small candidate set.
  *
- * Pipeline: load entity/concept pages → keep the rich ones (substantive prose) →
- * embed each once → upsert to the service → candidate pairs (cosine ≤ τ) →
- * union-find into clusters → run the existing detector on bounded batches of
- * clusters → DuplicateGroup[] (identical shape the Maintenance UI already
- * consumes). Stub / placeholder pages are deliberately excluded — they carry no
- * content to embed and collapse to identical vectors (see
- * scripts/dedup_prototype/FINDINGS.md, F2/F3); a separate lexical lane handles them.
+ * Three lanes (to control "chaff" — false groups from embedding similarity ≠
+ * duplication; see scripts/dedup_prototype/FINDINGS.md):
+ *   1. LEXICAL date-snapshot lane — date-suffixed pages (`X-YYYY-MM-DD`) grouped
+ *      by stripped base slug. Exact; embeddings mis-cluster these templated stubs.
+ *   2. EMBEDDING lane — substantive, non-dated pages: embed once → candidate pairs
+ *      at a tight cosine threshold → union-find → bounded batches → the existing
+ *      detector with a STRICT prompt (same-entity-only) → drop low-confidence.
+ *   3. (excluded) empty/stub pages — no content to embed; left for a future
+ *      lexical pass.
+ * Output is DuplicateGroup[] — the shape the Maintenance UI + merge queue consume.
  */
 import { getHttpFetch } from "./tauri-fetch"
 import { fetchEmbedding } from "./embedding"
@@ -59,6 +62,31 @@ const CONFIRM_MAX_TOKENS = 4096
 const EMBED_CONCURRENCY = 8
 /** Concurrency for the per-batch LLM confirm calls. */
 const CONFIRM_CONCURRENCY = 4
+
+/**
+ * Stricter system prompt for the embedding lane's confirm step. Candidate pages
+ * come from cosine similarity, which clusters *topically related* pages, not just
+ * duplicates — so the default detector prompt (designed for soft dupes) emits a
+ * lot of "medium: related dimensions of X" chaff. This prompt insists on
+ * same-entity-different-name only. (Date-suffixed snapshots are handled by the
+ * lexical lane and never reach here, so there's no "dated snapshot" example to
+ * over-generalize from.)
+ */
+export const STRICT_CONFIRM_SYSTEM_PROMPT = `You are a wiki maintenance assistant deciding which pages are DUPLICATES that should be MERGED into one.
+
+Group pages ONLY IF they describe the SAME specific entity or concept under a different name — merging them would lose no distinct subject. Good reasons to group: same name in two languages; plural vs singular; abbreviation vs full form; the same proper noun spelled differently; a page and a near-verbatim copy of it under a different slug.
+
+Do NOT group pages that are merely:
+- related, adjacent, or part of a common theme (e.g. "political-system" vs "political-structure");
+- different facets or sub-topics of one subject (e.g. "arts" vs "literature");
+- narratively connected but distinct things (e.g. "spy-channel" vs "coercion");
+- different entities that happen to be empty/placeholder stubs.
+
+When uncertain, DO NOT group — a false merge destroys information.
+
+Output ONLY valid JSON, no prose or fences. Schema:
+{ "groups": [ { "slugs": ["a", "b"], "reason": "...", "confidence": "high" } ] }
+"high" = certainly the same thing, only the name differs. Use "medium"/"low" sparingly — prefer NOT grouping over a weak group. Only include slugs from the input. If none are duplicates, output {"groups": []}.`
 
 // ── Pure helpers (unit-tested) ────────────────────────────────────────────
 
@@ -145,22 +173,80 @@ export function packClusters(clusters: string[][], budget = MAX_DETECTOR_BATCH_P
   return batches
 }
 
+/** Trailing `-YYYY-MM-DD` or `-YYYY-MM-DD-HHMMSS` snapshot suffix. */
+const DATE_SUFFIX_RE = /-\d{4}-\d{2}-\d{2}(?:-\d{6})?$/
+export function isDateSuffixedSlug(slug: string): boolean {
+  return DATE_SUFFIX_RE.test(slug)
+}
+export function baseSlug(slug: string): string {
+  return slug.replace(DATE_SUFFIX_RE, "")
+}
+
+/**
+ * Lexical lane for date-suffixed snapshot pages. Embeddings mis-cluster these
+ * (templated session snapshots embed alike, so unrelated entities like
+ * `wayside-inn-2026-05-27` and `whispering-woods-2026-05-27` look similar).
+ * Grouping by stripped base slug instead is exact: a base page and its dated
+ * snapshot(s) share a base name (same subject); unrelated stubs don't. Only
+ * emits a group when ≥2 pages share a base AND at least one is date-suffixed.
+ */
+export function dateSnapshotGroups(slugs: string[]): DuplicateGroup[] {
+  const byBase = new Map<string, string[]>()
+  for (const s of slugs) {
+    const base = baseSlug(s)
+    const arr = byBase.get(base)
+    if (arr) arr.push(s)
+    else byBase.set(base, [s])
+  }
+  const groups: DuplicateGroup[] = []
+  for (const members of byBase.values()) {
+    // Dedupe basenames within a base (the same basename can appear under both
+    // entities/ and concepts/ — F1; collapse to unique display slugs).
+    const unique = [...new Set(members)].sort()
+    if (unique.length < 2 || !unique.some(isDateSuffixedSlug)) continue
+    groups.push({
+      slugs: unique,
+      reason: "Same page name plus a dated snapshot suffix — dated copies of one subject.",
+      confidence: "high",
+    })
+  }
+  return groups
+}
+
+/** Canonical key for a slug-set (lowercased, sorted) — matches the notDuplicates
+ *  whitelist key used elsewhere, so confirmed false-positives stay suppressed. */
+export function groupKey(slugs: string[]): string {
+  return slugs.map((s) => s.toLowerCase()).sort().join(",")
+}
+
 // ── I/O orchestration ─────────────────────────────────────────────────────
 
-/** Walk wiki/entities + wiki/concepts; return rich-page records to embed. */
-export async function loadRichPageRecords(projectPath: string): Promise<RichPageRecord[]> {
+/**
+ * Walk wiki/entities + wiki/concepts once. Returns:
+ *  - `rich`: substantive-prose, NON-date-suffixed records for the embedding lane.
+ *  - `allSlugs`: every entity/concept slug (incl. empty + dated) for the lexical
+ *    date-snapshot lane, which needs the full set to find base↔dated matches.
+ * Date-suffixed pages are kept OUT of `rich` because they embed alike and form
+ * cross-entity false clusters; the lexical lane handles them precisely.
+ */
+export async function loadEntityConceptPages(
+  projectPath: string,
+): Promise<{ rich: RichPageRecord[]; allSlugs: string[] }> {
   const pages = await loadAllWikiPages(projectPath)
-  const out: RichPageRecord[] = []
+  const rich: RichPageRecord[] = []
+  const allSlugs: string[] = []
   for (const { path, content } of pages) {
     if (!path.startsWith("wiki/entities/") && !path.startsWith("wiki/concepts/")) continue
     const summary = extractEntitySummary(path, content)
     if (!summary) continue
+    allSlugs.push(summary.slug)
+    if (isDateSuffixedSlug(summary.slug)) continue // → lexical lane
     const { body } = parseFrontmatter(content)
     const prose = extractProse(body ?? "")
     if (!isRichProse(prose)) continue
-    out.push({ summary, embedText: buildEmbedText(summary.type, summary.title, summary.tags, prose) })
+    rich.push({ summary, embedText: buildEmbedText(summary.type, summary.title, summary.tags, prose) })
   }
-  return out
+  return { rich, allSlugs }
 }
 
 /** Embed records with bounded concurrency; drops any that fail to embed. */
@@ -254,18 +340,31 @@ export async function runEmbeddingDuplicateDetection(
   embeddingConfig: EmbeddingConfig,
   options: EmbeddingDedupOptions,
 ): Promise<DuplicateGroup[]> {
-  const { serviceUrl, threshold = 0.15, k = 6, signal, onProgress } = options
+  // Default τ tightened from 0.15 → 0.10: thematic-but-distinct pages cluster at
+  // ~0.08–0.15 cosine distance and become "related, not duplicate" chaff, while
+  // genuine near-identical-content dups sit near 0. Tunable per wiki from the UI.
+  const { serviceUrl, threshold = 0.1, k = 6, signal, onProgress } = options
   const pp = normalizePath(projectPath)
   const dbPath = `${pp}/.llm-wiki/turbovecdb`
 
-  onProgress?.("Loading rich pages…")
-  const records = await loadRichPageRecords(pp)
-  if (records.length < 2) return []
+  onProgress?.("Loading pages…")
+  const { rich, allSlugs } = await loadEntityConceptPages(pp)
+  const notDup = await loadNotDuplicates(pp)
+  const notDupSet = new Set(notDup.map(groupKey))
 
-  onProgress?.(`Embedding ${records.length} rich pages…`)
-  const items = await embedRecords(records, embeddingConfig, onProgress)
-  if (items.length < 2) return []
-  if (signal?.aborted) return []
+  // Lane 1 — lexical: date-suffixed snapshot pages grouped by base slug (exact,
+  // no LLM, no embeddings). Catches base↔dated dups without the cross-entity
+  // chaff embeddings produce for these templated stubs.
+  const lexicalGroups = dateSnapshotGroups(allSlugs).filter(
+    (g) => !notDupSet.has(groupKey(g.slugs)),
+  )
+
+  if (rich.length < 2) return lexicalGroups
+
+  // Lane 2 — embedding: substantive pages → candidate pairs → strict LLM confirm.
+  onProgress?.(`Embedding ${rich.length} rich pages…`)
+  const items = await embedRecords(rich, embeddingConfig, onProgress)
+  if (items.length < 2 || signal?.aborted) return lexicalGroups
 
   // Rebuild the index from scratch each scan so deleted/edited pages don't
   // leave stale vectors. (Incremental upsert-by-content-hash is a later step.)
@@ -281,17 +380,17 @@ export async function runEmbeddingDuplicateDetection(
     signal,
   )
   const clusters = clusterPairs(pairs)
-  if (clusters.length === 0) return []
+  if (clusters.length === 0) return lexicalGroups
 
-  // Map paths → summaries for the detector, then confirm in bounded batches.
-  const summaryByPath = new Map(records.map((r) => [r.summary.path, r.summary]))
-  const notDup = await loadNotDuplicates(pp)
+  // Map paths → summaries for the detector, then confirm in bounded batches with
+  // the STRICT prompt (cuts "related-but-not-duplicate" chaff).
+  const summaryByPath = new Map(rich.map((r) => [r.summary.path, r.summary]))
   const llm = buildConfirmLlmCall(llmConfig)
   const batches = packClusters(clusters)
 
   // Each batch is one LLM call (thinking off, output capped → bounded). Run
   // them with limited concurrency so total wall-clock ≈ one batch, not the sum.
-  const groups: DuplicateGroup[] = []
+  const embedGroups: DuplicateGroup[] = []
   let completed = 0
   let cursor = 0
   async function confirmWorker() {
@@ -302,8 +401,12 @@ export async function runEmbeddingDuplicateDetection(
         .map((path) => summaryByPath.get(path))
         .filter((s): s is EntitySummary => !!s)
       if (summaries.length >= 2) {
-        const found = await detectDuplicateGroups(summaries, llm, { signal, notDuplicates: notDup })
-        groups.push(...found)
+        const found = await detectDuplicateGroups(summaries, llm, {
+          signal,
+          notDuplicates: notDup,
+          systemPrompt: STRICT_CONFIRM_SYSTEM_PROMPT,
+        })
+        embedGroups.push(...found)
       }
       completed++
       onProgress?.(`Confirming candidates (${completed}/${batches.length} batches)…`)
@@ -312,5 +415,9 @@ export async function runEmbeddingDuplicateDetection(
   await Promise.all(
     Array.from({ length: Math.min(CONFIRM_CONCURRENCY, batches.length) }, confirmWorker),
   )
-  return groups
+
+  // Drop low-confidence embedding groups — that's where the residual chaff lands
+  // (placeholder/loosely-related pages). Lexical date groups are always kept.
+  const confirmed = embedGroups.filter((g) => g.confidence !== "low")
+  return [...lexicalGroups, ...confirmed]
 }

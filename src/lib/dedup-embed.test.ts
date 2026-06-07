@@ -5,6 +5,9 @@ import {
   buildEmbedText,
   clusterPairs,
   packClusters,
+  isDateSuffixedSlug,
+  baseSlug,
+  dateSnapshotGroups,
   RICH_MIN_PROSE_CHARS,
 } from "./dedup-embed"
 
@@ -79,5 +82,37 @@ describe("packClusters", () => {
   it("keeps an over-budget cluster intact as its own batch", () => {
     const batches = packClusters([["a", "b", "c", "d", "e"]], 3)
     expect(batches).toEqual([["a", "b", "c", "d", "e"]])
+  })
+})
+
+describe("date-suffix lexical lane", () => {
+  it("detects and strips -YYYY-MM-DD and -YYYY-MM-DD-HHMMSS suffixes", () => {
+    expect(isDateSuffixedSlug("cryovain-2026-05-27")).toBe(true)
+    expect(isDateSuffixedSlug("the-tower-2026-06-06-002746")).toBe(true)
+    expect(isDateSuffixedSlug("cryovain")).toBe(false)
+    expect(isDateSuffixedSlug("annam-the-allfather")).toBe(false) // not a date
+    expect(baseSlug("cryovain-2026-05-27")).toBe("cryovain")
+    expect(baseSlug("truth-gap-2026-06-06-002526")).toBe("truth-gap")
+    expect(baseSlug("cryovain")).toBe("cryovain")
+  })
+
+  it("groups a base page with its dated snapshots, but never cross-entity dated stubs", () => {
+    const groups = dateSnapshotGroups([
+      "cryovain", "cryovain-2026-05-27",
+      "truth-gap-2026-06-06-002526", "truth-gap-2026-06-06-133509",
+      "wayside-inn-2026-05-27",        // dated, no base, no sibling → no group
+      "whispering-woods-2026-05-27",   // different base → must NOT join wayside-inn
+      "plain-page",                    // not dated → no group
+    ])
+    const keys = groups.map((g) => g.slugs.slice().sort().join(","))
+    expect(keys).toContain("cryovain,cryovain-2026-05-27")
+    expect(keys).toContain("truth-gap-2026-06-06-002526,truth-gap-2026-06-06-133509")
+    // no cross-entity grouping of unrelated dated stubs
+    expect(keys.some((k) => k.includes("wayside-inn") && k.includes("whispering-woods"))).toBe(false)
+    expect(groups.every((g) => g.confidence === "high")).toBe(true)
+  })
+
+  it("ignores a lone dated stub with no base or sibling", () => {
+    expect(dateSnapshotGroups(["orphan-2026-05-27", "unrelated"])).toEqual([])
   })
 })
