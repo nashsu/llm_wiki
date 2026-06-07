@@ -57,4 +57,16 @@ describe("raw source image resolver", () => {
       "/project/wiki/media/report/img-1.png",
     )
   })
+
+  it("normalizes source-summary relative image URLs to absolute wiki media paths", () => {
+    expect(imageUrlToAbsolute("../media/paper/img-1.png", "/project")).toBe(
+      "/project/wiki/media/paper/img-1.png",
+    )
+  })
+
+  it("keeps absolute paths unchanged", () => {
+    expect(
+      imageUrlToAbsolute("/project/wiki/media/paper/img-1.png", "/project"),
+    ).toBe("/project/wiki/media/paper/img-1.png")
+  })
 })

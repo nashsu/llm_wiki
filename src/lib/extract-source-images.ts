@@ -316,10 +316,14 @@ export function buildImageMarkdownSection(
       // page number anyway.
       const caption = captionsBySha?.get(img.sha256)
       const alt = caption ? sanitize(caption) : ""
-      lines.push(`![${alt}](${img.relPath})`)
+      lines.push(`![${alt}](${sourceSummaryImagePath(img.relPath)})`)
     }
     lines.push("")
   }
 
   return lines.join("\n")
+}
+
+function sourceSummaryImagePath(relPath: string): string {
+  return relPath.replace(/^\.?\/*media\//, "../media/")
 }

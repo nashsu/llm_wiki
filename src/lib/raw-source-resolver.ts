@@ -3,7 +3,8 @@
  *
  * Image URLs we generate always live under
  *   `<project>/wiki/media/<slug>/img-N.<ext>`
- * — emitted either ABSOLUTE or WIKI-RELATIVE (`media/<slug>/img-N.png`).
+ * - emitted either ABSOLUTE or WIKI-RELATIVE (`media/<slug>/img-N.png`,
+ * or `../media/<slug>/img-N.png` from `wiki/sources/<slug>.md`).
  * The slug is the source-summary slug for the raw source identity. Root
  * sources keep their legacy basename stem slug; nested sources include their
  * `raw/sources` relative path plus a stable hash.
@@ -30,9 +31,10 @@ export async function findRawSourceForImage(
   imageUrl: string,
   projectPath: string,
 ): Promise<string | null> {
-  // Image URLs reach us in TWO shapes:
+  // Image URLs reach us in THREE shapes:
   //   1. ABSOLUTE: `/Users/.../wiki/media/<slug>/img-N.png`
   //   2. WIKI-RELATIVE: `media/<slug>/img-N.png`
+  //   3. SOURCE-RELATIVE: `../media/<slug>/img-N.png`
   // Match `media/<slug>/` either at the URL start or after any `/`.
   const m = imageUrl.replace(/\\/g, "/").match(/(?:^|\/)media\/([^/]+)\//)
   if (!m) return null
@@ -88,6 +90,8 @@ export function imageUrlToAbsolute(
     /^[a-zA-Z]:/.test(imageUrl) ||
     imageUrl.startsWith("\\\\")
   if (isAbsolute) return imageUrl
-  const cleaned = imageUrl.replace(/^\.\//, "")
+  const cleaned = imageUrl
+    .replace(/^\.\//, "")
+    .replace(/^(\.\.\/)+(?=media\/)/, "")
   return `${projectPath.replace(/\/+$/, "")}/wiki/${cleaned}`
 }
