@@ -62,6 +62,11 @@ export function MaintenanceSection() {
   const [serviceUrl, setServiceUrl] = useState<string>(
     () => localStorage.getItem("dedup.turbovecServiceUrl") || "http://127.0.0.1:8077",
   )
+  // Cosine-distance threshold for embedding candidate pairs. Lower = stricter
+  // (less chaff, may miss looser dups). Tunable per wiki.
+  const [scanThreshold, setScanThreshold] = useState<string>(
+    () => localStorage.getItem("dedup.embedThreshold") || "0.1",
+  )
 
   // Poll the queue at 1Hz so the UI reflects pending → processing →
   // failed transitions and cross-window queue activity (e.g. a merge
@@ -106,17 +111,23 @@ export function MaintenanceSection() {
   const handleScanEmbeddings = useCallback(async () => {
     if (!project) return
     localStorage.setItem("dedup.turbovecServiceUrl", serviceUrl)
+    localStorage.setItem("dedup.embedThreshold", scanThreshold)
     setScanning(true)
     setScanError(null)
     setGroups([])
     setScanCompleted(false)
     setScanProgress(null)
     try {
+      const parsedThreshold = Number.parseFloat(scanThreshold)
       const detected = await runEmbeddingDuplicateDetection(
         project.path,
         llmConfig,
         embeddingConfig,
-        { serviceUrl, onProgress: (m) => setScanProgress(m) },
+        {
+          serviceUrl,
+          threshold: Number.isFinite(parsedThreshold) ? parsedThreshold : undefined,
+          onProgress: (m) => setScanProgress(m),
+        },
       )
       setGroups(
         detected.map((g) => ({ group: g, canonicalSlug: g.slugs[0], skipped: false })),
@@ -128,7 +139,7 @@ export function MaintenanceSection() {
       setScanning(false)
       setScanProgress(null)
     }
-  }, [project, llmConfig, embeddingConfig, serviceUrl])
+  }, [project, llmConfig, embeddingConfig, serviceUrl, scanThreshold])
 
   const handleCanonicalChange = useCallback(
     (idx: number, slug: string) => {
@@ -328,6 +339,20 @@ export function MaintenanceSection() {
             placeholder="http://127.0.0.1:8077"
             spellCheck={false}
             className="flex-1 rounded border border-border/60 bg-background px-2 py-1 font-mono text-xs"
+          />
+          <Label className="shrink-0 text-xs text-muted-foreground" title="Cosine-distance ceiling for candidate pairs. Lower = stricter (less chaff).">
+            {t("settings.sections.maintenance.dedup.threshold", { defaultValue: "τ" })}
+          </Label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="2"
+            value={scanThreshold}
+            onChange={(e) => setScanThreshold(e.target.value)}
+            onBlur={() => localStorage.setItem("dedup.embedThreshold", scanThreshold)}
+            spellCheck={false}
+            className="w-16 rounded border border-border/60 bg-background px-2 py-1 font-mono text-xs"
           />
         </div>
 
