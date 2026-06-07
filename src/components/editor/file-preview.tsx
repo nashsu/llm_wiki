@@ -20,8 +20,9 @@ import {
   isExtractedTextPreviewFile,
 } from "@/lib/file-types"
 import type { FileCategory } from "@/lib/file-types"
-import { getFileName } from "@/lib/path-utils"
+import { getFileName, normalizePath } from "@/lib/path-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
+import { transformImageEmbeds } from "@/lib/wikilink-transform"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { parseFrontmatter } from "@/lib/frontmatter"
@@ -153,6 +154,18 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
   const scrollRootRef = useRef<HTMLDivElement | null>(null)
 
   const { frontmatter, body } = useMemo(() => parseFrontmatter(content), [content])
+  // Rewrite Obsidian image embeds (`![[…]]`) into standard markdown
+  // so raw-source previews (e.g. skill-exported docs) actually show
+  // their images instead of dumping the embed syntax as text.
+  const renderBody = useMemo(() => transformImageEmbeds(body), [body])
+  // Directory of this file (project-absolute) so relative image
+  // references (`../assets/x.png`) resolve against the file's own
+  // location, Obsidian-style.
+  const currentFileDir = useMemo(() => {
+    const norm = normalizePath(filePath)
+    const dir = norm.slice(0, norm.lastIndexOf("/"))
+    return dir || null
+  }, [filePath])
   const renderLanguage = useMemo(() => detectLanguage(body), [body])
   const direction = getTextDirection(renderLanguage)
   const htmlLang = getHtmlLang(renderLanguage)
@@ -240,7 +253,7 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
             // URL (which differs per platform).
             img: ({ src, alt, ...props }) => (
               <img
-                src={typeof src === "string" ? resolveMarkdownImageSrc(src, projectPath) : undefined}
+                src={typeof src === "string" ? resolveMarkdownImageSrc(src, projectPath, currentFileDir) : undefined}
                 data-mdsrc={typeof src === "string" ? src : undefined}
                 alt={alt ?? ""}
                 className="max-w-full rounded border border-border/40 transition-all"
@@ -275,7 +288,7 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
             },
           }}
         >
-          {body}
+          {renderBody}
         </ReactMarkdown>
       </div>
     </div>

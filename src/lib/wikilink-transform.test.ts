@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { transformWikilinks } from "./wikilink-transform"
+import { transformImageEmbeds, transformWikilinks } from "./wikilink-transform"
 
 describe("transformWikilinks", () => {
   it("returns input unchanged when there are no wikilinks", () => {
@@ -83,5 +83,84 @@ describe("transformWikilinks", () => {
   it("leaves dangling brackets untouched", () => {
     expect(transformWikilinks("[[broken")).toBe("[[broken")
     expect(transformWikilinks("broken]]")).toBe("broken]]")
+  })
+})
+
+describe("transformImageEmbeds", () => {
+  it("returns input unchanged when there are no embeds", () => {
+    expect(transformImageEmbeds("plain text")).toBe("plain text")
+    expect(transformImageEmbeds("a [[link]] but no embed")).toBe(
+      "a [[link]] but no embed",
+    )
+  })
+
+  it("converts an Obsidian image embed to standard markdown", () => {
+    expect(transformImageEmbeds("![[../assets/abc123.png]]")).toBe(
+      "![](<../assets/abc123.png>)",
+    )
+  })
+
+  it("converts a whiteboard-screenshot embed (jpg under boards/)", () => {
+    expect(
+      transformImageEmbeds("![[../assets/boards/WB1.jpg]]"),
+    ).toBe("![](<../assets/boards/WB1.jpg>)")
+  })
+
+  it("uses the alias as alt text for ![[target|alias]]", () => {
+    expect(transformImageEmbeds("![[img.png|A diagram]]")).toBe(
+      "![A diagram](<img.png>)",
+    )
+  })
+
+  it("wraps the target in <…> so spaces/non-ASCII survive the parser", () => {
+    expect(transformImageEmbeds("![[../assets/变与不变 图.png]]")).toBe(
+      "![](<../assets/变与不变 图.png>)",
+    )
+  })
+
+  it("converts multiple embeds and keeps surrounding text", () => {
+    expect(
+      transformImageEmbeds("before ![[a.png]] middle ![[b.png|B]] after"),
+    ).toBe("before ![](<a.png>) middle ![B](<b.png>) after")
+  })
+
+  it("does not touch embeds inside fenced code blocks", () => {
+    const input = "![[a.png]]\n```\n![[b.png]]\n```\n![[c.png]]"
+    expect(transformImageEmbeds(input)).toBe(
+      "![](<a.png>)\n```\n![[b.png]]\n```\n![](<c.png>)",
+    )
+  })
+
+  it("does not touch embeds inside inline code spans", () => {
+    expect(transformImageEmbeds("`![[skip.png]]` and ![[keep.png]]")).toBe(
+      "`![[skip.png]]` and ![](<keep.png>)",
+    )
+  })
+
+  it("leaves an embed whose alias contains `]` untouched (safe degradation)", () => {
+    // A `]` inside an alias is not valid Obsidian embed syntax; the
+    // regex declines to match rather than producing a malformed
+    // image. The literal text is preserved.
+    expect(transformImageEmbeds("![[x.png|a ] b]]")).toBe("![[x.png|a ] b]]")
+  })
+})
+
+describe("composition: embeds then wikilinks", () => {
+  it("an image embed survives the wikilink pass unmangled", () => {
+    // This is the real pipeline order used by the renderers.
+    const input = "See ![[../assets/x.png]] and the [[concept]] page."
+    const out = transformWikilinks(transformImageEmbeds(input))
+    expect(out).toBe("See ![](<../assets/x.png>) and the [concept](#concept) page.")
+  })
+
+  it("REGRESSION: wikilinks-only would have mangled an image embed", () => {
+    // Documents the bug this fix addresses: running the generic
+    // wikilink transform alone turns `![[x.png]]` into a broken
+    // image whose src is a `#fragment`. The embed pass must run first.
+    const mangled = transformWikilinks("![[x.png]]")
+    expect(mangled).toBe("![x.png](#x.png)")
+    // …whereas the correct pipeline yields a real image reference:
+    const correct = transformWikilinks(transformImageEmbeds("![[x.png]]"))
+    expect(correct).toBe("![](<x.png>)")
   })
 })

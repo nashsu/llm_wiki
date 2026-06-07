@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
-import { transformWikilinks } from "@/lib/wikilink-transform"
+import { transformImageEmbeds, transformWikilinks } from "@/lib/wikilink-transform"
 import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { normalizePath } from "@/lib/path-utils"
@@ -15,6 +15,14 @@ import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 interface WikiReaderProps {
   body: string
+  /**
+   * Absolute path of the markdown file being rendered. Used to
+   * resolve relative image references against the file's own
+   * directory (Obsidian-style), so e.g. `../assets/x.png` works.
+   * Optional — when omitted, image paths fall back to wiki-root
+   * resolution.
+   */
+  filePath?: string
 }
 
 /**
@@ -29,17 +37,31 @@ interface WikiReaderProps {
  * against the project's wiki tree and routed to setSelectedFile,
  * giving the user single-click navigation between pages.
  */
-export function WikiReader({ body }: WikiReaderProps) {
+export function WikiReader({ body, filePath }: WikiReaderProps) {
   const project = useWikiStore((s) => s.project)
   const fileTree = useWikiStore((s) => s.fileTree)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
 
-  const transformed = useMemo(() => transformWikilinks(body), [body])
+  // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
+  // wikilink pass, otherwise the embed target gets mangled into a
+  // `#fragment` link.
+  const transformed = useMemo(
+    () => transformWikilinks(transformImageEmbeds(body)),
+    [body],
+  )
   const renderLanguage = detectLanguage(body)
   const direction = getTextDirection(renderLanguage)
   const htmlLang = getHtmlLang(renderLanguage)
   const projectPath = project ? normalizePath(project.path) : null
   const wikiRoot = projectPath ? `${projectPath}/wiki` : null
+  // Directory of the file being rendered (project-absolute), so
+  // relative image srcs resolve against it like Obsidian does.
+  const currentFileDir = useMemo(() => {
+    if (!filePath) return null
+    const norm = normalizePath(filePath)
+    const dir = norm.slice(0, norm.lastIndexOf("/"))
+    return dir || null
+  }, [filePath])
 
   function handleAnchorClick(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
     if (!href.startsWith("#")) return
@@ -113,7 +135,7 @@ export function WikiReader({ body }: WikiReaderProps) {
             <img
               src={
                 typeof src === "string"
-                  ? resolveMarkdownImageSrc(src, projectPath)
+                  ? resolveMarkdownImageSrc(src, projectPath, currentFileDir)
                   : undefined
               }
               data-mdsrc={typeof src === "string" ? src : undefined}

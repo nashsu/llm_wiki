@@ -125,6 +125,7 @@ export function PreviewPanel() {
             key={selectedFile}
             content={fileContent}
             onSave={handleSave}
+            filePath={selectedFile}
           />
         ) : (
           <FilePreview

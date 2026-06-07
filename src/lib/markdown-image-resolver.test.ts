@@ -105,4 +105,154 @@ describe("resolveMarkdownImageSrc", () => {
   it("returns empty string verbatim for empty src", () => {
     expect(resolveMarkdownImageSrc("", PROJECT)).toBe("")
   })
+
+  describe("file-relative resolution (currentFileDir)", () => {
+    it("resolves ../assets against the file's own directory (Obsidian-style)", () => {
+      // A skill-exported raw source lives in raw/sources and refers
+      // to ../assets/<md5>.png — must land on raw/assets, NOT
+      // wiki/../assets.
+      expect(
+        resolveMarkdownImageSrc(
+          "../assets/abc123.png",
+          PROJECT,
+          `${PROJECT}/raw/sources`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/abc123.png")
+    })
+
+    it("resolves ../assets/boards (whiteboard screenshots) correctly", () => {
+      expect(
+        resolveMarkdownImageSrc(
+          "../assets/boards/WB1.jpg",
+          PROJECT,
+          `${PROJECT}/raw/sources`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/boards/WB1.jpg")
+    })
+
+    it("resolves a same-directory relative path against the file dir", () => {
+      expect(
+        resolveMarkdownImageSrc(
+          "diagram.png",
+          PROJECT,
+          `${PROJECT}/wiki/concepts`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/wiki/concepts/diagram.png")
+    })
+
+    it("strips a leading ./ before joining to the file dir", () => {
+      expect(
+        resolveMarkdownImageSrc(
+          "./img.png",
+          PROJECT,
+          `${PROJECT}/raw/sources`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/raw/sources/img.png")
+    })
+
+    it("accepts a project-relative currentFileDir and anchors it under the project", () => {
+      expect(
+        resolveMarkdownImageSrc("../assets/x.png", PROJECT, "raw/sources"),
+      ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/x.png")
+    })
+
+    it("normalizes backslashes in currentFileDir", () => {
+      expect(
+        resolveMarkdownImageSrc(
+          "../assets/x.png",
+          "C:\\Users\\me\\MyWiki",
+          "C:\\Users\\me\\MyWiki\\raw\\sources",
+        ),
+      ).toBe("tauri-asset:C:/Users/me/MyWiki/raw/assets/x.png")
+    })
+
+    it("collapses `..` segments against the file dir", () => {
+      // From /Users/me/MyWiki/raw/sources, four `..` pop
+      // sources, raw, MyWiki, me — landing in /Users.
+      expect(
+        resolveMarkdownImageSrc("../../../../etc/x.png", PROJECT, `${PROJECT}/raw/sources`),
+      ).toBe("tauri-asset:/Users/etc/x.png")
+    })
+
+    it("clamps `..` at the filesystem root rather than producing ../ garbage", () => {
+      // More `..` than there are segments → clamped at root.
+      expect(
+        resolveMarkdownImageSrc("../../x.png", PROJECT, "/a"),
+      ).toBe("tauri-asset:/x.png")
+    })
+
+    it("still uses wiki-root fallback when no currentFileDir is given", () => {
+      // The canonical generated-wiki case is unchanged.
+      expect(resolveMarkdownImageSrc("media/slug/img-1.png", PROJECT)).toBe(
+        "tauri-asset:/Users/me/MyWiki/wiki/media/slug/img-1.png",
+      )
+    })
+
+    it("keeps `media/` refs wiki-root-relative even WITH a currentFileDir set", () => {
+      // Regression: a generated `wiki/sources/<slug>.md` page embeds
+      // ingest images as `media/<slug>/img.jpg` — wiki-ROOT-relative,
+      // NOT relative to wiki/sources. Passing currentFileDir must not
+      // re-anchor it to wiki/sources/media/… (one level too deep,
+      // which 404s and shows the alt text instead of the image).
+      expect(
+        resolveMarkdownImageSrc(
+          "media/易配置平台2.0培训-1/001-abc.jpg",
+          PROJECT,
+          `${PROJECT}/wiki/sources`,
+        ),
+      ).toBe(
+        "tauri-asset:/Users/me/MyWiki/wiki/media/易配置平台2.0培训-1/001-abc.jpg",
+      )
+    })
+
+    it("decodes percent-encoded CJK paths so the disk path is literal UTF-8", () => {
+      // Regression: ReactMarkdown/remark percent-encodes non-ASCII
+      // image URLs. The src arrives already-encoded; if we don't
+      // decode it, convertFileSrc double-encodes (%E6 → %25E6) and
+      // the asset server 404s. Decode must restore the real filename.
+      const encoded =
+        "media/%E6%98%93%E9%85%8D%E7%BD%AE%E5%B9%B3%E5%8F%B02.0%E5%9F%B9%E8%AE%AD-1/001-GTuhw460rheJYBb4dnccLxYDngd.jpg"
+      expect(
+        resolveMarkdownImageSrc(encoded, PROJECT, `${PROJECT}/wiki/sources`),
+      ).toBe(
+        "tauri-asset:/Users/me/MyWiki/wiki/media/易配置平台2.0培训-1/001-GTuhw460rheJYBb4dnccLxYDngd.jpg",
+      )
+    })
+
+    it("decodes percent-encoded file-relative CJK paths too", () => {
+      // Same fix must apply on the file-relative branch (raw/sources
+      // with a CJK asset name, e.g. an exported Feishu image).
+      expect(
+        resolveMarkdownImageSrc(
+          "../assets/%E5%9B%BE%E7%89%87.png",
+          PROJECT,
+          `${PROJECT}/raw/sources`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/raw/assets/图片.png")
+    })
+
+    it("keeps a malformed percent sequence as-is rather than throwing", () => {
+      // A bare `%` that isn't a valid escape must not crash the
+      // renderer — fall back to the raw value.
+      expect(
+        resolveMarkdownImageSrc("media/100%-done.png", PROJECT),
+      ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/100%-done.png")
+    })
+
+    it("honors `./media/` (leading ./) as a wiki-root ref too, with a file dir", () => {
+      expect(
+        resolveMarkdownImageSrc(
+          "./media/slug/img-2.png",
+          PROJECT,
+          `${PROJECT}/wiki/concepts`,
+        ),
+      ).toBe("tauri-asset:/Users/me/MyWiki/wiki/media/slug/img-2.png")
+    })
+
+    it("passes absolute srcs through convertFileSrc even with a file dir set", () => {
+      expect(
+        resolveMarkdownImageSrc("/var/data/x.png", PROJECT, `${PROJECT}/raw/sources`),
+      ).toBe("tauri-asset:/var/data/x.png")
+    })
+  })
 })
