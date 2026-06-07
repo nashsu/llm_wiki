@@ -82,15 +82,37 @@ quality*, which is outside turbovecdb (see "Approach findings").
   `opening-scene`, `synthesis` — and some boilerplate plot-event pages). Real
   cross-type dupes embed fine (`everard-barners-*` 0.04–0.08, `blagothkus` 0.23,
   `annam-the-allfather` 0.35).
+  **Correction (important):** most of the 0.000 "collapse" pairs are **NOT noise — they
+  are real duplicate content the feature should catch.** `curse` / `sacrifice` /
+  `grandfather-tree` / `stalemate-at-grandfather-tree` have *byte-identical* bodies (same
+  551-char narrative, one sha); `giant-reward-offered` / `giant-reward` are identical
+  (149 chars). The embedding candidate-gen was *working*; it found pages whose bodies were
+  copy-pasted under different names. The genuine noise is small and two-flavoured:
+  (a) the 15 `prose = 0` stubs, and (b) a handful of placeholder pages (`"*(Content
+  pending)*"`, or bodies that are only a `- **Status:** … - **Tags:** …` metadata block —
+  the latter is partly a prose-extractor bug that should skip those lines).
   **Implications:**
-  - Stubs (prose = 0) need a *separate* dedup path — **lexical** title/tag/`related`
-    matching, not embeddings (nothing to embed). It's tiny and cheap and finds the
-    typo dup.
-  - Thin/templated content pages also collapse → embed the **full body** (chunked), not
-    a short excerpt, and consider excluding planning/scaffolding subtrees from dedup.
-  - Don't rely on a single global τ; the LLM-confirm step must carry a generously-sized
-    candidate set. nomic + short text is a weak signal — a stronger or full-body
-    embedding is worth testing.
+  - There are really **three lanes**: substantive content (embed → candidate-gen; finds
+    both name-variant and identical-body dupes), placeholder/stub pages (prose = 0 or
+    `Content pending` → **lexical** title/tag/`related` matching; embeddings useless),
+    and scaffolding/meta pages (consider excluding).
+  - The partition key is **not prose length** — `curse`/`sacrifice` are 551 chars and
+    *should* collapse. It's "substantive unique prose vs placeholder/empty".
+  - Fix the embed input: skip body-level metadata lists, embed full body (chunked).
+  - Don't rely on a single global τ; the LLM-confirm step carries a generous candidate
+    set and trivially rejects placeholders.
+
+## Two-index architecture (uses turbovecdb multi-collection — validated)
+
+turbovecdb supports multiple independent collections in one database
+(`db.collection(name)`; `db.list_collections()` → `['pages_rich','pages_thin']`,
+confirmed). This cleanly fits the lanes: keep a **rich** collection (substantive pages →
+embedding candidate-gen) separate from a **thin** collection (stubs/placeholders →
+lexical), so collapsing placeholder vectors never pollute the rich candidate pairs. Each
+collection can have its own τ, its own embed-input strategy, even its own model/dim, and
+can be rebuilt independently. Cross-lane check: a thin page may still dup a rich page (the
+`ordining`/`ordning` typo was stub→content), so match thin pages lexically against *all*
+titles, not just other thin pages.
 
 ## Reproduce
 
