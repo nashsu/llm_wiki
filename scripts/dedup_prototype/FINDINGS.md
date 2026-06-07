@@ -67,16 +67,30 @@ quality*, which is outside turbovecdb (see "Approach findings").
   other (the task prefix `search_document:` did not help). The same titles with a
   real one-line description separated cleanly (0.13–0.34, semantically sensible).
 
-- **F3 — Empty-bodied stub pages poison the candidate set.** Many concept pages are
-  frontmatter-only (`body_chars = 0`); their embed text reduces to `concept: Title
-  [tags]`, which collapses (F2) and floods the top candidate pairs with false
-  positives. Real-content pages embed fine — the 25 known cross-type dupes landed at
-  0.04–0.42 (e.g. `everard-barners-*` 0.04–0.08, `blagothkus` 0.23,
-  `annam-the-allfather` 0.35). **Implication:** embed richer per-page text (full body,
-  chunked, not just the summary), exclude/flag stubs, and don't rely on a single
-  global τ — the LLM-confirm step must do real work over a generously-sized candidate
-  set. nomic+title alone is a weak signal for D&D-entity dedup; a stronger or
-  full-body embedding is worth testing.
+- **F3 — Low-content pages collapse and poison the candidate set — but they're a
+  *gradient*, not a clean stub/non-stub split.** Measured on Storm King (1001 pages):
+  only **15 are frontmatter-only stubs** (prose = 0; 13 concept, 2 entity), 75 are thin
+  (prose 50–199), 911 are substantial (200+). The 15 stubs embed to *identical* vectors
+  (F2) and produce **every** 0.000 false-positive pair. As a *duplicate source* the
+  stubs are tiny and mostly distinct: 0 same-normalized-title clusters among them, just
+  **1** real dup (`shattering-of-the-ordining` vs `…ordning`, a typo of a content page)
+  — so for stubs the answer to "how many are the same?" is "almost none." Excluding the
+  15 stubs surfaces **real** content dupes (`giant-reward-offered`↔`giant-reward` 0.000,
+  `political-influence-…-policy`↔`…healthcare` 0.007, `giant-reward-denied`↔`…refused`
+  0.012), but a **residual collapse cluster of thin/templated content pages remains**
+  (the `plot-threads/` planning scaffolding — `comparisons`, `starstruck`,
+  `opening-scene`, `synthesis` — and some boilerplate plot-event pages). Real
+  cross-type dupes embed fine (`everard-barners-*` 0.04–0.08, `blagothkus` 0.23,
+  `annam-the-allfather` 0.35).
+  **Implications:**
+  - Stubs (prose = 0) need a *separate* dedup path — **lexical** title/tag/`related`
+    matching, not embeddings (nothing to embed). It's tiny and cheap and finds the
+    typo dup.
+  - Thin/templated content pages also collapse → embed the **full body** (chunked), not
+    a short excerpt, and consider excluding planning/scaffolding subtrees from dedup.
+  - Don't rely on a single global τ; the LLM-confirm step must carry a generously-sized
+    candidate set. nomic + short text is a weak signal — a stronger or full-body
+    embedding is worth testing.
 
 ## Reproduce
 
