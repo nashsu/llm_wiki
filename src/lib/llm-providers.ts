@@ -400,10 +400,6 @@ function buildOpenAiCompatibleBody(
     return body
   }
 
-  if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
-    body.chat_template_kwargs = { enable_thinking: false }
-  }
-
   if (config.provider === "ollama") {
     // Ollama's OpenAI-compatible /v1/chat/completions maps reasoning
     // control onto `reasoning_effort` ("high"|"medium"|"low"|"none";
@@ -430,6 +426,10 @@ function buildOpenAiCompatibleBody(
       body.reasoning_effort = "high"
     }
     return body
+  }
+
+  if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
+    body.chat_template_kwargs = { enable_thinking: false }
   }
 
   if (config.provider === "openai" && reasoning.mode !== "auto" && reasoning.mode !== "off") {

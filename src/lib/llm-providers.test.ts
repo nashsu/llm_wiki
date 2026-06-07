@@ -548,6 +548,21 @@ describe("reasoning controls", () => {
     expect(body.reasoning_effort).toBe("none")
   })
 
+  it("uses Ollama-native reasoning control instead of Qwen chat_template_kwargs", () => {
+    const cfg = mkConfig({
+      provider: "ollama",
+      model: "qwen3:8b",
+      ollamaUrl: "http://localhost:11434",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.reasoning_effort).toBe("none")
+    expect(body.chat_template_kwargs).toBeUndefined()
+  })
+
   it("maps Ollama low/medium/high reasoning straight through to reasoning_effort", () => {
     const cfg = mkConfig({
       provider: "ollama",
