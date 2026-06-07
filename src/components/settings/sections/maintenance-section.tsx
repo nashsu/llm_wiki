@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { useWikiStore } from "@/stores/wiki-store"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { runDuplicateDetection } from "@/lib/dedup-runner"
+import { runEmbeddingDuplicateDetection } from "@/lib/dedup-embed"
 import { addNotDuplicate } from "@/lib/dedup-storage"
 import {
   enqueueMerge,
@@ -46,12 +47,21 @@ function findTaskForGroup(
 export function MaintenanceSection() {
   const { t } = useTranslation()
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const project = useWikiStore((s) => s.project)
 
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
   const [groups, setGroups] = useState<GroupUiEntry[]>([])
   const [scanCompleted, setScanCompleted] = useState(false)
+  // Progress line for the multi-step embedding scan.
+  const [scanProgress, setScanProgress] = useState<string | null>(null)
+  // Prototype-local config for the experimental embedding scan: the
+  // turbovecdb-service URL. Kept in localStorage (not the app settings
+  // store) while this path is experimental — see scripts/dedup_prototype/.
+  const [serviceUrl, setServiceUrl] = useState<string>(
+    () => localStorage.getItem("dedup.turbovecServiceUrl") || "http://127.0.0.1:8077",
+  )
 
   // Poll the queue at 1Hz so the UI reflects pending → processing →
   // failed transitions and cross-window queue activity (e.g. a merge
@@ -89,6 +99,36 @@ export function MaintenanceSection() {
       setScanning(false)
     }
   }, [project, llmConfig])
+
+  // Experimental parallel path: embedding candidate-generation (rich pages)
+  // via the turbovecdb service, then the same LLM detector on the small
+  // candidate set. Scales to large wikis where the one-prompt scan times out.
+  const handleScanEmbeddings = useCallback(async () => {
+    if (!project) return
+    localStorage.setItem("dedup.turbovecServiceUrl", serviceUrl)
+    setScanning(true)
+    setScanError(null)
+    setGroups([])
+    setScanCompleted(false)
+    setScanProgress(null)
+    try {
+      const detected = await runEmbeddingDuplicateDetection(
+        project.path,
+        llmConfig,
+        embeddingConfig,
+        { serviceUrl, onProgress: (m) => setScanProgress(m) },
+      )
+      setGroups(
+        detected.map((g) => ({ group: g, canonicalSlug: g.slugs[0], skipped: false })),
+      )
+      setScanCompleted(true)
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setScanning(false)
+      setScanProgress(null)
+    }
+  }, [project, llmConfig, embeddingConfig, serviceUrl])
 
   const handleCanonicalChange = useCallback(
     (idx: number, slug: string) => {
@@ -238,23 +278,65 @@ export function MaintenanceSection() {
           </p>
         )}
 
-        <Button
-          onClick={() => void handleScan()}
-          disabled={scanning || !projectReady || !llmReady}
-        >
-          {scanning ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t("settings.sections.maintenance.dedup.scanning", {
-                defaultValue: "Scanning…",
-              })}
-            </>
-          ) : (
-            t("settings.sections.maintenance.dedup.scanButton", {
-              defaultValue: "Scan for duplicates",
-            })
-          )}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => void handleScan()}
+            disabled={scanning || !projectReady || !llmReady}
+          >
+            {scanning ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t("settings.sections.maintenance.dedup.scanning", {
+                  defaultValue: "Scanning…",
+                })}
+              </>
+            ) : (
+              t("settings.sections.maintenance.dedup.scanButton", {
+                defaultValue: "Scan for duplicates",
+              })
+            )}
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => void handleScanEmbeddings()}
+            disabled={scanning || !projectReady || !llmReady || !embeddingConfig.endpoint || !serviceUrl}
+            title={
+              !embeddingConfig.endpoint
+                ? "Configure an embedding endpoint first (Settings → Embeddings)"
+                : "Scale to large wikis: embed rich pages, find candidates via turbovecdb, confirm with the LLM"
+            }
+          >
+            {t("settings.sections.maintenance.dedup.scanEmbeddings", {
+              defaultValue: "Scan (embeddings, beta)",
+            })}
+          </Button>
+        </div>
+
+        {/* Prototype-local config for the experimental embedding scan. */}
+        <div className="flex items-center gap-2">
+          <Label className="shrink-0 text-xs text-muted-foreground">
+            {t("settings.sections.maintenance.dedup.serviceUrl", {
+              defaultValue: "turbovecdb service",
+            })}
+          </Label>
+          <input
+            type="text"
+            value={serviceUrl}
+            onChange={(e) => setServiceUrl(e.target.value)}
+            onBlur={() => localStorage.setItem("dedup.turbovecServiceUrl", serviceUrl)}
+            placeholder="http://127.0.0.1:8077"
+            spellCheck={false}
+            className="flex-1 rounded border border-border/60 bg-background px-2 py-1 font-mono text-xs"
+          />
+        </div>
+
+        {scanning && scanProgress && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>{scanProgress}</span>
+          </div>
+        )}
 
         {scanError && (
           <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/5 px-2 py-1.5 text-xs text-rose-700 dark:text-rose-400">
