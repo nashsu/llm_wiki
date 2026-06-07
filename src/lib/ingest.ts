@@ -483,6 +483,7 @@ async function autoIngestImpl(
   const isPdf = lowerExt === "pdf"
   const mineruCfg = useWikiStore.getState().mineruConfig
   if (isPdf && mineruCfg.enabled && mineruCfg.token) {
+    let mineruSucceeded = false
     try {
       const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
       const cachePath = `${cacheDir}/.cache/${fileName}.txt`
@@ -490,15 +491,22 @@ async function autoIngestImpl(
       console.log(`[ingest:mineru] submitting "${fileName}" to MinerU API`)
       const markdown = await parseWithMineru(mineruCfg, sp, undefined, (msg) => {
         activity.updateItem(activityId, { detail: `MinerU: ${msg}` })
-      })
+      }, signal)
       await createDirectory(`${cacheDir}/.cache`)
       await writeFile(cachePath, markdown)
+      mineruSucceeded = true
       console.log(`[ingest:mineru] cached MinerU output for "${fileName}" (${markdown.length} chars)`)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      if (signal?.aborted) throw err
+      const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
       console.warn(`[ingest:mineru] MinerU parsing failed, falling back to pdfium: ${msg}`)
+      activity.updateItem(activityId, {
+        detail: `MinerU failed, falling back to built-in PDF extraction: ${msg}`,
+      })
     }
-    activity.updateItem(activityId, { detail: "Reading source..." })
+    if (mineruSucceeded && !signal?.aborted) {
+      activity.updateItem(activityId, { detail: "Reading source..." })
+    }
   }
 
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
@@ -1974,6 +1982,10 @@ export function splitSourceIntoSemanticChunks(
 function trimLongText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text
   return `${text.slice(0, maxChars).trimEnd()}\n\n[...trimmed for prompt budget...]`
+}
+
+function trimInlineStatus(text: string, maxChars = 240): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars).trimEnd()}...`
 }
 
 function hashTextHex(text: string): string {

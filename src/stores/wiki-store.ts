@@ -213,7 +213,7 @@ interface SourceWatchConfig {
   maxFileSizeMb: number
 }
 
-export type MineruModelVersion = "pipeline" | "vlm" | "mineru-html"
+export type MineruModelVersion = "pipeline" | "vlm"
 
 export interface MineruConfig {
   enabled: boolean

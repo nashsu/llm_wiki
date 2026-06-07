@@ -583,14 +583,16 @@
       "mineru": {
         "title": "MinerU PDF Parser",
         "description": "Use MinerU cloud API for higher quality PDF parsing (tables, formulas, complex layouts). Default uses built-in pdfium extraction.",
+        "privacyNotice": "When enabled, PDF contents are uploaded to MinerU cloud for parsing. Do not enable this for sensitive documents unless you accept that.",
         "enabled": "Enable MinerU",
         "token": "API Token",
         "tokenHint": "Get your token from mineru.net",
         "model": "Model Version",
         "modelVlm": "VLM (Recommended, best for complex layouts)",
         "modelPipeline": "Pipeline (Faster)",
-        "modelHtml": "MinerU-HTML",
+        "modelHint": "PDF parsing supports pipeline and vlm. MinerU-HTML is for HTML files and is not used here.",
         "test": "Test Connection",
+        "testQuotaNotice": "Connection test submits a small demo file to MinerU and may consume a small amount of quota.",
         "testing": "Testing...",
         "testSuccess": "Connection successful",
         "testFailed": "Test failed"

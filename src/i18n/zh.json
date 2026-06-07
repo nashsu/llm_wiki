@@ -583,14 +583,16 @@
       "mineru": {
         "title": "MinerU PDF 解析",
         "description": "使用 MinerU 云端 API 获得更高质量的 PDF 解析（表格、公式、复杂排版）。默认使用内置 pdfium 提取。",
+        "privacyNotice": "启用后，PDF 内容会上传到 MinerU 云端进行解析。除非你接受这一点，否则不要用于敏感文档。",
         "enabled": "启用 MinerU",
         "token": "API Token",
         "tokenHint": "从 mineru.net 获取您的 Token",
         "model": "模型版本",
         "modelVlm": "VLM（推荐，适合复杂排版）",
         "modelPipeline": "Pipeline（更快）",
-        "modelHtml": "MinerU-HTML",
+        "modelHint": "PDF 解析仅使用 pipeline 或 vlm。MinerU-HTML 用于 HTML 文件，这里不会使用。",
         "test": "测试连接",
+        "testQuotaNotice": "连接测试会向 MinerU 提交一个小型示例文件，可能消耗少量额度。",
         "testing": "测试中...",
         "testSuccess": "连接成功",
         "testFailed": "测试失败"

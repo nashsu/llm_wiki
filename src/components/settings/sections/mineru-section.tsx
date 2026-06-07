@@ -36,12 +36,18 @@ export function MineruSection({ draft, setDraft }: Props) {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold">
-          {t("settings.mineru", { defaultValue: "MinerU PDF Parser" })}
+          {t("settings.sections.mineru.title", { defaultValue: "MinerU PDF Parser" })}
         </h2>
         <p className="text-sm text-muted-foreground mt-1">
-          {t("settings.mineruDescription", {
+          {t("settings.sections.mineru.description", {
             defaultValue:
               "Use MinerU cloud API for higher quality PDF parsing (tables, formulas, complex layouts)",
+          })}
+        </p>
+        <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          {t("settings.sections.mineru.privacyNotice", {
+            defaultValue:
+              "When enabled, PDF contents are uploaded to MinerU cloud for parsing. Do not enable this for sensitive documents unless you accept that.",
           })}
         </p>
       </div>
@@ -54,7 +60,7 @@ export function MineruSection({ draft, setDraft }: Props) {
           className="h-4 w-4"
         />
         <span className="text-sm">
-          {t("settings.mineruEnabled", { defaultValue: "Enable MinerU" })}
+          {t("settings.sections.mineru.enabled", { defaultValue: "Enable MinerU" })}
         </span>
       </label>
 
@@ -62,7 +68,7 @@ export function MineruSection({ draft, setDraft }: Props) {
         <div className="space-y-4 pl-1">
           <div className="space-y-2">
             <Label htmlFor="mineru-token">
-              {t("settings.mineruToken", { defaultValue: "API Token" })}
+              {t("settings.sections.mineru.token", { defaultValue: "API Token" })}
             </Label>
             <Input
               id="mineru-token"
@@ -72,7 +78,7 @@ export function MineruSection({ draft, setDraft }: Props) {
                 setDraft("mineruToken", e.target.value)
                 setTestState("idle")
               }}
-              placeholder={t("settings.mineruTokenHint", {
+              placeholder={t("settings.sections.mineru.tokenHint", {
                 defaultValue: "Get your token from mineru.net",
               })}
             />
@@ -80,7 +86,7 @@ export function MineruSection({ draft, setDraft }: Props) {
 
           <div className="space-y-2">
             <Label htmlFor="mineru-model">
-              {t("settings.mineruModel", { defaultValue: "Model Version" })}
+              {t("settings.sections.mineru.model", { defaultValue: "Model Version" })}
             </Label>
             <select
               id="mineru-model"
@@ -91,22 +97,28 @@ export function MineruSection({ draft, setDraft }: Props) {
               }
             >
               <option value="vlm">
-                {t("settings.mineruModelVlm", {
+                {t("settings.sections.mineru.modelVlm", {
                   defaultValue: "VLM (Recommended, best for complex layouts)",
                 })}
               </option>
               <option value="pipeline">
-                {t("settings.mineruModelPipeline", {
+                {t("settings.sections.mineru.modelPipeline", {
                   defaultValue: "Pipeline (Faster)",
                 })}
               </option>
-              <option value="mineru-html">
-                {t("settings.mineruModelHtml", {
-                  defaultValue: "MinerU-HTML",
-                })}
-              </option>
             </select>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.mineru.modelHint", {
+                defaultValue: "PDF parsing supports pipeline and vlm. MinerU-HTML is for HTML files and is not used here.",
+              })}
+            </p>
           </div>
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            {t("settings.sections.mineru.testQuotaNotice", {
+              defaultValue:
+                "Connection test submits a small demo file to MinerU and may consume a small amount of quota.",
+            })}
+          </p>
 
           <div className="flex items-center gap-3">
             <Button
@@ -118,21 +130,21 @@ export function MineruSection({ draft, setDraft }: Props) {
               }
             >
               {testState === "running"
-                ? t("settings.mineruTesting", { defaultValue: "Testing..." })
-                : t("settings.mineruTest", {
+                ? t("settings.sections.mineru.testing", { defaultValue: "Testing..." })
+                : t("settings.sections.mineru.test", {
                     defaultValue: "Test Connection",
                   })}
             </Button>
             {testState === "success" && (
               <span className="text-sm text-green-600">
-                {t("settings.mineruTestSuccess", {
+                {t("settings.sections.mineru.testSuccess", {
                   defaultValue: "Connection successful",
                 })}
               </span>
             )}
             {testState === "failed" && (
               <span className="text-sm text-red-600">
-                {t("settings.mineruTestFailed", {
+                {t("settings.sections.mineru.testFailed", {
                   defaultValue: "Test failed",
                 })}
                 : {testError}

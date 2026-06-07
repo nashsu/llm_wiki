@@ -108,10 +108,16 @@ vi.mock("./llm-client", () => ({
   }),
 }))
 
+vi.mock("./mineru", () => ({
+  parseWithMineru: vi.fn(),
+}))
+
 import { autoIngest, executeIngestWrites } from "./ingest"
 import { streamChat } from "./llm-client"
+import { parseWithMineru } from "./mineru"
 
 const mockStreamChat = vi.mocked(streamChat)
+const mockParseWithMineru = vi.mocked(parseWithMineru)
 
 describe("autoIngest source summary paths", () => {
   let tmp: { path: string; cleanup: () => Promise<void> } | undefined
@@ -123,6 +129,7 @@ describe("autoIngest source summary paths", () => {
     generationSuffix = ""
     abortDuringReview = null
     mockStreamChat.mockClear()
+    mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
 
     await writeFileRaw(`${tmp.path}/purpose.md`, "# Purpose\n\nTrack project config files.\n")
@@ -481,6 +488,69 @@ describe("autoIngest source summary paths", () => {
         "project-a",
       ),
     ).rejects.toThrow("AbortError")
+  })
+
+  it("falls back to built-in PDF extraction when MinerU fails for a non-cancelled ingest", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["mineru fallback source"]
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/report.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        token: "mineru-token",
+        modelVersion: "vlm",
+      },
+    })
+    mockParseWithMineru.mockRejectedValueOnce(new Error("network failure from MinerU"))
+    const updateSpy = vi.spyOn(useActivityStore.getState(), "updateItem")
+
+    const written = await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/report.pdf`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    expect(written.length).toBeGreaterThan(0)
+    expect(mockParseWithMineru).toHaveBeenCalled()
+    expect(
+      updateSpy.mock.calls.some(([, updates]) =>
+        updates.detail?.includes("falling back to built-in PDF extraction"),
+      ),
+    ).toBe(true)
+    updateSpy.mockRestore()
+  })
+
+  it("does not fall back to built-in PDF extraction when MinerU is cancelled", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/cancelled.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        token: "mineru-token",
+        modelVersion: "vlm",
+      },
+    })
+    const controller = new AbortController()
+    controller.abort()
+    mockParseWithMineru.mockRejectedValueOnce(new Error("MinerU parsing cancelled"))
+
+    await expect(
+      autoIngest(
+        tmp.path,
+        `${tmp.path}/raw/sources/project-a/cancelled.pdf`,
+        useWikiStore.getState().llmConfig,
+        controller.signal,
+        "project-a",
+      ),
+    ).rejects.toThrow("MinerU parsing cancelled")
+
+    expect(
+      useActivityStore.getState().items.some((item) =>
+        item.detail?.includes("falling back to built-in PDF extraction"),
+      ),
+    ).toBe(false)
   })
 
   it("canonicalizes interactive source summary paths and sources frontmatter", async () => {

@@ -112,14 +112,27 @@ export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
 
 const MINERU_KEY = "mineruConfig"
 
+function normalizeMineruConfig(config: MineruConfig): MineruConfig {
+  return {
+    enabled: config.enabled === true,
+    token: typeof config.token === "string" ? config.token : "",
+    modelVersion: config.modelVersion === "pipeline" ? "pipeline" : "vlm",
+  }
+}
+
+export const __projectStoreTest = {
+  normalizeMineruConfig,
+}
+
 export async function saveMineruConfig(config: MineruConfig): Promise<void> {
   const store = await getStore()
-  await store.set(MINERU_KEY, config)
+  await store.set(MINERU_KEY, normalizeMineruConfig(config))
 }
 
 export async function loadMineruConfig(): Promise<MineruConfig | null> {
   const store = await getStore()
-  return (await store.get<MineruConfig>(MINERU_KEY)) ?? null
+  const config = await store.get<MineruConfig>(MINERU_KEY)
+  return config ? normalizeMineruConfig(config) : null
 }
 
 // IMPORTANT: Keep this key in sync with the Rust setup hook
