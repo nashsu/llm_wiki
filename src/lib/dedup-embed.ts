@@ -20,8 +20,9 @@ import { getHttpFetch } from "./tauri-fetch"
 import { fetchEmbedding } from "./embedding"
 import { parseFrontmatter } from "./frontmatter"
 import { normalizePath } from "./path-utils"
-import { buildDedupLlmCall, loadAllWikiPages } from "./dedup-runner"
-import { detectDuplicateGroups, extractEntitySummary, type DuplicateGroup, type EntitySummary } from "./dedup"
+import { loadAllWikiPages } from "./dedup-runner"
+import { streamChat } from "./llm-client"
+import { detectDuplicateGroups, extractEntitySummary, type DedupLlmCall, type DuplicateGroup, type EntitySummary } from "./dedup"
 import { loadNotDuplicates } from "./dedup-storage"
 import type { LlmConfig, EmbeddingConfig } from "@/stores/wiki-store"
 
@@ -48,10 +49,16 @@ export interface EmbeddingDedupOptions {
  *  lane (they collapse to identical vectors under most embedding models). */
 export const RICH_MIN_PROSE_CHARS = 200
 /** Hard cap on pages fed to the LLM detector per call — keeps each confirm
- *  prompt small regardless of wiki size, so we never recreate the timeout. */
-export const MAX_DETECTOR_BATCH_PAGES = 120
+ *  prompt (and its groups output) small regardless of wiki size, so we never
+ *  recreate the timeout. */
+export const MAX_DETECTOR_BATCH_PAGES = 60
+/** Per-confirm output cap. The detector emits a bounded JSON groups list; a
+ *  60-page batch is well under this. Caps a thinking/runaway model. */
+const CONFIRM_MAX_TOKENS = 4096
 /** Concurrency for embedding requests. */
 const EMBED_CONCURRENCY = 8
+/** Concurrency for the per-batch LLM confirm calls. */
+const CONFIRM_CONCURRENCY = 4
 
 // ── Pure helpers (unit-tested) ────────────────────────────────────────────
 
@@ -179,6 +186,48 @@ async function embedRecords(
   return items
 }
 
+/**
+ * LLM call for the per-batch confirm. Unlike the v0.4.21 dedup wrapper, this
+ * DISABLES thinking and CAPS output — without that, a reasoning-capable model
+ * (or one that doesn't cleanly stop) spends an unbounded amount of time on a
+ * batch, recreating the original "request cancelled" hang. Mirrors what every
+ * other structured caller in the app does. (The standalone hardening lives on
+ * the fix-dedup-runaway-hardening branch; this is the local equivalent so the
+ * embedding path is safe on its own.)
+ */
+function buildConfirmLlmCall(llmConfig: LlmConfig): DedupLlmCall {
+  return async (systemPrompt, userMessage, signal) => {
+    let result = ""
+    let streamError: Error | null = null
+    await new Promise<void>((resolve) => {
+      streamChat(
+        llmConfig,
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        {
+          onToken: (t) => {
+            result += t
+          },
+          onDone: () => resolve(),
+          onError: (err) => {
+            streamError = err
+            resolve()
+          },
+        },
+        signal,
+        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: CONFIRM_MAX_TOKENS },
+      ).catch((err) => {
+        streamError = err instanceof Error ? err : new Error(String(err))
+        resolve()
+      })
+    })
+    if (streamError) throw streamError
+    return result
+  }
+}
+
 async function servicePost<T>(serviceUrl: string, route: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const httpFetch = await getHttpFetch()
   const resp = await httpFetch(`${serviceUrl.replace(/\/$/, "")}${route}`, {
@@ -237,19 +286,31 @@ export async function runEmbeddingDuplicateDetection(
   // Map paths → summaries for the detector, then confirm in bounded batches.
   const summaryByPath = new Map(records.map((r) => [r.summary.path, r.summary]))
   const notDup = await loadNotDuplicates(pp)
-  const llm = buildDedupLlmCall(llmConfig)
+  const llm = buildConfirmLlmCall(llmConfig)
   const batches = packClusters(clusters)
 
+  // Each batch is one LLM call (thinking off, output capped → bounded). Run
+  // them with limited concurrency so total wall-clock ≈ one batch, not the sum.
   const groups: DuplicateGroup[] = []
-  for (let i = 0; i < batches.length; i++) {
-    if (signal?.aborted) break
-    onProgress?.(`Confirming candidates (batch ${i + 1}/${batches.length})…`)
-    const summaries = batches[i]
-      .map((path) => summaryByPath.get(path))
-      .filter((s): s is EntitySummary => !!s)
-    if (summaries.length < 2) continue
-    const found = await detectDuplicateGroups(summaries, llm, { signal, notDuplicates: notDup })
-    groups.push(...found)
+  let completed = 0
+  let cursor = 0
+  async function confirmWorker() {
+    while (cursor < batches.length) {
+      const i = cursor++
+      if (signal?.aborted) return
+      const summaries = batches[i]
+        .map((path) => summaryByPath.get(path))
+        .filter((s): s is EntitySummary => !!s)
+      if (summaries.length >= 2) {
+        const found = await detectDuplicateGroups(summaries, llm, { signal, notDuplicates: notDup })
+        groups.push(...found)
+      }
+      completed++
+      onProgress?.(`Confirming candidates (${completed}/${batches.length} batches)…`)
+    }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONFIRM_CONCURRENCY, batches.length) }, confirmWorker),
+  )
   return groups
 }
