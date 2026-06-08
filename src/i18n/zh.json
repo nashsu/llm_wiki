@@ -306,7 +306,7 @@
         "enableLabel": "启用向量搜索",
         "enableHint": "关掉后搜索只走 token 匹配。",
         "endpoint": "Endpoint",
-        "endpointHint": "OpenAI 兼容示例：http://127.0.0.1:1234/v1/embeddings。Gemini 示例：https://generativelanguage.googleapis.com/v1beta，模型填 gemini-embedding-001。",
+        "endpointHint": "OpenAI 兼容示例：http://127.0.0.1:1234/v1/embeddings。Gemini 示例：https://generativelanguage.googleapis.com/v1beta，模型填 gemini-embedding-001。volcengine Coding Plan示例：https://ark.cn-beijing.volces.com/api/coding/v3，模型填 doubao-embedding-vision",
         "apiKey": "API Key（可选）",
         "apiKeyPlaceholder": "本地模型留空即可",
         "model": "Model",

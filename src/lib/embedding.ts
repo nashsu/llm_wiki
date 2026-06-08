@@ -88,6 +88,31 @@ export function looksLikeOversizeError(httpStatus: number, body: string): boolea
 }
 
 /**
+ * Doubao (火山方舟) multimodal embedding uses a different endpoint
+ * and request/response format from the standard OpenAI-compatible API.
+ *
+ * Endpoint: /embeddings/multimodal
+ * Request:  { model, encoding_format, input: [{ type: "text", text: "..." }] }
+ * Response: { data: { embedding: [...] } }  (single object, not array)
+ */
+function isDoubaoMultimodalEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+  const endpoint = cfg.endpoint.toLowerCase()
+  return endpoint.includes("/embeddings/multimodal")
+    && (endpoint.includes("volces.com") || endpoint.includes("volcengine"))
+}
+
+function doubaoMultimodalEmbeddingBody(
+  model: string,
+  text: string,
+): Record<string, unknown> {
+  return {
+    model,
+    encoding_format: "float",
+    input: [{ type: "text", text }],
+  }
+}
+
+/**
  * POST one embedding request; on an oversize rejection, halve the text
  * and retry up to `maxRetries` times. Returns null on definitive
  * failure (auth, network, dim mismatch, retries exhausted) with a
@@ -105,7 +130,15 @@ export async function fetchEmbedding(
   if (!cfg.endpoint) return null
 
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
-  const endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
+  let endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
+  // Auto-append /embeddings for OpenAI-compatible endpoints that
+  // only provide a base URL (e.g. volcengine Coding Plan).
+  if (!isGoogleNative && !isDoubaoMultimodalEmbeddingConfig(cfg)) {
+    const lower = endpoint.toLowerCase()
+    if (!lower.endsWith('/embeddings') && !lower.endsWith('/embeddings/')) {
+      endpoint = endpoint.replace(/\/+$/, '') + '/embeddings'
+    }
+  }
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (cfg.apiKey) {
     if (isGoogleNative) {
@@ -129,26 +162,39 @@ export async function fetchEmbedding(
     attempts++
     try {
       const httpFetch = await getHttpFetch()
+      const isDoubaoMultimodal = !isGoogleNative && isDoubaoMultimodalEmbeddingConfig(cfg)
+
       const resp = await httpFetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(
           isGoogleNative
             ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
-            : { model: cfg.model, input: current },
+            : isDoubaoMultimodal
+              ? doubaoMultimodalEmbeddingBody(cfg.model, current)
+              : { model: cfg.model, input: current },
         ),
       })
 
       if (resp.ok) {
         const data = await resp.json()
+        // Doubao multimodal returns { data: { embedding: [...] } } (single object)
+        // Standard OpenAI returns { data: [{ embedding: [...] }] } (array)
+        // Google returns { embedding: { values: [...] } }
         const embedding = isGoogleNative
           ? data?.embedding?.values ?? null
-          : data?.data?.[0]?.embedding ?? null
+          : isDoubaoMultimodal
+            ? data?.data?.embedding ?? null
+            : data?.data?.[0]?.embedding ?? null
         if (isNonEmptyNumberArray(embedding)) {
           lastEmbeddingError = null
           return embedding
         }
-        const expectedShape = isGoogleNative ? "embedding.values" : "data[0].embedding"
+        const expectedShape = isGoogleNative
+          ? "embedding.values"
+          : isDoubaoMultimodal
+            ? "data.embedding"
+            : "data[0].embedding"
         lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
         console.warn(`[Embedding] ${lastEmbeddingError}`)
         return null
@@ -214,6 +260,8 @@ function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
   return endpoint.includes("generativelanguage.googleapis.com")
     || /:embedcontent(\?|$)/i.test(endpoint)
 }
+
+
 
 function googleEmbeddingEndpoint(cfg: EmbeddingConfig): string {
   const raw = stripGoogleApiKeyQuery(cfg.endpoint.trim()).replace(/\/+$/, "")
