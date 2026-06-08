@@ -1,6 +1,6 @@
 {
   "name": "llm-wiki-mcp-server",
-  "version": "0.4.20",
+  "version": "0.4.23",
   "description": "MCP server for LLM Wiki local API",
   "type": "module",
   "main": "dist/src/index.js",
