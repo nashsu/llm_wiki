@@ -212,6 +212,21 @@ export class LlmWikiApiClient {
     })
   }
 
+  async chat(
+    projectId = "current",
+    query: string,
+    options: { topK?: number; includeContent?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/chat`, {
+      method: "POST",
+      body: {
+        query,
+        topK: options.topK,
+        includeContent: options.includeContent,
+      },
+    })
+  }
+
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`
     const headers: Record<string, string> = { Accept: "application/json" }

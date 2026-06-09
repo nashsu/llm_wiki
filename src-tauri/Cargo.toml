@@ -62,6 +62,7 @@ sha2 = "0.10"
 md-5 = "0.10"
 notify = "8"
 walkdir = "2"
+keyring = "3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

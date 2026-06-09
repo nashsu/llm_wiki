@@ -1,4 +1,15 @@
 const API_URL = "http://127.0.0.1:19827";
+const TOKEN_STORAGE_KEY = "llmWikiApiToken";
+
+async function clipAuthHeaders() {
+  const stored = await chrome.storage.local.get([TOKEN_STORAGE_KEY]);
+  const headers = { "Content-Type": "application/json" };
+  const token = stored[TOKEN_STORAGE_KEY];
+  if (typeof token === "string" && token.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`;
+  }
+  return headers;
+}
 
 const statusBar = document.getElementById("statusBar");
 const titleInput = document.getElementById("titleInput");
@@ -12,7 +23,7 @@ let pageUrl = "";
 
 async function checkConnection() {
   try {
-    const res = await fetch(`${API_URL}/status`, { method: "GET" });
+    const res = await fetch(`${API_URL}/status`, { method: "GET", headers: await clipAuthHeaders() });
     const data = await res.json();
     if (data.ok) {
       statusBar.className = "status connected";
@@ -30,7 +41,7 @@ async function checkConnection() {
 
 async function loadProjects() {
   try {
-    const res = await fetch(`${API_URL}/projects`, { method: "GET" });
+    const res = await fetch(`${API_URL}/projects`, { method: "GET", headers: await clipAuthHeaders() });
     const data = await res.json();
     if (data.ok && data.projects?.length > 0) {
       projectSelect.innerHTML = "";
@@ -46,7 +57,7 @@ async function loadProjects() {
   } catch {}
   // Fallback to current project
   try {
-    const res = await fetch(`${API_URL}/project`, { method: "GET" });
+    const res = await fetch(`${API_URL}/project`, { method: "GET", headers: await clipAuthHeaders() });
     const data = await res.json();
     if (data.ok && data.path) {
       const name = data.path.replace(/\\/g, "/").split("/").pop() || data.path;
@@ -214,7 +225,7 @@ async function sendClip() {
   try {
     const res = await fetch(`${API_URL}/clip`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await clipAuthHeaders(),
       body: JSON.stringify({
         title: titleInput.value,
         url: pageUrl,

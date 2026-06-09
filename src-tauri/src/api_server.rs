@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use walkdir::WalkDir;
 
-use crate::{clip_server, commands};
+use crate::{api_runtime, clip_server, commands, local_auth, observability};
 
 const PORT: u16 = 19828;
 const API_PREFIX: &str = "/api/v1";
@@ -26,7 +26,6 @@ const HARD_MAX_REVIEWS: usize = 1_000;
 const MAX_SEARCH_RESULTS: usize = 50;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const MAX_BIND_RETRIES: u32 = 3;
-const APP_STATE_CACHE_TTL: Duration = Duration::from_secs(5);
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 const RATE_LIMIT_MAX_REQUESTS: usize = 120;
 const MAX_IN_FLIGHT_REQUESTS: usize = 64;
@@ -34,14 +33,7 @@ const MAX_IN_FLIGHT_REQUESTS: usize = 64;
 /// API status: 0=starting, 1=running, 2=port_conflict, 3=error
 static API_STATUS: AtomicU8 = AtomicU8::new(0);
 static IN_FLIGHT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
-static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
-
-#[derive(Clone)]
-struct CachedAppState {
-    loaded_at: Instant,
-    value: Option<Value>,
-}
 
 pub fn get_api_status() -> &'static str {
     match API_STATUS.load(Ordering::Relaxed) {
@@ -53,11 +45,7 @@ pub fn get_api_status() -> &'static str {
 }
 
 pub fn invalidate_config_cache() {
-    if let Some(lock) = APP_STATE_CACHE.get() {
-        if let Ok(mut cache) = lock.lock() {
-            *cache = None;
-        }
-    }
+    local_auth::invalidate_config_cache();
 }
 
 pub fn start_api_server(app: AppHandle) {
@@ -87,13 +75,18 @@ pub fn start_api_server(app: AppHandle) {
                 continue;
             };
             let app = app.clone();
+            let request_id = observability::next_request_id();
             thread::spawn(move || {
                 let _slot = slot;
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    process_request(app, request);
+                    process_request(app, request, &request_id);
                 }));
                 if let Err(payload) = result {
-                    eprintln!("[API Server] request handler panicked: {payload:?}");
+                    observability::log_error(
+                        "api_server",
+                        "handler_panicked",
+                        &[("detail", &format!("{payload:?}"))],
+                    );
                 }
             });
         }
@@ -147,24 +140,25 @@ fn try_acquire_request_slot() -> Option<RequestSlot> {
     }
 }
 
-fn process_request(app: AppHandle, mut request: tiny_http::Request) {
+fn process_request(app: AppHandle, mut request: tiny_http::Request, request_id: &str) {
     let method = request.method().clone();
     let url = request.url().to_string();
+    let (path_only, _) = split_url(&url);
+    observability::log_event(
+        "info",
+        "api_server",
+        "request",
+        &[
+            ("method", method.as_str()),
+            ("path", &path_only),
+        ],
+        Some(request_id),
+    );
+    let headers = headers_from_request(&request);
     if method == Method::Options {
-        respond_options(request);
+        respond_options(request, &headers);
         return;
     }
-
-    let headers: Vec<(String, String)> = request
-        .headers()
-        .iter()
-        .map(|header| {
-            (
-                header.field.as_str().to_ascii_lowercase().to_string(),
-                header.value.as_str().to_string(),
-            )
-        })
-        .collect();
 
     let body = match read_body(&mut request) {
         Ok(body) => body,
@@ -181,7 +175,7 @@ fn process_request(app: AppHandle, mut request: tiny_http::Request) {
         eprintln!("[API Server] request panicked: {payload:?}");
         err(500, "Internal API server error")
     });
-    respond_json(request, response.status, response.body);
+    respond_json(request, &headers, response.status, response.body);
 }
 
 struct ApiResponse {
@@ -218,18 +212,18 @@ fn handle_request(
             "ok": true,
             "status": get_api_status(),
             "version": env!("CARGO_PKG_VERSION"),
-            "authRequired": api_auth_required(app),
-            "authConfigured": api_token(app).is_some(),
-            "tokenSource": api_token_source(app),
-            "enabled": api_enabled(app),
-            "mcpEnabled": api_mcp_enabled(app),
-            "allowUnauthenticated": api_allow_unauthenticated(app),
+            "authRequired": local_auth::api_auth_required(app),
+            "authConfigured": local_auth::api_token(app).is_some(),
+            "tokenSource": local_auth::api_token_source(app),
+            "enabled": local_auth::api_enabled(app),
+            "mcpEnabled": local_auth::api_mcp_enabled(app),
+            "allowUnauthenticated": local_auth::api_allow_unauthenticated(app),
         }));
     }
     if !path.starts_with(API_PREFIX) {
         return err(404, "Not found");
     }
-    if !api_enabled(app) {
+    if !local_auth::api_enabled(app) {
         // Kill-switch path: token may be configured and valid, but the
         // user toggled the API off in Settings → API Server. 503 is
         // the right code semantically ("temporarily unavailable")
@@ -237,7 +231,7 @@ fn handle_request(
         // retry instantly the way 401 would.
         return err(503, "API server is disabled in Settings → API Server");
     }
-    if !is_authorized(app, query, headers) {
+    if !local_auth::is_authorized(app, headers) {
         return err(401, "Unauthorized");
     }
     if !matches!(method, &Method::Get | &Method::Post) {
@@ -265,10 +259,7 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
-        (&Method::Post, ["projects", project_id, "chat"]) => {
-            let _ = project_id;
-            err(501, "Chat API is not implemented in the local Rust API server yet. The existing chat/RAG pipeline currently lives in the WebView; expose it after moving the shared chat pipeline behind a backend command.")
-        }
+        (&Method::Post, ["projects", project_id, "chat"]) => handle_chat(app, project_id, body),
         _ => err(404, "Not found"),
     }
 }
@@ -311,29 +302,44 @@ fn read_body(request: &mut tiny_http::Request) -> Result<String, String> {
 }
 
 fn respond_error(request: tiny_http::Request, status: u16, message: &str) {
-    respond_json(request, status, json!({ "ok": false, "error": message }));
+    let headers = headers_from_request(&request);
+    respond_json(request, &headers, status, json!({ "ok": false, "error": message }));
 }
 
-fn respond_options(request: tiny_http::Request) {
+fn headers_from_request(request: &tiny_http::Request) -> Vec<(String, String)> {
+    request
+        .headers()
+        .iter()
+        .map(|header| {
+            (
+                header.field.as_str().to_ascii_lowercase().to_string(),
+                header.value.as_str().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn respond_options(request: tiny_http::Request, request_headers: &[(String, String)]) {
     let mut response = Response::empty(StatusCode(204));
-    for header in cors_headers() {
+    for header in cors_headers_for_request(request_headers) {
         response.add_header(header);
     }
     response.add_header(Header::from_bytes("Access-Control-Max-Age", "600").unwrap());
     let _ = request.respond(response);
 }
 
-fn respond_json(request: tiny_http::Request, status: u16, body: Value) {
+fn respond_json(request: tiny_http::Request, request_headers: &[(String, String)], status: u16, body: Value) {
     let mut response = Response::from_string(body.to_string()).with_status_code(StatusCode(status));
-    for header in cors_headers() {
+    for header in cors_headers_for_request(request_headers) {
         response.add_header(header);
     }
     let _ = request.respond(response);
 }
 
-fn cors_headers() -> Vec<Header> {
-    vec![
-        Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
+/// Do not emit `Access-Control-Allow-Origin: *` — that lets arbitrary
+/// browser tabs read API responses when unauthenticated mode is on.
+fn cors_headers_for_request(request_headers: &[(String, String)]) -> Vec<Header> {
+    let mut headers = vec![
         Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap(),
         Header::from_bytes(
             "Access-Control-Allow-Headers",
@@ -341,7 +347,19 @@ fn cors_headers() -> Vec<Header> {
         )
         .unwrap(),
         Header::from_bytes("Content-Type", "application/json").unwrap(),
-    ]
+    ];
+    if let Some(origin) = request_headers
+        .iter()
+        .find(|(k, _)| k == "origin")
+        .map(|(_, v)| v.as_str())
+    {
+        if origin.starts_with("chrome-extension://") || origin == "null" {
+            if let Ok(h) = Header::from_bytes("Access-Control-Allow-Origin", origin) {
+                headers.push(h);
+            }
+        }
+    }
+    headers
 }
 
 fn split_url(url: &str) -> (String, &str) {
@@ -378,156 +396,6 @@ fn percent_decode(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> bool {
-    if !api_auth_required(app) {
-        return true;
-    }
-    let Some(token) = api_token(app) else {
-        return false;
-    };
-    let params = parse_query(query);
-    if params
-        .get("token")
-        .map(|v| constant_time_eq(v.as_bytes(), token.as_bytes()))
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    headers.iter().any(|(key, value)| {
-        if key == "x-llm-wiki-token" {
-            return constant_time_eq(value.as_bytes(), token.as_bytes());
-        }
-        if key == "authorization" {
-            return value
-                .strip_prefix("Bearer ")
-                .map(|v| constant_time_eq(v.as_bytes(), token.as_bytes()))
-                .unwrap_or(false);
-        }
-        false
-    })
-}
-
-fn api_token(app: &AppHandle) -> Option<String> {
-    if let Ok(token) = std::env::var("LLM_WIKI_API_TOKEN") {
-        let trimmed = token.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    let parsed = load_app_state(app)?;
-    parsed
-        .get("apiConfig")
-        .and_then(|v| v.get("token"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn api_token_source(app: &AppHandle) -> &'static str {
-    if let Ok(token) = std::env::var("LLM_WIKI_API_TOKEN") {
-        if !token.trim().is_empty() {
-            return "env";
-        }
-    }
-    if load_app_state(app)
-        .and_then(|parsed| {
-            parsed
-                .get("apiConfig")
-                .and_then(|v| v.get("token"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .map(|_| ())
-        })
-        .is_some()
-    {
-        return "store";
-    }
-    "none"
-}
-
-fn api_auth_required(app: &AppHandle) -> bool {
-    !api_allow_unauthenticated(app)
-}
-
-fn api_allow_unauthenticated(app: &AppHandle) -> bool {
-    let Some(parsed) = load_app_state(app) else {
-        return false;
-    };
-    parsed
-        .get("apiConfig")
-        .and_then(|v| v.get("allowUnauthenticated"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-/// Whether the API server should accept non-/health requests.
-///
-/// Defaults to `true` when no config has been written yet — keeps
-/// existing setups (env-token-only, hand-edited app-state.json) working
-/// after the kill-switch was introduced. New users still land in
-/// "enabled + no token = 401" which is fail-closed by virtue of the
-/// missing token, not the enable flag.
-fn api_enabled(app: &AppHandle) -> bool {
-    let Some(parsed) = load_app_state(app) else {
-        return true;
-    };
-    parsed
-        .get("apiConfig")
-        .and_then(|v| v.get("enabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
-}
-
-fn api_mcp_enabled(app: &AppHandle) -> bool {
-    let Some(parsed) = load_app_state(app) else {
-        return false;
-    };
-    parsed
-        .get("apiConfig")
-        .and_then(|v| v.get("mcpEnabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let max_len = left.len().max(right.len());
-    let mut diff = left.len() ^ right.len();
-    for i in 0..max_len {
-        let a = left.get(i).copied().unwrap_or(0);
-        let b = right.get(i).copied().unwrap_or(0);
-        diff |= (a ^ b) as usize;
-    }
-    diff == 0
-}
-
-fn load_app_state(app: &AppHandle) -> Option<Value> {
-    let now = Instant::now();
-    let lock = APP_STATE_CACHE.get_or_init(|| Mutex::new(None));
-    let mut previous = None;
-    if let Ok(cache) = lock.lock() {
-        if let Some(cached) = cache.as_ref() {
-            if now.duration_since(cached.loaded_at) < APP_STATE_CACHE_TTL {
-                return cached.value.clone();
-            }
-            previous = cached.value.clone();
-        }
-    }
-
-    let path = app.path().app_data_dir().ok()?.join("app-state.json");
-    let loaded = fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
-    let value = loaded.or(previous);
-
-    if let Ok(mut cache) = lock.lock() {
-        *cache = Some(CachedAppState {
-            loaded_at: now,
-            value: value.clone(),
-        });
-    }
-    value
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProjectEntry {
     id: String,
@@ -550,7 +418,7 @@ fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
     let current = normalize_path(&clip_server::current_project_path());
     let mut by_path: BTreeMap<String, ProjectEntry> = BTreeMap::new();
 
-    if let Some(parsed) = load_app_state(app) {
+    if let Some(parsed) = local_auth::load_app_state(app) {
         if let Some(registry) = parsed.get("projectRegistry").and_then(Value::as_object) {
             for (id, value) in registry {
                 let path = value.get("path").and_then(Value::as_str).unwrap_or("");
@@ -1151,6 +1019,76 @@ struct SearchRequest {
     query_embedding: Option<Vec<f32>>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatRequest {
+    query: Option<String>,
+    message: Option<String>,
+    top_k: Option<usize>,
+    include_content: Option<bool>,
+}
+
+/// Retrieval-stage chat API for agent clients. Returns ranked wiki context
+/// (search hits + optional purpose excerpt). LLM completion remains the
+/// caller's responsibility — same split as the desktop UI pipeline.
+fn handle_chat(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let req: ChatRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    let query = req
+        .query
+        .or(req.message)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return err(400, "query or message is required");
+    }
+    let top_k = req.top_k.unwrap_or(10).clamp(1, MAX_SEARCH_RESULTS);
+    let include_content = req.include_content.unwrap_or(true);
+    let query_embedding = match api_runtime::block_on(commands::search::resolve_query_embedding(
+        &query,
+        None,
+        load_embedding_config(app),
+    )) {
+        Ok(embedding) => embedding,
+        Err(e) => return err(400, e),
+    };
+    let search = match api_runtime::block_on(commands::search::search_project_inner(
+        project.path.clone(),
+        query.clone(),
+        top_k,
+        include_content,
+        query_embedding,
+    )) {
+        Ok(search) => search,
+        Err(e) => return err(500, e),
+    };
+    let purpose_excerpt = {
+        let path = Path::new(&project.path).join("purpose.md");
+        fs::read_to_string(path)
+            .ok()
+            .map(|content| content.chars().take(4_000).collect::<String>())
+            .filter(|s| !s.trim().is_empty())
+    };
+    ok(json!({
+        "ok": true,
+        "projectId": project.id,
+        "mode": "retrieval",
+        "query": query,
+        "purposeExcerpt": purpose_excerpt,
+        "note": "Retrieval-only chat API. Pass `context`/`results` to your agent LLM for completion.",
+        "tokenHits": search.token_hits,
+        "vectorHits": search.vector_hits,
+        "results": search.results,
+    }))
+}
+
 fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
     let project = match resolve_project(app, project_id) {
         Ok(project) => project,
@@ -1166,7 +1104,7 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
     let top_k = req.top_k.unwrap_or(10).clamp(1, MAX_SEARCH_RESULTS);
     let query = req.query;
     let query_embedding =
-        match tauri::async_runtime::block_on(commands::search::resolve_query_embedding(
+        match api_runtime::block_on(commands::search::resolve_query_embedding(
             &query,
             req.query_embedding,
             load_embedding_config(app),
@@ -1174,7 +1112,7 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
             Ok(embedding) => embedding,
             Err(e) => return err(400, e),
         };
-    match tauri::async_runtime::block_on(commands::search::search_project_inner(
+    match api_runtime::block_on(commands::search::search_project_inner(
         project.path.clone(),
         query,
         top_k,
@@ -1195,7 +1133,7 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
 }
 
 fn load_embedding_config(app: &AppHandle) -> Option<commands::search::SearchEmbeddingConfig> {
-    let parsed = load_app_state(app)?;
+    let parsed = local_auth::load_app_state(app)?;
     let value = parsed.get("embeddingConfig")?.clone();
     serde_json::from_value::<commands::search::SearchEmbeddingConfig>(value).ok()
 }
@@ -1387,7 +1325,7 @@ fn load_source_watch_config(
     app: &AppHandle,
     project_id: &str,
 ) -> Option<commands::file_sync::SourceWatchConfig> {
-    let parsed = load_app_state(app)?;
+    let parsed = local_auth::load_app_state(app)?;
     let settings = parsed.get("sourceWatchConfig").and_then(Value::as_object);
     if let Some(value) = settings
         .and_then(|s| s.get(project_id).or_else(|| s.get("default")))
@@ -1580,10 +1518,10 @@ mod tests {
 
     #[test]
     fn constant_time_eq_matches_equal_bytes_only() {
-        assert!(constant_time_eq(b"token", b"token"));
-        assert!(constant_time_eq(b"", b""));
-        assert!(!constant_time_eq(b"token", b"tokeN"));
-        assert!(!constant_time_eq(b"token", b"token-longer"));
+        assert!(local_auth::constant_time_eq(b"token", b"token"));
+        assert!(local_auth::constant_time_eq(b"", b""));
+        assert!(!local_auth::constant_time_eq(b"token", b"tokeN"));
+        assert!(!local_auth::constant_time_eq(b"token", b"token-longer"));
     }
 
     #[test]

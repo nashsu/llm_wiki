@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core"
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
 import type { ApiConfig, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
@@ -168,13 +169,17 @@ const API_CONFIG_KEY = "apiConfig"
 
 export async function saveApiConfig(config: ApiConfig): Promise<void> {
   const store = await getStore()
-  await store.set(API_CONFIG_KEY, config)
-  // Force-flush. The 100ms debounce default is fine for cosmetic
-  // settings, but the API token is on a security hot path — a user
-  // generates one, hits Save, then immediately curls the API from
-  // another terminal. We want the disk file to match in-memory
-  // state before the next request reads it.
+  const persisted: ApiConfig = { ...config }
+  const trimmedToken = config.token.trim()
+  if (trimmedToken) {
+    await invoke("secrets_store_command", { key: "api_token", value: trimmedToken })
+    persisted.token = ""
+  } else {
+    await invoke("secrets_delete_command", { key: "api_token" }).catch(() => {})
+  }
+  await store.set(API_CONFIG_KEY, persisted)
   await store.save()
+  await invoke("api_server_reload_config").catch(() => {})
 }
 
 export async function loadApiConfig(): Promise<ApiConfig | null> {

@@ -3711,6 +3711,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4461,7 +4471,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "llm-wiki"
-version = "0.4.22"
+version = "0.4.23"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4471,6 +4481,7 @@ dependencies = [
  "docx-rs",
  "futures",
  "image",
+ "keyring",
  "lancedb",
  "md-5",
  "notify",

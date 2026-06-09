@@ -22,10 +22,10 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: http:; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'",
+      "csp": "default-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": ["$APPDATA/**", "$RESOURCE/**", "$HOME/**"]
       }
     }
   },

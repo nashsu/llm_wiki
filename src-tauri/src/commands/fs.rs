@@ -9,6 +9,7 @@ use office_oxide::Document;
 
 use crate::commands::file_sync;
 use crate::panic_guard::run_guarded;
+use crate::project_sandbox;
 use crate::types::wiki::FileNode;
 
 /// Known binary formats that need special extraction
@@ -66,7 +67,9 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
     // pool where blocking-for-seconds is the contract.
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("read_file", || {
-            let p = Path::new(&path);
+            let sandbox_path = project_sandbox::validate_sandboxed_path("read_file", &path)?;
+            let p = sandbox_path.as_path();
+            let path_str = sandbox_path.to_string_lossy().to_string();
             let ext = p
                 .extension()
                 .and_then(|e| e.to_str())
@@ -80,14 +83,14 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
             let include_images = extract_images.unwrap_or(true);
 
             match ext.as_str() {
-                "pdf" => extract_pdf_text(&path, include_images),
-                e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
+                "pdf" => extract_pdf_text(&path_str, include_images),
+                e if OFFICE_EXTS.contains(&e) => extract_office_text(&path_str, e),
                 e if IMAGE_EXTS.contains(&e) => {
-                    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                     Ok(format!("[Image: {} ({:.1} KB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1024.0))
                 }
                 e if MEDIA_EXTS.contains(&e) => {
-                    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                     Ok(format!("[Media: {} ({:.1} MB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1048576.0))
                 }
                 e if LEGACY_DOC_EXTS.contains(&e) => {
@@ -95,16 +98,16 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
                         p.file_name().unwrap_or_default().to_string_lossy(), e))
                 }
                 _ => {
-                    match fs::read_to_string(&path) {
+                    match fs::read_to_string(p) {
                         Ok(content) => Ok(content),
                         Err(e) => {
                             let exists = p.exists();
                             if !exists {
-                                Err(format!("File does not exist: '{}'", path))
+                                Err(format!("File does not exist: '{}'", path_str))
                             } else {
                                 Err(format!(
                                     "Failed to read file '{}' as text: {} (likely binary, locked, or non-UTF-8)",
-                                    path, e,
+                                    path_str, e,
                                 ))
                             }
                         }
@@ -123,7 +126,9 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
     // See `read_file` above for why `spawn_blocking` is required.
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("preprocess_file", || {
-            let p = Path::new(&path);
+            let sandbox_path = project_sandbox::validate_sandboxed_path("preprocess_file", &path)?;
+            let p = sandbox_path.as_path();
+            let path_str = sandbox_path.to_string_lossy().to_string();
             let ext = p
                 .extension()
                 .and_then(|e| e.to_str())
@@ -131,8 +136,8 @@ pub async fn preprocess_file(path: String) -> Result<String, String> {
                 .to_lowercase();
 
             let text = match ext.as_str() {
-                "pdf" => extract_pdf_text(&path, false)?,
-                e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e)?,
+                "pdf" => extract_pdf_text(&path_str, false)?,
+                e if OFFICE_EXTS.contains(&e) => extract_office_text(&path_str, e)?,
                 _ => return Ok("no preprocessing needed".to_string()),
             };
 
@@ -973,14 +978,15 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file", || {
             require_absolute_path("write_file", &path)?;
-            let p = Path::new(&path);
+            let path = project_sandbox::validate_sandboxed_path("write_file", &path)?;
+            let p = path.as_path();
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
+                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", p.display(), e))?;
             }
             file_sync::mark_app_write_path(p);
-            fs::write(&path, contents)
-                .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+            fs::write(p, contents)
+                .map_err(|e| format!("Failed to write file '{}': {}", p.display(), e))?;
             file_sync::mark_app_write_path(p);
             Ok(())
         })
@@ -996,17 +1002,18 @@ pub async fn write_file_base64(path: String, base64: String) -> Result<(), Strin
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_base64", || {
             require_absolute_path("write_file_base64", &path)?;
+            let sandbox_path = project_sandbox::validate_sandboxed_path("write_file_base64", &path)?;
+            let p = sandbox_path.as_path();
             let bytes = B64
                 .decode(base64.as_bytes())
-                .map_err(|e| format!("Invalid base64 for '{}': {}", path, e))?;
-            let p = Path::new(&path);
+                .map_err(|e| format!("Invalid base64 for '{}': {}", p.display(), e))?;
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
+                    .map_err(|e| format!("Failed to create parent dirs for '{}': {}", p.display(), e))?;
             }
             file_sync::mark_app_write_path(p);
-            fs::write(&path, bytes)
-                .map_err(|e| format!("Failed to write binary file '{}': {}", path, e))?;
+            fs::write(p, bytes)
+                .map_err(|e| format!("Failed to write binary file '{}': {}", p.display(), e))?;
             file_sync::mark_app_write_path(p);
             Ok(())
         })
@@ -1020,7 +1027,8 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("write_file_atomic", || {
             require_absolute_path("write_file_atomic", &path)?;
-            let p = Path::new(&path);
+            let sandbox_path = project_sandbox::validate_sandboxed_path("write_file_atomic", &path)?;
+            let p = sandbox_path.as_path();
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs for '{}': {}", path, e))?;
@@ -1064,12 +1072,13 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
 pub async fn list_directory(path: String) -> Result<Vec<FileNode>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
-            let p = Path::new(&path);
+            let sandbox_path = project_sandbox::validate_sandboxed_path("list_directory", &path)?;
+            let p = sandbox_path.as_path();
             if !p.exists() {
-                return Err(format!("Path does not exist: '{}'", path));
+                return Err(format!("Path does not exist: '{}'", p.display()));
             }
             if !p.is_dir() {
-                return Err(format!("Path is not a directory: '{}'", path));
+                return Err(format!("Path is not a directory: '{}'", p.display()));
             }
             let nodes = build_tree(p, 0, 30)?;
             Ok(nodes)
@@ -1146,13 +1155,15 @@ fn build_tree(dir: &Path, depth: usize, max_depth: usize) -> Result<Vec<FileNode
 pub async fn copy_file(source: String, destination: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_file", || {
-            let dest = Path::new(&destination);
+            let source_path = project_sandbox::validate_sandboxed_path("copy_file", &source)?;
+            let dest_path = project_sandbox::validate_sandboxed_path("copy_file", &destination)?;
+            let dest = dest_path.as_path();
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create parent dirs: {}", e))?;
             }
             file_sync::mark_app_write_path(dest);
-            fs::copy(&source, &destination)
+            fs::copy(source_path.as_path(), dest)
                 .map_err(|e| format!("Failed to copy '{}' to '{}': {}", source, destination, e))?;
             file_sync::mark_app_write_path(dest);
             Ok(())
@@ -1168,8 +1179,10 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
 pub async fn copy_directory(source: String, destination: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("copy_directory", || {
-            let src = Path::new(&source);
-            let dest = Path::new(&destination);
+            let src = project_sandbox::validate_sandboxed_path("copy_directory", &source)?;
+            let dest = project_sandbox::validate_sandboxed_path("copy_directory", &destination)?;
+            let src = src.as_path();
+            let dest = dest.as_path();
             file_sync::mark_app_write_path(dest);
 
             if !src.is_dir() {
@@ -1223,14 +1236,16 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
 pub async fn delete_file(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("delete_file", || {
-            let p = Path::new(&path);
+            let sandbox_path = project_sandbox::validate_sandboxed_path("delete_file", &path)?;
+            let p = sandbox_path.as_path();
+            let path_display = p.to_string_lossy().to_string();
             file_sync::mark_app_write_path(p);
             if p.is_dir() {
-                remove_path_with_retry(&path, true)
-                    .map_err(|e| format!("Failed to delete directory '{}': {}", path, e))?;
+                remove_path_with_retry(&path_display, true)
+                    .map_err(|e| format!("Failed to delete directory '{}': {}", path_display, e))?;
             } else {
-                remove_path_with_retry(&path, false)
-                    .map_err(|e| format!("Failed to delete file '{}': {}", path, e))?;
+                remove_path_with_retry(&path_display, false)
+                    .map_err(|e| format!("Failed to delete file '{}': {}", path_display, e))?;
             }
             file_sync::mark_app_write_path(p);
             Ok(())
@@ -1425,7 +1440,8 @@ pub async fn create_directory(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("create_directory", || {
             require_absolute_path("create_directory", &path)?;
-            fs::create_dir_all(&path)
+            let sandbox_path = project_sandbox::validate_sandboxed_path("create_directory", &path)?;
+            fs::create_dir_all(sandbox_path.as_path())
                 .map_err(|e| format!("Failed to create directory '{}': {}", path, e))
         })
     })
@@ -1457,8 +1473,10 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("read_file_as_base64", || {
-            let bytes = fs::read(&path).map_err(|e| format!("Failed to read '{}': {}", path, e))?;
-            let p = Path::new(&path);
+            let sandbox_path =
+                project_sandbox::validate_sandboxed_path("read_file_as_base64", &path)?;
+            let p = sandbox_path.as_path();
+            let bytes = fs::read(p).map_err(|e| format!("Failed to read '{}': {}", path, e))?;
             let ext = p
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1495,7 +1513,10 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     // every fs command rather than carving out an exception that's
     // easy to violate later.
     tauri::async_runtime::spawn_blocking(move || {
-        run_guarded("file_exists", || Ok(Path::new(&path).exists()))
+        run_guarded("file_exists", || {
+            let sandbox_path = project_sandbox::validate_sandboxed_path("file_exists", &path)?;
+            Ok(sandbox_path.exists())
+        })
     })
     .await
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
@@ -1507,7 +1528,9 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
 pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("get_file_modified_time", || {
-            let metadata = fs::metadata(&path)
+            let sandbox_path =
+                project_sandbox::validate_sandboxed_path("get_file_modified_time", &path)?;
+            let metadata = fs::metadata(sandbox_path.as_path())
                 .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
             let modified = metadata
                 .modified()
@@ -1526,7 +1549,8 @@ pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
 pub async fn get_file_size(path: String) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("get_file_size", || {
-            let metadata = fs::metadata(&path)
+            let sandbox_path = project_sandbox::validate_sandboxed_path("get_file_size", &path)?;
+            let metadata = fs::metadata(sandbox_path.as_path())
                 .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
             Ok(metadata.len())
         })
@@ -1541,7 +1565,8 @@ pub async fn get_file_md5(path: String) -> Result<String, String> {
     use md5::{Digest, Md5};
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("get_file_md5", || {
-            let mut file = fs::File::open(&path)
+            let sandbox_path = project_sandbox::validate_sandboxed_path("get_file_md5", &path)?;
+            let mut file = fs::File::open(sandbox_path.as_path())
                 .map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
             let mut hasher = Md5::new();
             let mut buffer = [0u8; 64 * 1024];
@@ -1642,16 +1667,21 @@ mod tests {
         assert!(result.unwrap_err().contains("Failed to parse DOC"));
     }
 
+    fn sandbox_test_dir(label: &str) -> std::path::PathBuf {
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("llm-wiki-fs-{label}-{id}"));
+        fs::create_dir_all(&dir).unwrap();
+        crate::project_sandbox::register_project_root(dir.to_str().unwrap()).unwrap();
+        dir
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn write_file_base64_writes_decoded_binary_bytes() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "llm-wiki-base64-{}.bin",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = sandbox_test_dir("base64-write");
+        let path = dir.join("payload.bin");
         let path_str = path.to_string_lossy().to_string();
 
         write_file_base64(path_str.clone(), "AAECA/8=".to_string())
@@ -1659,17 +1689,16 @@ mod tests {
             .unwrap();
 
         let bytes = fs::read(&path).unwrap();
-        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&dir);
+        crate::project_sandbox::unregister_project_root(dir.to_str().unwrap());
         assert_eq!(bytes, vec![0, 1, 2, 3, 255]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn write_file_base64_rejects_invalid_base64_and_relative_paths() {
+        let dir = sandbox_test_dir("base64-reject");
         let invalid = write_file_base64(
-            std::env::temp_dir()
-                .join("llm-wiki-invalid-base64.bin")
-                .to_string_lossy()
-                .to_string(),
+            dir.join("invalid.bin").to_string_lossy().to_string(),
             "not!!base64".to_string(),
         )
         .await;
@@ -1679,6 +1708,9 @@ mod tests {
         let relative = write_file_base64("relative.bin".to_string(), "AA==".to_string()).await;
         assert!(relative.is_err());
         assert!(relative.unwrap_err().contains("requires an absolute path"));
+
+        let _ = fs::remove_dir_all(&dir);
+        crate::project_sandbox::unregister_project_root(dir.to_str().unwrap());
     }
 
     /// Ad-hoc probe: run the production PDF extraction path against every
@@ -1804,8 +1836,11 @@ mod tests {
     // would be surfaced here and then wrongly deleted downstream.
 
     fn make_wiki(files: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static WIKI_TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = WIKI_TEST_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "wiki-test-{}",
+            "wiki-test-{seq}-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

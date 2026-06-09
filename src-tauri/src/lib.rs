@@ -1,8 +1,13 @@
+mod api_runtime;
 mod api_server;
 mod clip_server;
 mod commands;
+mod local_auth;
+mod observability;
 mod panic_guard;
+mod project_sandbox;
 mod proxy;
+mod secrets_store;
 mod tray;
 mod types;
 
@@ -134,8 +139,6 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    clip_server::start_clip_server();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -189,6 +192,11 @@ pub fn run() {
                 }
             };
             app.manage(TrayAvailabilityState(Mutex::new(tray_available)));
+            if let Ok(dir) = app.path().app_data_dir() {
+                project_sandbox::set_app_data_root(dir.clone());
+                let _ = secrets_store::migrate_api_token_from_app_state(app.handle());
+            }
+            clip_server::start_clip_server(app.handle().clone());
             api_server::start_api_server(app.handle().clone());
             Ok(())
         })
@@ -246,6 +254,10 @@ pub fn run() {
             commands::file_sync::ignore_file_change_task,
             set_proxy_env,
             set_close_behavior,
+            project_sandbox::register_sandbox_project,
+            project_sandbox::unregister_sandbox_project,
+            secrets_store::secrets_store_command,
+            secrets_store::secrets_delete_command,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
