@@ -106,7 +106,12 @@ export async function fetchEmbedding(
 
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
   const endpoint = isGoogleNative ? googleEmbeddingEndpoint(cfg) : cfg.endpoint
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // Override Tauri http plugin's Windows-default Origin
+    // (http://tauri.localhost) which Ollama rejects with 403.
+    Origin: "http://localhost",
+  }
   if (cfg.apiKey) {
     if (isGoogleNative) {
       headers["x-goog-api-key"] = cfg.apiKey
