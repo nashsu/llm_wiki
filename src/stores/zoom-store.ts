@@ -3,11 +3,7 @@ import { create } from "zustand"
 export interface ZoomState {
   /** Current zoom level as a decimal (1 = 100%) */
   level: number
-  /** Whether the zoom slider popover is open */
-  open: boolean
   setLevel: (level: number) => void
-  toggle: () => void
-  close: () => void
 }
 
 /**
@@ -19,8 +15,5 @@ function clamp(v: number): number {
 
 export const useZoomStore = create<ZoomState>((set) => ({
   level: 1,
-  open: false,
   setLevel: (level: number) => set({ level: clamp(level) }),
-  toggle: () => set((s) => ({ open: !s.open })),
-  close: () => set({ open: false }),
 }))

@@ -67,6 +67,7 @@ export interface SettingsDraft {
   // UI
   uiLanguage: string
   theme: "light" | "dark" | "system"
+  zoomLevel: number
 
   // General app behavior
   autostart: boolean

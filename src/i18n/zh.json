@@ -538,7 +538,8 @@
         "themeHint": "预览会立即生效。保存设置后会记住所选主题。跟随系统会使用操作系统的外观设置。",
         "themeLight": "浅色",
         "themeDark": "深色",
-        "themeSystem": "跟随系统"
+        "themeSystem": "跟随系统",
+        "zoom": "缩放"
       },
       "maintenance": {
         "title": "维护",

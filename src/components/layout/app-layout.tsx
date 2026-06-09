@@ -10,7 +10,6 @@ import { ContentArea } from "./content-area"
 import { PreviewPanel } from "./preview-panel"
 import { ResearchPanel } from "./research-panel"
 import { ActivityPanel } from "./activity-panel"
-import { ZoomControls } from "./zoom-controls"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
 
@@ -105,7 +104,6 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
-        <ZoomControls />
         <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
           {/* Zoom transform wrapper — scales the entire work area */}
           <div

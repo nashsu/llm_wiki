@@ -380,3 +380,17 @@ export async function loadUpdateCheckState(): Promise<PersistedUpdateCheckState 
     (await store.get<PersistedUpdateCheckState>(UPDATE_CHECK_STATE_KEY)) ?? null
   )
 }
+
+const ZOOM_LEVEL_KEY = "zoomLevel"
+
+export async function saveZoomLevel(level: number): Promise<void> {
+  const store = await getStore()
+  await store.set(ZOOM_LEVEL_KEY, level)
+  await store.save()
+}
+
+export async function loadZoomLevel(): Promise<number> {
+  const store = await getStore()
+  const level = await store.get<number>(ZOOM_LEVEL_KEY)
+  return typeof level === "number" && level >= 0.5 && level <= 3 ? level : 1
+}

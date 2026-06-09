@@ -538,7 +538,8 @@
         "themeHint": "Preview applies immediately. Save settings to keep the selected theme. System follows your operating system appearance.",
         "themeLight": "Light",
         "themeDark": "Dark",
-        "themeSystem": "System"
+        "themeSystem": "System",
+        "zoom": "Zoom"
       },
       "maintenance": {
         "title": "Maintenance",

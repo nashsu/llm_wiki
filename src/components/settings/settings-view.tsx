@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
+import { useZoomStore } from "@/stores/zoom-store"
 import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib/project-store"
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
@@ -103,6 +104,7 @@ function initialDraft(
   uiLanguage: string,
   projectPath?: string,
   theme?: AppTheme,
+  zoomLevel?: number,
 ): SettingsDraft {
   // Show absolute path: if stored path is empty, show default using project path
   // If stored path is relative (legacy), prepend project path
@@ -166,6 +168,7 @@ function initialDraft(
     closeBehavior: generalConfig.closeBehavior,
     uiLanguage,
     theme: theme ?? "system",
+    zoomLevel: zoomLevel ?? useZoomStore.getState().level,
   }
 }
 
@@ -262,6 +265,8 @@ export function SettingsView() {
   // pick with the still-stale `i18n.language`. The next save would then
   // see draft.uiLanguage out of sync with i18n.language and silently
   // revert the UI to the previous language.
+  // Same applies to zoomLevel — preserve the user's pending value through
+  // the resync so mid-save store updates don't revert the input.
   useEffect(() => {
     setDraftState((prev) =>
       initialDraft(
@@ -279,6 +284,7 @@ export function SettingsView() {
         prev.uiLanguage,
         project?.path,
         prev.theme,
+        prev.zoomLevel,
       ),
     )
   }, [
@@ -497,6 +503,11 @@ export function SettingsView() {
         // Apply theme immediately
         applyTheme(draft.theme)
       }
+
+      // Apply zoom level
+      const { saveZoomLevel } = await import("@/lib/project-store")
+      useZoomStore.getState().setLevel(draft.zoomLevel)
+      await saveZoomLevel(draft.zoomLevel)
 
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
