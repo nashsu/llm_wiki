@@ -52,6 +52,16 @@ jobs:
       - name: Check frontend build
         run: npx vite build
 
+      - name: Run frontend unit tests
+        run: npm run test:mocks
+
+      - name: Run MCP server tests
+        run: npm run mcp:test
+
       - name: Check Rust build
         working-directory: src-tauri
         run: cargo build
+
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --lib

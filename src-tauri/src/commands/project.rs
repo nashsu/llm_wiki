@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::panic_guard::run_guarded;
+use crate::project_sandbox;
 use crate::types::wiki::WikiProject;
 
 #[tauri::command]
@@ -234,11 +235,13 @@ related: []
         obsidian_core_plugins,
     )?;
 
-    Ok(WikiProject {
+    let project = WikiProject {
         name,
         // Forward slashes for cross-platform consistency in the TS layer.
         path: root.to_string_lossy().replace('\\', "/"),
-    })
+    };
+    let _ = project_sandbox::register_project_root(&project.path);
+    Ok(project)
 }
 
 #[tauri::command]
@@ -255,11 +258,13 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
             .unwrap_or("Unknown")
             .to_string();
 
-        Ok(WikiProject {
+        let project = WikiProject {
             name,
             // Forward slashes for cross-platform consistency in the TS layer.
             path: path.replace('\\', "/"),
-        })
+        };
+        project_sandbox::register_project_root(&project.path)?;
+        Ok(project)
     })
 }
 

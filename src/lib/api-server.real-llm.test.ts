@@ -381,12 +381,12 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
         )
         expect(xToken.status).toBe(200)
 
-        const query = await api<ApiEnvelope & { projects: ApiProject[] }>(
+        const query = await api<ApiEnvelope>(
           `/api/v1/projects?token=${encodeURIComponent(effectiveToken)}`,
           {},
           { auth: "none" },
         )
-        expect(query.status).toBe(200)
+        expect(query.status).toBe(401)
       }
     },
     TEST_TIMEOUT_MS,
@@ -596,16 +596,21 @@ describe.skipIf(!ENABLED)("local API v1 against real project", () => {
   )
 
   it(
-    "reports chat as not implemented in API v1",
+    "chat returns retrieval context for agent clients",
     async (ctx) => {
       ensureServer(ctx)
       await requireUsableApi()
-      const chatResp = await api<ApiEnvelope>(`/api/v1/projects/${PROJECT_ID}/chat`, {
-        method: "POST",
-        body: JSON.stringify({ message: "hello" }),
-      })
-      expect(chatResp.status).toBe(501)
-      expect(chatResp.body.ok).toBe(false)
+      const chatResp = await api<ApiEnvelope & { mode?: string; results?: unknown[] }>(
+        `/api/v1/projects/${PROJECT_ID}/chat`,
+        {
+          method: "POST",
+          body: JSON.stringify({ message: "wiki index" }),
+        },
+      )
+      expect(chatResp.status).toBe(200)
+      expect(chatResp.body.ok).toBe(true)
+      expect(chatResp.body.mode).toBe("retrieval")
+      expect(Array.isArray(chatResp.body.results)).toBe(true)
     },
     TEST_TIMEOUT_MS,
   )

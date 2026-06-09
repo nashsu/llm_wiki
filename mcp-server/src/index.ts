@@ -16,7 +16,7 @@ import {
   type ApiSearchResult,
 } from "./api-client.js"
 
-const VERSION = "0.4.20"
+const VERSION = "0.4.23"
 const DEFAULT_PROJECT_ID = "current"
 const MAX_TEXT_BYTES = 120_000
 
@@ -118,6 +118,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "llm_wiki_chat",
+      description: "Retrieve wiki context for a query using the desktop app's hybrid search (retrieval-only; LLM completion is the caller's job).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          query: { type: "string", description: "User question or search query." },
+          top_k: { type: "number", description: "Maximum results." },
+          include_content: { type: "boolean", description: "Include full page content in hits." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "llm_wiki_rescan_sources",
       description: "Trigger the desktop app's source folder rescan for a project, using the user's Source Watch rules.",
       inputSchema: {
@@ -187,6 +202,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: numberArg(args.limit),
         })
         return textResult(formatGraph(graph.nodes, graph.edges))
+      }
+      case "llm_wiki_chat": {
+        await assertMcpEnabled()
+        const query = stringArg(args.query, "query")
+        const payload = await client.chat(projectId(args), query, {
+          topK: numberArg(args.top_k),
+          includeContent: boolArg(args.include_content, true),
+        })
+        return textResult(JSON.stringify(payload, null, 2))
       }
       case "llm_wiki_rescan_sources": {
         await assertMcpEnabled()
