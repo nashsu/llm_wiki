@@ -8,6 +8,9 @@ export interface LintItem {
   page: string
   detail: string
   affectedPages?: string[]
+  brokenTarget?: string
+  suggestedTarget?: string
+  suggestedSource?: string
   createdAt: number
 }
 
@@ -18,6 +21,9 @@ function lintResultToItem(result: LintResult): LintItem {
     page: result.page,
     detail: result.detail,
     affectedPages: result.affectedPages,
+    brokenTarget: result.brokenTarget,
+    suggestedTarget: result.suggestedTarget,
+    suggestedSource: result.suggestedSource,
     id: `lint-${++counter}`,
     createdAt: Date.now(),
   }

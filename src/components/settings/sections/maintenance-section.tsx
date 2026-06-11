@@ -395,7 +395,7 @@ export function MaintenanceSection() {
         const merged = recentlyMergedKeys.has(groupKey(entry.group.slugs))
         return (
           <DuplicateGroupCard
-            key={entry.group.slugs.join(",")}
+            key={groupKey(entry.group.slugs)}
             entry={entry}
             task={task}
             merged={merged}
