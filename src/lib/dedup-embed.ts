@@ -314,7 +314,7 @@ function buildConfirmLlmCall(llmConfig: LlmConfig): DedupLlmCall {
   }
 }
 
-async function servicePost<T>(serviceUrl: string, route: string, body: unknown, signal?: AbortSignal): Promise<T> {
+export async function servicePost<T>(serviceUrl: string, route: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const httpFetch = await getHttpFetch()
   const resp = await httpFetch(`${serviceUrl.replace(/\/$/, "")}${route}`, {
     method: "POST",
@@ -419,5 +419,19 @@ export async function runEmbeddingDuplicateDetection(
   // Drop low-confidence embedding groups — that's where the residual chaff lands
   // (placeholder/loosely-related pages). Lexical date groups are always kept.
   const confirmed = embedGroups.filter((g) => g.confidence !== "low")
-  return [...lexicalGroups, ...confirmed]
+
+  // Dedup by normalized slug-set key. The LLM can output the same group twice
+  // within one call, and slug-order variants of the same pair produce different
+  // raw keys but represent the same merge candidate. Lexical groups take
+  // precedence (they come first) since their reason text is more precise.
+  const seen = new Set<string>()
+  const result: DuplicateGroup[] = []
+  for (const g of [...lexicalGroups, ...confirmed]) {
+    const k = groupKey(g.slugs)
+    if (!seen.has(k)) {
+      seen.add(k)
+      result.push(g)
+    }
+  }
+  return result
 }
