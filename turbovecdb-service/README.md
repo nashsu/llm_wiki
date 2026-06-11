@@ -14,20 +14,21 @@ It is the service that `src/lib/dedup-embed.ts` POSTs to during the
 
 ## Requirements
 
-This service imports the **`turbovecdb`** Python package (and its `turbovec` /
-`numpy` / `filelock` deps). `turbovecdb` is a **separate, local package — it is not
-on PyPI and is not vendored here.** You must have it importable on your
-`PYTHONPATH` (or installed into a virtualenv) before this service will start;
-otherwise it fails with `ModuleNotFoundError: No module named 'turbovecdb'`.
+The service's only third-party dependency is the [`turbovecdb`](https://github.com/kostadis/turbovecdb)
+package, published on PyPI:
+
+```bash
+pip install -r requirements.txt   # or: pip install turbovecdb
+```
+
+That pulls `turbovecdb` plus its transitive deps (`turbovec`, `numpy`, `filelock`).
+Everything else the service uses is Python stdlib. A virtualenv is recommended.
 
 ## Run
 
 ```bash
 python service.py --host 127.0.0.1 --port 8077
 ```
-
-Use whichever interpreter has `turbovecdb` available. (In the original dev setup
-that was a dedicated virtualenv, e.g. `~/.venvs/main/bin/python service.py`.)
 
 ## API
 
