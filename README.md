@@ -59,6 +59,15 @@ This project is based on [Karpathy's LLM Wiki pattern](https://gist.github.com/k
 
 The foundational methodology comes from **Andrej Karpathy**'s [llm-wiki.md](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), which describes the pattern of using LLMs to incrementally build and maintain a personal wiki. The original document is an abstract design pattern; this project is a concrete implementation with substantial extensions.
 
+### Related implementations
+
+Other open-source projects exploring the same pattern, with different shapes:
+
+- [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki) — agent-skill for Claude Code / Cursor.
+- [atomicmemory/llm-wiki-compiler](https://github.com/atomicmemory/llm-wiki-compiler) — CLI compiler.
+- [dimknaf/braindb](https://github.com/dimknaf/braindb) — persistent memory database + REST API for LLM agents: typed entities with explicit relations, fuzzy + semantic retrieval over a keyword graph, temporal decay, plus a watcher that auto-ingests dropped files into a self-healing wiki.
+- [lucasastorian/llmwiki](https://github.com/lucasastorian/llmwiki) — Claude MCP integration.
+
 ## What We Kept from the Original
 
 The core architecture follows Karpathy's design faithfully:
