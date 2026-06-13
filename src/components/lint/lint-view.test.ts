@@ -36,6 +36,49 @@ describe("groupLintResultsForDisplay", () => {
       "info-a.md",
       "info-c.md",
     ])
+    expect(grouped.suggestions).toEqual([])
+  })
+
+  it("pulls suggested-link items into their own bucket (not infos)", () => {
+    const suggestion: LintItem = {
+      id: "lint-sugg",
+      type: "suggested-link",
+      severity: "info",
+      page: "a.md",
+      detail: "related to b",
+      affectedPages: ["b.md"],
+      createdAt: Date.now(),
+    }
+    const grouped = groupLintResultsForDisplay([
+      suggestion,
+      makeLintItem("info-a.md", "info", 1),
+    ])
+
+    expect(grouped.suggestions.map((i) => i.page)).toEqual(["a.md"])
+    expect(grouped.infos.map((i) => i.page)).toEqual(["info-a.md"])
+  })
+
+  it("sorts repointable broken links above other warnings (stable otherwise)", () => {
+    const plainWarning = makeLintItem("plain-1.md", "warning", 0)
+    const repointable: LintItem = {
+      id: "lint-repoint",
+      type: "broken-link",
+      severity: "warning",
+      page: "src.md",
+      detail: "Broken link: [[baz]] — did you mean [[baz-page]]?",
+      brokenTarget: "baz",
+      suggestedTarget: "baz-page",
+      createdAt: Date.now(),
+    }
+    const plainWarning2 = makeLintItem("plain-2.md", "warning", 1)
+
+    const grouped = groupLintResultsForDisplay([plainWarning, repointable, plainWarning2])
+
+    expect(grouped.warnings.map((i) => i.page)).toEqual([
+      "src.md", // repointable first
+      "plain-1.md", // remaining order preserved
+      "plain-2.md",
+    ])
   })
 })
 
