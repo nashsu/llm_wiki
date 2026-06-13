@@ -47,6 +47,13 @@ const SEARCH_PROVIDERS = [
     urlPlaceholder: "https://search.example.com",
     needsApiKey: false,
   },
+  {
+    id: "brave",
+    label: "Brave Search",
+    hint: "Independent index with privacy focus (api.search.brave.com)",
+    keyPlaceholder: "Enter your Brave Search API subscription token",
+    needsApiKey: true,
+  },
 ] as const
 
 export function WebSearchSection() {
