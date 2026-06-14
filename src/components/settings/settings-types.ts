@@ -34,6 +34,12 @@ export interface SettingsDraft {
   embeddingOverlapChunkChars: number | undefined
   /** Extra HTTP headers to send on every embedding request. Empty = none. */
   embeddingExtraHeaders: Record<string, string>
+  /**
+   * Search relevance threshold. Results with scores below this value
+   * are filtered out before being sent to the LLM.
+   * Empty = use backend defaults (15.0 for keyword, 0.015 for RRF).
+   */
+  embeddingSearchRelevanceThreshold: number | undefined
 
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
