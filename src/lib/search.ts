@@ -24,6 +24,8 @@ interface BackendSearchResponse {
   results: SearchResult[]
   tokenHits: number
   vectorHits: number
+  /** Whether any result exceeds the high relevance threshold. */
+  hasHighRelevance: boolean
 }
 
 const STOP_WORDS = new Set([
@@ -43,7 +45,7 @@ export function tokenizeQuery(query: string): string[] {
 
   const tokens: string[] = []
   for (const token of rawTokens) {
-    const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf]/.test(token)
+    const hasCJK = /[一-鿿㐀-䶿]/.test(token)
     if (hasCJK && token.length > 2) {
       const chars = [...token]
       for (let i = 0; i < chars.length - 1; i++) tokens.push(chars[i] + chars[i + 1])
