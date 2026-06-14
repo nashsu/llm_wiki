@@ -124,6 +124,18 @@ interface EmbeddingConfig {
    * are ignored — they're managed by the embedding client itself.
    */
   extraHeaders?: Record<string, string>
+  /**
+   * Search relevance threshold. Results with scores below this value
+   * are filtered out before being sent to the LLM. This prevents the
+   * LLM from piecing together answers from irrelevant fragments when
+   * the knowledge base lacks content for a query.
+   *
+   * - Keyword mode: scores range from 0 to ~450 (filename exact = 200, phrase in title = 50, etc.)
+   * - Hybrid/RRF mode: scores range from ~0.015 to ~0.033
+   *
+   * Undefined = use backend defaults (15.0 for keyword, 0.015 for RRF).
+   */
+  searchRelevanceThreshold?: number
 }
 
 /**
