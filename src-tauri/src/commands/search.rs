@@ -22,11 +22,11 @@ const SNIPPET_CONTEXT: usize = 80;
 const SEARCH_EMBEDDING_TIMEOUT_SECS: u64 = 8;
 const MAX_SEARCH_FILES: usize = 10_000;
 
-// Minimum score thresholds for filtering low-relevance results
+// Default minimum score thresholds for filtering low-relevance results
 // Keyword mode: at least one content phrase hit (20) or multiple title token matches
-const MIN_KEYWORD_SCORE: f64 = 15.0;
+const DEFAULT_MIN_KEYWORD_SCORE: f64 = 15.0;
 // Hybrid/RRF mode: results with very low fusion scores are not useful
-const MIN_RRF_SCORE: f64 = 0.015;
+const DEFAULT_MIN_RRF_SCORE: f64 = 0.015;
 // Threshold for considering a result "highly relevant" (used in response metadata)
 const HIGH_RELEVANCE_SCORE: f64 = 50.0;
 
@@ -79,6 +79,11 @@ pub struct SearchEmbeddingConfig {
     /// by the client.
     #[serde(default)]
     pub extra_headers: Option<BTreeMap<String, String>>,
+    /// Search relevance threshold. Results with scores below this value
+    /// are filtered out before being sent to the LLM.
+    /// Undefined = use backend defaults (15.0 for keyword, 0.015 for RRF).
+    #[serde(default)]
+    pub search_relevance_threshold: Option<f64>,
 }
 
 #[tauri::command]
@@ -92,13 +97,14 @@ pub async fn search_project(
 ) -> Result<ProjectSearchResponse, String> {
     run_guarded_async("search_project", async move {
         let query_embedding =
-            resolve_query_embedding(&query, query_embedding, embedding_config).await?;
+            resolve_query_embedding(&query, query_embedding, embedding_config.as_ref()).await?;
         search_project_inner(
             project_path,
             query,
             top_k.unwrap_or(DEFAULT_RESULTS),
             include_content.unwrap_or(false),
             query_embedding,
+            embedding_config.as_ref().and_then(|c| c.search_relevance_threshold),
         )
         .await
     })
@@ -108,7 +114,7 @@ pub async fn search_project(
 pub async fn resolve_query_embedding(
     query: &str,
     explicit_embedding: Option<Vec<f32>>,
-    embedding_config: Option<SearchEmbeddingConfig>,
+    embedding_config: Option<&SearchEmbeddingConfig>,
 ) -> Result<Option<Vec<f32>>, String> {
     if let Some(embedding) = explicit_embedding {
         return validate_query_embedding(embedding).map(Some);
@@ -119,7 +125,7 @@ pub async fn resolve_query_embedding(
     if !cfg.enabled || cfg.endpoint.trim().is_empty() || cfg.model.trim().is_empty() {
         return Ok(None);
     }
-    match fetch_embedding(query, &cfg).await {
+    match fetch_embedding(query, cfg).await {
         Ok(embedding) => validate_query_embedding(embedding).map(Some),
         Err(err) => {
             eprintln!("[Search] embedding disabled for this request: {err}");
@@ -144,6 +150,7 @@ pub async fn search_project_inner(
     top_k: usize,
     include_content: bool,
     query_embedding: Option<Vec<f32>>,
+    relevance_threshold: Option<f64>,
 ) -> Result<ProjectSearchResponse, String> {
     if query.trim().is_empty() {
         return Err("query is required".to_string());
@@ -256,7 +263,8 @@ pub async fn search_project_inner(
                 .then_with(|| a.path.cmp(&b.path))
         });
         // Filter out low-relevance results before truncation
-        results.retain(|r| r.score >= MIN_KEYWORD_SCORE);
+        let min_score = relevance_threshold.unwrap_or(DEFAULT_MIN_KEYWORD_SCORE);
+        results.retain(|r| r.score >= min_score);
         let has_high_relevance = results.iter().any(|r| r.score >= HIGH_RELEVANCE_SCORE);
         results.truncate(limit);
         return Ok(ProjectSearchResponse {
@@ -277,7 +285,8 @@ pub async fn search_project_inner(
             .then_with(|| a.path.cmp(&b.path))
     });
     // Filter out low-relevance results before truncation
-    results.retain(|r| r.score >= MIN_RRF_SCORE);
+    let min_rrf = relevance_threshold.unwrap_or(DEFAULT_MIN_RRF_SCORE);
+    results.retain(|r| r.score >= min_rrf);
     let has_high_relevance = results.iter().any(|r| r.score >= 0.025); // ~top 3 in RRF
     results.truncate(limit);
 
@@ -1121,6 +1130,7 @@ mod tests {
             model: "gemini-embedding-001".to_string(),
             output_dimensionality: Some(768),
             extra_headers: None,
+            search_relevance_threshold: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);
@@ -1143,6 +1153,7 @@ mod tests {
             model: "doubao-embedding-text-240715".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            search_relevance_threshold: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1169,6 +1180,7 @@ mod tests {
             model: "doubao-embedding-vision".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            search_relevance_threshold: None,
         };
 
         assert_eq!(
@@ -1192,6 +1204,7 @@ mod tests {
             model: "doubao-embedding-text-240715".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            search_relevance_threshold: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1227,6 +1240,7 @@ mod tests {
             model: "doubao-embedding-vision".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            search_relevance_threshold: None,
         };
 
         assert!(is_doubao_multimodal_embedding_config(&cfg));
@@ -1368,6 +1382,7 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1394,6 +1409,7 @@ mod tests {
             "默会知识".into(),
             20,
             false,
+            None,
             None,
         )
         .await
@@ -1425,6 +1441,7 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1455,12 +1472,56 @@ mod tests {
             20,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
 
         // Should not include the unrelated page
         assert!(!out.results.iter().any(|r| r.path.contains("unrelated")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_respects_custom_threshold() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/concepts/medium.md",
+            "---\ntitle: Medium Match\n---\n\n# Medium\n\nThis page has insurance mentioned twice. Insurance is important.",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/high.md",
+            "---\ntitle: Insurance Guide\n---\n\n# Insurance Guide\n\nComprehensive guide to insurance.",
+        );
+
+        // With default threshold (15.0), both should pass
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "insurance".into(),
+            20,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(out.results.len() >= 1);
+
+        // With high threshold (100.0), only exact title match should pass
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "insurance".into(),
+            20,
+            false,
+            None,
+            Some(100.0),
+        )
+        .await
+        .unwrap();
+        // Only "Insurance Guide" with title match should pass
+        assert!(out.results.iter().all(|r| r.score >= 100.0));
         let _ = fs::remove_dir_all(root);
     }
 }
