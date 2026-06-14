@@ -22,6 +22,14 @@ const SNIPPET_CONTEXT: usize = 80;
 const SEARCH_EMBEDDING_TIMEOUT_SECS: u64 = 8;
 const MAX_SEARCH_FILES: usize = 10_000;
 
+// Minimum score thresholds for filtering low-relevance results
+// Keyword mode: at least one content phrase hit (20) or multiple title token matches
+const MIN_KEYWORD_SCORE: f64 = 15.0;
+// Hybrid/RRF mode: results with very low fusion scores are not useful
+const MIN_RRF_SCORE: f64 = 0.015;
+// Threshold for considering a result "highly relevant" (used in response metadata)
+const HIGH_RELEVANCE_SCORE: f64 = 50.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchImageRef {
@@ -51,6 +59,9 @@ pub struct ProjectSearchResponse {
     pub results: Vec<ProjectSearchResult>,
     pub token_hits: usize,
     pub vector_hits: usize,
+    /// Whether any result exceeds the high relevance threshold.
+    /// Frontend can use this to decide if RAG context is sufficient.
+    pub has_high_relevance: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,11 +255,15 @@ pub async fn search_project_inner(
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.path.cmp(&b.path))
         });
+        // Filter out low-relevance results before truncation
+        results.retain(|r| r.score >= MIN_KEYWORD_SCORE);
+        let has_high_relevance = results.iter().any(|r| r.score >= HIGH_RELEVANCE_SCORE);
         results.truncate(limit);
         return Ok(ProjectSearchResponse {
             mode: "keyword".to_string(),
             token_hits: token_rank.len(),
             vector_hits,
+            has_high_relevance,
             results,
         });
     }
@@ -261,12 +276,16 @@ pub async fn search_project_inner(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.path.cmp(&b.path))
     });
+    // Filter out low-relevance results before truncation
+    results.retain(|r| r.score >= MIN_RRF_SCORE);
+    let has_high_relevance = results.iter().any(|r| r.score >= 0.025); // ~top 3 in RRF
     results.truncate(limit);
 
     Ok(ProjectSearchResponse {
         mode: search_mode(token_rank.is_empty(), vector_hits).to_string(),
         token_hits: token_rank.len(),
         vector_hits,
+        has_high_relevance,
         results,
     })
 }
@@ -530,10 +549,10 @@ fn is_query_separator(c: char) -> bool {
                 | '、'
                 | '；'
                 | '：'
-                | '“'
-                | '”'
-                | '‘'
-                | '’'
+                | '"'
+                | '"'
+                | '\''
+                | '\''
                 | '（'
                 | '）'
                 | '·'
@@ -1176,7 +1195,7 @@ mod tests {
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
-            "https://ark.cn-beijing.volces.com/api/v3/embeddings"
+            "https://ARK.cn-beijing.volces.com/api/v3/embeddings"
         );
 
         let vision = SearchEmbeddingConfig {
@@ -1357,6 +1376,7 @@ mod tests {
         assert_eq!(out.results[0].title, "Attention");
         assert!(out.results[0].title_match);
         assert!(out.results[0].score > 100.0);
+        assert!(out.has_high_relevance);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1381,6 +1401,7 @@ mod tests {
 
         assert_eq!(out.results[0].title, "默会知识");
         assert!(out.results[0].snippet.contains("默会知识"));
+        assert!(out.has_high_relevance);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1409,6 +1430,37 @@ mod tests {
         .unwrap();
 
         assert_eq!(out.results[0].title, "Phrase");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn keyword_search_filters_low_relevance_results() {
+        let root = tmp_project();
+        // Page with only a single token match (low score)
+        write_page(
+            &root,
+            "wiki/concepts/weak.md",
+            "---\ntitle: Weak Match\n---\n\n# Weak\n\nThis page mentions insurance once.",
+        );
+        // Page with no relevant content at all (should be filtered)
+        write_page(
+            &root,
+            "wiki/concepts/unrelated.md",
+            "---\ntitle: Unrelated\n---\n\n# Unrelated\n\nThis page is about cooking recipes.",
+        );
+
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "insurance".into(),
+            20,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Should not include the unrelated page
+        assert!(!out.results.iter().any(|r| r.path.contains("unrelated")));
         let _ = fs::remove_dir_all(root);
     }
 }
