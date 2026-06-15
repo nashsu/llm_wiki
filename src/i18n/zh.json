@@ -64,9 +64,10 @@
     "creating": "创建中...",
     "errorNameRequired": "名称和路径不能为空",
     "errorLanguageRequired": "请选择 AI 输出语言",
+    "requiredHint": "填写项目名称、选择输出语言和父目录后即可创建项目。",
+    "requiredMarker": "*",
     "browse": "选择父目录",
     "aiOutputLanguage": "AI 输出语言",
-    "aiOutputLanguageRequired": "*",
     "aiOutputLanguageHint": "所有 AI 生成的内容（Wiki 页面、聊天回复、Research 结果）都将使用此语言。您可以在设置 → 输出 中稍后更改。",
     "pickLanguage": "选择语言..."
   },

@@ -64,9 +64,10 @@
     "creating": "Creating...",
     "errorNameRequired": "Name and path are required",
     "errorLanguageRequired": "Please pick an AI output language",
+    "requiredHint": "Enter a name, pick a language, and choose a parent directory to create the project.",
+    "requiredMarker": "*",
     "browse": "Select Parent Directory",
     "aiOutputLanguage": "AI Output Language",
-    "aiOutputLanguageRequired": "*",
     "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Settings → Output.",
     "pickLanguage": "Pick a language…"
   },
