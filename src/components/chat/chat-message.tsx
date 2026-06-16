@@ -188,21 +188,24 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     const pp = normalizePath(project.path)
     setSaving(true)
     try {
-      // Generate a unique filename for this save.
-      // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
-      // (so CJK titles don't collapse to empty) and the HHMMSS
-      // timestamp suffix guarantees same-day saves stay distinct.
-      const firstLine = content.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
-      const { date, fileName } = makeQueryFileName(title)
-      const filePath = `${pp}/wiki/queries/${fileName}`
-
       // Strip hidden sources comment and thinking blocks from content
+      // BEFORE extracting the title — reasoning models (e.g. deepseek-r1)
+      // may start their reply with <think>…</think>, which would pollute
+      // the saved title if we extracted first and cleaned second.
       const cleanContent = content
         .replace(/<!--\s*sources:.*?-->/g, "")
         .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
         .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "")
         .trimEnd()
+
+      // Generate a unique filename for this save.
+      // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
+      // (so CJK titles don't collapse to empty) and the HHMMSS
+      // timestamp suffix guarantees same-day saves stay distinct.
+      const firstLine = cleanContent.split("\n")[0].replace(/^#+\s*/, "").trim()
+      const title = firstLine.slice(0, 60) || "Saved Query"
+      const { date, fileName } = makeQueryFileName(title)
+      const filePath = `${pp}/wiki/queries/${fileName}`
 
       const frontmatter = [
         "---",
