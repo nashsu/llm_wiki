@@ -137,8 +137,8 @@ export async function webSearch(
   if (resolved.provider === "none") {
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
-  if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a different provider.")
+  if ((resolved.provider === "tavily" || resolved.provider === "serpapi" || resolved.provider === "serper") && !resolved.apiKey) {
+    throw new Error("Web search not configured. Add a Tavily, SerpApi, or Serper API key in Settings, or select a different provider.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
@@ -156,6 +156,8 @@ export async function webSearch(
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     case "ollama":
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
+    case "serper":
+      return serperSearch(query, resolved.apiKey, maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -377,6 +379,76 @@ function normalizeSerpApiResult(item: unknown): WebSearchResult {
     url,
     snippet: r.snippet ?? r.summary ?? r.description ?? "",
     source: hostnameFromUrl(url) || r.source || r.displayed_link || "",
+  }
+}
+
+async function serperSearch(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  // Serper (serper.dev) exposes a Google SERP API at https://google.serper.dev.
+  // Unlike Tavily/SerpApi it authenticates via an `X-API-KEY` header (not a
+  // Bearer token and not a query param), and the query + options go in the
+  // POST body rather than the URL. Routed through the Tauri HTTP plugin like
+  // the other providers so CORS-agnostic endpoints keep working.
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-KEY": apiKey,
+      },
+      body: JSON.stringify({
+        q: query,
+        num: maxResults,
+        gl: "us",
+        hl: "en",
+      }),
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching google.serper.dev. Check your connectivity and whether the Serper API key is still valid.",
+      )
+    }
+    throw err
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error")
+    throw new Error(`Serper search failed (${response.status}): ${errorText}`)
+  }
+
+  const data = await response.json()
+  return normalizeSerperResults(data, maxResults)
+}
+
+function normalizeSerperResults(data: { organic?: unknown[] }, maxResults: number): WebSearchResult[] {
+  return (data.organic ?? [])
+    .slice(0, maxResults)
+    .map((item) => normalizeSerperResult(item))
+    .filter((item) => item.url.length > 0)
+}
+
+function normalizeSerperResult(item: unknown): WebSearchResult {
+  const r = item as {
+    title?: string
+    link?: string
+    url?: string
+    snippet?: string
+    description?: string
+    source?: string
+    imageUrl?: string
+  }
+  const url = r.link ?? r.url ?? r.imageUrl ?? ""
+  return {
+    title: r.title ?? "Untitled",
+    url,
+    snippet: r.snippet ?? r.description ?? "",
+    source: hostnameFromUrl(url) || r.source || "",
   }
 }
 

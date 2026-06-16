@@ -155,7 +155,7 @@ describe("webSearch", () => {
     await expect(webSearch("x", { provider: "none", apiKey: "" }, 5))
       .rejects.toThrow("Select a search provider")
     await expect(webSearch("x", { provider: "serpapi", apiKey: "" }, 5))
-      .rejects.toThrow("Tavily or SerpApi API key")
+      .rejects.toThrow("Tavily, SerpApi, or Serper API key")
     await expect(webSearch("x", { provider: "searxng", apiKey: "" }, 5))
       .rejects.toThrow("SearXNG instance URL")
   })
@@ -289,5 +289,57 @@ describe("webSearch", () => {
       },
       5,
     )).rejects.toThrow("Check your Ollama API key")
+  })
+
+  it("calls Serper Google Search and normalizes organic results", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      organic: [
+        { title: "Serper result", link: "https://www.serp.example/page", snippet: "Snippet" },
+        { title: "Second", link: "https://docs.example/item", snippet: "More" },
+      ],
+    }))
+
+    const out = await webSearch("serper test", { provider: "serper", apiKey: "ser-key" }, 1)
+    const [url, init] = fetchMock.mock.calls[0]
+
+    expect(url).toBe("https://google.serper.dev/search")
+    expect(init).toEqual(expect.objectContaining({ method: "POST" }))
+    // Serper authenticates via X-API-KEY header, NOT Bearer.
+    expect((init?.headers as Record<string, string>)["X-API-KEY"]).toBe("ser-key")
+    // Query goes in the JSON body (gl/hl defaults), not query string.
+    expect(JSON.parse(String(init?.body))).toEqual({ q: "serper test", num: 1, gl: "us", hl: "en" })
+    expect(out).toEqual([
+      { title: "Serper result", url: "https://www.serp.example/page", snippet: "Snippet", source: "serp.example" },
+    ])
+  })
+
+  it("uses Serper provider-specific config and requires a key", async () => {
+    // Provider-specific override should be picked up over the top-level apiKey.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ organic: [] }))
+
+    await webSearch(
+      "config test",
+      {
+        provider: "serper",
+        apiKey: "",
+        providerConfigs: { serper: { apiKey: "override-key" } },
+      },
+      5,
+    )
+    const init = fetchMock.mock.calls[0][1]
+    expect((init?.headers as Record<string, string>)["X-API-KEY"]).toBe("override-key")
+
+    // No key anywhere → configuration error.
+    await expect(webSearch("x", { provider: "serper", apiKey: "" }, 5))
+      .rejects.toThrow("Serper API key")
+    expect(hasConfiguredSearchProvider({ provider: "serper", apiKey: "k" })).toBe(true)
+    expect(hasConfiguredSearchProvider({ provider: "serper", apiKey: "" })).toBe(false)
+  })
+
+  it("surfaces Serper HTTP errors", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: "Invalid API key" }, { status: 401 }))
+
+    await expect(webSearch("x", { provider: "serper", apiKey: "bad" }, 5))
+      .rejects.toThrow("Serper search failed (401)")
   })
 })
