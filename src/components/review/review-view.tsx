@@ -17,7 +17,8 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
+import { extractMissingEntityNames } from "@/lib/review-utils"
 import { useTranslation } from "react-i18next"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
@@ -171,33 +172,48 @@ export function ReviewView() {
       // fallback branch above) and actions that heuristically look like
       // a create instruction.
       //
-      // When affectedPages is populated (e.g. missing-page insights that
-      // list specific entity paths), create one page per affected path
-      // using entity/concept templates. Otherwise fall back to creating a
-      // single query page from the insight description.
+      // For `missing-page` insights, the entity/concept names that need a
+      // dedicated page live in the review TITLE (e.g.
+      // "缺失页面: CallMethod、StartFunc、Print"). `affectedPages` lists the
+      // EXISTING pages that reference the gap — NOT the pages to create — so
+      // it is used only as `related:` back-references. We create one page per
+      // parsed entity name. Everything else falls back to a single query page.
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
         : action
       if (item) {
         try {
           const { date } = makeQueryFileName("temp") // just need the date
-          const createdPaths: string[] = []
 
-          if (item.affectedPages && item.affectedPages.length > 0) {
-            // ── Multi-page creation mode ──────────────────────────────
-            for (const pagePath of item.affectedPages) {
-              const normalized = normalizePath(pagePath)
-              const wikiRelative = normalized.startsWith("wiki/")
-                ? normalized
-                : normalized.startsWith(`${pp}/wiki/`)
-                  ? normalized.slice(pp.length + 1)
-                  : `wiki/${normalized}`
+          // Parse missing entity names from the title. Only applies to
+          // missing-page insights; other types keep the single-page behavior.
+          const entityNames =
+            item.type === "missing-page" ? extractMissingEntityNames(item.title) : []
 
-              const fullPath = wikiRelative.startsWith(pp)
-                ? wikiRelative
-                : `${pp}/${wikiRelative}`
+          if (entityNames.length > 0) {
+            // ── Multi-entity creation mode ────────────────────────────
+            // Pick a directory once for the whole insight: missing-page
+            // defaults to entities; if the action/type hints "concept",
+            // use concepts instead.
+            const pageType = detectPageType(realAction, item.type) === "concept" ? "concept" : "entity"
+            const dir = pageType === "entity" ? "entities" : "concepts"
 
-              // Skip if page already exists
+            // `affectedPages` become wikilink back-references (the pages that
+            // referenced these missing entities).
+            const relatedLinks = (item.affectedPages ?? [])
+              .map((p) => p.split("/").pop()?.replace(/\.md$/, "") ?? "")
+              .filter((p) => p.length > 0)
+            const relatedYaml = relatedLinks.length > 0
+              ? relatedLinks.map((r) => `"[[${r}]]"`).join(", ")
+              : ""
+
+            const createdPaths: string[] = []
+            for (const entityName of entityNames) {
+              const slug = makeQuerySlug(entityName)
+              const wikiRelative = `wiki/${dir}/${slug}.md`
+              const fullPath = `${pp}/${wikiRelative}`
+
+              // Skip if page already exists — never overwrite.
               try {
                 await readFile(fullPath)
                 continue
@@ -205,37 +221,30 @@ export function ReviewView() {
                 // File doesn't exist — proceed to create
               }
 
-              // Extract entity info from path
-              const pathParts = wikiRelative.replace(/^wiki\//, "").split("/")
-              const rawFileName = pathParts[pathParts.length - 1]
-              const entityName = rawFileName.replace(/\.md$/, "")
-              const dir = pathParts.length > 1 ? pathParts[0] : "concepts"
-              const pageType = dir === "entities" ? "entity" : "concept"
-
-              // Extract entity-specific info from insight description
               const entityInfo = extractEntityInfo(entityName, item.description)
-
-              const frontmatter = `---\ntype: ${pageType}\ntitle: "${entityName.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
+              const frontmatter = `---\ntype: ${pageType}\ntitle: "${entityName.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: [${relatedYaml}]\n---\n\n`
               const body = `# ${entityName}\n\n${entityInfo || `TODO: 待补充 ${entityName} 的详细内容。\n\n> 此页面由洞察自动生成，请根据实际需求完善内容。`}\n`
-              const pageContent = frontmatter + body
-              await writeFile(fullPath, pageContent)
+              await writeFile(fullPath, frontmatter + body)
               createdPaths.push(wikiRelative)
             }
 
+            if (createdPaths.length === 0) {
+              // Every entity page already existed — nothing to create.
+              resolveItem(id, "Already exists")
+              return
+            }
+
             // Update index for all created pages
-            if (createdPaths.length > 0) {
+            {
               const indexPath = `${pp}/wiki/index.md`
               let indexContent = ""
               try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
+              const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
 
               for (const wikiRel of createdPaths) {
-                const parts = wikiRel.replace(/^wiki\//, "").split("/")
-                const dir = parts.length > 1 ? parts[0] : "concepts"
-                const linkTarget = parts[parts.length - 1].replace(/\.md$/, "")
-                const entityName = linkTarget
-                const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
-                const entry = `- [[${dir}/${linkTarget}|${entityName}]]`
-
+                const linkTarget = wikiRel.replace(/^wiki\//, "").replace(/\.md$/, "")
+                const label = linkTarget.split("/").pop() ?? linkTarget
+                const entry = `- [[${linkTarget}|${label}]]`
                 if (indexContent.includes(sectionHeader)) {
                   indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
                 } else {
@@ -255,18 +264,16 @@ export function ReviewView() {
             // Refresh and open first created page
             const tree = await listDirectory(pp)
             setFileTree(tree)
-            if (createdPaths.length > 0) {
-              const firstPath = createdPaths[0].startsWith(pp) ? createdPaths[0] : `${pp}/${createdPaths[0]}`
-              try {
-                const firstContent = await readFile(firstPath)
-                useWikiStore.getState().openFileInPreview(firstPath, firstContent)
-              } catch {
-                // ignore
-              }
+            const firstPath = `${pp}/${createdPaths[0]}`
+            try {
+              const firstContent = await readFile(firstPath)
+              useWikiStore.getState().openFileInPreview(firstPath, firstContent)
+            } catch {
+              // ignore
             }
             useWikiStore.getState().bumpDataVersion()
 
-            resolveItem(id, `Created: ${createdPaths.map((p) => p.replace(/^wiki\//, "wiki/")).join(", ")}`)
+            resolveItem(id, `Created: ${createdPaths.join(", ")}`)
           } else {
             // ── Single-page creation mode (original behavior) ─────────
             const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
