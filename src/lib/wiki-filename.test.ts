@@ -5,7 +5,49 @@
  * into a single `-YYYY-MM-DD.md`. These tests pin the new policy.
  */
 import { describe, it, expect } from "vitest"
-import { makeQuerySlug, makeQueryFileName } from "./wiki-filename"
+import { makeQuerySlug, makeQueryFileName, deriveTitleFromQuestion } from "./wiki-filename"
+
+describe("deriveTitleFromQuestion", () => {
+  it("returns short questions unchanged (minus heading markers)", () => {
+    expect(deriveTitleFromQuestion("## InitSyncRange 是做什么的？")).toBe("InitSyncRange 是做什么的？")
+  })
+
+  it("collapses newlines and whitespace", () => {
+    expect(deriveTitleFromQuestion("第一行\n\n第二行")).toBe("第一行 第二行")
+  })
+
+  it("returns empty string for null/undefined/blank", () => {
+    expect(deriveTitleFromQuestion(undefined)).toBe("")
+    expect(deriveTitleFromQuestion(null)).toBe("")
+    expect(deriveTitleFromQuestion("   ")).toBe("")
+  })
+
+  it("strips image markdown so an image-only question yields no title", () => {
+    expect(deriveTitleFromQuestion("![screenshot](data:image/png;base64,AAAABBBBCCCC)")).toBe("")
+  })
+
+  it("keeps the text but drops the image when a question mixes both", () => {
+    const q = "这张图里的报错是什么意思？ ![err](data:image/png;base64,ZZZZ)"
+    expect(deriveTitleFromQuestion(q)).toBe("这张图里的报错是什么意思？")
+  })
+
+  it("summarizes an over-long question at a clause boundary with an ellipsis", () => {
+    const long =
+      "请帮我详细分析一下这个分布式同步系统的整体架构设计，包括它的数据一致性保证机制、节点之间的容错策略以及高并发场景下的整体性能优化方案。"
+    const title = deriveTitleFromQuestion(long)
+    expect(title.endsWith("…")).toBe(true)
+    // Must be a clean cut, not a mid-word hard slice with trailing punctuation.
+    expect(title).not.toMatch(/[，。、；]…$/)
+    expect(Array.from(title).length).toBeLessThanOrEqual(61) // 60 budget + ellipsis
+  })
+
+  it("falls back to a hard cut when there is no boundary in the budget", () => {
+    const long = "a".repeat(120)
+    const title = deriveTitleFromQuestion(long)
+    expect(title.endsWith("…")).toBe(true)
+    expect(Array.from(title).length).toBe(61)
+  })
+})
 
 describe("makeQuerySlug", () => {
   it("ASCII title is lowercased and hyphenated", () => {

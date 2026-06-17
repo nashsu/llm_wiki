@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useChatStore } from "@/stores/chat-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
 import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
@@ -18,7 +19,7 @@ import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
 import { normalizePath, getFileName } from "@/lib/path-utils"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, deriveTitleFromQuestion } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { messageImageToDataUrl } from "@/lib/chat-image-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -74,6 +75,21 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
   const isAssistant = message.role === "assistant"
   const [hovered, setHovered] = useState(false)
 
+  // Find the preceding user question for this assistant message (for wiki title)
+  const userQuestion = useChatStore((s) => {
+    if (!isAssistant) return undefined
+    const messages = s.messages
+    const msgIdx = messages.findIndex((m) => m.id === message.id)
+    if (msgIdx < 0) return undefined
+    // Search backwards for the nearest user message in the same conversation
+    for (let i = msgIdx - 1; i >= 0; i--) {
+      if (messages[i].conversationId === message.conversationId && messages[i].role === "user") {
+        return messages[i].content
+      }
+    }
+    return undefined
+  })
+
   return (
     <div
       className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
@@ -124,7 +140,7 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessage
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
             <CopyButton content={message.content} />
-            <SaveToWikiButton content={message.content} visible={true} />
+            <SaveToWikiButton content={message.content} question={userQuestion} visible={true} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
@@ -177,7 +193,7 @@ function CopyButton({ content }: { content: string }) {
   )
 }
 
-function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
+function SaveToWikiButton({ content, question, visible }: { content: string; question?: string; visible: boolean }) {
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const [saved, setSaved] = useState(false)
@@ -202,8 +218,13 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       // See `src/lib/wiki-filename.ts` — the slug is Unicode-aware
       // (so CJK titles don't collapse to empty) and the HHMMSS
       // timestamp suffix guarantees same-day saves stay distinct.
+      // Prefer the user's question as title — summarized if long and with
+      // image markdown stripped (see deriveTitleFromQuestion). Fall back to
+      // the first line of the answer when no usable question text exists
+      // (e.g. an image-only question).
+      const titleFromQuestion = deriveTitleFromQuestion(question)
       const firstLine = cleanContent.split("\n")[0].replace(/^#+\s*/, "").trim()
-      const title = firstLine.slice(0, 60) || "Saved Query"
+      const title = titleFromQuestion || firstLine.slice(0, 60) || "Saved Query"
       const { date, fileName } = makeQueryFileName(title)
       const filePath = `${pp}/wiki/queries/${fileName}`
 

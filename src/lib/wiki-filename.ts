@@ -27,6 +27,61 @@
  * conversations with the same topic, or repeated "Untitled" saves).
  */
 
+/**
+ * Maximum display length for a saved-query title (the human-readable
+ * `title:` frontmatter / index label — distinct from the 50-char slug).
+ */
+const TITLE_MAX_LEN = 60
+
+/**
+ * Derive a clean, human-readable title from a user's question.
+ *
+ * The question is the best title source (the answer's first line is often
+ * boilerplate or — with reasoning models — polluted by <think> output). But
+ * raw question text needs cleaning:
+ *   - strip leading markdown heading markers
+ *   - drop image markdown (`![alt](data:image/png;base64,…)` and bare
+ *     `data:` URIs) so an image-only or image-heavy question doesn't leak a
+ *     giant base64 blob into the title
+ *   - collapse whitespace/newlines
+ *
+ * When the cleaned text is longer than `TITLE_MAX_LEN`, we *summarize* by
+ * cutting at the nearest sentence/clause boundary before the limit (falling
+ * back to a word boundary) and appending an ellipsis — rather than a hard
+ * mid-word slice, which reads as garbled.
+ *
+ * Returns "" when nothing usable remains (e.g. an image-only question), so
+ * callers can fall back to the answer content.
+ */
+export function deriveTitleFromQuestion(question: string | null | undefined): string {
+  if (!question) return ""
+
+  const cleaned = question
+    .replace(/^#+\s*/, "")
+    // Image markdown: ![alt](url) — including long base64 data URIs.
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    // Bare data: URIs that slipped in without markdown wrapping.
+    .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!cleaned) return ""
+  if (Array.from(cleaned).length <= TITLE_MAX_LEN) return cleaned
+
+  // Too long — summarize at a natural boundary within the limit.
+  const head = Array.from(cleaned).slice(0, TITLE_MAX_LEN).join("")
+  // Prefer the last sentence/clause terminator, then the last space.
+  const boundary = Math.max(
+    head.lastIndexOf("。"), head.lastIndexOf("！"), head.lastIndexOf("？"),
+    head.lastIndexOf("，"), head.lastIndexOf("、"), head.lastIndexOf("；"),
+    head.lastIndexOf("."), head.lastIndexOf("!"), head.lastIndexOf("?"),
+    head.lastIndexOf(","), head.lastIndexOf(";"), head.lastIndexOf(" "),
+  )
+  // Only honor a boundary that isn't uselessly early (keep ≥ half the budget).
+  const cut = boundary >= TITLE_MAX_LEN / 2 ? head.slice(0, boundary) : head
+  return cut.replace(/[\s、，；,;.。!！?？]+$/, "").trim() + "…"
+}
+
 /** Produce just the slug — exported for tests / callers that want
  *  to reuse it in places like the index.md wikilink target. */
 export function makeQuerySlug(title: string): string {
