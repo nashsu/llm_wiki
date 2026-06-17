@@ -17,7 +17,8 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
+import { extractMissingEntityNames } from "@/lib/review-utils"
 import { useTranslation } from "react-i18next"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
@@ -166,55 +167,155 @@ export function ReviewView() {
       (action.startsWith("__create_page__:") || actionLooksLikeCreate(action))
       && project
     ) {
-      // Create a wiki page from the review item's content. Accepts both
+      // Create wiki pages from the review item's content. Accepts both
       // the `__create_page__:` sentinel (forced via the "no search API"
       // fallback branch above) and actions that heuristically look like
       // a create instruction.
+      //
+      // For `missing-page` insights, the entity/concept names that need a
+      // dedicated page live in the review TITLE (e.g.
+      // "缺失页面: CallMethod、StartFunc、Print"). `affectedPages` lists the
+      // EXISTING pages that reference the gap — NOT the pages to create — so
+      // it is used only as `related:` back-references. We create one page per
+      // parsed entity name. Everything else falls back to a single query page.
       const realAction = action.startsWith("__create_page__:")
         ? action.slice("__create_page__:".length)
         : action
       if (item) {
         try {
-          const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
-          const { date, fileName } = makeQueryFileName(title)
+          const { date } = makeQueryFileName("temp") // just need the date
 
-          // Determine page type from review type or action text
-          const pageType = detectPageType(realAction, item.type)
-          const dir = pageType === "query" ? "queries" : pageType === "entity" ? "entities" : pageType === "concept" ? "concepts" : "queries"
-          const filePath = `${pp}/wiki/${dir}/${fileName}`
+          // Parse missing entity names from the title. Only applies to
+          // missing-page insights; other types keep the single-page behavior.
+          const entityNames =
+            item.type === "missing-page" ? extractMissingEntityNames(item.title) : []
 
-          const frontmatter = `---\ntype: ${pageType}\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
-          const body = `# ${title}\n\n${item.description}\n`
-          const pageContent = frontmatter + body
-          await writeFile(filePath, pageContent)
+          if (entityNames.length > 0) {
+            // ── Multi-entity creation mode ────────────────────────────
+            // Pick a directory once for the whole insight: missing-page
+            // defaults to entities; if the action/type hints "concept",
+            // use concepts instead.
+            const pageType = detectPageType(realAction, item.type) === "concept" ? "concept" : "entity"
+            const dir = pageType === "entity" ? "entities" : "concepts"
 
-          // Update index
-          const indexPath = `${pp}/wiki/index.md`
-          let indexContent = ""
-          try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
-          const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
-          const linkTarget = fileName.replace(/\.md$/, "")
-          const entry = `- [[${dir}/${linkTarget}|${title}]]`
-          if (indexContent.includes(sectionHeader)) {
-            indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
+            // `affectedPages` become wikilink back-references (the pages that
+            // referenced these missing entities).
+            const relatedLinks = (item.affectedPages ?? [])
+              .map((p) => p.split("/").pop()?.replace(/\.md$/, "") ?? "")
+              .filter((p) => p.length > 0)
+            const relatedYaml = relatedLinks.length > 0
+              ? relatedLinks.map((r) => `"[[${r}]]"`).join(", ")
+              : ""
+
+            const createdPaths: string[] = []
+            for (const entityName of entityNames) {
+              const slug = makeQuerySlug(entityName)
+              const wikiRelative = `wiki/${dir}/${slug}.md`
+              const fullPath = `${pp}/${wikiRelative}`
+
+              // Skip if page already exists — never overwrite.
+              try {
+                await readFile(fullPath)
+                continue
+              } catch {
+                // File doesn't exist — proceed to create
+              }
+
+              const entityInfo = extractEntityInfo(entityName, item.description)
+              const frontmatter = `---\ntype: ${pageType}\ntitle: "${entityName.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: [${relatedYaml}]\n---\n\n`
+              const body = `# ${entityName}\n\n${entityInfo || `TODO: 待补充 ${entityName} 的详细内容。\n\n> 此页面由洞察自动生成，请根据实际需求完善内容。`}\n`
+              await writeFile(fullPath, frontmatter + body)
+              createdPaths.push(wikiRelative)
+            }
+
+            if (createdPaths.length === 0) {
+              // Every entity page already existed — nothing to create.
+              resolveItem(id, "Already exists")
+              return
+            }
+
+            // Update index for all created pages
+            {
+              const indexPath = `${pp}/wiki/index.md`
+              let indexContent = ""
+              try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
+              const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
+
+              for (const wikiRel of createdPaths) {
+                const linkTarget = wikiRel.replace(/^wiki\//, "").replace(/\.md$/, "")
+                const label = linkTarget.split("/").pop() ?? linkTarget
+                const entry = `- [[${linkTarget}|${label}]]`
+                if (indexContent.includes(sectionHeader)) {
+                  indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
+                } else {
+                  indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
+                }
+              }
+              await writeFile(indexPath, indexContent)
+            }
+
+            // Log
+            const logPath = `${pp}/wiki/log.md`
+            let logContent = ""
+            try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
+            const logEntry = createdPaths.map((p) => `\`${p}\``).join(", ")
+            await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Created ${createdPaths.length} page(s) from review: ${logEntry}\n`)
+
+            // Refresh and open first created page
+            const tree = await listDirectory(pp)
+            setFileTree(tree)
+            const firstPath = `${pp}/${createdPaths[0]}`
+            try {
+              const firstContent = await readFile(firstPath)
+              useWikiStore.getState().openFileInPreview(firstPath, firstContent)
+            } catch {
+              // ignore
+            }
+            useWikiStore.getState().bumpDataVersion()
+
+            resolveItem(id, `Created: ${createdPaths.join(", ")}`)
           } else {
-            indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
+            // ── Single-page creation mode (original behavior) ─────────
+            const title = item.title.replace(/^(Create|Save|Add)[:\s]*/i, "").trim() || "Untitled"
+            const { fileName } = makeQueryFileName(title)
+
+            const pageType = detectPageType(realAction, item.type)
+            const dir = pageType === "query" ? "queries" : pageType === "entity" ? "entities" : pageType === "concept" ? "concepts" : "queries"
+            const filePath = `${pp}/wiki/${dir}/${fileName}`
+
+            const frontmatter = `---\ntype: ${pageType}\ntitle: "${title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
+            const body = `# ${title}\n\n${item.description}\n`
+            const pageContent = frontmatter + body
+            await writeFile(filePath, pageContent)
+
+            // Update index
+            const indexPath = `${pp}/wiki/index.md`
+            let indexContent = ""
+            try { indexContent = await readFile(indexPath) } catch { indexContent = "# Wiki Index\n" }
+            const sectionHeader = `## ${dir.charAt(0).toUpperCase() + dir.slice(1)}`
+            const linkTarget = fileName.replace(/\.md$/, "")
+            const entry = `- [[${dir}/${linkTarget}|${title}]]`
+            if (indexContent.includes(sectionHeader)) {
+              indexContent = indexContent.replace(new RegExp(`(${sectionHeader}\n)`), (match) => `${match}${entry}\n`)
+            } else {
+              indexContent = indexContent.trimEnd() + `\n\n${sectionHeader}\n${entry}\n`
+            }
+            await writeFile(indexPath, indexContent)
+
+            // Log
+            const logPath = `${pp}/wiki/log.md`
+            let logContent = ""
+            try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
+            await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Created ${pageType} page \`${fileName}\` from review\n`)
+
+            // Refresh
+            const tree = await listDirectory(pp)
+            setFileTree(tree)
+            useWikiStore.getState().openFileInPreview(filePath, pageContent)
+            useWikiStore.getState().bumpDataVersion()
+
+            resolveItem(id, `Created: wiki/${dir}/${fileName}`)
           }
-          await writeFile(indexPath, indexContent)
-
-          // Log
-          const logPath = `${pp}/wiki/log.md`
-          let logContent = ""
-          try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
-          await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Created ${pageType} page \`${fileName}\` from review\n`)
-
-          // Refresh
-          const tree = await listDirectory(pp)
-          setFileTree(tree)
-          useWikiStore.getState().openFileInPreview(filePath, pageContent)
-          useWikiStore.getState().bumpDataVersion()
-
-          resolveItem(id, `Created: wiki/${dir}/${fileName}`)
         } catch (err) {
           console.error("Failed to create page from review:", err)
           resolveItem(id, "Create failed")
@@ -421,4 +522,33 @@ function detectPageType(action: string, reviewType: string): string {
   if (reviewType === "suggestion") return "query"
   // Default: research/investigate/create → query
   return "query"
+}
+
+/**
+ * Extract entity-specific information from an insight description.
+ * Attempts to find sentences or phrases that mention the entity name,
+ * returning a cleaned-up excerpt for the page body.
+ */
+function extractEntityInfo(entityName: string, description: string): string {
+  if (!description) return ""
+
+  // Try to find sentences that mention the entity name (case-insensitive)
+  const sentences = description.split(/[。！？\.\!\?]/).filter((s) => s.trim().length > 0)
+  const relevant = sentences.filter((s) =>
+    s.toLowerCase().includes(entityName.toLowerCase())
+  )
+
+  if (relevant.length > 0) {
+    return relevant.map((s) => s.trim()).join("。") + "。"
+  }
+
+  // If no direct mention, try common patterns like "(如 A、B、C)" or "(如 A, B, C)"
+  const patternMatch = description.match(
+    new RegExp(`[（(]如[^)）]*${entityName}[^)）]*[)）]`, "i")
+  )
+  if (patternMatch) {
+    return patternMatch[0]
+  }
+
+  return ""
 }
