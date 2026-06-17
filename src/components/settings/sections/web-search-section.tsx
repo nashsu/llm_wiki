@@ -41,6 +41,13 @@ const SEARCH_PROVIDERS = [
     needsApiKey: true,
   },
   {
+    id: "serper",
+    label: "Serper",
+    hint: "Google search results via serper.dev",
+    keyPlaceholder: "Enter your Serper API key (serper.dev)",
+    needsApiKey: true,
+  },
+  {
     id: "searxng",
     label: "SearXNG",
     hint: "Self-hosted metasearch via the SearXNG JSON API",
