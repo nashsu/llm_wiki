@@ -36,6 +36,7 @@ import {
   type SavedImage,
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
+import { enrichWithWikilinks } from "@/lib/enrich-wikilinks"
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
@@ -482,6 +483,21 @@ export async function autoIngest(
   )
 }
 
+
+/**
+ * Determine whether a wiki page path should be skipped during wikilink enrichment.
+ * Skips: index, log, overview, source summary pages.
+ */
+export function shouldSkipWikilinkEnrichment(wpath: string): boolean {
+  return (
+    isLogPath(wpath) ||
+    isListingPath(wpath) ||
+    wpath === "wiki/index.md" ||
+    wpath === "wiki/overview.md" ||
+    wpath.startsWith("wiki/sources/")
+  )
+}
+
 async function autoIngestImpl(
   projectPath: string,
   sourcePath: string,
@@ -631,6 +647,25 @@ async function autoIngestImpl(
         err instanceof Error ? err.message : err,
       )
     }
+    // Enrich cached pages with [[wikilinks]] (cache-hit enrichment)
+    // This ensures older cached pages also get wikilinks for graph visibility.
+    if (cachedFiles.length > 0 && !signal?.aborted) {
+      try {
+        activity.updateItem(activityId, { detail: "Enriching cached wikilinks..." })
+        for (const wpath of cachedFiles) {
+          if (signal?.aborted) break
+          if (shouldSkipWikilinkEnrichment(wpath)) continue
+          try {
+            await enrichWithWikilinks(pp, `${pp}/${wpath}`, llmConfig, signal)
+          } catch (err) {
+            console.warn(`[ingest:wikilinks] cache enrichment failed for ${wpath}:`, err instanceof Error ? err.message : err)
+          }
+        }
+      } catch (err) {
+        console.warn(`[ingest:wikilinks] cache enrichment pass failed:`, err instanceof Error ? err.message : err)
+      }
+    }
+
     activity.updateItem(activityId, {
       status: "done",
       detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
@@ -1125,12 +1160,31 @@ async function autoIngestImpl(
     )
   }
 
-  // ── Step 6: Generate embeddings (if enabled) ───────────────
+  // ── Step 6: Enrich wiki pages with [[wikilinks]] ────────────
+  // Post-save enrichment: ask LLM to identify terms that should become
+  // [[wikilinks]] pointing to existing wiki pages. This ensures the graph
+  // builder can discover cross-references between pages.
+  // Must run BEFORE embeddings so that embeddings reflect the final content.
+  if (writtenPaths.length > 0 && !signal?.aborted) {
+    activity.updateItem(activityId, { detail: "Enriching wikilinks..." })
+    for (const wpath of writtenPaths) {
+      if (signal?.aborted) break
+      if (shouldSkipWikilinkEnrichment(wpath)) continue
+      try {
+        await enrichWithWikilinks(pp, `${pp}/${wpath}`, llmConfig, signal)
+      } catch (err) {
+        console.warn(`[ingest:wikilinks] enrichment failed for ${wpath}:`, err instanceof Error ? err.message : err)
+      }
+    }
+  }
+
+  // ── Step 7: Generate embeddings (if enabled) ───────────────
   const embCfg = useWikiStore.getState().embeddingConfig
-  if (embCfg.enabled && embCfg.model && writtenPaths.length > 0) {
+  if (embCfg.enabled && embCfg.model && writtenPaths.length > 0 && !signal?.aborted) {
     try {
       const { embedPage } = await import("@/lib/embedding")
       for (const wpath of writtenPaths) {
+        if (signal?.aborted) break
         const pageId = wpath.split("/").pop()?.replace(/\.md$/, "") ?? ""
         if (!pageId || ["index", "log", "overview"].includes(pageId)) continue
         try {

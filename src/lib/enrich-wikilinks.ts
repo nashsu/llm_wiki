@@ -26,7 +26,11 @@ export async function enrichWithWikilinks(
   projectPath: string,
   filePath: string,
   llmConfig: LlmConfig,
+  signal?: AbortSignal,
 ): Promise<void> {
+  // Early abort check
+  if (signal?.aborted) return
+
   const pp = normalizePath(projectPath)
   const fp = normalizePath(filePath)
   const [content, index] = await Promise.all([
@@ -34,7 +38,12 @@ export async function enrichWithWikilinks(
     readFile(`${pp}/wiki/index.md`).catch(() => ""),
   ])
 
+  if (signal?.aborted) return
   if (!content || !index) return
+
+  // Extract valid page names from index for target validation
+  const validTargets = extractPageNamesFromIndex(index)
+  if (validTargets.size === 0) return
 
   // Ask the LLM to return a JSON list of {term, target} substitutions.
   // Much easier task than rewriting the whole page, and the model can't
@@ -59,17 +68,17 @@ export async function enrichWithWikilinks(
           "",
           "Response format (EXACTLY this JSON shape, nothing else):",
           "{",
-          "  \"links\": [",
-          "    { \"term\": \"exact text appearing in the content\", \"target\": \"index page name\" }",
+          '  "links": [',
+          '    { "term": "exact text appearing in the content", "target": "index page name" }',
           "  ]",
           "}",
           "",
           "Rules:",
-          "- Each \"term\" MUST be a literal substring present in the page content (case-sensitive).",
-          "- Each \"target\" MUST be a page listed in the wiki index.",
+          '- Each "term" MUST be a literal substring present in the page content (case-sensitive).',
+          '- Each "target" MUST be a page listed in the wiki index.',
           "- Include at most one entry per target (first mention).",
           "- Only include clearly-matching terms (e.g. if content mentions 'Transformer' and index has 'transformer', target='transformer' is correct).",
-          "- If no terms should be linked, return `{\"links\": []}`.",
+          "- If no terms should be linked, return {\"links\": []}.",
           "- Do NOT output preamble, explanations, or markdown fences — ONLY the JSON object.",
           "",
           `## Wiki Index\n${index}`,
@@ -85,19 +94,77 @@ export async function enrichWithWikilinks(
       onDone: () => {},
       onError: () => {},
     },
+    signal,
   )
+
+  // Check abort again after LLM call
+  if (signal?.aborted) return
 
   // Parse the LLM response. Be tolerant of fences / prose wrappers.
   const links = parseLinkResponse(raw)
   if (links.length === 0) return // nothing to do
 
+  // Filter out links with targets not in the wiki index
+  const validLinks = links.filter(({ target }) => {
+    const normalizedTarget = target.toLowerCase().replace(/\.md$/, "")
+    return validTargets.has(normalizedTarget)
+  })
+  if (validLinks.length === 0) return
+
   // Apply substitutions to the ORIGINAL content. This guarantees the only
   // change is inserted [[...]] brackets.
-  const enriched = applyLinks(content, links)
+  const enriched = applyLinks(content, validLinks)
   if (enriched === content) return
+  if (signal?.aborted) return
 
   await writeFile(fp, enriched)
   useWikiStore.getState().bumpDataVersion()
+}
+
+/**
+ * Extract valid page names/ids from wiki index content.
+ * Supports formats:
+ * - `- page-name`
+ * - `- [[page-name]]`
+ * - `- [[page-name|Title]]`
+ * - `[Title](page-name.md)`
+ */
+function extractPageNamesFromIndex(indexContent: string): Set<string> {
+  const targets = new Set<string>()
+  const lines = indexContent.split("\n")
+  
+  for (const line of lines) {
+    // Match `- page-name`
+    const simpleMatch = line.match(/^-\s+([\w-]+)/)
+    if (simpleMatch) {
+      targets.add(simpleMatch[1].toLowerCase())
+      continue
+    }
+    
+    // Match `- [[page-name]]` or `- [[page-name|Title]]`
+    const wikilinkMatches = line.match(/\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g)
+    if (wikilinkMatches) {
+      for (const match of wikilinkMatches) {
+        const pageName = match.replace(/\[\[|\]\]/g, "").split("|")[0].trim()
+        if (pageName) targets.add(pageName.toLowerCase())
+      }
+      continue
+    }
+    
+    // Match `[Title](page-name.md)`
+    const mdLinkMatches = line.match(/\[([^\]]+)\]\(([^)]+\.md)\)/g)
+    if (mdLinkMatches) {
+      for (const match of mdLinkMatches) {
+        const pathMatch = match.match(/\]\(([^)]+)\)/)
+        if (pathMatch) {
+          const pageName = pathMatch[1].replace(/\.md$/, "").split("/").pop()
+          if (pageName) targets.add(pageName.toLowerCase())
+        }
+      }
+    }
+  }
+  
+  return targets
 }
 
 interface LinkEntry {
@@ -180,6 +247,7 @@ function applyLinks(content: string, links: LinkEntry[]): string {
     const idx = findUnlinkedOccurrence(body, term)
     if (idx === -1) continue
 
+    // Check if term matches target case-insensitively
     const displayEqualsTarget = term.toLowerCase() === target.toLowerCase()
     const replacement = displayEqualsTarget
       ? `[[${term}]]`
@@ -191,19 +259,43 @@ function applyLinks(content: string, links: LinkEntry[]): string {
   return frontmatter + body
 }
 
-/** Find the first occurrence of `term` in text that isn't already wrapped in [[...]]. */
+/**
+ * Find the first occurrence of `term` in text that isn't already wrapped in [[...]].
+ * Pre-scans all [[...]] intervals to accurately detect if a match falls inside one.
+ */
 function findUnlinkedOccurrence(text: string, term: string): number {
+  // Pre-scan all [[...]] intervals
+  const wikilinkIntervals: Array<[number, number]> = []
+  let scanPos = 0
+  while (scanPos < text.length) {
+    const openIdx = text.indexOf("[[", scanPos)
+    if (openIdx === -1) break
+    const closeIdx = text.indexOf("]]", openIdx + 2)
+    if (closeIdx === -1) break
+    wikilinkIntervals.push([openIdx, closeIdx + 2])
+    scanPos = closeIdx + 2
+  }
+
+  // Helper to check if a position falls inside any wikilink interval
+  const isInsideWikilink = (pos: number): boolean => {
+    for (const [start, end] of wikilinkIntervals) {
+      if (pos >= start && pos < end) return true
+    }
+    return false
+  }
+
+  // Find first occurrence not inside a wikilink
   let searchFrom = 0
   while (searchFrom < text.length) {
     const idx = text.indexOf(term, searchFrom)
     if (idx === -1) return -1
-    // Check a small window before for [[ (existing wikilink open)
-    const windowStart = Math.max(0, idx - 2)
-    const window = text.slice(windowStart, idx)
-    if (window.endsWith("[[")) {
+    
+    // Check if this occurrence is inside a wikilink
+    if (isInsideWikilink(idx)) {
       searchFrom = idx + term.length
       continue
     }
+    
     return idx
   }
   return -1
