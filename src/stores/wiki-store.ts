@@ -38,7 +38,7 @@ interface LlmConfig {
   codexCliTimeoutMinutes?: number
 }
 
-export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "firecrawl" | "none"
+export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "firecrawl" | "fastcrw" | "none"
 export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
   | "google"
@@ -70,6 +70,7 @@ export interface SearchProviderOverride {
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
+  fastCrwUrl?: string
 }
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>

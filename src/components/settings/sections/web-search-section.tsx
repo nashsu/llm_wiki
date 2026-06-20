@@ -54,6 +54,14 @@ const SEARCH_PROVIDERS = [
     hint: "Anonymous Firecrawl Search API",
     configKind: "none",
   },
+  {
+    id: "fastcrw",
+    label: "fastCRW",
+    hint: "SearXNG-based search — self-hostable or managed cloud",
+    keyPlaceholder: "fastCRW API key (fastcrw.com) — for the managed cloud",
+    urlPlaceholder: "http://localhost:3000 — leave blank to use the cloud",
+    configKind: "key+url",
+  },
 ] as const
 
 export function WebSearchSection() {
@@ -282,7 +290,9 @@ export function WebSearchSection() {
             ? true
             : provider.id === "searxng"
               ? !!override?.searXngUrl
-              : !!override?.apiKey
+              : provider.id === "fastcrw"
+                ? !!override?.apiKey || !!override?.fastCrwUrl
+                : !!override?.apiKey
           const isExpanded = !!expanded[provider.id]
           return (
             <div
@@ -349,7 +359,30 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  {provider.configKind === "url" ? (
+                  {provider.configKind === "key+url" ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>{t("settings.apiKey")}</Label>
+                        <Input
+                          type="password"
+                          value={override?.apiKey ?? ""}
+                          onChange={(e) => updateProvider(provider.id, { apiKey: e.target.value })}
+                          placeholder={provider.keyPlaceholder}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
+                        <Input
+                          value={override?.fastCrwUrl ?? ""}
+                          onChange={(e) => updateProvider(provider.id, { fastCrwUrl: e.target.value })}
+                          placeholder={provider.urlPlaceholder}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.fastcrwHint")}
+                        </p>
+                      </div>
+                    </>
+                  ) : provider.configKind === "url" ? (
                     <div className="space-y-2">
                       <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
                       <Input
@@ -445,6 +478,12 @@ function localizeSearchTestError(err: unknown, t: ReturnType<typeof useTranslati
   }
   if (/Firecrawl search returned an invalid JSON response/i.test(message)) {
     return t("settings.sections.webSearch.firecrawlInvalidJson")
+  }
+  if (/Network error reaching fastCRW Search/i.test(message)) {
+    return t("settings.sections.webSearch.fastcrwNetworkError")
+  }
+  if (/fastCRW search returned an invalid JSON response/i.test(message)) {
+    return t("settings.sections.webSearch.fastcrwInvalidJson")
   }
   return t("settings.sections.webSearch.testFailed", { message })
 }

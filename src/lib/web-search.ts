@@ -117,6 +117,10 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "firecrawl") {
     return true
   }
+  if (resolved.provider === "fastcrw") {
+    const cfg = resolved.providerConfigs?.fastcrw
+    return Boolean(cfg?.apiKey?.trim() || cfg?.fastCrwUrl?.trim())
+  }
   return Boolean(resolved.apiKey?.trim())
 }
 
@@ -149,6 +153,12 @@ export async function webSearch(
   if (resolved.provider === "ollama" && !resolved.apiKey?.trim()) {
     throw new Error("Ollama Web Search API requires an Ollama API key. Add one in Settings.")
   }
+  if (resolved.provider === "fastcrw") {
+    const cfg = resolved.providerConfigs?.fastcrw
+    if (!cfg?.apiKey?.trim() && !cfg?.fastCrwUrl?.trim()) {
+      throw new Error("fastCRW not configured. Add a fastCRW API key (fastcrw.com), or set a self-hosted Base URL in Settings.")
+    }
+  }
 
   switch (resolved.provider) {
     case "tavily":
@@ -161,6 +171,12 @@ export async function webSearch(
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
     case "firecrawl":
       return firecrawlSearch(query, maxResults)
+    case "fastcrw": {
+      // Read key + url only from fastcrw's own override — never fall back to the
+      // flattened top-level apiKey, which can hold another provider's key.
+      const cfg = resolved.providerConfigs?.fastcrw
+      return fastcrwSearch(query, cfg?.apiKey ?? "", cfg?.fastCrwUrl ?? "", maxResults)
+    }
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -395,6 +411,95 @@ function normalizeFirecrawlResult(item: unknown): WebSearchResult {
     url,
     snippet: r.snippet ?? r.description ?? r.metadata?.description ?? r.content ?? r.markdown ?? "",
     source: hostnameFromUrl(url) || r.source || "",
+  }
+}
+
+const FASTCRW_DEFAULT_BASE_URL = "https://api.fastcrw.com"
+
+// The managed cloud (api.fastcrw.com) returns results as a flat `data` array;
+// the self-hosted engine nests them under `data.results`. Handle both.
+interface FastCrwSearchResponse {
+  success?: boolean
+  error?: string
+  data?: unknown[] | { results?: unknown[] }
+}
+
+async function fastcrwSearch(
+  query: string,
+  apiKey: string,
+  baseUrl: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  const base = (baseUrl.trim() || FASTCRW_DEFAULT_BASE_URL).replace(/\/+$/, "")
+  const key = apiKey.trim()
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch(`${base}/v1/search`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      body: JSON.stringify({
+        query,
+        limit: maxResults,
+      }),
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching fastCRW Search. Check your connectivity or choose another Web Search provider.",
+      )
+    }
+    throw err
+  }
+
+  const text = await response.text().catch(() => "")
+  let data: FastCrwSearchResponse = {}
+  try {
+    data = text ? JSON.parse(text) as FastCrwSearchResponse : {}
+  } catch {
+    if (!response.ok) {
+      throw new Error(`fastCRW search failed (${response.status}): ${text || "Unknown error"}`)
+    }
+    throw new Error("fastCRW search returned an invalid JSON response.")
+  }
+
+  if (!response.ok) {
+    throw new Error(`fastCRW search failed (${response.status}): ${data.error ?? text ?? "Unknown error"}`)
+  }
+
+  if (data.success === false || (data.success !== true && typeof data.error === "string" && data.error.trim())) {
+    throw new Error(`fastCRW search failed: ${data.error ?? "Unknown error"}`)
+  }
+
+  return normalizeFastCrwResults(data, maxResults)
+}
+
+function normalizeFastCrwResults(data: FastCrwSearchResponse, maxResults: number): WebSearchResult[] {
+  const d = data.data
+  const rawResults: unknown[] = Array.isArray(d) ? d : (d?.results ?? [])
+  return rawResults
+    .slice(0, maxResults)
+    .map((item) => normalizeFastCrwResult(item))
+    .filter((item) => item.url.length > 0)
+}
+
+function normalizeFastCrwResult(item: unknown): WebSearchResult {
+  const r = item as {
+    title?: string
+    url?: string
+    description?: string
+    snippet?: string
+  }
+  const url = r.url ?? ""
+  return {
+    title: r.title ?? "Untitled",
+    url,
+    snippet: r.snippet || r.description || "",
+    source: hostnameFromUrl(url),
   }
 }
 

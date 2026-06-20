@@ -424,6 +424,9 @@
         "firecrawlIpBlocked": "Firecrawl 匿名搜索已被当前 IP 拦截。请切换其他网页搜索 Provider，或尝试更换网络。",
         "firecrawlNetworkError": "无法连接 Firecrawl Search。请检查网络，或切换其他网页搜索 Provider。",
         "firecrawlInvalidJson": "Firecrawl 返回了无效响应。请稍后重试，或切换其他网页搜索 Provider。",
+        "fastcrwHint": "基于 SearXNG 的网页搜索。可使用托管云服务（在 fastcrw.com 获取 API Key），或将 Base URL 指向自托管的 fastCRW 实例（例如 http://localhost:3000）以获得无限制、私有的搜索。",
+        "fastcrwNetworkError": "无法连接 fastCRW Search。请检查网络，或切换其他网页搜索 Provider。",
+        "fastcrwInvalidJson": "fastCRW 返回了无效响应。请稍后重试，或切换其他网页搜索 Provider。",
         "configureBeforeTesting": "请先配置"
       },
       "network": {

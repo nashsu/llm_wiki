@@ -424,6 +424,9 @@
         "firecrawlIpBlocked": "Firecrawl anonymous search is blocked for this IP. Choose another Web Search provider or try a different network.",
         "firecrawlNetworkError": "Could not reach Firecrawl Search. Check your network or choose another Web Search provider.",
         "firecrawlInvalidJson": "Firecrawl returned an invalid response. Try again later or choose another Web Search provider.",
+        "fastcrwHint": "SearXNG-based web search. Use the managed cloud with an API key from fastcrw.com, or set Base URL to your own self-hosted fastCRW instance (e.g. http://localhost:3000) for unlimited, private search.",
+        "fastcrwNetworkError": "Could not reach fastCRW Search. Check your network or choose another Web Search provider.",
+        "fastcrwInvalidJson": "fastCRW returned an invalid response. Try again later or choose another Web Search provider.",
         "configureBeforeTesting": "Configure first"
       },
       "network": {
