@@ -58,6 +58,21 @@ interface PageCatalogEntry {
 
 Future versions may add aliases and previously observed display text, but v1 only needs slug, title, type, tags, and path.
 
+## Alternative Matching
+
+Alternatives are recalled by matching each candidate `term` against the whole Page Catalog, not by starting from the model's preferred `target`. This prevents one poor model target from narrowing the alternative set too early.
+
+V1 matching should compare the term against:
+
+- slug, using case-insensitive and hyphen/space-normalized exact and substring matching
+- title, using exact, case-insensitive, and substring matching
+- tags, using exact and normalized matching
+- type only as a weak ranking hint, not as a standalone match
+
+The title field is important for cross-language notes. For example, the body term `肠肾轴` can match a page whose slug is `gut-kidney-axis` if that page title is `肠肾轴 (Gut-Kidney Axis)`.
+
+Only real catalog entries can become alternatives. The UI must not show model-invented page targets.
+
 ## Confidence Bands
 
 Use bands instead of user-facing numeric scores.
@@ -71,6 +86,7 @@ Conditions:
 - term exactly matches a slug
 - term exactly matches a title
 - term is an acronym or gene/protein-like symbol and has exactly one strong catalog match
+- term has exactly one strong cross-language match through title or tags
 
 Examples: `GDF3 -> gdf3`, `HDAC3 -> hdac3-in-macrophages`.
 
@@ -82,7 +98,7 @@ Conditions:
 
 - term is clearly related to a title but not exact
 - exact or strong match exists, but the same term has multiple plausible targets
-- cross-language title/slug match is plausible but not deterministic
+- cross-language match exists, but the same term could plausibly map to multiple catalog entries
 
 ### Low
 
@@ -183,6 +199,16 @@ After apply:
 - bump `dataVersion`
 - refresh the graph if the graph view is active or when it is next opened
 
+## Empty and Error States
+
+The UI should handle non-happy paths explicitly:
+
+- if the current page is empty or has no body content, keep `Auto Link` disabled or show a no-content message
+- if the project has fewer than two linkable wiki pages, show that there are no available targets
+- if the LLM call fails, keep the original file untouched and show a retryable error in the review panel
+- if no candidates remain after validation and ignore rules, show a "no suggestions found" state
+- if applying selected links fails, keep the panel open and show the write error without changing selection state
+
 ## Testing
 
 Keep existing `enrichWithWikilinks` tests passing.
@@ -193,8 +219,11 @@ Add tests for:
 - `applyWikilinks` applies only selected links
 - `applyLinks` does not link terms already inside any `[[...]]` span
 - confidence banding for exact slug, exact title, acronym, multi-target, and generic-term cases
+- cross-language unique title/tag matches are High; ambiguous cross-language matches are Medium
+- alternative matching uses term-to-catalog matching and includes title-based matches
 - ignore rules suppress ignored terms and ignored pairs
 - review panel defaults: High selected, Medium unselected, Low collapsed
+- empty page, no-target project, LLM failure, and write failure states
 
 ## Out of Scope
 
