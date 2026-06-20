@@ -54,6 +54,13 @@ const SEARCH_PROVIDERS = [
     hint: "Anonymous Firecrawl Search API",
     configKind: "none",
   },
+  {
+    id: "jina",
+    label: "Jina",
+    hint: "Jina Search API (s.jina.ai)",
+    keyPlaceholder: "Enter your Jina API key (jina.ai)",
+    configKind: "key",
+  },
 ] as const
 
 export function WebSearchSection() {

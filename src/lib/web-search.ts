@@ -143,6 +143,9 @@ export async function webSearch(
   if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
     throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }
+  if (resolved.provider === "jina" && !resolved.apiKey?.trim()) {
+    throw new Error("Jina Search requires a Jina API key. Add one in Settings (jina.ai).")
+  }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")
   }
@@ -161,6 +164,8 @@ export async function webSearch(
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
     case "firecrawl":
       return firecrawlSearch(query, maxResults)
+    case "jina":
+      return jinaSearch(query, resolved.apiKey ?? "", maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -556,4 +561,89 @@ async function ollamaSearch(
         source: hostnameFromUrl(url),
       }
     })
+}
+
+interface JinaSearchResponse {
+  code?: number
+  status?: number
+  data?: Array<{
+    title?: string
+    url?: string
+    description?: string
+    content?: string
+  }>
+  // Jina returns this name on failures (e.g. invalid token, quota).
+  name?: string
+  message?: string
+  readableMessage?: string
+}
+
+async function jinaSearch(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  const trimmedApiKey = apiKey.trim()
+  if (!trimmedApiKey) {
+    throw new Error("Jina Search requires a Jina API key. Add one in Settings (jina.ai).")
+  }
+
+  const endpoint = new URL("https://s.jina.ai/")
+  endpoint.searchParams.set("q", query)
+  // Jina caps `count` at 20; never request fewer than 1 result.
+  endpoint.searchParams.set("count", String(Math.max(1, Math.min(maxResults, 20))))
+
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch(endpoint.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${trimmedApiKey}`,
+        // Return the SERP only; skip reading each result page so the search
+        // stays fast and cheap. Snippets come from each item's description.
+        "X-Respond-With": "no-content",
+      },
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching s.jina.ai. Check your connectivity and whether the Jina API key is still valid.",
+      )
+    }
+    throw err
+  }
+
+  const text = await response.text().catch(() => "")
+  let data: JinaSearchResponse = {}
+  try {
+    data = text ? (JSON.parse(text) as JinaSearchResponse) : {}
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Jina search failed (${response.status}): ${text || "Unknown error"}`)
+    }
+    throw new Error("Jina search returned an invalid JSON response.")
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Jina search authentication failed. Check your Jina API key.")
+    }
+    const detail = data.readableMessage ?? data.message ?? data.name ?? (text || "Unknown error")
+    throw new Error(`Jina search failed (${response.status}): ${detail}`)
+  }
+
+  return (data.data ?? [])
+    .slice(0, maxResults)
+    .map((r) => {
+      const url = r.url ?? ""
+      return {
+        title: r.title ?? "Untitled",
+        url,
+        snippet: r.description ?? r.content ?? "",
+        source: hostnameFromUrl(url),
+      }
+    })
+    .filter((item) => item.url.length > 0)
 }
