@@ -404,7 +404,7 @@ fn build_claude_cli_args(model: &str, isolate_local_config: bool) -> Vec<String>
             "project".to_string(),
             "--strict-mcp-config".to_string(),
             "--mcp-config".to_string(),
-            "{}".to_string(),
+            r#"{"mcpServers":{}}"#.to_string(),
             "--disable-slash-commands".to_string(),
             "--tools".to_string(),
             "".to_string(),
@@ -530,7 +530,7 @@ mod tests {
         assert!(args.contains(&"--strict-mcp-config".to_string()));
         assert!(args
             .windows(2)
-            .any(|pair| pair[0] == "--mcp-config" && pair[1] == "{}"));
+            .any(|pair| pair[0] == "--mcp-config" && pair[1] == r#"{"mcpServers":{}}"#));
         assert!(args.contains(&"--disable-slash-commands".to_string()));
         assert!(args
             .windows(2)
