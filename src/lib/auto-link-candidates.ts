@@ -60,8 +60,7 @@ function unwrapWikilink(value: string): string {
 }
 
 export function normalizeForMatch(value: string): string {
-  return unwrapWikilink(value)
-    .normalize("NFKC")
+  return unwrapWikilink(value.normalize("NFKC"))
     .trim()
     .toLowerCase()
     .replace(/[-_]+/g, " ")
@@ -81,11 +80,13 @@ export function findCatalogMatches(
 
   const generic = GENERIC_TERMS.has(normalizedTerm)
   const symbol = isLikelySymbol(term)
-  const literalTerm = unwrapWikilink(term).trim()
+  const literalTerm = unwrapWikilink(term.normalize("NFKC")).trim()
+  const shortAsciiNonSymbol =
+    /^[\x00-\x7f]+$/.test(literalTerm) &&
+    normalizedTerm.replace(/\s+/g, "").length < 4 &&
+    !symbol
   const nonAscii = /[^\x00-\x7f]/.test(literalTerm)
-  const normalizedLiteralTerm = literalTerm
-    .normalize("NFKC")
-    .toLowerCase()
+  const normalizedLiteralTerm = literalTerm.toLowerCase()
 
   const matches = catalog.flatMap((entry): ClassifiedMatch[] => {
     const normalizedSlug = normalizeForMatch(entry.slug)
@@ -142,10 +143,10 @@ export function findCatalogMatches(
     } else if (exactTag) {
       matchKind = "tag-exact"
       reason = "Exact normalized tag match."
-    } else if (!generic && symbolMatch) {
+    } else if (!generic && !shortAsciiNonSymbol && symbolMatch) {
       matchKind = "symbol-unique"
       reason = "Unique symbol match."
-    } else if (!generic && crossLanguageMatch) {
+    } else if (!generic && !shortAsciiNonSymbol && crossLanguageMatch) {
       matchKind = "cross-language-unique"
       reason = "Unique cross-language match."
     } else if (titleRelated || crossLanguageMatch) {
@@ -157,11 +158,14 @@ export function findCatalogMatches(
     }
 
     const strong =
-      exactSlug ||
-      exactTitle ||
-      exactTag ||
-      (!generic && (symbolMatch || crossLanguageMatch))
-    const band: ConfidenceBand = generic
+      !generic &&
+      !shortAsciiNonSymbol &&
+      (exactSlug ||
+        exactTitle ||
+        exactTag ||
+        symbolMatch ||
+        crossLanguageMatch)
+    const band: ConfidenceBand = generic || shortAsciiNonSymbol
       ? "low"
       : strong
         ? "high"

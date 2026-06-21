@@ -29,6 +29,10 @@ describe("normalizeForMatch", () => {
       "gdf3 alpha beta",
     )
   })
+
+  it("normalizes full-width wikilink brackets before unwrapping", () => {
+    expect(normalizeForMatch("［［ＧＤＦ３］］")).toBe("gdf3")
+  })
 })
 
 describe("isLikelySymbol", () => {
@@ -86,6 +90,20 @@ describe("findCatalogMatches", () => {
   it("promotes one literal cross-language title match to High", () => {
     expect(
       findCatalogMatches("肠肾轴", [
+        page("gut-kidney-axis", { title: "肠肾轴 (Gut-Kidney Axis)" }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        target: "gut-kidney-axis",
+        band: "high",
+        matchKind: "cross-language-unique",
+      }),
+    ])
+  })
+
+  it("keeps full-width wrapped cross-language terms eligible for High", () => {
+    expect(
+      findCatalogMatches("［［肠肾轴］］", [
         page("gut-kidney-axis", { title: "肠肾轴 (Gut-Kidney Axis)" }),
       ]),
     ).toEqual([
@@ -181,6 +199,27 @@ describe("findCatalogMatches", () => {
     expect(findCatalogMatches("机制", [mechanismPage])[0].band).toBe("low")
   })
 
+  it("keeps non-symbol short ASCII terms Low even on exact matches", () => {
+    expect(findCatalogMatches("in", [page("in")])).toEqual([
+      expect.objectContaining({
+        target: "in",
+        band: "low",
+        matchKind: "slug-exact",
+      }),
+    ])
+
+    expect(
+      buildAutoLinkSuggestions(
+        [{ term: "in", target: "in" }],
+        [page("in")],
+        noIgnores,
+      )[0],
+    ).toMatchObject({
+      band: "low",
+      selectedByDefault: false,
+    })
+  })
+
   it("ranks title-related matches above slug partial matches", () => {
     expect(
       findCatalogMatches("activated macrophage", [
@@ -214,13 +253,29 @@ describe("findCatalogMatches", () => {
 
   it("sorts otherwise tied alternatives by slug and path", () => {
     const matches = findCatalogMatches("HDAC3", [
+      page("hdac3-zeta", { path: "/project/wiki/z/hdac3-zeta.md" }),
+      page("hdac3-alpha", { path: "/project/wiki/z/hdac3-alpha.md" }),
       page("hdac3-notes", { path: "/project/wiki/z/hdac3-notes.md" }),
       page("hdac3-notes", { path: "/project/wiki/a/hdac3-notes.md" }),
     ])
 
-    expect(matches.map(({ path }) => path)).toEqual([
-      "/project/wiki/a/hdac3-notes.md",
-      "/project/wiki/z/hdac3-notes.md",
+    expect(matches.map(({ target, path }) => ({ target, path }))).toEqual([
+      {
+        target: "hdac3-alpha",
+        path: "/project/wiki/z/hdac3-alpha.md",
+      },
+      {
+        target: "hdac3-notes",
+        path: "/project/wiki/a/hdac3-notes.md",
+      },
+      {
+        target: "hdac3-notes",
+        path: "/project/wiki/z/hdac3-notes.md",
+      },
+      {
+        target: "hdac3-zeta",
+        path: "/project/wiki/z/hdac3-zeta.md",
+      },
     ])
   })
 })
