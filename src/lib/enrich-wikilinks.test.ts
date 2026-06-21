@@ -321,6 +321,14 @@ describe("applyLinks", () => {
     ])).toBe("[[Alpha]] [[beta|A long Beta alias]] then [[Beta]].")
   })
 
+  it("finds a later overlapping occurrence after a wikilink boundary", () => {
+    const term = "]]]"
+
+    expect(applyLinks("[[x]]]]]", [
+      { term, target: "closing" },
+    ])).toBe(`[[x]][[closing|${term}]]`)
+  })
+
   it.each([
     [
       "strict LF",
@@ -356,7 +364,7 @@ describe("applyLinks", () => {
   it("keeps first occurrence per target and the existing replacement format", () => {
     expect(applyLinks("Transformer and transformer", [
       { term: "Transformer", target: "transformer" },
-      { term: "transformer", target: "transformer" },
+      { term: "transformer", target: "TRANSFORMER" },
     ])).toBe("[[Transformer]] and transformer")
 
     expect(applyLinks("Attention mechanism", [

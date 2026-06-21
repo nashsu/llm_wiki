@@ -236,7 +236,7 @@ function findUnlinkedOccurrence(text: string, term: string): number {
       ([start, end]) => idx < end && termEnd > start,
     )
     if (overlapsWikilink) {
-      searchFrom = idx + term.length
+      searchFrom = idx + 1
       continue
     }
     return idx
