@@ -208,59 +208,70 @@ export function buildAutoLinkSuggestions(
   catalog: PageCatalogEntry[],
   ignoreRules: IgnoreRules,
 ): AutoLinkSuggestion[] {
-  const suggestions = rawLinks.flatMap((link): AutoLinkSuggestion[] => {
-    if (isIgnoredTerm(link.term, ignoreRules)) return []
+  const linksByTerm = new Map<string, LinkEntry[]>()
+  for (const link of rawLinks) {
+    const existing = linksByTerm.get(link.term)
+    if (existing) existing.push(link)
+    else linksByTerm.set(link.term, [link])
+  }
 
-    const availableCatalog = catalog.filter(
-      (entry) => !isIgnoredPair(link.term, entry.slug, ignoreRules),
-    )
-    const alternatives = findCatalogMatches(link.term, availableCatalog)
-    const normalizedPreferredTarget = normalizeForMatch(link.target)
-    const preferredEntry = [...availableCatalog]
-      .sort(compareCatalogEntries)
-      .find(
-        (entry) =>
-          normalizeForMatch(entry.slug) === normalizedPreferredTarget,
+  const suggestions = [...linksByTerm.entries()].flatMap(
+    ([term, termLinks]): AutoLinkSuggestion[] => {
+      if (isIgnoredTerm(term, ignoreRules)) return []
+
+      const availableCatalog = catalog.filter(
+        (entry) => !isIgnoredPair(term, entry.slug, ignoreRules),
       )
-    const preferredAlternative = preferredEntry
-      ? alternatives.find(
-          (candidate) =>
-            candidate.target === preferredEntry.slug &&
-            candidate.path === preferredEntry.path,
+      const alternatives = findCatalogMatches(term, availableCatalog)
+      const sortedCatalog = [...availableCatalog].sort(compareCatalogEntries)
+      const preferredEntry = termLinks
+        .map((link) => normalizeForMatch(link.target))
+        .map((target) =>
+          sortedCatalog.find(
+            (entry) => normalizeForMatch(entry.slug) === target,
+          ),
         )
-      : undefined
+        .find((entry): entry is PageCatalogEntry => entry !== undefined)
+      const preferredAlternative = preferredEntry
+        ? alternatives.find(
+            (candidate) =>
+              candidate.target === preferredEntry.slug &&
+              candidate.path === preferredEntry.path,
+          )
+        : undefined
 
-    if (preferredAlternative?.matchKind === "partial") {
-      preferredAlternative.matchKind = "llm-preferred"
-      preferredAlternative.reason = "Validated LLM preferred target."
-    } else if (preferredEntry && !preferredAlternative) {
-      alternatives.push({
-        target: preferredEntry.slug,
-        title: preferredEntry.title,
-        path: preferredEntry.path,
-        band: "low",
-        matchKind: "llm-preferred",
-        reason: "Validated LLM preferred target.",
-      })
-    }
+      if (preferredAlternative?.matchKind === "partial") {
+        preferredAlternative.matchKind = "llm-preferred"
+        preferredAlternative.reason = "Validated LLM preferred target."
+      } else if (preferredEntry && !preferredAlternative) {
+        alternatives.push({
+          target: preferredEntry.slug,
+          title: preferredEntry.title,
+          path: preferredEntry.path,
+          band: "low",
+          matchKind: "llm-preferred",
+          reason: "Validated LLM preferred target.",
+        })
+      }
 
-    alternatives.sort(compareCandidates)
-    const selected = alternatives[0]
-    if (!selected) return []
+      alternatives.sort(compareCandidates)
+      const selected = alternatives[0]
+      if (!selected) return []
 
-    return [
-      {
-        id: `${link.term}\u0000${selected.target}`,
-        term: link.term,
-        selectedTarget: selected.target,
-        preferredTarget: preferredEntry?.slug ?? null,
-        alternatives,
-        band: selected.band,
-        selectedByDefault: selected.band === "high",
-        reason: selected.reason,
-      },
-    ]
-  })
+      return [
+        {
+          id: `${term}\u0000${selected.target}`,
+          term,
+          selectedTarget: selected.target,
+          preferredTarget: preferredEntry?.slug ?? null,
+          alternatives,
+          band: selected.band,
+          selectedByDefault: selected.band === "high",
+          reason: selected.reason,
+        },
+      ]
+    },
+  )
 
   return suggestions.sort((a, b) => {
     return (

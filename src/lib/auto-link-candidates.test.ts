@@ -281,6 +281,31 @@ describe("findCatalogMatches", () => {
 })
 
 describe("buildAutoLinkSuggestions", () => {
+  it("groups repeated raw terms into one review suggestion", () => {
+    const suggestions = buildAutoLinkSuggestions(
+      [
+        { term: "HDAC3", target: "hdac3-alpha" },
+        { term: "HDAC3", target: "hdac3-beta" },
+      ],
+      [
+        page("hdac3-alpha", { title: "HDAC3 alpha" }),
+        page("hdac3-beta", { title: "HDAC3 beta" }),
+      ],
+      noIgnores,
+    )
+
+    expect(suggestions).toHaveLength(1)
+    expect(suggestions[0]).toMatchObject({
+      term: "HDAC3",
+      preferredTarget: "hdac3-alpha",
+      band: "medium",
+      selectedByDefault: false,
+    })
+    expect(
+      suggestions[0].alternatives.map(({ target }) => target),
+    ).toEqual(["hdac3-alpha", "hdac3-beta"])
+  })
+
   it("selects a unique High exact match by default with a deterministic id", () => {
     expect(
       buildAutoLinkSuggestions(
