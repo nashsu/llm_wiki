@@ -6,9 +6,11 @@ import type {
 import {
   countSuggestionsByBand,
   createInitialAutoLinkSelection,
+  isAutoLinkReviewInteractionBusy,
   selectedLinksFromState,
   setSuggestionSelected,
   setSuggestionTarget,
+  shouldAllowAutoLinkOpenChange,
 } from "./auto-link-review-state"
 
 function suggestion(
@@ -94,5 +96,19 @@ describe("countSuggestionsByBand", () => {
         suggestion("low", "low", false),
       ]),
     ).toEqual({ high: 2, medium: 0, low: 1 })
+  })
+})
+
+describe("review interaction guards", () => {
+  it("blocks dismissal while links are being applied", () => {
+    expect(shouldAllowAutoLinkOpenChange(false, true)).toBe(false)
+    expect(shouldAllowAutoLinkOpenChange(false, false)).toBe(true)
+    expect(shouldAllowAutoLinkOpenChange(true, true)).toBe(true)
+  })
+
+  it("locks apply and ignore interactions during either mutation", () => {
+    expect(isAutoLinkReviewInteractionBusy(true, null)).toBe(true)
+    expect(isAutoLinkReviewInteractionBusy(false, "term:suggestion")).toBe(true)
+    expect(isAutoLinkReviewInteractionBusy(false, null)).toBe(false)
   })
 })

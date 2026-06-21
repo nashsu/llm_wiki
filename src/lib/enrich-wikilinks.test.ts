@@ -329,6 +329,13 @@ describe("applyLinks", () => {
     ])).toBe(`[[x]][[closing|${term}]]`)
   })
 
+  it("prefers the longest selected term when selected terms overlap", () => {
+    expect(applyLinks("The kidney axis connects organs.", [
+      { term: "kidney", target: "kidney" },
+      { term: "kidney axis", target: "gut-kidney-axis" },
+    ])).toBe("The [[gut-kidney-axis|kidney axis]] connects organs.")
+  })
+
   it.each([
     [
       "strict LF",

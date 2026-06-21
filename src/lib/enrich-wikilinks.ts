@@ -205,7 +205,11 @@ export function applyLinks(content: string, links: LinkEntry[]): string {
   // Track what we've already linked so we don't double-link
   const linkedTargets = new Set<string>()
 
-  for (const { term, target } of links) {
+  const longestTermsFirst = [...links].sort(
+    (left, right) => right.term.length - left.term.length,
+  )
+
+  for (const { term, target } of longestTermsFirst) {
     if (linkedTargets.has(target.toLowerCase())) continue
     if (!term || !target) continue
 

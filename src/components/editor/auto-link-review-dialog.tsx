@@ -27,9 +27,11 @@ import type { AutoLinkReviewResult } from "@/lib/auto-link-review"
 import {
   countSuggestionsByBand,
   createInitialAutoLinkSelection,
+  isAutoLinkReviewInteractionBusy,
   selectedLinksFromState,
   setSuggestionSelected,
   setSuggestionTarget,
+  shouldAllowAutoLinkOpenChange,
   type AutoLinkSelectionState,
 } from "@/lib/auto-link-review-state"
 import type {
@@ -137,6 +139,10 @@ export function AutoLinkReviewDialog({
     () => selectedLinksFromState(suggestions, selection),
     [selection, suggestions],
   )
+  const interactionBusy = isAutoLinkReviewInteractionBusy(
+    applying,
+    pendingIgnore,
+  )
 
   const handleIgnoreTerm = async (suggestion: AutoLinkSuggestion) => {
     const key = `term:${suggestion.id}`
@@ -161,8 +167,18 @@ export function AutoLinkReviewDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] sm:max-w-2xl">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (shouldAllowAutoLinkOpenChange(nextOpen, applying)) {
+          onOpenChange(nextOpen)
+        }
+      }}
+    >
+      <DialogContent
+        className="max-h-[88vh] sm:max-w-2xl"
+        showCloseButton={!applying}
+      >
         <DialogHeader>
           <DialogTitle>Auto Link Review</DialogTitle>
           <DialogDescription>
@@ -190,6 +206,7 @@ export function AutoLinkReviewDialog({
                     suggestions={suggestions}
                     selection={selection}
                     pendingIgnore={pendingIgnore}
+                    interactionsDisabled={interactionBusy}
                     onSelectionChange={setSelection}
                     onIgnoreTerm={handleIgnoreTerm}
                     onIgnorePair={handleIgnorePair}
@@ -200,6 +217,7 @@ export function AutoLinkReviewDialog({
                     suggestions={suggestions}
                     selection={selection}
                     pendingIgnore={pendingIgnore}
+                    interactionsDisabled={interactionBusy}
                     onSelectionChange={setSelection}
                     onIgnoreTerm={handleIgnoreTerm}
                     onIgnorePair={handleIgnorePair}
@@ -226,6 +244,7 @@ export function AutoLinkReviewDialog({
                           suggestions={suggestions}
                           selection={selection}
                           pendingIgnore={pendingIgnore}
+                          interactionsDisabled={interactionBusy}
                           onSelectionChange={setSelection}
                           onIgnoreTerm={handleIgnoreTerm}
                           onIgnorePair={handleIgnorePair}
@@ -253,7 +272,7 @@ export function AutoLinkReviewDialog({
               </Button>
               <Button
                 onClick={() => void onApply(selectedLinks)}
-                disabled={applying || selectedLinks.length === 0}
+                disabled={interactionBusy || selectedLinks.length === 0}
               >
                 {applying ? (
                   <Loader2 className="animate-spin" />
@@ -302,6 +321,7 @@ interface SuggestionRowsProps {
   suggestions: AutoLinkSuggestion[]
   selection: AutoLinkSelectionState
   pendingIgnore: string | null
+  interactionsDisabled: boolean
   onSelectionChange: React.Dispatch<React.SetStateAction<AutoLinkSelectionState>>
   onIgnoreTerm: (suggestion: AutoLinkSuggestion) => Promise<void>
   onIgnorePair: (suggestion: AutoLinkSuggestion) => Promise<void>
@@ -329,6 +349,7 @@ function SuggestionRows({
   suggestions,
   selection,
   pendingIgnore,
+  interactionsDisabled,
   onSelectionChange,
   onIgnoreTerm,
   onIgnorePair,
@@ -433,7 +454,7 @@ function SuggestionRows({
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Ignore term ${suggestion.term}`}
-                        disabled={pendingIgnore !== null}
+                        disabled={interactionsDisabled}
                         onClick={() => void onIgnoreTerm(suggestion)}
                       />
                     }
@@ -449,7 +470,7 @@ function SuggestionRows({
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Ignore ${suggestion.term} to ${selectedTarget}`}
-                        disabled={pendingIgnore !== null}
+                        disabled={interactionsDisabled}
                         onClick={() => void onIgnorePair(suggestion)}
                       />
                     }

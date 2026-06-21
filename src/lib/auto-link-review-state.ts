@@ -10,6 +10,20 @@ export interface AutoLinkSelectionState {
   lowExpanded: boolean
 }
 
+export function shouldAllowAutoLinkOpenChange(
+  nextOpen: boolean,
+  applying: boolean,
+): boolean {
+  return nextOpen || !applying
+}
+
+export function isAutoLinkReviewInteractionBusy(
+  applying: boolean,
+  pendingIgnore: string | null,
+): boolean {
+  return applying || pendingIgnore !== null
+}
+
 export function createInitialAutoLinkSelection(
   suggestions: AutoLinkSuggestion[],
 ): AutoLinkSelectionState {
