@@ -96,10 +96,20 @@ export function AutoLinkReviewDialog({
       const previousIds = new Set(
         previousSuggestions.current.map((suggestion) => suggestion.id),
       )
+      const previousByTerm = new Map(
+        previousSuggestions.current.map((suggestion) => [
+          suggestion.term,
+          suggestion,
+        ]),
+      )
       const selectedIds = new Set<string>()
       const selectedTargets: Record<string, string> = {}
       for (const suggestion of nextSuggestions) {
-        const currentTarget = current.selectedTargets[suggestion.id]
+        const previousSuggestion = previousIds.has(suggestion.id)
+          ? suggestion
+          : previousByTerm.get(suggestion.term)
+        const previousId = previousSuggestion?.id ?? suggestion.id
+        const currentTarget = current.selectedTargets[previousId]
         const targetStillExists = suggestion.alternatives.some(
           (alternative) => alternative.target === currentTarget,
         )
@@ -107,8 +117,8 @@ export function AutoLinkReviewDialog({
           ? currentTarget
           : suggestion.selectedTarget
         if (
-          current.selectedIds.has(suggestion.id) ||
-          (!previousIds.has(suggestion.id) && suggestion.selectedByDefault)
+          current.selectedIds.has(previousId) ||
+          (!previousSuggestion && suggestion.selectedByDefault)
         ) {
           selectedIds.add(suggestion.id)
         }
