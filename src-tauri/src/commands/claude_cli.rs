@@ -30,6 +30,8 @@ use tokio::sync::Mutex;
 
 use super::cli_resolver::find_cli_command;
 
+const EMPTY_MCP_CONFIG: &str = r#"{"mcpServers":{}}"#;
+
 /// Shared state holding running `claude` child processes keyed by the
 /// frontend-generated stream id. Registered via .manage() in lib.rs.
 #[derive(Default)]
@@ -404,7 +406,7 @@ fn build_claude_cli_args(model: &str, isolate_local_config: bool) -> Vec<String>
             "project".to_string(),
             "--strict-mcp-config".to_string(),
             "--mcp-config".to_string(),
-            "{}".to_string(),
+            EMPTY_MCP_CONFIG.to_string(),
             "--disable-slash-commands".to_string(),
             "--tools".to_string(),
             "".to_string(),
@@ -528,9 +530,16 @@ mod tests {
             .windows(2)
             .any(|pair| pair[0] == "--setting-sources" && pair[1] == "project"));
         assert!(args.contains(&"--strict-mcp-config".to_string()));
-        assert!(args
+        let mcp_config = args
             .windows(2)
-            .any(|pair| pair[0] == "--mcp-config" && pair[1] == "{}"));
+            .find_map(|pair| (pair[0] == "--mcp-config").then_some(pair[1].as_str()))
+            .expect("isolation mode should pass an explicit empty MCP config");
+        assert_eq!(mcp_config, EMPTY_MCP_CONFIG);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(mcp_config)
+                .expect("empty MCP config should be valid JSON"),
+            serde_json::json!({ "mcpServers": {} })
+        );
         assert!(args.contains(&"--disable-slash-commands".to_string()));
         assert!(args
             .windows(2)
