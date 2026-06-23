@@ -195,6 +195,7 @@ const GENERAL_CONFIG_KEY = "generalConfig"
 export const DEFAULT_GENERAL_CONFIG: GeneralConfig = {
   autostart: false,
   closeBehavior: "minimize",
+  ingestConcurrency: 1,
 }
 
 export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): GeneralConfig {
@@ -205,6 +206,10 @@ export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): 
       closeBehavior === "ask" || closeBehavior === "minimize" || closeBehavior === "exit"
         ? closeBehavior
         : DEFAULT_GENERAL_CONFIG.closeBehavior,
+    ingestConcurrency:
+      typeof config?.ingestConcurrency === "number" && config.ingestConcurrency >= 1 && config.ingestConcurrency <= 16
+        ? Math.round(config.ingestConcurrency)
+        : DEFAULT_GENERAL_CONFIG.ingestConcurrency,
   }
 }
 

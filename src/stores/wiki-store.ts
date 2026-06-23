@@ -203,6 +203,8 @@ export type CloseBehavior = "ask" | "minimize" | "exit"
 export interface GeneralConfig {
   autostart: boolean
   closeBehavior: CloseBehavior
+  /** Max concurrent document ingest tasks. 1 = strictly sequential (default). */
+  ingestConcurrency: number
 }
 
 interface SourceWatchConfig {
@@ -481,6 +483,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   generalConfig: {
     autostart: false,
     closeBehavior: "minimize",
+    ingestConcurrency: 1,
   },
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
