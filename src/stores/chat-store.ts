@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { ChatMessage, ContentBlock } from "@/lib/llm-client"
 import i18n from "@/i18n"
+import type { ChatAgentMode, ChatAgentStep } from "@/lib/chat-agent"
 
 /**
  * An image attached to a user message. Field names mirror the
@@ -37,6 +38,7 @@ export interface DisplayMessage {
   timestamp: number
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
+  agentSteps?: ChatAgentStep[]  // agent tool calls and routing decisions saved with assistant replies
   images?: MessageImage[]  // images attached to a user message (vision input)
 }
 
@@ -51,6 +53,7 @@ interface ChatState {
   maxHistoryMessages: number
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  agentMode: ChatAgentMode
 
   // Conversation management
   createConversation: () => string
@@ -64,13 +67,14 @@ interface ChatState {
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
-  finalizeStream: (content: string, references?: MessageReference[]) => void
+  finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[]) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
   setMaxHistoryMessages: (n: number) => void
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
+  setAgentMode: (mode: ChatAgentMode) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
@@ -99,6 +103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maxHistoryMessages: 10,
   useWebSearch: false,
   useAnyTxtSearch: false,
+  agentMode: "standard",
 
   createConversation: () => {
     const id = generateConversationId()
@@ -194,7 +199,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: state.streamingContent + token,
     })),
 
-  finalizeStream: (content, references) =>
+  finalizeStream: (content, references, agentSteps) =>
     set((state) => {
       const { activeConversationId, conversations } = state
       if (!activeConversationId) {
@@ -211,6 +216,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         timestamp: Date.now(),
         conversationId: activeConversationId,
         references,
+        agentSteps,
       }
 
       return {
@@ -241,6 +247,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
 
   setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
+
+  setAgentMode: (agentMode) => set({ agentMode }),
 
   removeLastAssistantMessage: () =>
     set((state) => {

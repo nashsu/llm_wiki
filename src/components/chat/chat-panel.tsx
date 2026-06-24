@@ -6,7 +6,7 @@ import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePrevie
 import { ChatInput, type ChatSendOptions } from "./chat-input"
 import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { streamChat } from "@/lib/llm-client"
+import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
 import { executeIngestWrites } from "@/lib/ingest"
 import { listDirectory, deleteFile } from "@/commands/fs"
@@ -139,8 +139,10 @@ export function ChatPanel() {
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const useWebSearch = useChatStore((s) => s.useWebSearch)
   const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
+  const agentMode = useChatStore((s) => s.agentMode)
   const setUseWebSearch = useChatStore((s) => s.setUseWebSearch)
   const setUseAnyTxtSearch = useChatStore((s) => s.setUseAnyTxtSearch)
+  const setAgentMode = useChatStore((s) => s.setAgentMode)
 
   // Derive active messages via selector to re-render on message changes
   const allMessages = useChatStore((s) => s.messages)
@@ -188,6 +190,7 @@ export function ChatPanel() {
       const sendOptions = options ?? {
         useWebSearch: useChatStore.getState().useWebSearch,
         useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
+        agentMode: useChatStore.getState().agentMode,
       }
       // Auto-create a conversation if none is active
       let convId = useChatStore.getState().activeConversationId
@@ -250,46 +253,55 @@ export function ChatPanel() {
           appendStreamToken("</think>")
         }
 
-        await streamChat(
-          llmConfig,
-          agentResult.messages,
-          {
-            onToken: (token) => {
-              if (!isCurrentRun()) return
-              closeReasoning()
-              accumulated += token
-              appendStreamToken(token)
+        const streamFinalAnswer = async (reasoningOff: boolean) => {
+          let streamError: Error | null = null
+          await streamChat(
+            llmConfig,
+            agentResult.messages,
+            {
+              onToken: (token) => {
+                if (!isCurrentRun()) return
+                closeReasoning()
+                accumulated += token
+                appendStreamToken(token)
+              },
+              onReasoningToken: (token) => {
+                if (!isCurrentRun()) return
+                if (reasoningOff) return
+                appendReasoning(token)
+              },
+              onDone: () => {},
+              onError: (err) => {
+                streamError = err
+              },
             },
-            onReasoningToken: (token) => {
-              if (!isCurrentRun()) return
-              appendReasoning(token)
-            },
-            onDone: () => {
-              if (!isCurrentRun()) return
-              closeReasoning()
-              finalized = true
-              finalizeStream(accumulated, agentResult.references)
-              setAgentEvents([])
-              abortRef.current = null
-              // save-worthy detection removed — user has direct "Save to Wiki" button on each message
-            },
-            onError: (err) => {
-              if (!isCurrentRun()) return
-              if (controller.signal.aborted || isAbortLikeError(err)) {
-                finalized = true
-                setStreaming(false)
-                setAgentEvents([])
-                abortRef.current = null
-                return
-              }
-              finalized = true
-              finalizeStream(`Error: ${err.message}`, undefined)
-              setAgentEvents([])
-              abortRef.current = null
-            },
-          },
-          controller.signal,
-        )
+            controller.signal,
+            reasoningOff ? { reasoning: { mode: "off" } } : undefined,
+          )
+          if (streamError) throw streamError
+        }
+
+        try {
+          await streamFinalAnswer(false)
+        } catch (err) {
+          if (!isCurrentRun()) return
+          if (isReasoningOnlyResponseError(err)) {
+            accumulated = ""
+            thinkingOpen = false
+            useChatStore.setState({ streamingContent: "" })
+            await streamFinalAnswer(true)
+          } else {
+            throw err
+          }
+        }
+
+        if (!isCurrentRun()) return
+        closeReasoning()
+        finalized = true
+        finalizeStream(accumulated, agentResult.references, agentResult.steps)
+        setAgentEvents([])
+        abortRef.current = null
+        // save-worthy detection removed — user has direct "Save to Wiki" button on each message
       } catch (err) {
         if (!finalized) {
           if (isAbortLikeError(err) || runIdRef.current !== runId) {
@@ -423,8 +435,10 @@ export function ChatPanel() {
           isStreaming={isStreaming}
           useWebSearch={useWebSearch}
           useAnyTxtSearch={useAnyTxtSearch}
+          agentMode={agentMode}
           onUseWebSearchChange={setUseWebSearch}
           onUseAnyTxtSearchChange={setUseAnyTxtSearch}
+          onAgentModeChange={setAgentMode}
           anyTxtAvailable={anyTxtAvailable}
           imageInputAvailable={imageInputAvailable}
           placeholder={

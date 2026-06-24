@@ -2,6 +2,7 @@ import { writeFile, readFile, createDirectory } from "@/commands/fs"
 import type { ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
+import type { ChatAgentMode } from "@/lib/chat-agent"
 import { normalizePath } from "@/lib/path-utils"
 
 async function ensureDir(projectPath: string): Promise<void> {
@@ -49,6 +50,7 @@ interface PersistedChatData {
 export interface ChatPreferences {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  agentMode: ChatAgentMode
 }
 
 function stripPersistedMessageImages(msg: DisplayMessage): DisplayMessage {
@@ -159,8 +161,21 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
     return {
       useWebSearch: parsed.useWebSearch === true,
       useAnyTxtSearch: parsed.useAnyTxtSearch === true,
+      agentMode: normalizePersistedAgentMode(parsed.agentMode),
     }
   } catch {
-    return { useWebSearch: false, useAnyTxtSearch: false }
+    return { useWebSearch: false, useAnyTxtSearch: false, agentMode: "standard" }
+  }
+}
+
+function normalizePersistedAgentMode(value: unknown): ChatAgentMode {
+  switch (value) {
+    case "fast":
+    case "standard":
+    case "deep":
+    case "local_first":
+      return value
+    default:
+      return "standard"
   }
 }

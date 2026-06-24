@@ -139,6 +139,13 @@
     "typeAMessage": "Type a message...",
     "useWebSearch": "Web search",
     "useAnyTxtSearch": "AnyTXT search",
+    "agentMode": "Agent mode",
+    "agentModes": {
+      "fast": "Fast",
+      "standard": "Standard",
+      "deep": "Deep",
+      "localFirst": "Local first"
+    },
     "enableAnyTxtInSettings": "Enable AnyTXT in Settings → External Information Sources",
     "sendMessage": "Send message",
     "stopGeneration": "Stop generation",

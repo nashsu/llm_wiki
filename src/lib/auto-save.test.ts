@@ -143,19 +143,21 @@ describe("auto-save project-switch guard", () => {
     expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
       useWebSearch: false,
       useAnyTxtSearch: false,
+      agentMode: "standard",
     })
     expect(saveReviewItems).toHaveBeenCalled()
   })
 
   it("persists chat search preferences on flush", async () => {
     setProjectPath("/proj/A")
-    useChatStore.setState({ useWebSearch: true, useAnyTxtSearch: true })
+    useChatStore.setState({ useWebSearch: true, useAnyTxtSearch: true, agentMode: "local_first" })
 
     await flushAndSuspendAutoSave()
 
     expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
       useWebSearch: true,
       useAnyTxtSearch: true,
+      agentMode: "local_first",
     })
   })
 })

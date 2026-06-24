@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import type { MessageImage } from "@/stores/chat-store"
+import type { ChatAgentMode } from "@/lib/chat-agent"
 import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_MB,
@@ -17,7 +18,10 @@ import {
 export interface ChatSendOptions {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  agentMode: ChatAgentMode
 }
+
+const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
 
 interface ChatInputProps {
   onSend: (text: string, images: MessageImage[], options: ChatSendOptions) => void
@@ -25,8 +29,10 @@ interface ChatInputProps {
   isStreaming: boolean
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  agentMode: ChatAgentMode
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
+  onAgentModeChange: (mode: ChatAgentMode) => void
   anyTxtAvailable?: boolean
   imageInputAvailable?: boolean
   placeholder?: string
@@ -38,8 +44,10 @@ export function ChatInput({
   isStreaming,
   useWebSearch,
   useAnyTxtSearch,
+  agentMode,
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
+  onAgentModeChange,
   anyTxtAvailable = true,
   imageInputAvailable = true,
   placeholder,
@@ -151,14 +159,14 @@ export function ChatInput({
       setImageError(t("chat.imageInputUnavailable"))
       return
     }
-    onSend(trimmed, images, { useWebSearch, useAnyTxtSearch })
+    onSend(trimmed, images, { useWebSearch, useAnyTxtSearch, agentMode })
     setValue("")
     setImages([])
     setImageError(null)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [imageInputAvailable, images, isStreaming, onSend, t, useAnyTxtSearch, useWebSearch, value])
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, t, useAnyTxtSearch, useWebSearch, value])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -181,6 +189,20 @@ export function ChatInput({
         ? "border-border bg-accent text-foreground shadow-sm"
         : "border-transparent bg-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground"
     } disabled:pointer-events-none disabled:opacity-50`
+
+  const agentModeLabel = (mode: ChatAgentMode) => {
+    switch (mode) {
+      case "fast":
+        return t("chat.agentModes.fast")
+      case "deep":
+        return t("chat.agentModes.deep")
+      case "local_first":
+        return t("chat.agentModes.localFirst")
+      case "standard":
+      default:
+        return t("chat.agentModes.standard")
+    }
+  }
 
   return (
     <div className="border-t bg-background/95 p-3">
@@ -296,6 +318,33 @@ export function ChatInput({
                 )}
               </Tooltip>
             </TooltipProvider>
+            <div
+              className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
+              role="radiogroup"
+              aria-label={t("chat.agentMode")}
+              title={t("chat.agentMode")}
+            >
+              {AGENT_MODE_OPTIONS.map((mode) => {
+                const active = agentMode === mode
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={isStreaming}
+                    onClick={() => onAgentModeChange(mode)}
+                    className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    } disabled:pointer-events-none disabled:opacity-50`}
+                  >
+                    {agentModeLabel(mode)}
+                  </button>
+                )
+              })}
+            </div>
           </div>
           {isStreaming ? (
             <Button

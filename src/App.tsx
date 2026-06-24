@@ -437,6 +437,7 @@ function App() {
         const savedChatPreferences = await loadChatPreferences(proj.path)
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
+        useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)
         const savedChat = await loadChatHistory(proj.path)
         if (savedChat.conversations.length > 0) {
           useChatStore.getState().setConversations(savedChat.conversations)

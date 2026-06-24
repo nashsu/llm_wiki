@@ -1,4 +1,4 @@
-import { readFile } from "@/commands/fs"
+import { listDirectory, readFile } from "@/commands/fs"
 import { anyTxtSearchSmart } from "@/lib/anytxt-search"
 import { computeContextBudget } from "@/lib/context-budget"
 import { isGreeting } from "@/lib/greeting-detector"
@@ -10,9 +10,12 @@ import { searchWiki, type SearchResult } from "@/lib/search"
 import { resolveSearchConfig, webSearch, type WebSearchResult } from "@/lib/web-search"
 import type { LlmConfig, SearchApiConfig } from "@/stores/wiki-store"
 import type { MessageReference } from "@/stores/chat-store"
+import type { FileNode } from "@/types/wiki"
 
 export type ChatAgentAction =
   | "answer"
+  | "project_files"
+  | "project_file_read"
   | "wiki_search"
   | "graph_search"
   | "external_search"
@@ -56,6 +59,7 @@ export interface ChatAgentProject {
 export interface ChatAgentOptions {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  mode?: ChatAgentMode
 }
 
 export interface ChatAgentDeps {
@@ -109,7 +113,7 @@ export interface ChatAgentResult {
 }
 
 interface ToolObservation {
-  tool: "wiki_search" | "graph_search" | "external_search"
+  tool: "project_files" | "project_file_read" | "wiki_search" | "graph_search" | "external_search"
   query: string
   content: string
   references: MessageReference[]
@@ -118,11 +122,19 @@ interface ToolObservation {
   errorCount?: number
 }
 
-export type ChatAgentToolName = "wiki_search" | "graph_search" | "web_search" | "anytxt_search"
+export type ChatAgentMode = "fast" | "standard" | "deep" | "local_first"
+
+export type ChatAgentToolName =
+  | "project_files"
+  | "project_file_read"
+  | "wiki_search"
+  | "graph_search"
+  | "web_search"
+  | "anytxt_search"
 
 export interface ChatAgentToolDefinition {
   name: ChatAgentToolName
-  action: Extract<ChatAgentAction, "wiki_search" | "graph_search" | "external_search">
+  action: Extract<ChatAgentAction, "project_files" | "project_file_read" | "wiki_search" | "graph_search" | "external_search">
   stage: Extract<ChatAgentEventStage, "searching_wiki" | "searching_graph" | "searching_web" | "searching_anytxt">
   label: string
   description: string
@@ -166,9 +178,26 @@ interface RetrievedContext {
 }
 
 const MAX_AGENT_ROUNDS = 3
+const MAX_DEEP_AGENT_ROUNDS = 5
 const MAX_TOOL_CONTEXT_CHARS = 48_000
 
 const CHAT_AGENT_TOOL_REGISTRY: ChatAgentToolDefinition[] = [
+  {
+    name: "project_files",
+    action: "project_files",
+    stage: "searching_wiki",
+    label: "Project Files",
+    description: "List project and wiki files through the same project-bound file access used by the local API/MCP tools.",
+    requiresProject: true,
+  },
+  {
+    name: "project_file_read",
+    action: "project_file_read",
+    stage: "searching_wiki",
+    label: "Project File Read",
+    description: "Read a specific project text file by relative path when the user names a file or asks to inspect one.",
+    requiresProject: true,
+  },
   {
     name: "wiki_search",
     action: "wiki_search",
@@ -205,11 +234,13 @@ export function getChatAgentTools(args: {
   hasProject: boolean
   webSearchEnabled: boolean
   anyTxtSearchEnabled: boolean
+  mode?: ChatAgentMode
 }): ChatAgentToolDefinition[] {
   return CHAT_AGENT_TOOL_REGISTRY.filter((tool) => {
     if (tool.requiresProject && !args.hasProject) return false
-    if (tool.name === "web_search") return args.webSearchEnabled
+    if (tool.name === "web_search") return args.webSearchEnabled && args.mode !== "local_first"
     if (tool.name === "anytxt_search") return args.anyTxtSearchEnabled
+    if (tool.name === "project_file_read") return args.mode !== "fast"
     return true
   })
 }
@@ -261,6 +292,7 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
     hasProject: Boolean(input.project),
     webSearchEnabled: input.options.useWebSearch,
     anyTxtSearchEnabled: input.options.useAnyTxtSearch,
+    mode: input.options.mode ?? "standard",
   })
   const projectRoutingContext = input.project
     ? await readProjectRoutingContext(projectPath, input.text, input.llmConfig)
@@ -285,6 +317,7 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
       projectContext: projectRoutingContext,
       webSearchEnabled: input.options.useWebSearch,
       anyTxtSearchEnabled: input.options.useAnyTxtSearch,
+      mode: input.options.mode ?? "standard",
       tools: enabledTools,
       signal: input.signal,
       streamChatImpl: deps.streamChat,
@@ -308,7 +341,8 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
       plan.push(understandingDecision)
     }
 
-    for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    const maxRounds = input.options.mode === "deep" ? MAX_DEEP_AGENT_ROUNDS : MAX_AGENT_ROUNDS
+    for (let round = 0; round < maxRounds; round++) {
       if (plan[plan.length - 1]?.action === "answer") break
       throwIfAborted(input.signal)
       const observationsBefore = observations.length
@@ -326,6 +360,7 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
         projectContext: projectRoutingContext,
         webSearchEnabled: input.options.useWebSearch,
         anyTxtSearchEnabled: input.options.useAnyTxtSearch,
+        mode: input.options.mode ?? "standard",
         signal: input.signal,
         streamChatImpl: deps.streamChat,
       })
@@ -352,63 +387,101 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
       if (executedToolKeys.has(toolKey)) break
       executedToolKeys.add(toolKey)
 
+      if ((decision.action === "project_files" || decision.action === "multi_search") && input.project) {
+        throwIfAborted(input.signal)
+        const tool = enabledTools.find((item) => item.name === "project_files")
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runProjectFilesTool({
+            projectPath,
+            queries,
+            llmConfig: input.llmConfig,
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
+      }
+
+      if ((decision.action === "project_file_read" || decision.action === "multi_search") && input.project) {
+        throwIfAborted(input.signal)
+        const tool = enabledTools.find((item) => item.name === "project_file_read")
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runProjectFileReadTool({
+            projectPath,
+            queries,
+            llmConfig: input.llmConfig,
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
+      }
+
       if ((decision.action === "wiki_search" || decision.action === "multi_search") && input.project) {
         throwIfAborted(input.signal)
         const tool = enabledTools.find((item) => item.name === "wiki_search")
-        if (tool) emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
-        const observation = await runWikiSearchTool({
-          projectPath,
-          queries,
-          llmConfig: input.llmConfig,
-          searchWikiImpl: deps.searchWiki,
-        })
-        observations.push(observation)
-        if (tool) emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runWikiSearchTool({
+            projectPath,
+            queries,
+            llmConfig: input.llmConfig,
+            searchWikiImpl: deps.searchWiki,
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
       }
 
       if ((decision.action === "graph_search" || decision.action === "multi_search") && input.project) {
         throwIfAborted(input.signal)
         const tool = enabledTools.find((item) => item.name === "graph_search")
-        if (tool) emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
-        const observation = await runGraphSearchTool({
-          projectPath,
-          dataVersion: input.dataVersion,
-          queries,
-          llmConfig: input.llmConfig,
-          searchWikiImpl: deps.searchWiki,
-        })
-        observations.push(observation)
-        if (tool) emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runGraphSearchTool({
+            projectPath,
+            dataVersion: input.dataVersion,
+            queries,
+            llmConfig: input.llmConfig,
+            searchWikiImpl: deps.searchWiki,
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
       }
 
       if ((decision.action === "external_search" || decision.action === "multi_search") && input.options.useWebSearch) {
         throwIfAborted(input.signal)
         const tool = enabledTools.find((item) => item.name === "web_search")
-        if (tool) emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
-        const observation = await runExternalSearchTool({
-          queries,
-          searchConfig,
-          webSearchImpl: deps.webSearch,
-          source: "web",
-        })
-        observations.push(observation)
-        if (tool) emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runExternalSearchTool({
+            queries,
+            searchConfig,
+            webSearchImpl: deps.webSearch,
+            source: "web",
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
       }
 
       if ((decision.action === "external_search" || decision.action === "multi_search") && input.options.useAnyTxtSearch) {
         throwIfAborted(input.signal)
         const tool = enabledTools.find((item) => item.name === "anytxt_search")
-        if (tool) emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
-        const observation = await runExternalSearchTool({
-          queries,
-          searchConfig,
-          llmConfig: input.llmConfig,
-          projectPath,
-          anyTxtSearchSmartImpl: deps.anyTxtSearchSmart,
-          source: "anytxt",
-        })
-        observations.push(observation)
-        if (tool) emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        if (tool) {
+          emitToolCall({ tool, queries, steps, onEvent: input.onEvent })
+          const observation = await runExternalSearchTool({
+            queries,
+            searchConfig,
+            llmConfig: input.llmConfig,
+            projectPath,
+            anyTxtSearchSmartImpl: deps.anyTxtSearchSmart,
+            source: "anytxt",
+          })
+          observations.push(observation)
+          emitToolResult({ tool, observation, steps, onEvent: input.onEvent })
+        }
       }
 
       if (observations.length === observationsBefore) break
@@ -423,7 +496,11 @@ export async function buildChatAgentMessages(input: ChatAgentInput): Promise<Cha
       ? historicalObservations
       : []
   if (observations.length > 0) input.onEvent?.({ stage: "reading_context" })
-  const projectContext = input.project && observationsForAnswer.some((obs) => obs.tool === "wiki_search" || obs.tool === "graph_search")
+  const projectContext = input.project && observationsForAnswer.some((obs) =>
+    obs.tool === "project_files"
+    || obs.tool === "project_file_read"
+    || obs.tool === "wiki_search"
+    || obs.tool === "graph_search")
     ? await readProjectPromptContext(projectPath, input.text, input.llmConfig)
     : undefined
   const retrievedContext = buildRetrievedContext(observationsForAnswer, input.text, input.llmConfig)
@@ -466,6 +543,7 @@ async function decideNextAction(args: {
   projectContext?: ProjectPromptContext
   webSearchEnabled: boolean
   anyTxtSearchEnabled: boolean
+  mode: ChatAgentMode
   signal?: AbortSignal
   streamChatImpl: typeof streamChat
 }): Promise<ChatAgentDecision> {
@@ -479,6 +557,8 @@ async function decideNextAction(args: {
     "",
     "Available actions:",
     "- answer: answer from conversation history or general reasoning without retrieval.",
+    "- project_files: list project/wiki files when the user asks what exists, asks for project structure, or names files/pages imprecisely.",
+    "- project_file_read: read a specific project text file when the user names a path or asks to inspect a known file.",
     "- wiki_search: search the local wiki when the user asks about project/wiki/docs/knowledge.",
     "- graph_search: inspect relationships between entities/concepts/pages.",
     "- external_search: search enabled external information sources.",
@@ -489,18 +569,22 @@ async function decideNextAction(args: {
     toolDescriptions,
     "",
     "Return shape:",
-    "{\"action\":\"answer|wiki_search|graph_search|external_search|multi_search|finish\",\"queries\":[\"short query\"],\"answer\":\"optional direct draft\",\"reason\":\"short reason\"}",
+    "{\"action\":\"answer|project_files|project_file_read|wiki_search|graph_search|external_search|multi_search|finish\",\"queries\":[\"short query or relative file path\"],\"answer\":\"optional direct draft\",\"reason\":\"short reason\"}",
     "",
     "Rules:",
     "- Do not retrieve for greetings, casual chat, translation/rewrite/summarize/follow-up requests about prior assistant messages.",
     "- Use wiki_search for questions about the local wiki, project materials, documents, notes, or remembered knowledge.",
     "- Use the project overview/purpose/index below to judge whether the local wiki is likely to contain the answer.",
     "- If the project overview says the current topic is in scope, prefer wiki_search or multi_search before relying only on external_search.",
+    "- Use project_files before project_file_read when the user gives a fuzzy file/page name and you need to locate likely paths.",
     "- Use graph_search for relationships, dependencies, links, entities, concepts, clusters, or graph questions.",
     "- If the user enabled Web Search for this turn, treat that as a strong preference to use external_search or multi_search for current facts, web pages, public docs, product/API details, news, versions, pricing, or anything likely outside the local wiki.",
     "- If the user enabled AnyTXT Search for this turn, treat that as a strong preference to use external_search or multi_search when the answer may depend on external local files outside the wiki.",
     "- Do not repeat external_search for simple follow-ups, summaries, rewrites, translations, or questions that can be answered from already available observations/history, unless the user explicitly asks to search again or asks for newer information.",
     "- Never choose external_search if no external source is enabled.",
+    "- In local_first mode, prefer project_files, project_file_read, wiki_search, or graph_search; use external_search only when the user explicitly asks for external information.",
+    "- In fast mode, avoid multi-step file inspection; prefer answer or a single wiki_search when retrieval is clearly needed.",
+    "- In deep mode, you may use multiple tools when the question requires broader evidence.",
     "- If tool observations are already enough, choose finish.",
     "- Keep queries concise and keyword-rich.",
   ].join("\n")
@@ -528,6 +612,7 @@ async function decideNextAction(args: {
     `Project: ${args.projectName ?? "none"}`,
     `Local wiki available: ${args.hasProject ? "yes" : "no"}`,
     `External search enabled: ${externalEnabled ? "yes" : "no"}`,
+    `Agent mode: ${args.mode}`,
     `User enabled Web Search for this turn: ${args.webSearchEnabled ? "yes" : "no"}`,
     `User enabled AnyTXT Search for this turn: ${args.anyTxtSearchEnabled ? "yes" : "no"}`,
     `Query understanding: ${JSON.stringify(args.understanding)}`,
@@ -565,6 +650,7 @@ async function understandUserQuery(args: {
   projectContext?: ProjectPromptContext
   webSearchEnabled: boolean
   anyTxtSearchEnabled: boolean
+  mode: ChatAgentMode
   tools: ChatAgentToolDefinition[]
   signal?: AbortSignal
   streamChatImpl: typeof streamChat
@@ -588,6 +674,9 @@ async function understandUserQuery(args: {
     "- Use graph for relationship/entity/connection questions.",
     "- Use external for current facts, public docs, web pages, product/API details, versions, pricing, or local files outside the wiki when the matching external source is enabled.",
     "- Use mixed when local wiki plus external sources are both useful.",
+    "- In local_first mode, set needsWiki=true for any topic plausibly covered by the project.",
+    "- In fast mode, be conservative about extra tools.",
+    "- In deep mode, prefer mixed when both local and external evidence could help.",
     "- Keep each query concise and keyword-rich.",
     "",
     "Enabled tools:",
@@ -605,6 +694,7 @@ async function understandUserQuery(args: {
     `Local wiki available: ${args.hasProject ? "yes" : "no"}`,
     `Web Search enabled: ${args.webSearchEnabled ? "yes" : "no"}`,
     `AnyTXT Search enabled: ${args.anyTxtSearchEnabled ? "yes" : "no"}`,
+    `Agent mode: ${args.mode}`,
     `User enabled Web Search for this turn: ${args.webSearchEnabled ? "yes" : "no"}`,
     `User enabled AnyTXT Search for this turn: ${args.anyTxtSearchEnabled ? "yes" : "no"}`,
     "",
@@ -670,7 +760,7 @@ function fallbackUnderstanding(
   const lower = query.toLowerCase()
   const needsGraph = /(关系|关联|连接|图谱|依赖|relationship|related|graph|connection|linked)/i.test(query)
   const needsExternal = availability.webSearchEnabled && /(latest|current|today|news|price|version|docs|api|最新|现在|今天|新闻|价格|版本|官方文档)/i.test(lower)
-  const needsWiki = availability.hasProject && !needsExternal
+  const needsWiki = availability.hasProject && (!needsExternal || availability.anyTxtSearchEnabled)
   const intent: ChatAgentIntent = needsGraph
     ? "graph"
     : needsExternal && needsWiki
@@ -782,6 +872,8 @@ export function parseDecision(raw: string, fallbackQuery: string): ChatAgentDeci
 function normalizeAction(action: unknown): ChatAgentAction {
   switch (action) {
     case "answer":
+    case "project_files":
+    case "project_file_read":
     case "wiki_search":
     case "graph_search":
     case "external_search":
@@ -796,6 +888,108 @@ function normalizeAction(action: unknown): ChatAgentAction {
 function normalizeDecisionQueries(decision: ChatAgentDecision, fallback: string): string[] {
   const queries = decision.queries.map((q) => q.trim()).filter(Boolean)
   return (queries.length > 0 ? queries : [fallback]).slice(0, 5)
+}
+
+async function runProjectFilesTool(args: {
+  projectPath: string
+  queries: string[]
+  llmConfig: LlmConfig
+}): Promise<ToolObservation> {
+  const maxEntries = args.llmConfig.maxContextSize > 180_000 ? 160 : 80
+  const [wikiTree, rawTree] = await Promise.all([
+    listDirectory(`${args.projectPath}/wiki`).catch(() => [] as FileNode[]),
+    listDirectory(`${args.projectPath}/raw/sources`).catch(() => [] as FileNode[]),
+  ])
+  const wikiEntries = flattenFileTree(wikiTree, "wiki").slice(0, maxEntries)
+  const rawEntries = flattenFileTree(rawTree, "raw/sources").slice(0, Math.floor(maxEntries / 2))
+  const content = [
+    "# Project file listing",
+    `Query: ${args.queries.join(" | ")}`,
+    "",
+    "## Wiki files",
+    wikiEntries.length > 0 ? wikiEntries.map((entry) => `- ${entry}`).join("\n") : "(none)",
+    wikiEntries.length >= maxEntries ? "\n[...wiki listing truncated...]" : "",
+    "",
+    "## Source files",
+    rawEntries.length > 0 ? rawEntries.map((entry) => `- ${entry}`).join("\n") : "(none)",
+    rawEntries.length >= Math.floor(maxEntries / 2) ? "\n[...source listing truncated...]" : "",
+  ].filter(Boolean).join("\n")
+  const reference: MessageReference = {
+    title: "Project file listing",
+    path: `${args.projectPath}/wiki/index.md`,
+    kind: "wiki",
+    snippet: wikiEntries.slice(0, 10).join("\n"),
+  }
+  return {
+    tool: "project_files",
+    query: args.queries.join(" | "),
+    content,
+    references: [reference],
+    pages: [],
+    items: [{
+      id: "project-files",
+      kind: "wiki",
+      source: "project_files",
+      title: "Project file listing",
+      path: `${args.projectPath}/wiki/index.md`,
+      snippet: wikiEntries.slice(0, 10).join("\n"),
+      content,
+      score: 0.8,
+      query: args.queries.join(" | "),
+      reference,
+    }],
+    errorCount: 0,
+  }
+}
+
+async function runProjectFileReadTool(args: {
+  projectPath: string
+  queries: string[]
+  llmConfig: LlmConfig
+}): Promise<ToolObservation> {
+  const { maxPageSize } = computeContextBudget(args.llmConfig.maxContextSize)
+  const pages: PageEntry[] = []
+  const errors: string[] = []
+  for (const query of args.queries.slice(0, 5)) {
+    const rel = normalizeProjectRelativePath(query)
+    if (!rel || !isReadableProjectTextPath(rel)) {
+      errors.push(`Skipped unsafe or unsupported path: ${query}`)
+      continue
+    }
+    try {
+      const raw = await readFile(`${args.projectPath}/${rel}`)
+      const content = raw.length > maxPageSize
+        ? `${raw.slice(0, maxPageSize)}\n\n[...truncated...]`
+        : raw
+      pages.push({
+        title: getFileName(rel),
+        path: rel,
+        content,
+        priority: pages.length,
+      })
+    } catch (err) {
+      errors.push(`Failed to read ${rel}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return {
+    tool: "project_file_read",
+    query: args.queries.join(" | "),
+    content: [
+      formatWikiObservation("Project file contents", pages, []),
+      errors.length > 0 ? `Errors:\n${errors.map((err) => `- ${err}`).join("\n")}` : "",
+    ].filter(Boolean).join("\n\n"),
+    references: pages.map((page) => ({ title: page.title, path: `${args.projectPath}/${page.path}`, kind: "wiki" as const })),
+    pages: pages.map((page) => ({ title: page.title, path: `${args.projectPath}/${page.path}` })),
+    items: pages.map((page) => pageToRetrievedItem({
+      projectPath: args.projectPath,
+      page,
+      query: args.queries.join(" | "),
+      kind: "wiki",
+      source: "project_file_read",
+      score: 0.95,
+    })),
+    errorCount: errors.length,
+  }
 }
 
 async function readProjectRoutingContext(
@@ -847,6 +1041,45 @@ function trimRelevantIndex(rawIndex: string, query: string, maxChars: number): s
   return keptLines.length > 0
     ? `${keptLines.join("\n")}\n\n[...index trimmed to routing-relevant entries...]`
     : rawIndex.slice(0, Math.max(0, maxChars - 40)).trimEnd() + "\n[...index truncated...]"
+}
+
+function flattenFileTree(nodes: FileNode[], prefix: string): string[] {
+  const out: string[] = []
+  const walk = (items: FileNode[], base: string) => {
+    for (const node of items) {
+      const rel = `${base}/${node.name}`.replace(/\/+/g, "/")
+      if (node.is_dir) {
+        if (node.children) walk(node.children, rel)
+      } else {
+        out.push(rel)
+      }
+    }
+  }
+  walk(nodes, prefix)
+  return out.sort((a, b) => a.localeCompare(b))
+}
+
+function normalizeProjectRelativePath(input: string): string {
+  const stripped = input
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/^\.\//, "")
+  const normalized = normalizePath(stripped)
+    .replace(/^\/+/, "")
+    .replace(/^.*?\/(wiki|raw\/sources)\//, "$1/")
+  if (!normalized || normalized.includes("\0")) return ""
+  if (normalized.split("/").some((part) => part === ".." || part.startsWith("."))) return ""
+  return normalized
+}
+
+function isReadableProjectTextPath(rel: string): boolean {
+  const lower = rel.toLowerCase()
+  if (!lower.startsWith("wiki/") && !lower.startsWith("raw/sources/") && lower !== "purpose.md" && lower !== "schema.md") {
+    return false
+  }
+  return /\.(md|mdx|txt|json|yaml|yml|csv|tsv|log)$/i.test(lower)
+    || lower === "purpose.md"
+    || lower === "schema.md"
 }
 
 function makeStepId(steps: ChatAgentStep[]): string {
@@ -1535,6 +1768,10 @@ async function collectChatText(
 ): Promise<string> {
   let out = ""
   let error: Error | null = null
+  const requestOverrides: Parameters<typeof streamChat>[4] = {
+    ...overrides,
+    reasoning: overrides?.reasoning ?? { mode: "off" },
+  }
   await streamChatImpl(
     llmConfig,
     messages,
@@ -1545,7 +1782,7 @@ async function collectChatText(
       onError: (err) => { error = err },
     },
     signal,
-    overrides,
+    requestOverrides,
   )
   if (error) throw error
   throwIfAborted(signal)

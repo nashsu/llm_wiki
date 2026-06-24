@@ -26,6 +26,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.1",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "Added Chat Agent modes, persisted tool progress, and project file tools for local inspection.",
+        "Improved reasoning-model handling so chat can recover when an endpoint returns thinking text but no final answer.",
+      ],
+      zh: [
+        "新增聊天 Agent 模式、持久化工具调用进度，并加入项目文件查看工具。",
+        "改进推理模型兼容性：当端点只返回思考内容而没有最终回答时，聊天会自动兜底恢复。",
+      ],
+    },
+  },
+  {
     version: "0.5.0",
     date: "2026-06-24",
     highlights: {

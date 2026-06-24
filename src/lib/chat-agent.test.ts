@@ -11,6 +11,23 @@ import type { LlmConfig, SearchApiConfig } from "@/stores/wiki-store"
 import type { ChatMessage as LLMMessage } from "@/lib/llm-client"
 
 vi.mock("@/commands/fs", () => ({
+  listDirectory: vi.fn(async (path: string) => {
+    if (path.endsWith("/wiki")) {
+      return [
+        { name: "concepts", path: `${path}/concepts`, is_dir: true, children: [
+          { name: "attention.md", path: `${path}/concepts/attention.md`, is_dir: false },
+          { name: "transformer.md", path: `${path}/concepts/transformer.md`, is_dir: false },
+        ] },
+        { name: "index.md", path: `${path}/index.md`, is_dir: false },
+      ]
+    }
+    if (path.endsWith("/raw/sources")) {
+      return [
+        { name: "paper.pdf", path: `${path}/paper.pdf`, is_dir: false },
+      ]
+    }
+    return []
+  }),
   readFile: vi.fn(async (path: string) => {
     if (path.endsWith("purpose.md")) {
       return "This wiki tracks transformer research."
@@ -26,6 +43,9 @@ vi.mock("@/commands/fs", () => ({
     }
     if (path.endsWith("transformer.md")) {
       return "---\ntitle: Transformer\ntype: concept\n---\n# Transformer\n\nTransformers use attention layers."
+    }
+    if (path.endsWith("schema.md")) {
+      return "# Schema"
     }
     return ""
   }),
@@ -111,12 +131,26 @@ describe("chat agent routing", () => {
       hasProject: false,
       webSearchEnabled: true,
       anyTxtSearchEnabled: false,
+      mode: "standard",
     }).map((tool) => tool.name)).toEqual(["web_search"])
     expect(getChatAgentTools({
       hasProject: true,
       webSearchEnabled: false,
       anyTxtSearchEnabled: true,
-    }).map((tool) => tool.name)).toEqual(["wiki_search", "graph_search", "anytxt_search"])
+      mode: "standard",
+    }).map((tool) => tool.name)).toEqual([
+      "project_files",
+      "project_file_read",
+      "wiki_search",
+      "graph_search",
+      "anytxt_search",
+    ])
+    expect(getChatAgentTools({
+      hasProject: true,
+      webSearchEnabled: true,
+      anyTxtSearchEnabled: false,
+      mode: "local_first",
+    }).map((tool) => tool.name)).not.toContain("web_search")
   })
 
   it("does not call search tools for direct greetings", async () => {
@@ -227,6 +261,83 @@ describe("chat agent routing", () => {
       expect.objectContaining({ stage: "tool_call", tool: "wiki_search" }),
       expect.objectContaining({ stage: "tool_result", tool: "wiki_search", count: 1 }),
     ]))
+  })
+
+  it("disables reasoning for internal JSON controller calls", async () => {
+    const streamChat = vi.fn(async (...args: unknown[]) => {
+      const callbacks = args[2] as { onToken: (token: string) => void; onDone: () => void }
+      callbacks.onToken('{"action":"wiki_search","queries":["attention mechanism"]}')
+      callbacks.onDone()
+    })
+    const searchWiki = vi.fn(async () => [])
+
+    await buildChatAgentMessages({
+      project: { name: "Demo", path: "/tmp/project" },
+      llmConfig: { ...llmConfig, reasoning: { mode: "high" } },
+      searchApiConfig,
+      text: "What do my notes say about attention?",
+      historyMessages: [{ role: "user", content: "What do my notes say about attention?" }],
+      dataVersion: 1,
+      options: { useWebSearch: false, useAnyTxtSearch: false },
+      deps: { streamChat, searchWiki },
+    })
+
+    expect(streamChat).toHaveBeenCalled()
+    for (const call of streamChat.mock.calls as unknown[][]) {
+      expect(call[4]).toEqual(expect.objectContaining({ reasoning: { mode: "off" } }))
+    }
+  })
+
+  it("can list project files through the project_files tool", async () => {
+    const streamChat = vi.fn(async (_cfg, _messages, callbacks) => {
+      callbacks.onToken('{"action":"project_files","queries":["what files exist"]}')
+      callbacks.onDone()
+    })
+
+    const result = await buildChatAgentMessages({
+      project: { name: "Demo", path: "/tmp/project" },
+      llmConfig,
+      searchApiConfig,
+      text: "What files are in this project?",
+      historyMessages: [{ role: "user", content: "What files are in this project?" }],
+      dataVersion: 1,
+      options: { useWebSearch: false, useAnyTxtSearch: false, mode: "standard" },
+      deps: { streamChat },
+    })
+
+    expect(result.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "tool_call", tool: "project_files" }),
+      expect.objectContaining({ type: "tool_result", tool: "project_files", count: 1 }),
+    ]))
+    expect(String(result.messages[0].content)).toContain("Project file listing")
+    expect(String(result.messages[0].content)).toContain("wiki/concepts/attention.md")
+  })
+
+  it("can read a project text file by relative path", async () => {
+    const streamChat = vi.fn(async (_cfg, _messages, callbacks) => {
+      callbacks.onToken('{"action":"project_file_read","queries":["wiki/concepts/attention.md"]}')
+      callbacks.onDone()
+    })
+
+    const result = await buildChatAgentMessages({
+      project: { name: "Demo", path: "/tmp/project" },
+      llmConfig,
+      searchApiConfig,
+      text: "Read wiki/concepts/attention.md",
+      historyMessages: [{ role: "user", content: "Read wiki/concepts/attention.md" }],
+      dataVersion: 1,
+      options: { useWebSearch: false, useAnyTxtSearch: false, mode: "standard" },
+      deps: { streamChat },
+    })
+
+    expect(result.references).toEqual([
+      {
+        title: "attention.md",
+        path: "/tmp/project/wiki/concepts/attention.md",
+        kind: "wiki",
+      },
+    ])
+    expect(String(result.messages[0].content)).toContain("Attention lets models focus")
   })
 
   it("materializes graph results without double-prefixing absolute node paths", async () => {

@@ -52,6 +52,11 @@ function isRequestCancelledError(err: unknown): boolean {
   return /^request cancel(?:l)?ed$/i.test(message.trim())
 }
 
+export function isReasoningOnlyResponseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /^Model produced [\d,]+ characters of reasoning \/ chain-of-thought, but no actual response content\./.test(message)
+}
+
 export async function streamChat(
   config: LlmConfig,
   messages: import("./llm-providers").ChatMessage[],

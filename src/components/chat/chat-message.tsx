@@ -30,7 +30,7 @@ import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
-import type { ChatAgentEvent, ChatAgentEventStage } from "@/lib/chat-agent"
+import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep } from "@/lib/chat-agent"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -118,6 +118,9 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
             ))}
           </div>
         )}
+        {isAssistant && (
+          <SavedAgentActivity steps={message.agentSteps ?? []} />
+        )}
         {(!isUser || message.content) && (
           <div
             className={`rounded-lg px-3 py-2 text-sm ${
@@ -157,6 +160,31 @@ function ChatMessageImpl({ message, isLastAssistant, onRegenerate, onOpenReferen
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function SavedAgentActivity({ steps }: { steps: ChatAgentStep[] }) {
+  const events = useMemo<ChatAgentEvent[]>(() => steps
+    .filter((step) => step.type !== "final")
+    .map((step) => ({
+      stage: step.type === "understanding"
+        ? "understanding"
+        : step.type === "routing"
+          ? "routing"
+          : step.type === "tool_call"
+            ? "tool_call"
+            : "tool_result",
+      tool: step.tool,
+      query: step.query,
+      message: step.message,
+      count: step.count,
+      status: step.status,
+    })), [steps])
+  if (events.length === 0) return null
+  return (
+    <div className="rounded-md border border-border/50 bg-background/50 px-2 py-1">
+      <AgentActivity events={events} compact />
     </div>
   )
 }
@@ -828,7 +856,7 @@ export function StreamingMessage({ content, agentEvents = [] }: StreamingMessage
   )
 }
 
-function AgentActivity({ events }: { events: ChatAgentEvent[] }) {
+function AgentActivity({ events, compact = false }: { events: ChatAgentEvent[]; compact?: boolean }) {
   const { t } = useTranslation()
   const visible = events.filter((event, index, arr) => {
     const prev = arr[index - 1]
@@ -841,7 +869,7 @@ function AgentActivity({ events }: { events: ChatAgentEvent[] }) {
   if (visible.length === 0) return null
 
   return (
-    <div className="mb-2 flex flex-col gap-1.5 border-b border-border/40 pb-2">
+    <div className={`${compact ? "" : "mb-2 border-b border-border/40 pb-2"} flex flex-col gap-1.5`}>
       {visible.map((event, index) => {
         const active = index === visible.length - 1
         const Icon = agentStageIcon(event.stage)

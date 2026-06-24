@@ -25,6 +25,7 @@ export async function resetProjectState(): Promise<void> {
     streamingContent: "",
     useWebSearch: false,
     useAnyTxtSearch: false,
+    agentMode: "standard",
   })
 
   useReviewStore.setState({

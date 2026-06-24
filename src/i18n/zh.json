@@ -139,6 +139,13 @@
     "typeAMessage": "输入消息...",
     "useWebSearch": "网页搜索",
     "useAnyTxtSearch": "AnyTXT 搜索",
+    "agentMode": "Agent 模式",
+    "agentModes": {
+      "fast": "快速",
+      "standard": "标准",
+      "deep": "深度",
+      "localFirst": "本地优先"
+    },
     "enableAnyTxtInSettings": "请在设置 → 外部信息源中启用 AnyTXT",
     "sendMessage": "发送消息",
     "stopGeneration": "停止生成",

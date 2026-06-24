@@ -9,7 +9,7 @@ vi.mock("./tauri-fetch", async () => {
   return { ...actual, getHttpFetch: () => Promise.resolve(mockHttpFetch) }
 })
 
-import { isFetchNetworkError, streamChat } from "./llm-client"
+import { isFetchNetworkError, isReasoningOnlyResponseError, streamChat } from "./llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 /**
@@ -59,6 +59,15 @@ describe("isFetchNetworkError — cross-webview fetch failures", () => {
     expect(isFetchNetworkError(null)).toBe(false)
     expect(isFetchNetworkError(undefined)).toBe(false)
     expect(isFetchNetworkError({ message: "Load failed" })).toBe(false)
+  })
+})
+
+describe("isReasoningOnlyResponseError", () => {
+  it("recognises the reasoning-only stream diagnostic", () => {
+    expect(isReasoningOnlyResponseError(
+      new Error("Model produced 2,176 characters of reasoning / chain-of-thought, but no actual response content. Try again."),
+    )).toBe(true)
+    expect(isReasoningOnlyResponseError(new Error("plain provider error"))).toBe(false)
   })
 })
 

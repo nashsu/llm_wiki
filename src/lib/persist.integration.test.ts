@@ -263,10 +263,11 @@ describe("chat persistence — round-trip (new format)", () => {
   })
 
   it("round-trips chat search preferences", async () => {
-    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false })
+    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false, agentMode: "deep" })
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: true,
       useAnyTxtSearch: false,
+      agentMode: "deep",
     })
 
     const raw = await readFileRaw(`${tmp.path}/.llm-wiki/chat-preferences.json`)
@@ -277,6 +278,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: false,
       useAnyTxtSearch: false,
+      agentMode: "standard",
     })
   })
 
