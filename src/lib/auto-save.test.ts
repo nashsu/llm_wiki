@@ -12,13 +12,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest"
 
-const { saveReviewItems, saveLintItems, saveChatHistory } = vi.hoisted(() => ({
+const { saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences } = vi.hoisted(() => ({
   saveReviewItems: vi.fn().mockResolvedValue(undefined),
   saveLintItems: vi.fn().mockResolvedValue(undefined),
   saveChatHistory: vi.fn().mockResolvedValue(undefined),
+  saveChatPreferences: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory }))
+vi.mock("./persist", () => ({ saveReviewItems, saveLintItems, saveChatHistory, saveChatPreferences }))
 
 import {
   setupAutoSave,
@@ -46,6 +47,7 @@ beforeEach(() => {
   saveReviewItems.mockClear()
   saveLintItems.mockClear()
   saveChatHistory.mockClear()
+  saveChatPreferences.mockClear()
   useReviewStore.setState({ items: [] })
   useLintStore.setState({ items: [] })
   useChatStore.setState({ conversations: [], messages: [], isStreaming: false })
@@ -116,6 +118,7 @@ describe("auto-save project-switch guard", () => {
     saveReviewItems.mockClear()
     saveLintItems.mockClear()
     saveChatHistory.mockClear()
+    saveChatPreferences.mockClear()
 
     // A post-failure store change should not write empty data to the half-opened
     // project because the cleanup cleared the active project before resume.
@@ -127,6 +130,7 @@ describe("auto-save project-switch guard", () => {
     expect(saveReviewItems).not.toHaveBeenCalled()
     expect(saveLintItems).not.toHaveBeenCalled()
     expect(saveChatHistory).not.toHaveBeenCalled()
+    expect(saveChatPreferences).not.toHaveBeenCalled()
   })
 
   it("skips chat flush while streaming", async () => {
@@ -136,6 +140,22 @@ describe("auto-save project-switch guard", () => {
     await flushAndSuspendAutoSave()
 
     expect(saveChatHistory).not.toHaveBeenCalled()
+    expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
+      useWebSearch: false,
+      useAnyTxtSearch: false,
+    })
     expect(saveReviewItems).toHaveBeenCalled()
+  })
+
+  it("persists chat search preferences on flush", async () => {
+    setProjectPath("/proj/A")
+    useChatStore.setState({ useWebSearch: true, useAnyTxtSearch: true })
+
+    await flushAndSuspendAutoSave()
+
+    expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
+      useWebSearch: true,
+      useAnyTxtSearch: true,
+    })
   })
 })

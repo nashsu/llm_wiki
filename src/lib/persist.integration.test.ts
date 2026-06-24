@@ -22,6 +22,8 @@ import {
   loadLintItems,
   saveChatHistory,
   loadChatHistory,
+  saveChatPreferences,
+  loadChatPreferences,
 } from "./persist"
 
 let tmp: { path: string; cleanup: () => Promise<void> }
@@ -258,6 +260,24 @@ describe("chat persistence — round-trip (new format)", () => {
   it("returns empty data when no persistence file exists", async () => {
     const loaded = await loadChatHistory(tmp.path)
     expect(loaded).toEqual({ conversations: [], messages: [] })
+  })
+
+  it("round-trips chat search preferences", async () => {
+    await saveChatPreferences(tmp.path, { useWebSearch: true, useAnyTxtSearch: false })
+    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
+      useWebSearch: true,
+      useAnyTxtSearch: false,
+    })
+
+    const raw = await readFileRaw(`${tmp.path}/.llm-wiki/chat-preferences.json`)
+    expect(raw).toContain('"useWebSearch": true')
+  })
+
+  it("defaults chat search preferences to off when no file exists", async () => {
+    await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
+      useWebSearch: false,
+      useAnyTxtSearch: false,
+    })
   })
 
   it("skips missing per-conversation files without throwing", async () => {

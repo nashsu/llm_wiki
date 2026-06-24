@@ -149,7 +149,24 @@
     "imageInputUnavailable": "当前 Provider 不支持图片输入。请在设置中切换到支持视觉的 Provider。",
     "imageTooLarge": "图片过大（最大 {{max}}MB）：{{name}}",
     "tooManyImages": "图片数量过多（最多 {{max}} 张）",
-    "unsupportedImageType": "不支持的图片类型：{{type}}"
+    "unsupportedImageType": "不支持的图片类型：{{type}}",
+    "referencePreview": "引用预览",
+    "closeReferencePreview": "关闭引用预览",
+    "resizeReferencePreview": "调整引用预览宽度",
+    "noReferencePreviewFragment": "没有返回可预览的片段。",
+    "agent": {
+      "understanding": "理解问题",
+      "routing": "规划下一步",
+      "tool_call": "调用工具",
+      "tool_result": "工具结果",
+      "searching_wiki": "搜索 Wiki",
+      "searching_graph": "探索知识图谱",
+      "searching_web": "搜索网页",
+      "searching_anytxt": "搜索 AnyTXT",
+      "reading_context": "读取上下文",
+      "writing": "生成回答",
+      "resultCount": "{{count}} 条结果"
+    }
   },
   "search": {
     "title": "搜索",

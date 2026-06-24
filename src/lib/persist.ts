@@ -46,6 +46,11 @@ interface PersistedChatData {
   messages: DisplayMessage[]
 }
 
+export interface ChatPreferences {
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
+}
+
 function stripPersistedMessageImages(msg: DisplayMessage): DisplayMessage {
   if (!msg.images || msg.images.length === 0) return msg
   const { images: _images, ...rest } = msg
@@ -134,5 +139,28 @@ export async function loadChatHistory(projectPath: string): Promise<PersistedCha
     } catch {
       return { conversations: [], messages: [] }
     }
+  }
+}
+
+export async function saveChatPreferences(
+  projectPath: string,
+  preferences: ChatPreferences,
+): Promise<void> {
+  const pp = normalizePath(projectPath)
+  await ensureDir(pp)
+  await writeFile(`${pp}/.llm-wiki/chat-preferences.json`, JSON.stringify(preferences, null, 2))
+}
+
+export async function loadChatPreferences(projectPath: string): Promise<ChatPreferences> {
+  const pp = normalizePath(projectPath)
+  try {
+    const content = await readFile(`${pp}/.llm-wiki/chat-preferences.json`)
+    const parsed = JSON.parse(content) as Partial<ChatPreferences>
+    return {
+      useWebSearch: parsed.useWebSearch === true,
+      useAnyTxtSearch: parsed.useAnyTxtSearch === true,
+    }
+  } catch {
+    return { useWebSearch: false, useAnyTxtSearch: false }
   }
 }

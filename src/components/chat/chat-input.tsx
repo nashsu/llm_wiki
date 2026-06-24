@@ -23,6 +23,10 @@ interface ChatInputProps {
   onSend: (text: string, images: MessageImage[], options: ChatSendOptions) => void
   onStop: () => void
   isStreaming: boolean
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
+  onUseWebSearchChange: (enabled: boolean) => void
+  onUseAnyTxtSearchChange: (enabled: boolean) => void
   anyTxtAvailable?: boolean
   imageInputAvailable?: boolean
   placeholder?: string
@@ -32,22 +36,24 @@ export function ChatInput({
   onSend,
   onStop,
   isStreaming,
+  useWebSearch,
+  useAnyTxtSearch,
+  onUseWebSearchChange,
+  onUseAnyTxtSearchChange,
   anyTxtAvailable = true,
   imageInputAvailable = true,
   placeholder,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const [value, setValue] = useState("")
-  const [useWebSearch, setUseWebSearch] = useState(false)
-  const [useAnyTxtSearch, setUseAnyTxtSearch] = useState(false)
   const [images, setImages] = useState<MessageImage[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!anyTxtAvailable) setUseAnyTxtSearch(false)
-  }, [anyTxtAvailable])
+    if (!anyTxtAvailable && useAnyTxtSearch) onUseAnyTxtSearchChange(false)
+  }, [anyTxtAvailable, onUseAnyTxtSearchChange, useAnyTxtSearch])
 
   // Validate + decode a batch of files (from paste, drop, or the file
   // picker) and append the accepted ones to `images`. Rejections set a
@@ -248,7 +254,7 @@ export function ChatInput({
             <button
               type="button"
               aria-pressed={useWebSearch}
-              onClick={() => setUseWebSearch((v) => !v)}
+              onClick={() => onUseWebSearchChange(!useWebSearch)}
               disabled={isStreaming}
               className={searchToggleClass(useWebSearch)}
             >
@@ -270,7 +276,7 @@ export function ChatInput({
                   <button
                     type="button"
                     aria-pressed={useAnyTxtSearch}
-                    onClick={() => setUseAnyTxtSearch((v) => !v)}
+                    onClick={() => onUseAnyTxtSearchChange(!useAnyTxtSearch)}
                     disabled={isStreaming || !anyTxtAvailable}
                     className={searchToggleClass(useAnyTxtSearch)}
                   >

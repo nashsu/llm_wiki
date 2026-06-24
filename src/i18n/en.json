@@ -149,7 +149,24 @@
     "imageInputUnavailable": "The current provider does not support image input. Switch to a vision-capable provider in Settings.",
     "imageTooLarge": "Image too large (max {{max}}MB): {{name}}",
     "tooManyImages": "Too many images (max {{max}})",
-    "unsupportedImageType": "Unsupported image type: {{type}}"
+    "unsupportedImageType": "Unsupported image type: {{type}}",
+    "referencePreview": "Reference preview",
+    "closeReferencePreview": "Close reference preview",
+    "resizeReferencePreview": "Resize reference preview",
+    "noReferencePreviewFragment": "No preview fragment returned.",
+    "agent": {
+      "understanding": "Understanding request",
+      "routing": "Planning next step",
+      "tool_call": "Calling tool",
+      "tool_result": "Tool result",
+      "searching_wiki": "Searching wiki",
+      "searching_graph": "Exploring knowledge graph",
+      "searching_web": "Searching web",
+      "searching_anytxt": "Searching AnyTXT",
+      "reading_context": "Reading context",
+      "writing": "Writing answer",
+      "resultCount": "results: {{count}}"
+    }
   },
   "search": {
     "title": "Search",

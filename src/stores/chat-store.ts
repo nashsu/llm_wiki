@@ -49,6 +49,8 @@ interface ChatState {
   mode: "chat" | "ingest"
   ingestSource: string | null
   maxHistoryMessages: number
+  useWebSearch: boolean
+  useAnyTxtSearch: boolean
 
   // Conversation management
   createConversation: () => string
@@ -67,6 +69,8 @@ interface ChatState {
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
   setMaxHistoryMessages: (n: number) => void
+  setUseWebSearch: (enabled: boolean) => void
+  setUseAnyTxtSearch: (enabled: boolean) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
@@ -93,6 +97,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   mode: "chat",
   ingestSource: null,
   maxHistoryMessages: 10,
+  useWebSearch: false,
+  useAnyTxtSearch: false,
 
   createConversation: () => {
     const id = generateConversationId()
@@ -231,6 +237,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   setMaxHistoryMessages: (maxHistoryMessages) => set({ maxHistoryMessages }),
+
+  setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
+
+  setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
 
   removeLastAssistantMessage: () =>
     set((state) => {

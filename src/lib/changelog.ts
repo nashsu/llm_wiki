@@ -26,6 +26,56 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.0",
+    date: "2026-06-24",
+    highlights: {
+      en: [
+        "Added the new chat Agent flow with query understanding, local/wiki graph tools, external search tools, and visible tool progress.",
+        "Improved chat references with an in-chat preview panel, resizable preview width, source snippets, and persisted search toggles.",
+        "Improved Agent routing by using each project overview to decide when local wiki search should be preferred over external search.",
+        "Removed the Intel macOS release build from GitHub Actions.",
+      ],
+      zh: [
+        "新增聊天 Agent 流程，支持问题理解、本地 Wiki/图谱工具、外部搜索工具，以及可见的工具调用进度。",
+        "改进聊天引用体验：支持对话内引用预览、可调预览宽度、来源片段展示，以及搜索开关持久化。",
+        "改进 Agent 路由判断：使用每个项目的 overview 来判断何时优先搜索当前知识库而不是外部网页。",
+        "移除 GitHub Actions 中的 Intel Mac 发布构建。",
+      ],
+    },
+  },
+  {
+    version: "0.4.26",
+    date: "2026-06-23",
+    highlights: {
+      en: [
+        "Merged recent community PR fixes and cleaned up release documentation.",
+        "Fixed release build issues around bundled resources and PDFium binaries.",
+        "Added Intel x86_64 macOS client support to the release build.",
+      ],
+      zh: [
+        "合并近期社区 PR 修复，并清理发布文档。",
+        "修复发布构建中随包资源和 PDFium 二进制相关问题。",
+        "新增 Intel x86_64 Mac 客户端的发布构建支持。",
+      ],
+    },
+  },
+  {
+    version: "0.4.25",
+    date: "2026-06-23",
+    highlights: {
+      en: [
+        "Added Firecrawl as a Web Search provider with friendlier handling for anonymous search limits.",
+        "Fixed a batch of reported UI, import, search, and provider compatibility bugs.",
+        "Improved release build preparation for bundled MCP resources.",
+      ],
+      zh: [
+        "新增 Firecrawl 网页搜索 Provider，并优化匿名搜索受限时的提示。",
+        "修复一批用户反馈的界面、导入、搜索和 Provider 兼容性问题。",
+        "改进发布构建中 MCP 随包资源的准备流程。",
+      ],
+    },
+  },
+  {
     version: "0.4.24",
     date: "2026-06-16",
     highlights: {

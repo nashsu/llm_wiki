@@ -23,6 +23,8 @@ export async function resetProjectState(): Promise<void> {
     ingestSource: null,
     isStreaming: false,
     streamingContent: "",
+    useWebSearch: false,
+    useAnyTxtSearch: false,
   })
 
   useReviewStore.setState({
