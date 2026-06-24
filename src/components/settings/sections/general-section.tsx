@@ -95,7 +95,7 @@ export function GeneralSection({ draft, setDraft }: Props) {
 
       {/* Ingest concurrency */}
       <div className="space-y-2">
-        <Label>Concurrent document ingest</Label>
+        <Label>{t("settings.sections.general.ingestConcurrency", { defaultValue: "Concurrent document ingest" })}</Label>
         <Input
           type="number"
           min={1}
@@ -108,9 +108,9 @@ export function GeneralSection({ draft, setDraft }: Props) {
           }}
         />
         <p className="text-xs text-muted-foreground">
-          How many documents to process in parallel during ingestion.
-          1 = strictly sequential (original behavior). 2-4 is a good range
-          for most setups. Higher values may hit API rate limits.
+          {t("settings.sections.general.ingestConcurrencyHint", {
+            defaultValue: "How many documents to process in parallel during ingestion. 1 = strictly sequential (original behavior). 2-4 is a good range for most setups. Higher values may hit API rate limits.",
+          })}
         </p>
       </div>
     </div>
