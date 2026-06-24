@@ -311,6 +311,236 @@ describe("webSearch", () => {
       ])
   })
 
+  it("calls fastCRW cloud with Bearer auth and maps the flat data array", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: [
+        { title: "Doc", url: "https://example.com/doc", description: "Desc", snippet: "Desc" },
+      ],
+    }))
+
+    const out = await webSearch(
+      "llm_wiki",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      2,
+    )
+    const [url, init] = fetchMock.mock.calls[0]
+
+    expect(url).toBe("https://api.fastcrw.com/v1/search")
+    expect(init).toEqual(expect.objectContaining({ method: "POST" }))
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer k")
+    expect(JSON.parse(String(init?.body))).toEqual({ query: "llm_wiki", limit: 2 })
+    expect(out).toEqual([
+      { title: "Doc", url: "https://example.com/doc", snippet: "Desc", source: "example.com" },
+    ])
+  })
+
+  it("maps the self-hosted engine's nested data.results shape", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: { results: [{ title: "Self", url: "https://example.com/self", description: "Body" }] },
+    }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000" } } },
+      5,
+    )).resolves.toEqual([
+      { title: "Self", url: "https://example.com/self", snippet: "Body", source: "example.com" },
+    ])
+  })
+
+  it("calls a self-hosted fastCRW base URL", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: { results: [] } }))
+
+    await webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000" } } },
+      5,
+    )
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:3000/v1/search")
+  })
+
+  it("strips a trailing slash from the fastCRW base URL", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: { results: [] } }))
+
+    await webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000/" } } },
+      5,
+    )
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:3000/v1/search")
+  })
+
+  it("omits the Authorization header for keyless self-hosted fastCRW", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: { results: [] } }))
+
+    await webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000" } } },
+      5,
+    )
+    const [, init] = fetchMock.mock.calls[0]
+
+    expect((init?.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it("does not leak a stale top-level apiKey to a keyless self-hosted fastCRW", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: [] }))
+
+    await webSearch(
+      "q",
+      {
+        provider: "fastcrw",
+        apiKey: "stale-other-provider-key",
+        providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000" } },
+      },
+      5,
+    )
+    const [url, init] = fetchMock.mock.calls[0]
+
+    expect(url).toBe("http://localhost:3000/v1/search")
+    expect((init?.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it("rejects whitespace-only fastCRW config as unconfigured", async () => {
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "  ", fastCrwUrl: "  " } } },
+      5,
+    )).rejects.toThrow("fastCRW not configured")
+  })
+
+  it("allows empty fastCRW result sets", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: { results: [] } }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).resolves.toEqual([])
+  })
+
+  it("filters fastCRW results with missing URLs", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: {
+        results: [
+          { title: "No URL", description: "skip" },
+          { title: "Has URL", url: "https://example.com/ok", description: "keep" },
+        ],
+      },
+    }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).resolves.toEqual([
+      { title: "Has URL", url: "https://example.com/ok", snippet: "keep", source: "example.com" },
+    ])
+  })
+
+  it("returns fastCRW results when success is true despite an advisory error field", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      error: "partial results only",
+      data: { results: [{ title: "Advisory", url: "https://example.com/a", description: "Still usable" }] },
+    }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).resolves.toEqual([
+      { title: "Advisory", url: "https://example.com/a", snippet: "Still usable", source: "example.com" },
+    ])
+  })
+
+  it("surfaces fastCRW application errors", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false, error: "bad query" }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).rejects.toThrow("fastCRW search failed: bad query")
+  })
+
+  it("surfaces fastCRW unknown error fallback", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).rejects.toThrow("fastCRW search failed: Unknown error")
+  })
+
+  it("surfaces fastCRW non-ok JSON errors", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false, error: "Invalid or missing API key" }, { status: 401 }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "bad" } } },
+      5,
+    )).rejects.toThrow("fastCRW search failed (401): Invalid or missing API key")
+  })
+
+  it("surfaces fastCRW non-json HTTP errors", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>Service unavailable</html>", {
+      status: 503,
+      headers: { "Content-Type": "text/html" },
+    }))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).rejects.toThrow("fastCRW search failed (503): <html>Service unavailable</html>")
+  })
+
+  it("surfaces fastCRW network errors", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))
+
+    await expect(webSearch(
+      "q",
+      { provider: "fastcrw", apiKey: "", providerConfigs: { fastcrw: { apiKey: "k" } } },
+      5,
+    )).rejects.toThrow("Network error reaching fastCRW Search")
+  })
+
+  it("migrates a legacy top-level apiKey into fastCRW config", () => {
+    const resolved = resolveSearchConfig({ provider: "fastcrw", apiKey: "k" })
+
+    expect(resolved.providerConfigs?.fastcrw?.apiKey).toBe("k")
+  })
+
+  it("treats fastCRW as configured with either a key or a self-host URL", () => {
+    expect(hasConfiguredSearchProvider({
+      provider: "fastcrw",
+      apiKey: "",
+      providerConfigs: { fastcrw: { apiKey: "k" } },
+    })).toBe(true)
+    expect(hasConfiguredSearchProvider({
+      provider: "fastcrw",
+      apiKey: "",
+      providerConfigs: { fastcrw: { fastCrwUrl: "http://localhost:3000" } },
+    })).toBe(true)
+    expect(hasConfiguredSearchProvider({
+      provider: "fastcrw",
+      apiKey: "",
+      providerConfigs: { fastcrw: {} },
+    })).toBe(false)
+    expect(hasConfiguredSearchProvider({
+      provider: "fastcrw",
+      apiKey: "",
+      providerConfigs: { fastcrw: { apiKey: "  ", fastCrwUrl: "  " } },
+    })).toBe(false)
+  })
+
   it("requires a configured search provider and key", async () => {
     await expect(webSearch("x", { provider: "none", apiKey: "" }, 5))
       .rejects.toThrow("Select a search provider")
