@@ -41,6 +41,13 @@ import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import {
+  chunkIndexByEntries,
+  assembleReducedIndex,
+  runPrematchParallel,
+  parseIndexBlocks,
+  appendIndexEntries,
+} from "./index-chunker"
 
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
@@ -950,6 +957,34 @@ async function autoIngestImpl(
     }
   }
 
+  // ── Step 0.7: Pre-match index chunks ─────────────────────
+  // Split index into chunks, run parallel LLM calls to find
+  // entries relevant to this source, assemble a reduced index.
+  const CHUNK_SIZE = 50
+  let reducedIndex = index
+  if (index.trim()) {
+    const chunks = chunkIndexByEntries(index, CHUNK_SIZE)
+    if (chunks.length > 1) {
+      activity.updateItem(activityId, {
+        detail: `Step 0.7: Pre-matching index (${chunks.length} chunks)...`,
+      })
+      const matchedNumbers = await runPrematchParallel(
+        chunks,
+        sourceContext,
+        llmConfig,
+        signal,
+      )
+      reducedIndex = assembleReducedIndex(index, matchedNumbers)
+      if (!reducedIndex) {
+        reducedIndex = "(no matching wiki entries found)"
+      }
+      console.log(
+        `[ingest:prematch] index reduced from ${index.length} to ${reducedIndex.length} chars ` +
+        `(${matchedNumbers.length} matches from ${chunks.length} chunks)`,
+      )
+    }
+  }
+
   // ── Step 1: Analysis ──────────────────────────────────────────
   // LLM reads the source and produces a structured analysis:
   // key entities, concepts, main arguments, connections to existing wiki, contradictions
@@ -965,7 +1000,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext, schema) },
+        { role: "system", content: buildAnalysisPrompt(purpose, reducedIndex, sourceContext, schema) },
         { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${sourceContext}` },
       ],
       {
@@ -997,7 +1032,7 @@ async function autoIngestImpl(
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
+      { role: "system", content: buildGenerationPrompt(schema, purpose, reducedIndex, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
       {
         role: "user",
         content: [
@@ -1109,6 +1144,30 @@ async function autoIngestImpl(
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
+
+  // ── Step 3.5: Process INDEX blocks ──────────────────────
+  // Parse ---INDEX: blocks from generation output and append
+  // entries to the existing index.md programmatically.
+  const indexBlocks = parseIndexBlocks(generation)
+  if (indexBlocks.length > 0) {
+    try {
+      const indexAbs = `${pp}/wiki/index.md`
+      const existingIndex = await tryReadFile(indexAbs)
+      const updatedIndex = appendIndexEntries(existingIndex, indexBlocks)
+      await writeFile(indexAbs, updatedIndex)
+      console.log(
+        `[ingest:index] appended ${indexBlocks.reduce((s, b) => s + b.entries.length, 0)} entries ` +
+        `across ${indexBlocks.length} categories to index.md`,
+      )
+      if (!writtenPaths.includes("wiki/index.md")) {
+        writtenPaths.push("wiki/index.md")
+      }
+    } catch (err) {
+      writeWarnings.push(
+        `Failed to append INDEX blocks: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
 
   const aggregateRepairPaths = aggregatePathsNeedingRepair(writtenPaths, writeWarnings)
   const repairableAggregatePaths = aggregateRepairPaths.filter((path) =>
