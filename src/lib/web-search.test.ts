@@ -34,6 +34,44 @@ describe("webSearch", () => {
     ])
   })
 
+  it("calls Jina Search and normalizes results using descriptions as snippets", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      code: 200,
+      status: 200,
+      data: [
+        { title: "Wikipedia", url: "https://www.wikipedia.org/", description: "Free encyclopedia", content: "" },
+        { title: "No url", url: "", description: "skip me" },
+      ],
+    }))
+
+    const out = await webSearch("wikipedia", { provider: "jina", apiKey: "jina-key" }, 5)
+    const [url, init] = fetchMock.mock.calls[0]
+    const parsed = new URL(String(url))
+
+    expect(parsed.origin + parsed.pathname).toBe("https://s.jina.ai/")
+    expect(parsed.searchParams.get("q")).toBe("wikipedia")
+    expect(parsed.searchParams.get("count")).toBe("5")
+    expect(init).toEqual(expect.objectContaining({ method: "GET" }))
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer jina-key")
+    expect((init?.headers as Record<string, string>)["X-Respond-With"]).toBe("no-content")
+    expect(out).toEqual([
+      { title: "Wikipedia", url: "https://www.wikipedia.org/", snippet: "Free encyclopedia", source: "wikipedia.org" },
+    ])
+  })
+
+  it("throws a clear error when Jina is selected without an API key", async () => {
+    await expect(webSearch("x", { provider: "jina", apiKey: "" }, 3)).rejects.toThrow(/Jina/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("surfaces Jina authentication failures", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ name: "AuthenticationFailedError" }, { status: 401 }))
+
+    await expect(
+      webSearch("x", { provider: "jina", apiKey: "bad-key" }, 3),
+    ).rejects.toThrow(/authentication failed/i)
+  })
+
   it("calls SerpApi Google Search and normalizes organic results", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({
       organic_results: [
