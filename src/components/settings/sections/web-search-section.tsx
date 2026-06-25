@@ -25,6 +25,7 @@ const SEARCH_PROVIDERS = [
     hint: "Ollama Web Search API",
     keyPlaceholder: "Enter your Ollama API key (ollama.com)",
     needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "tavily",
@@ -32,6 +33,7 @@ const SEARCH_PROVIDERS = [
     hint: "General web search for Deep Research",
     keyPlaceholder: "Enter your Tavily API key (tavily.com)",
     needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "serpapi",
@@ -39,6 +41,7 @@ const SEARCH_PROVIDERS = [
     hint: "Google, Bing, DuckDuckGo, Scholar, News, Images, Videos, YouTube",
     keyPlaceholder: "Enter your SerpApi API key (serpapi.com)",
     needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "searxng",
@@ -46,6 +49,16 @@ const SEARCH_PROVIDERS = [
     hint: "Self-hosted metasearch via the SearXNG JSON API",
     urlPlaceholder: "https://search.example.com",
     needsApiKey: false,
+    needsUrl: true,
+  },
+  {
+    id: "firecrawl",
+    label: "Firecrawl",
+    hint: "Self-hosted Firecrawl search API",
+    urlPlaceholder: "http://localhost:3002",
+    keyPlaceholder: "Enter your Firecrawl API key (optional for self-host)",
+    needsApiKey: true,
+    needsUrl: true,
   },
 ] as const
 
@@ -233,7 +246,9 @@ export function WebSearchSection() {
           const isActive = resolvedConfig.provider === provider.id
           const hasConfig = provider.id === "searxng"
             ? !!override?.searXngUrl
-            : !!override?.apiKey
+            : provider.id === "firecrawl"
+              ? !!override?.firecrawlUrl
+              : !!override?.apiKey
           const isExpanded = !!expanded[provider.id]
           return (
             <div
@@ -300,7 +315,38 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  {provider.needsApiKey ? (
+                  {provider.needsUrl && (
+                    <div className="space-y-2">
+                      <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
+                      <Input
+                        value={
+                          provider.id === "searxng"
+                            ? override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""
+                            : override?.firecrawlUrl ?? resolvedConfig.firecrawlUrl ?? ""
+                        }
+                        onChange={(e) =>
+                          updateProvider(provider.id, {
+                            ...(provider.id === "searxng"
+                              ? { searXngUrl: e.target.value }
+                              : { firecrawlUrl: e.target.value }),
+                          })
+                        }
+                        placeholder={provider.urlPlaceholder}
+                      />
+                      {provider.id === "searxng" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.searxngJsonHint")}
+                        </p>
+                      )}
+                      {provider.id === "firecrawl" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.firecrawlHint")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {provider.needsApiKey && (
                     <div className="space-y-2">
                       <Label>{t("settings.apiKey")}</Label>
                       <Input
@@ -314,18 +360,6 @@ export function WebSearchSection() {
                           {t("settings.sections.webSearch.ollamaHint")}
                         </p>
                       )}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
-                      <Input
-                        value={override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""}
-                        onChange={(e) => updateProvider("searxng", { searXngUrl: e.target.value })}
-                        placeholder={provider.urlPlaceholder}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("settings.sections.webSearch.searxngJsonHint")}
-                      </p>
                     </div>
                   )}
 

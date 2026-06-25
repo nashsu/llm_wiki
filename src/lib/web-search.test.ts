@@ -290,4 +290,70 @@ describe("webSearch", () => {
       5,
     )).rejects.toThrow("Check your Ollama API key")
   })
+
+  it("calls Firecrawl self-hosted search and normalizes web-shaped results", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: {
+        web: [
+          { title: "Firecrawl result", url: "https://docs.example/page", description: "Scraped summary", category: "research" },
+        ],
+      },
+    }))
+
+    const out = await webSearch(
+      "firecrawl query",
+      {
+        provider: "firecrawl",
+        apiKey: "",
+        providerConfigs: {
+          firecrawl: { firecrawlUrl: "http://localhost:3002" },
+        },
+      },
+      3,
+    )
+    const [url, init] = fetchMock.mock.calls[0]
+
+    expect(url).toBe("http://localhost:3002/v1/search")
+    expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json")
+    expect(JSON.parse(String(init?.body))).toEqual({ query: "firecrawl query", limit: 3 })
+    expect(out).toEqual([
+      { title: "Firecrawl result", url: "https://docs.example/page", snippet: "Scraped summary", source: "docs.example" },
+    ])
+    expect(hasConfiguredSearchProvider({
+      provider: "firecrawl",
+      apiKey: "",
+      providerConfigs: {
+        firecrawl: { firecrawlUrl: "http://localhost:3002" },
+      },
+    })).toBe(true)
+  })
+
+  it("normalizes Firecrawl results-shaped responses", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: {
+        results: [
+          { title: "Result A", url: "https://example.com/a", content: "Body A" },
+          { title: "Result B", url: "https://example.com/b", content: "Body B" },
+        ],
+      },
+    }))
+
+    const out = await webSearch(
+      "firecrawl query",
+      {
+        provider: "firecrawl",
+        apiKey: "fc-key",
+        firecrawlUrl: "http://localhost:3002",
+      },
+      2,
+    )
+    const [, init] = fetchMock.mock.calls[0]
+
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer fc-key")
+    expect(out).toHaveLength(2)
+    expect(out[0]).toEqual({ title: "Result A", url: "https://example.com/a", snippet: "Body A", source: "example.com" })
+  })
+
 })

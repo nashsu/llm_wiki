@@ -67,6 +67,13 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
           },
         }
       : {}),
+    ...(config.provider === "firecrawl" && config.firecrawlUrl
+      ? {
+          firecrawl: {
+            firecrawlUrl: config.firecrawlUrl,
+          },
+        }
+      : {}),
   }
 
   const activeProvider = config.provider as SearchProvider
@@ -85,6 +92,7 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
       searXngUrl: config.searXngUrl ?? providerConfigs.searxng?.searXngUrl ?? "",
       searXngCategories: config.searXngCategories ?? providerConfigs.searxng?.searXngCategories ?? ["general"],
       ollamaUrl: providerConfigs.ollama?.ollamaUrl ?? "https://ollama.com",
+      firecrawlUrl: providerConfigs.firecrawl?.firecrawlUrl ?? config.firecrawlUrl ?? "http://localhost:3002",
       providerConfigs,
       deepResearchSource: config.deepResearchSource ?? "web",
       anyTxt: normalizeAnyTxtConfig(config.anyTxt),
@@ -99,6 +107,7 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
     searXngUrl: activeOverride?.searXngUrl ?? config.searXngUrl ?? "",
     searXngCategories: activeOverride?.searXngCategories ?? config.searXngCategories ?? ["general"],
     ollamaUrl: resolvedOllamaUrl,
+    firecrawlUrl: activeOverride?.firecrawlUrl ?? config.firecrawlUrl ?? providerConfigs.firecrawl?.firecrawlUrl ?? "http://localhost:3002",
     providerConfigs,
     deepResearchSource: config.deepResearchSource ?? "web",
     anyTxt: normalizeAnyTxtConfig(config.anyTxt),
@@ -113,6 +122,9 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   }
   if (resolved.provider === "ollama") {
     return Boolean(resolved.apiKey?.trim())
+  }
+  if (resolved.provider === "firecrawl") {
+    return Boolean(resolved.firecrawlUrl?.trim())
   }
   return Boolean(resolved.apiKey?.trim())
 }
@@ -146,6 +158,9 @@ export async function webSearch(
   if (resolved.provider === "ollama" && !resolved.apiKey?.trim()) {
     throw new Error("Ollama Web Search API requires an Ollama API key. Add one in Settings.")
   }
+  if (resolved.provider === "firecrawl" && !resolved.firecrawlUrl?.trim()) {
+    throw new Error("Web search not configured. Add a Firecrawl instance URL in Settings.")
+  }
 
   switch (resolved.provider) {
     case "tavily":
@@ -156,6 +171,8 @@ export async function webSearch(
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     case "ollama":
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
+    case "firecrawl":
+      return firecrawlSearch(query, resolved.firecrawlUrl ?? "", resolved.apiKey ?? "", maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
@@ -452,4 +469,80 @@ async function ollamaSearch(
         source: hostnameFromUrl(url),
       }
     })
+}
+
+interface FirecrawlSearchResult {
+  title?: string
+  url?: string
+  description?: string
+  content?: string
+  category?: string
+}
+
+interface FirecrawlSearchResponse {
+  success?: boolean
+  data?: {
+    web?: FirecrawlSearchResult[]
+    results?: FirecrawlSearchResult[]
+  }
+}
+
+async function firecrawlSearch(
+  query: string,
+  instanceUrl: string,
+  apiKey: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  const trimmedUrl = instanceUrl.trim().replace(/\/+$/, "")
+  const endpoint = `${trimmedUrl}/v1/search`
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  }
+  const trimmedApiKey = apiKey.trim()
+  if (trimmedApiKey) {
+    headers.Authorization = `Bearer ${trimmedApiKey}`
+  }
+
+  const httpFetch = await getHttpFetch()
+  let response: Response
+  try {
+    response = await httpFetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        query,
+        limit: maxResults,
+      }),
+    })
+  } catch (err) {
+    if (isFetchNetworkError(err)) {
+      throw new Error(
+        "Network error reaching Firecrawl. Check the instance URL and whether the container is running.",
+      )
+    }
+    throw err
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "Unknown error")
+    throw new Error(`Firecrawl search failed (${response.status}): ${errorText}`)
+  }
+
+  const data = (await response.json()) as FirecrawlSearchResponse
+  const raw = data.data?.web ?? data.data?.results ?? []
+
+  return raw
+    .slice(0, maxResults)
+    .map((r) => {
+      const url = r.url ?? ""
+      return {
+        title: r.title ?? "Untitled",
+        url,
+        snippet: r.description ?? r.content ?? "",
+        source: hostnameFromUrl(url) || r.category || "",
+      }
+    })
+    .filter((r) => r.url.length > 0)
 }

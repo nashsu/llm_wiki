@@ -409,6 +409,7 @@
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
+        "firecrawlHint": "Firecrawl 自建端点。系统会自动追加路径 `/v1/search`。",
         "searchCategories": "搜索分类",
         "searxngCategoriesHint": "分类会作为 SearXNG 的 `categories` 参数发送。",
         "searchEngine": "搜索引擎 / 分类",

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LLM Wiki",
-  "version": "0.4.24",
-  "identifier": "com.llmwiki.app",
+  "productName": "LLM Wiki Beta",
+  "version": "0.4.24-firecrawl",
+  "identifier": "com.llmwiki.beta",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "LLM Wiki",
+        "title": "LLM Wiki Beta",
         "width": 1200,
         "height": 800,
         "resizable": true,
