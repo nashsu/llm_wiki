@@ -120,3 +120,138 @@ export function assembleReducedIndex(index: string, matchedNumbers: number[]): s
 
   return lines.join("\n")
 }
+
+/**
+ * Build the system prompt for a pre-match LLM call.
+ * The LLM reads the source document and a chunk of index entries,
+ * then outputs matching entry numbers.
+ */
+export function buildPrematchPrompt(sourceContent: string, chunk: string): string {
+  return [
+    "You are a relevance matcher. Read the source document and determine",
+    "which wiki index entries are related to it.",
+    "",
+    "## Source Document",
+    sourceContent,
+    "",
+    "## Index Chunk",
+    "Below is a chunk of the wiki index. Each numbered item is a page entry.",
+    "For each item, determine whether it covers the same subject as any",
+    "entity or concept in the source document. A match means the page",
+    "is about the same entity, concept, method, or topic.",
+    "",
+    chunk,
+    "",
+    "## Output Format (STRICT)",
+    "",
+    "Output ONLY matching item numbers in bracket format: [3, 12, 47]",
+    "If no items match, output exactly: none",
+    "",
+    "Do not output explanations, reasoning, or any other text.",
+  ].join("\n")
+}
+
+export interface ParsedIndexBlock {
+  category: string
+  entries: string[]
+}
+
+const INDEX_BLOCK_REGEX = /---INDEX:\s*(.+?)\s*---\n([\s\S]*?)---END INDEX---/g
+
+/**
+ * Parse ---INDEX: Category--- blocks from LLM generation output.
+ * Pattern follows existing parseFileBlocks / parseReviewBlocks conventions.
+ */
+export function parseIndexBlocks(text: string): ParsedIndexBlock[] {
+  const normalized = text.replace(/\r\n/g, "\n")
+  const blocks: ParsedIndexBlock[] = []
+
+  for (const match of normalized.matchAll(INDEX_BLOCK_REGEX)) {
+    const category = match[1].trim()
+    const body = match[2].trim()
+    const entries = body
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+    blocks.push({ category, entries })
+  }
+
+  return blocks
+}
+
+/**
+ * Convert a raw entry line from an INDEX block into index.md format.
+ * Input: "rope — Rotary Position Embedding" or "rope"
+ * Output: "- [[rope]] — Rotary Position Embedding" or "- [[rope]]"
+ */
+function formatIndexEntry(rawEntry: string): string {
+  const trimmed = rawEntry.trim()
+  // Already has [[...]] format? Keep as-is (just ensure leading - [[)
+  if (/^\[\[/.test(trimmed)) {
+    return `- ${trimmed}`
+  }
+  // Split on em-dash or hyphen to separate slug from description
+  const dashMatch = trimmed.match(/^(.+?)\s+[—–-]\s+(.+)$/)
+  if (dashMatch) {
+    const slug = dashMatch[1].trim()
+    const desc = dashMatch[2].trim()
+    return `- [[${slug}]] — ${desc}`
+  }
+  // No description — just the slug
+  return `- [[${trimmed}]]`
+}
+
+/**
+ * Programmatically append parsed INDEX block entries to existing index.md content.
+ * - Appends to existing category sections
+ * - Creates new category sections at the end if needed
+ */
+export function appendIndexEntries(indexContent: string, blocks: ParsedIndexBlock[]): string {
+  if (blocks.length === 0) return indexContent
+
+  const lines = indexContent.split("\n")
+  const result = [...lines]
+
+  for (const block of blocks) {
+    if (block.entries.length === 0) continue
+
+    const categoryHeader = `## ${block.category}`
+    const formattedEntries = block.entries.map(formatIndexEntry)
+
+    // Find the category section
+    let catStartIdx = -1
+    for (let i = 0; i < result.length; i++) {
+      if (result[i].trim() === categoryHeader) {
+        catStartIdx = i
+        break
+      }
+    }
+
+    if (catStartIdx >= 0) {
+      // Category exists — find the last entry line in this section
+      let insertIdx = catStartIdx + 1
+      for (let i = catStartIdx + 1; i < result.length; i++) {
+        const line = result[i].trim()
+        if (/^##\s/.test(line)) break // Hit next category
+        if (/^[-*]\s+\[\[/.test(line) || /^\(none yet\)/.test(line)) {
+          insertIdx = i + 1
+        }
+      }
+      // Remove "(none yet)" placeholder if present
+      const placeholderIdx = result.indexOf("(none yet)", catStartIdx)
+      if (placeholderIdx >= 0 && placeholderIdx < insertIdx) {
+        result.splice(placeholderIdx, 1)
+        insertIdx--
+      }
+      // Insert entries
+      result.splice(insertIdx, 0, ...formattedEntries)
+    } else {
+      // Category doesn't exist — append at end
+      result.push("")
+      result.push(categoryHeader)
+      result.push(...formattedEntries)
+    }
+  }
+
+  return result.join("\n")
+}
