@@ -151,45 +151,6 @@ describe("webSearch", () => {
       .rejects.toThrow("SerpApi search failed: Invalid API key")
   })
 
-  it("calls Firecrawl anonymous search without an API key", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      success: true,
-      data: [
-        {
-          title: "LLM Wiki",
-          url: "https://github.com/nashsu/llm_wiki",
-          description: "Knowledge base app",
-        },
-      ],
-    }))
-
-    const out = await webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 2)
-    const [url, init] = fetchMock.mock.calls[0]
-
-    expect(url).toBe("https://api.firecrawl.dev/v2/search")
-    expect(init).toEqual(expect.objectContaining({ method: "POST" }))
-    expect((init?.headers as Record<string, string>).Authorization).toBeUndefined()
-    expect(JSON.parse(String(init?.body))).toEqual({ query: "llm_wiki", limit: 2 })
-    expect(out).toEqual([
-      {
-        title: "LLM Wiki",
-        url: "https://github.com/nashsu/llm_wiki",
-        snippet: "Knowledge base app",
-        source: "github.com",
-      },
-    ])
-  })
-
-  it("surfaces Firecrawl suspicious-IP anonymous search guidance", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      success: false,
-      error: "Unfortunately, your IP address looks suspicious, so Firecrawl can't be used without an API key from here. Sign up for a free API key at https://firecrawl.dev for 1000 credits and higher rate limits for free.",
-    }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .rejects.toThrow("Firecrawl anonymous search is blocked for this IP")
-  })
-
   it("does not migrate legacy top-level apiKey into Firecrawl config", () => {
     const resolved = resolveSearchConfig({
       provider: "firecrawl",
@@ -197,118 +158,6 @@ describe("webSearch", () => {
     })
 
     expect(resolved.providerConfigs?.firecrawl).toBeUndefined()
-  })
-
-  it("allows Firecrawl success responses with advisory error fields", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      success: true,
-      error: "partial results only",
-      data: [
-        {
-          title: "Advisory result",
-          url: "https://example.com/advisory",
-          description: "Still usable",
-        },
-      ],
-    }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .resolves.toEqual([
-        {
-          title: "Advisory result",
-          url: "https://example.com/advisory",
-          snippet: "Still usable",
-          source: "example.com",
-        },
-      ])
-  })
-
-  it("surfaces Firecrawl unknown error fallback", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .rejects.toThrow("Firecrawl search failed: Unknown error")
-  })
-
-  it("surfaces Firecrawl non-ok JSON errors", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(
-      { error: "rate limited" },
-      { status: 429 },
-    ))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .rejects.toThrow("Firecrawl search failed: rate limited")
-  })
-
-  it("surfaces Firecrawl non-json HTTP errors", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("<html>Service unavailable</html>", {
-      status: 503,
-      headers: { "Content-Type": "text/html" },
-    }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .rejects.toThrow("Firecrawl search failed (503): <html>Service unavailable</html>")
-  })
-
-  it("surfaces Firecrawl network errors", async () => {
-    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .rejects.toThrow("Network error reaching Firecrawl Search")
-  })
-
-  it("normalizes Firecrawl results field and filters missing URLs", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      success: true,
-      results: [
-        { title: "Missing URL", description: "No URL" },
-        {
-          metadata: {
-            title: "Metadata title",
-            sourceURL: "https://docs.example/firecrawl",
-            description: "Metadata description",
-          },
-        },
-      ],
-    }))
-
-    const out = await webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5)
-
-    expect(out).toEqual([
-      {
-        title: "Metadata title",
-        url: "https://docs.example/firecrawl",
-        snippet: "Metadata description",
-        source: "docs.example",
-      },
-    ])
-  })
-
-  it("allows empty Firecrawl result sets", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: [] }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .resolves.toEqual([])
-  })
-
-  it("filters missing URLs in Firecrawl data results", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({
-      success: true,
-      data: [
-        { title: "No URL", description: "skip me" },
-        { title: "Has URL", url: "https://example.com/ok", description: "keep me" },
-      ],
-    }))
-
-    await expect(webSearch("llm_wiki", { provider: "firecrawl", apiKey: "" }, 5))
-      .resolves.toEqual([
-        {
-          title: "Has URL",
-          url: "https://example.com/ok",
-          snippet: "keep me",
-          source: "example.com",
-        },
-      ])
   })
 
   it("requires a configured search provider and key", async () => {
@@ -358,10 +207,11 @@ describe("webSearch", () => {
     })).toBe(false)
   })
 
-  it("treats Firecrawl as configured without an API key", () => {
+  it("treats Firecrawl as configured with an instance URL and without an API key", () => {
     expect(hasConfiguredSearchProvider({
       provider: "firecrawl",
       apiKey: "",
+      firecrawlUrl: "http://localhost:3002",
     })).toBe(true)
   })
 
@@ -457,4 +307,70 @@ describe("webSearch", () => {
       5,
     )).rejects.toThrow("Check your Ollama API key")
   })
+
+  it("calls Firecrawl self-hosted search and normalizes web-shaped results", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: {
+        web: [
+          { title: "Firecrawl result", url: "https://docs.example/page", description: "Scraped summary", category: "research" },
+        ],
+      },
+    }))
+
+    const out = await webSearch(
+      "firecrawl query",
+      {
+        provider: "firecrawl",
+        apiKey: "",
+        providerConfigs: {
+          firecrawl: { firecrawlUrl: "http://localhost:3002" },
+        },
+      },
+      3,
+    )
+    const [url, init] = fetchMock.mock.calls[0]
+
+    expect(url).toBe("http://localhost:3002/v1/search")
+    expect((init?.headers as Record<string, string>)["Content-Type"]).toBe("application/json")
+    expect(JSON.parse(String(init?.body))).toEqual({ query: "firecrawl query", limit: 3 })
+    expect(out).toEqual([
+      { title: "Firecrawl result", url: "https://docs.example/page", snippet: "Scraped summary", source: "docs.example" },
+    ])
+    expect(hasConfiguredSearchProvider({
+      provider: "firecrawl",
+      apiKey: "",
+      providerConfigs: {
+        firecrawl: { firecrawlUrl: "http://localhost:3002" },
+      },
+    })).toBe(true)
+  })
+
+  it("normalizes Firecrawl results-shaped responses", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      success: true,
+      data: {
+        results: [
+          { title: "Result A", url: "https://example.com/a", content: "Body A" },
+          { title: "Result B", url: "https://example.com/b", content: "Body B" },
+        ],
+      },
+    }))
+
+    const out = await webSearch(
+      "firecrawl query",
+      {
+        provider: "firecrawl",
+        apiKey: "fc-key",
+        firecrawlUrl: "http://localhost:3002",
+      },
+      2,
+    )
+    const [, init] = fetchMock.mock.calls[0]
+
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer fc-key")
+    expect(out).toHaveLength(2)
+    expect(out[0]).toEqual({ title: "Result A", url: "https://example.com/a", snippet: "Body A", source: "example.com" })
+  })
+
 })
