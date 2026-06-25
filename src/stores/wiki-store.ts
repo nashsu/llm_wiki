@@ -70,6 +70,7 @@ export interface SearchProviderOverride {
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
+  firecrawlUrl?: string
 }
 
 export type SearchProviderConfigs = Partial<Record<Exclude<SearchProvider, "none">, SearchProviderOverride>>
@@ -89,6 +90,7 @@ interface SearchApiConfig {
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
   ollamaUrl?: string
+  firecrawlUrl?: string
   providerConfigs?: SearchProviderConfigs
   deepResearchSource?: DeepResearchSource
   anyTxt?: AnyTxtConfig
@@ -412,6 +414,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     serpApiEngine: "google",
     searXngUrl: "",
     searXngCategories: ["general"],
+    firecrawlUrl: "http://localhost:3002",
     providerConfigs: {},
     deepResearchSource: "web",
     anyTxt: {

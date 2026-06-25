@@ -25,34 +25,41 @@ const SEARCH_PROVIDERS = [
     label: "Ollama",
     hint: "Ollama Web Search API",
     keyPlaceholder: "Enter your Ollama API key (ollama.com)",
-    configKind: "key",
+    needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "tavily",
     label: "Tavily",
     hint: "General web search for Deep Research",
     keyPlaceholder: "Enter your Tavily API key (tavily.com)",
-    configKind: "key",
+    needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "serpapi",
     label: "SerpApi",
     hint: "Google, Bing, DuckDuckGo, Scholar, News, Images, Videos, YouTube",
     keyPlaceholder: "Enter your SerpApi API key (serpapi.com)",
-    configKind: "key",
+    needsApiKey: true,
+    needsUrl: false,
   },
   {
     id: "searxng",
     label: "SearXNG",
     hint: "Self-hosted metasearch via the SearXNG JSON API",
     urlPlaceholder: "https://search.example.com",
-    configKind: "url",
+    needsApiKey: false,
+    needsUrl: true,
   },
   {
     id: "firecrawl",
     label: "Firecrawl",
-    hint: "Anonymous Firecrawl Search API",
-    configKind: "none",
+    hint: "Self-hosted Firecrawl search API",
+    urlPlaceholder: "http://localhost:3002",
+    keyPlaceholder: "Enter your Firecrawl API key (optional for self-host)",
+    needsApiKey: true,
+    needsUrl: true,
   },
 ] as const
 
@@ -278,10 +285,10 @@ export function WebSearchSection() {
         {SEARCH_PROVIDERS.map((provider) => {
           const override = resolvedConfig.providerConfigs?.[provider.id]
           const isActive = resolvedConfig.provider === provider.id
-          const hasConfig = provider.configKind === "none"
-            ? true
-            : provider.id === "searxng"
-              ? !!override?.searXngUrl
+          const hasConfig = provider.id === "searxng"
+            ? !!override?.searXngUrl
+            : provider.id === "firecrawl"
+              ? !!override?.firecrawlUrl
               : !!override?.apiKey
           const isExpanded = !!expanded[provider.id]
           return (
@@ -349,19 +356,38 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  {provider.configKind === "url" ? (
+                  {provider.needsUrl && (
                     <div className="space-y-2">
                       <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
                       <Input
-                        value={override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""}
-                        onChange={(e) => updateProvider(provider.id, { searXngUrl: e.target.value })}
+                        value={
+                          provider.id === "searxng"
+                            ? override?.searXngUrl ?? resolvedConfig.searXngUrl ?? ""
+                            : override?.firecrawlUrl ?? resolvedConfig.firecrawlUrl ?? ""
+                        }
+                        onChange={(e) =>
+                          updateProvider(provider.id, {
+                            ...(provider.id === "searxng"
+                              ? { searXngUrl: e.target.value }
+                              : { firecrawlUrl: e.target.value }),
+                          })
+                        }
                         placeholder={provider.urlPlaceholder}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        {t("settings.sections.webSearch.searxngJsonHint")}
-                      </p>
+                      {provider.id === "searxng" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.searxngJsonHint")}
+                        </p>
+                      )}
+                      {provider.id === "firecrawl" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.firecrawlHint")}
+                        </p>
+                      )}
                     </div>
-                  ) : provider.configKind !== "none" ? (
+                  )}
+
+                  {provider.needsApiKey && (
                     <div className="space-y-2">
                       <Label>{t("settings.apiKey")}</Label>
                       <Input
@@ -376,10 +402,6 @@ export function WebSearchSection() {
                         </p>
                       )}
                     </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t("settings.sections.webSearch.firecrawlHint")}
-                    </p>
                   )}
 
                   {provider.id === "serpapi" && (
