@@ -24,7 +24,13 @@ export interface IngestTask {
 // ── State ─────────────────────────────────────────────────────────────────
 
 let queue: IngestTask[] = []
-let processing = false
+let activeCount = 0
+/** Active abort controllers, keyed by task id. Each concurrent ingest
+ *  gets its own so cancelTask can target a specific one. */
+const abortControllers = new Map<string, AbortController>()
+/** Written files per active task, keyed by task id. Needed so
+ *  cancelTask can clean up files from the correct task. */
+const writtenFilesByTask = new Map<string, string[]>()
 /** UUID of the currently-active project. Used as a stale-context guard
  *  in processNext: if this changes mid-ingest (user switched projects),
  *  the orphaned runner bails instead of writing to the old project. */
@@ -33,8 +39,6 @@ let currentProjectId = ""
  *  step with `currentProjectId` by pauseQueue / restoreQueue so sync
  *  callers (saveQueue, cancelTask, etc.) don't need a registry lookup. */
 let currentProjectPath = ""
-let currentAbortController: AbortController | null = null
-let lastWrittenFiles: string[] = []  // track files written by current ingest for cleanup
 let completedSinceIdle = 0
 // Track whether any task has been processed since the last drain.
 // Prevents the sweep from running on every idle/no-op call.
@@ -45,6 +49,14 @@ let sweepAbortController: AbortController | null = null
 
 function resetQueueAccounting(): void {
   completedSinceIdle = 0
+}
+
+/** Read the configured max concurrency from the user's settings.
+ *  Defaults to 1 (strictly sequential, original behavior). */
+function getMaxConcurrency(): number {
+  const gc = useWikiStore.getState().generalConfig
+  const n = typeof gc?.ingestConcurrency === "number" ? gc.ingestConcurrency : 1
+  return Math.max(1, Math.min(16, Math.round(n)))
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────
@@ -102,7 +114,7 @@ function upsertQueuedIngestTask(
   sourcePath: string,
   folderContext: string,
 ): string {
-  if (queue.length === 0 && !processing) {
+  if (queue.length === 0 && activeCount === 0) {
     resetQueueAccounting()
   }
   const normalizedSourcePath = normalizeSourcePathForQueue(sourcePath)
@@ -223,7 +235,7 @@ export async function enqueueBatch(
   }
 
   await saveQueue(currentProjectPath)
-  console.log(`[Ingest Queue] Enqueued ${files.length} files`)
+  console.log(`[Ingest Queue] Enqueued ${files.length} files (maxConcurrency=${getMaxConcurrency()})`)
   processNext(currentProjectId)
 
   return ids
@@ -278,20 +290,22 @@ export async function cancelTask(taskId: string): Promise<void> {
   if (task.projectId !== currentProjectId) return
 
   if (task.status === "processing") {
-    // Abort the in-progress LLM call
-    if (currentAbortController) {
-      currentAbortController.abort()
-      currentAbortController = null
+    // Abort the in-progress LLM call for this specific task
+    const ac = abortControllers.get(taskId)
+    if (ac) {
+      ac.abort()
+      abortControllers.delete(taskId)
     }
 
     // Clean up any files written by the interrupted ingest
-    if (lastWrittenFiles.length > 0) {
-      await cleanupWrittenFiles(currentProjectPath, lastWrittenFiles)
-      console.log(`[Ingest Queue] Cleaned up ${lastWrittenFiles.length} files from cancelled task`)
-      lastWrittenFiles = []
+    const files = writtenFilesByTask.get(taskId)
+    if (files && files.length > 0) {
+      await cleanupWrittenFiles(currentProjectPath, files)
+      console.log(`[Ingest Queue] Cleaned up ${files.length} files from cancelled task ${taskId}`)
+      writtenFilesByTask.delete(taskId)
     }
 
-    processing = false
+    activeCount = Math.max(0, activeCount - 1)
   }
 
   queue = queue.filter((t) => t.id !== taskId)
@@ -311,23 +325,24 @@ export async function clearCompletedTasks(): Promise<void> {
 
 /**
  * Cancel everything that's not finished in the active project's queue:
- * aborts the running task (if any), cleans up its partial output, and
- * drops every pending + processing item.
+ * aborts all running tasks (if any), cleans up their partial output,
+ * and drops every pending + processing item.
  *
  * Failed tasks are retained so the user can still see / retry them.
  * Returns the number of tasks removed from the queue.
  */
 export async function cancelAllTasks(): Promise<number> {
-  if (currentAbortController) {
-    currentAbortController.abort()
-    currentAbortController = null
+  // Abort all in-flight tasks
+  for (const [taskId, ac] of abortControllers) {
+    ac.abort()
+    const files = writtenFilesByTask.get(taskId)
+    if (files && files.length > 0) {
+      await cleanupWrittenFiles(currentProjectPath, files)
+    }
   }
-  processing = false
-
-  if (lastWrittenFiles.length > 0) {
-    await cleanupWrittenFiles(currentProjectPath, lastWrittenFiles)
-    lastWrittenFiles = []
-  }
+  abortControllers.clear()
+  writtenFilesByTask.clear()
+  activeCount = 0
 
   const before = queue.length
   queue = queue.filter((t) => t.status === "failed")
@@ -352,7 +367,7 @@ export function getQueueSummary(): { pending: number; processing: number; failed
   const activeTotal = queue.length + completedSinceIdle
   return {
     pending: queue.filter((t) => t.status === "pending").length,
-    processing: queue.filter((t) => t.status === "processing").length,
+    processing: activeCount,
     failed: queue.filter((t) => t.status === "failed").length,
     completed: completedSinceIdle,
     total: activeTotal,
@@ -366,19 +381,19 @@ export function getQueueSummary(): { pending: number; processing: number; failed
  * disk before clearing memory.
  */
 export function clearQueueState(): void {
-  if (currentAbortController) {
-    currentAbortController.abort()
+  for (const [, ac] of abortControllers) {
+    ac.abort()
   }
+  abortControllers.clear()
+  writtenFilesByTask.clear()
   if (sweepAbortController) {
     sweepAbortController.abort()
   }
   queue = []
-  processing = false
+  activeCount = 0
   currentProjectId = ""
   currentProjectPath = ""
-  currentAbortController = null
   sweepAbortController = null
-  lastWrittenFiles = []
   processedSinceDrain = false
   resetQueueAccounting()
 }
@@ -400,15 +415,18 @@ export async function pauseQueue(): Promise<void> {
 
   const pausedProjectPath = currentProjectPath
 
-  if (currentAbortController) {
-    currentAbortController.abort()
-    currentAbortController = null
+  // Abort all in-flight tasks
+  for (const [, ac] of abortControllers) {
+    ac.abort()
   }
+  abortControllers.clear()
+  writtenFilesByTask.clear()
+  activeCount = 0
+
   if (sweepAbortController) {
     sweepAbortController.abort()
     sweepAbortController = null
   }
-  processing = false
 
   // Revert any in-flight processing task back to pending so when the
   // user returns to this project, the task is re-tried from scratch.
@@ -424,7 +442,6 @@ export async function pauseQueue(): Promise<void> {
   queue = []
   currentProjectId = ""
   currentProjectPath = ""
-  lastWrittenFiles = []
   processedSinceDrain = false
   resetQueueAccounting()
 }
@@ -445,9 +462,9 @@ export async function restoreQueue(
   // Defensive: reset in-memory state (should already be empty via
   // pauseQueue, but clearing again costs nothing).
   queue = []
-  processing = false
-  currentAbortController = null
-  lastWrittenFiles = []
+  activeCount = 0
+  abortControllers.clear()
+  writtenFilesByTask.clear()
   resetQueueAccounting()
   currentProjectId = projectId
   currentProjectPath = pp
@@ -513,108 +530,146 @@ async function onQueueDrained(projectId: string, projectPath: string): Promise<v
 }
 
 async function processNext(projectId: string): Promise<void> {
-  if (processing) return
+  const maxConcurrency = getMaxConcurrency()
+
   // Stale-context guard: processNext may be invoked by an orphaned
   // recursion from a previous project. If we're no longer active, bail.
   if (currentProjectId !== projectId) return
 
-  const next = queue.find((t) => t.projectId === projectId && t.status === "pending")
-  if (!next) {
-    // Queue drained — trigger review cleanup (auto-resolve stale items)
-    const pathAtDrain = currentProjectPath
-    onQueueDrained(projectId, pathAtDrain).catch((err) =>
-      console.error("[Ingest Queue] sweep failed:", err)
-    )
-    return
-  }
+  // Keep launching tasks until the concurrency slot is full or queue is empty
+  while (activeCount < maxConcurrency) {
+    // Re-check stale context inside the loop (project could switch during await)
+    if (currentProjectId !== projectId) return
 
-  // Look up the project's current filesystem path from the registry —
-  // it may have moved since the task was enqueued. If the project isn't
-  // in the registry (was deleted or never registered), mark as failed.
-  const registryPath = await getProjectPathById(projectId)
-  const pp = registryPath ? normalizePath(registryPath) : ""
+    const next = queue.find((t) => t.projectId === projectId && t.status === "pending")
+    if (!next) {
+      // Queue drained — if nothing is actively processing, trigger cleanup
+      if (activeCount === 0 && processedSinceDrain) {
+        const pathAtDrain = currentProjectPath
+        onQueueDrained(projectId, pathAtDrain).catch((err) =>
+          console.error("[Ingest Queue] sweep failed:", err)
+        )
+      }
+      return
+    }
 
-  // Check we're still active after the registry await.
-  if (currentProjectId !== projectId) return
+    // Look up the project's current filesystem path from the registry —
+    // it may have moved since the task was enqueued.
+    const registryPath = await getProjectPathById(projectId)
+    const pp = registryPath ? normalizePath(registryPath) : ""
 
-  if (!pp) {
-    next.status = "failed"
-    next.error = "Project not found in registry (was it deleted?)"
-    await saveQueue(currentProjectPath)
-    processNext(projectId)
-    return
-  }
+    // Check we're still active after the registry await.
+    if (currentProjectId !== projectId) return
 
-  processing = true
-  next.status = "processing"
-  await saveQueue(pp)
-  if (currentProjectId !== projectId) return
+    if (!pp) {
+      next.status = "failed"
+      next.error = "Project not found in registry (was it deleted?)"
+      await saveQueue(currentProjectPath)
+      // Don't recurse — the while loop will pick up the next task
+      continue
+    }
 
-  const llmConfig = useWikiStore.getState().llmConfig
-
-  // Check if LLM is configured
-  if (!hasUsableLlm(llmConfig)) {
-    next.status = "failed"
-    next.error = "LLM not configured — set API key in Settings"
-    processing = false
+    // Mark as processing BEFORE bumping activeCount so cancelTask sees it
+    next.status = "processing"
+    activeCount++
     await saveQueue(pp)
-    processNext(projectId)
+    if (currentProjectId !== projectId) return
+
+    const llmConfig = useWikiStore.getState().llmConfig
+
+    // Check if LLM is configured
+    if (!hasUsableLlm(llmConfig)) {
+      next.status = "failed"
+      next.error = "LLM not configured — set API key in Settings"
+      activeCount = Math.max(0, activeCount - 1)
+      await saveQueue(pp)
+      continue
+    }
+
+    const fullSourcePath = isAbsolutePath(next.sourcePath)
+      ? normalizePath(next.sourcePath)
+      : `${pp}/${next.sourcePath}`
+
+    const remaining = queue.filter((t) => t.projectId === projectId && t.status === "pending").length
+    console.log(`[Ingest Queue] Processing: ${next.sourcePath} (${remaining} remaining, ${activeCount}/${maxConcurrency} active)`)
+
+    const ac = new AbortController()
+    abortControllers.set(next.id, ac)
+    writtenFilesByTask.set(next.id, [])
+
+    // Fire-and-forget this task (don't await — let the loop start the next one)
+    runTask(next.id, pp, fullSourcePath, llmConfig, ac, projectId).catch((err) => {
+      console.error(`[Ingest Queue] Unhandled error in runTask(${next.id}):`, err)
+    })
+  }
+}
+
+async function runTask(
+  taskId: string,
+  projectPath: string,
+  fullSourcePath: string,
+  llmConfig: ReturnType<typeof useWikiStore.getState>["llmConfig"],
+  abortController: AbortController,
+  projectId: string,
+): Promise<void> {
+  const task = queue.find((t) => t.id === taskId)
+  if (!task) {
+    activeCount = Math.max(0, activeCount - 1)
     return
   }
-
-  const fullSourcePath = isAbsolutePath(next.sourcePath)
-    ? normalizePath(next.sourcePath)
-    : `${pp}/${next.sourcePath}`
-
-  console.log(`[Ingest Queue] Processing: ${next.sourcePath} (${queue.filter((t) => t.projectId === projectId && t.status === "pending").length} remaining)`)
-
-  currentAbortController = new AbortController()
-  lastWrittenFiles = []
 
   try {
-    const writtenFiles = await autoIngest(pp, fullSourcePath, llmConfig, currentAbortController.signal, next.folderContext)
-    // Stale-context guard: project switched during the long LLM call.
-    // Bail without mutating queue or writing to disk — pauseQueue has
-    // already persisted the correct state to the old project's file,
-    // and the new project's queue must not be touched by this orphan.
-    if (currentProjectId !== projectId) return
-    lastWrittenFiles = writtenFiles
+    const writtenFiles = await autoIngest(
+      projectPath,
+      fullSourcePath,
+      llmConfig,
+      abortController.signal,
+      task.folderContext,
+    )
 
-    // Safety net: autoIngest resolving with zero files means nothing
-    // was really ingested (e.g. abort during webview refresh where the
-    // historical `return []` error path masqueraded as success). Treat
-    // as failure so the task stays in the queue and retries.
+    // Stale-context guard: project switched during the long LLM call
+    if (currentProjectId !== projectId) return
+
+    if (writtenFiles.length > 0) {
+      writtenFilesByTask.set(taskId, writtenFiles)
+    }
+
+    // Safety net: autoIngest returning zero files is treated as failure
     if (writtenFiles.length === 0) {
       throw new Error("Ingest produced no output files")
     }
 
     // Success: remove from queue
-    currentAbortController = null
-    lastWrittenFiles = []
-    queue = queue.filter((t) => t.id !== next.id)
+    abortControllers.delete(taskId)
+    writtenFilesByTask.delete(taskId)
+    queue = queue.filter((t) => t.id !== taskId)
     completedSinceIdle++
     processedSinceDrain = true
-    await saveQueue(pp)
+    activeCount = Math.max(0, activeCount - 1)
+    await saveQueue(projectPath)
 
-    console.log(`[Ingest Queue] Done: ${next.sourcePath}`)
+    console.log(`[Ingest Queue] Done: ${task.sourcePath}`)
   } catch (err) {
     if (currentProjectId !== projectId) return
-    currentAbortController = null
-    const message = err instanceof Error ? err.message : String(err)
-    next.retryCount++
-    next.error = message
 
-    if (next.retryCount >= MAX_RETRIES) {
-      next.status = "failed"
-      console.log(`[Ingest Queue] Failed (${next.retryCount}x): ${next.sourcePath} — ${message}`)
+    abortControllers.delete(taskId)
+    writtenFilesByTask.delete(taskId)
+    const message = err instanceof Error ? err.message : String(err)
+    task.retryCount++
+    task.error = message
+
+    if (task.retryCount >= MAX_RETRIES) {
+      task.status = "failed"
+      console.log(`[Ingest Queue] Failed (${task.retryCount}x): ${task.sourcePath} — ${message}`)
     } else {
-      next.status = "pending" // will retry
-      console.log(`[Ingest Queue] Error (retry ${next.retryCount}/${MAX_RETRIES}): ${next.sourcePath} — ${message}`)
+      task.status = "pending" // will retry
+      console.log(`[Ingest Queue] Error (retry ${task.retryCount}/${MAX_RETRIES}): ${task.sourcePath} — ${message}`)
     }
 
-    await saveQueue(pp)
+    activeCount = Math.max(0, activeCount - 1)
+    await saveQueue(projectPath)
   }
 
-  processing = false
+  // After one task finishes, try to start the next one
   processNext(projectId)
 }

@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import type { CloseBehavior } from "@/stores/wiki-store"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
@@ -88,6 +89,27 @@ export function GeneralSection({ draft, setDraft }: Props) {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.general.closeBehaviorHint", {
             defaultValue: "This setting applies when you click the title-bar close button. The tray menu can still quit the app directly.",
+          })}
+        </p>
+      </div>
+
+      {/* Ingest concurrency */}
+      <div className="space-y-2">
+        <Label>{t("settings.sections.general.ingestConcurrency", { defaultValue: "Concurrent document ingest" })}</Label>
+        <Input
+          type="number"
+          min={1}
+          max={16}
+          step={1}
+          value={draft.ingestConcurrency}
+          onChange={(e) => {
+            const n = Number(e.target.value)
+            setDraft("ingestConcurrency", Number.isFinite(n) ? n : 1)
+          }}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.general.ingestConcurrencyHint", {
+            defaultValue: "How many documents to process in parallel during ingestion. 1 = strictly sequential (original behavior). 2-4 is a good range for most setups. Higher values may hit API rate limits.",
           })}
         </p>
       </div>

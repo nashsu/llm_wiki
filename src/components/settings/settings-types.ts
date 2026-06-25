@@ -72,6 +72,8 @@ export interface SettingsDraft {
   // General app behavior
   autostart: boolean
   closeBehavior: CloseBehavior
+  /** Max concurrent document ingest tasks (1 = sequential). */
+  ingestConcurrency: number
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig
