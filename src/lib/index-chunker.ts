@@ -93,3 +93,30 @@ export function parsePrematchOutput(output: string): number[] {
 
   return [...new Set(numbers)]
 }
+
+/**
+ * Assemble a reduced index from the original index.md and matched entry numbers.
+ * Entry numbers are 1-based as assigned by chunkIndexByEntries.
+ * Preserves original index order and deduplicates category headers.
+ */
+export function assembleReducedIndex(index: string, matchedNumbers: number[]): string {
+  if (matchedNumbers.length === 0) return ""
+
+  const { entries } = parseIndexEntries(index)
+  const matchSet = new Set(matchedNumbers)
+  const lines: string[] = []
+  let currentCat = ""
+
+  for (let i = 0; i < entries.length; i++) {
+    const entryNum = i + 1
+    if (!matchSet.has(entryNum)) continue
+
+    if (entries[i].category !== currentCat) {
+      currentCat = entries[i].category
+      lines.push(`## ${currentCat}`)
+    }
+    lines.push(entries[i].text)
+  }
+
+  return lines.join("\n")
+}
