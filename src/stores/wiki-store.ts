@@ -92,6 +92,10 @@ interface SearchApiConfig {
   providerConfigs?: SearchProviderConfigs
   deepResearchSource?: DeepResearchSource
   anyTxt?: AnyTxtConfig
+  /** Max Deep Research tasks running in parallel. Falls back to 3 when unset. */
+  deepResearchConcurrency?: number
+  /** Upper bound on merged web + local sources per research page. Falls back to 20 when unset. */
+  deepResearchMaxSources?: number
 }
 
 interface EmbeddingConfig {
@@ -414,6 +418,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     searXngCategories: ["general"],
     providerConfigs: {},
     deepResearchSource: "web",
+    deepResearchConcurrency: 3,
+    deepResearchMaxSources: 20,
     anyTxt: {
       enabled: false,
       endpoint: "http://127.0.0.1:9920",
