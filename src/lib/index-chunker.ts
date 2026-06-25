@@ -66,3 +66,30 @@ export function chunkIndexByEntries(index: string, chunkSize: number): string[] 
 
   return chunks
 }
+
+/**
+ * Parse the pre-match LLM output into an array of matching entry numbers.
+ * Tolerant: handles [3, 12, 47], 3, 12, 47, none, 无, surrounding text.
+ * Returns deduplicated numbers, or empty array if no valid numbers found.
+ */
+export function parsePrematchOutput(output: string): number[] {
+  const trimmed = output.trim()
+  if (!trimmed) return []
+
+  const lower = trimmed.toLowerCase()
+  if (lower === "none" || trimmed === "无") return []
+
+  // Try to extract bracketed numbers first: [3, 12, 47]
+  const bracketMatch = trimmed.match(/\[([\d,\s]+)\]/)
+  const source = bracketMatch ? bracketMatch[1] : trimmed
+
+  // Extract all integer tokens
+  const tokens = source.match(/\d+/g)
+  if (!tokens) return []
+
+  const numbers = tokens
+    .map((t) => parseInt(t, 10))
+    .filter((n) => Number.isFinite(n) && n > 0)
+
+  return [...new Set(numbers)]
+}
