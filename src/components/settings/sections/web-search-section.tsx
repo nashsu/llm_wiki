@@ -148,6 +148,14 @@ export function WebSearchSection() {
     setTimeout(() => setSavedId((cur) => (cur === "anytxt" ? null : cur)), 1500)
   }
 
+  function updateDeepResearch(
+    patch: Pick<SearchApiConfig, "deepResearchConcurrency" | "deepResearchMaxSources">,
+  ) {
+    persist(resolveSearchConfig({ ...resolvedConfig, ...patch })).catch(() => {})
+    setSavedId("deepResearch")
+    setTimeout(() => setSavedId((cur) => (cur === "deepResearch" ? null : cur)), 1500)
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -271,6 +279,62 @@ export function WebSearchSection() {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.webSearch.anyTxtHint")}
         </p>
+      </div>
+
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <Label>{t("settings.sections.webSearch.deepResearchTitle")}</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.deepResearchDescription")}
+            </p>
+          </div>
+          {savedId === "deepResearch" && (
+            <span className="shrink-0 text-[10px] text-emerald-600">
+              {t("settings.sections.webSearch.savedBadge")}
+            </span>
+          )}
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.deepResearchConcurrency")}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={8}
+              step={1}
+              value={resolvedConfig.deepResearchConcurrency ?? 3}
+              onChange={(e) => {
+                const n = Math.floor(Number(e.target.value))
+                updateDeepResearch({
+                  deepResearchConcurrency: Number.isFinite(n) ? Math.min(8, Math.max(1, n)) : 1,
+                })
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.deepResearchConcurrencyHint")}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>{t("settings.sections.webSearch.deepResearchMaxSources")}</Label>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              value={resolvedConfig.deepResearchMaxSources ?? 20}
+              onChange={(e) => {
+                const n = Math.floor(Number(e.target.value))
+                updateDeepResearch({
+                  deepResearchMaxSources: Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1,
+                })
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.webSearch.deepResearchMaxSourcesHint")}
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2">
