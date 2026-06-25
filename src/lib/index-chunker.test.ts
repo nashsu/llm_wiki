@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { chunkIndexByEntries, parsePrematchOutput } from "./index-chunker"
+import { chunkIndexByEntries, parsePrematchOutput, assembleReducedIndex } from "./index-chunker"
 
 describe("chunkIndexByEntries", () => {
   it("returns empty array for empty index", () => {
@@ -128,5 +128,69 @@ describe("parsePrematchOutput", () => {
 
   it("deduplicates numbers", () => {
     expect(parsePrematchOutput("[3, 3, 12]")).toEqual([3, 12])
+  })
+})
+
+describe("assembleReducedIndex", () => {
+  it("returns empty string for empty matches", () => {
+    const index = "## Concepts\n- [[a]] — desc a\n- [[b]] — desc b"
+    expect(assembleReducedIndex(index, [])).toBe("")
+  })
+
+  it("returns single matched entry with its category header", () => {
+    const index = [
+      "# Index", "",
+      "## Concepts",
+      "- [[attention]] — Core mechanism",
+      "- [[transformer]] — Architecture",
+    ].join("\n")
+    const result = assembleReducedIndex(index, [1])
+    expect(result).toContain("## Concepts")
+    expect(result).toContain("[[attention]]")
+    expect(result).not.toContain("[[transformer]]")
+  })
+
+  it("returns multiple matches preserving original order", () => {
+    const index = [
+      "## Concepts",
+      "- [[a]] — desc a",
+      "- [[b]] — desc b",
+      "- [[c]] — desc c",
+    ].join("\n")
+    const result = assembleReducedIndex(index, [3, 1])
+    expect(result.indexOf("[[a]]")).toBeLessThan(result.indexOf("[[c]]"))
+  })
+
+  it("deduplicates category headers", () => {
+    const index = [
+      "## Concepts",
+      "- [[a]] — desc a",
+      "- [[b]] — desc b",
+      "## Entities",
+      "- [[c]] — desc c",
+    ].join("\n")
+    const result = assembleReducedIndex(index, [1, 2])
+    const headerCount = (result.match(/## Concepts/g) ?? []).length
+    expect(headerCount).toBe(1)
+  })
+
+  it("handles matches from different categories", () => {
+    const index = [
+      "## Concepts",
+      "- [[a]] — desc a",
+      "## Entities",
+      "- [[b]] — desc b",
+    ].join("\n")
+    const result = assembleReducedIndex(index, [1, 2])
+    expect(result).toContain("## Concepts")
+    expect(result).toContain("## Entities")
+    expect(result).toContain("[[a]]")
+    expect(result).toContain("[[b]]")
+  })
+
+  it("ignores out-of-range numbers gracefully", () => {
+    const index = "## Concepts\n- [[a]] — desc a"
+    const result = assembleReducedIndex(index, [1, 999])
+    expect(result).toContain("[[a]]")
   })
 })
