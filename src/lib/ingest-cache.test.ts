@@ -7,7 +7,7 @@ vi.mock("@/commands/fs", () => ({
   fileExists: vi.fn(),
 }))
 
-import { checkIngestCache, saveIngestCache } from "./ingest-cache"
+import { checkIngestCache, saveIngestCache, checkPrematchCache, savePrematchCache } from "./ingest-cache"
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 
 const mockReadFile = vi.mocked(readFile)
@@ -91,6 +91,48 @@ describe("ingest-cache — checkIngestCache", () => {
     mockFileExists.mockRejectedValue(new Error("stat failed"))
 
     const result = await checkIngestCache("/project", "foo.pdf", "hello")
+    expect(result).toBeNull()
+  })
+})
+
+describe("prematch cache", () => {
+  beforeEach(() => {
+    mockReadFile.mockReset()
+    mockWriteFile.mockReset()
+    mockWriteFile.mockResolvedValue(undefined as unknown as void)
+  })
+
+  it("returns null when no cache entry exists", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {}, prematch: {} }))
+    const result = await checkPrematchCache("/project", "source-hash-abc", "chunk-hash-xyz")
+    expect(result).toBeNull()
+  })
+
+  it("returns cached result on hit", async () => {
+    let persisted = ""
+    mockReadFile.mockImplementation(async () => persisted || JSON.stringify({ entries: {}, prematch: {} }))
+    mockWriteFile.mockImplementation(async (_p, c) => { persisted = c })
+
+    await savePrematchCache("/project", "src-hash", "chunk-hash", [1, 3, 5])
+    const result = await checkPrematchCache("/project", "src-hash", "chunk-hash")
+    expect(result).toEqual([1, 3, 5])
+  })
+
+  it("returns null when prematch key not in cache", async () => {
+    let persisted = ""
+    mockReadFile.mockImplementation(async () => persisted || JSON.stringify({ entries: {}, prematch: {} }))
+    mockWriteFile.mockImplementation(async (_p, c) => { persisted = c })
+
+    await savePrematchCache("/project", "src-hash", "chunk-hash", [1, 3])
+    // Different key should miss
+    const result = await checkPrematchCache("/project", "different-src", "chunk-hash")
+    expect(result).toBeNull()
+  })
+
+  it("handles cache file with no prematch field (backwards compat)", async () => {
+    // Old cache format without prematch field
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {} }))
+    const result = await checkPrematchCache("/project", "src", "chunk")
     expect(result).toBeNull()
   })
 })
