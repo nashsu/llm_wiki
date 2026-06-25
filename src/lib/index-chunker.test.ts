@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { chunkIndexByEntries } from "./index-chunker"
+import { chunkIndexByEntries, parsePrematchOutput } from "./index-chunker"
 
 describe("chunkIndexByEntries", () => {
   it("returns empty array for empty index", () => {
@@ -81,5 +81,52 @@ describe("chunkIndexByEntries", () => {
     ].join("\n")
     const chunks = chunkIndexByEntries(index, 2)
     expect(chunks).toHaveLength(2)
+  })
+})
+
+describe("parsePrematchOutput", () => {
+  it("parses bracket format with spaces", () => {
+    expect(parsePrematchOutput("[3, 12, 47]")).toEqual([3, 12, 47])
+  })
+
+  it("parses bracket format without spaces", () => {
+    expect(parsePrematchOutput("[3,12,47]")).toEqual([3, 12, 47])
+  })
+
+  it("parses comma-separated without brackets", () => {
+    expect(parsePrematchOutput("3, 12, 47")).toEqual([3, 12, 47])
+  })
+
+  it("parses single number", () => {
+    expect(parsePrematchOutput("[5]")).toEqual([5])
+    expect(parsePrematchOutput("5")).toEqual([5])
+  })
+
+  it("returns empty for none variations", () => {
+    expect(parsePrematchOutput("none")).toEqual([])
+    expect(parsePrematchOutput("None")).toEqual([])
+    expect(parsePrematchOutput("NONE")).toEqual([])
+    expect(parsePrematchOutput("无")).toEqual([])
+  })
+
+  it("returns empty for empty or whitespace", () => {
+    expect(parsePrematchOutput("")).toEqual([])
+    expect(parsePrematchOutput("   ")).toEqual([])
+  })
+
+  it("tolerates surrounding explanation text", () => {
+    expect(parsePrematchOutput("Matching items: [3, 12, 47]")).toEqual([3, 12, 47])
+  })
+
+  it("ignores non-numeric tokens", () => {
+    expect(parsePrematchOutput("[3, abc, 47]")).toEqual([3, 47])
+  })
+
+  it("returns empty on complete parse failure", () => {
+    expect(parsePrematchOutput("I think none match")).toEqual([])
+  })
+
+  it("deduplicates numbers", () => {
+    expect(parsePrematchOutput("[3, 3, 12]")).toEqual([3, 12])
   })
 })
