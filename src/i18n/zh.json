@@ -432,7 +432,6 @@
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
-        "firecrawlHint": "使用 Firecrawl 的匿名搜索 API（`https://api.firecrawl.dev/v2/search`），这里不需要 API Key；但 Firecrawl 可能会拦截可疑 IP。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
         "firecrawlHint": "Firecrawl 自建端点。系统会自动追加路径 `/v1/search`。",
         "searchCategories": "搜索分类",
