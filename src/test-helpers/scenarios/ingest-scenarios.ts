@@ -2,12 +2,22 @@ import type { IngestScenario } from "./types"
 
 /**
  * Ingest scenarios drive autoIngest end-to-end. Two LLM responses per
- * scenario (stage 1 analysis, stage 2 generation with FILE + REVIEW blocks).
+ * scenario (stage 1 analysis, stage 2 generation with FILE + INDEX +
+ * REVIEW blocks).
  *
  * FILE block format (what stage 2 must emit to write a wiki file):
  *   ---FILE: wiki/path/to/page.md---
  *   (file content, usually with YAML frontmatter)
  *   ---END FILE---
+ *
+ * INDEX block format (what stage 2 emits to append new entries to
+ * wiki/index.md instead of regenerating the whole file):
+ *   ---INDEX: CategoryName---
+ *   slug — Short description
+ *   ---END INDEX---
+ * INDEX blocks appear AFTER all FILE blocks and BEFORE any REVIEW blocks.
+ * Only NEW entries are listed (pre-existing index entries are preserved
+ * by the append path, never re-emitted).
  *
  * REVIEW block format (what stage 2 emits to inject a review item):
  *   ---REVIEW: missing-page | Short title---
@@ -100,11 +110,16 @@ export const ingestScenarios: IngestScenario[] = [
       "",
       "Paper introducing [[Rotary Position Embedding]].",
       "---END FILE---",
+      "",
+      "---INDEX: Concepts---",
+      "rope — Rotary Position Embedding for variable-length contexts",
+      "---END INDEX---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/rope.md",
         "wiki/sources/rope-paper.md",
+        "wiki/index.md",
       ],
       fileContains: {
         "wiki/concepts/rope.md": [
@@ -112,6 +127,7 @@ export const ingestScenarios: IngestScenario[] = [
           "[[attention]]",
         ],
         "wiki/sources/rope-paper.md": ["rope-paper.md"],
+        "wiki/index.md": ["[[attention]]", "[[rope]]"],
       },
       reviewsCreated: [],
     },
@@ -146,6 +162,10 @@ export const ingestScenarios: IngestScenario[] = [
       "FlashAttention is mentioned here.",
       "---END FILE---",
       "",
+      "---INDEX: Sources---",
+      "flash-attention — FlashAttention source summary",
+      "---END INDEX---",
+      "",
       "---REVIEW: missing-page | FlashAttention---",
       "The source introduces FlashAttention but no dedicated page exists.",
       "OPTIONS: Create page | Skip",
@@ -157,7 +177,10 @@ export const ingestScenarios: IngestScenario[] = [
       "---END REVIEW---",
     ].join("\n"),
     expected: {
-      writtenPaths: ["wiki/sources/flash-attention.md"],
+      writtenPaths: ["wiki/sources/flash-attention.md", "wiki/index.md"],
+      fileContains: {
+        "wiki/index.md": ["[[flash-attention]]"],
+      },
       reviewsCreated: [
         { type: "missing-page", titleContains: "FlashAttention" },
         { type: "suggestion", titleContains: "IO-aware" },
@@ -205,14 +228,20 @@ export const ingestScenarios: IngestScenario[] = [
       "",
       "Source for multi-head [[attention]].",
       "---END FILE---",
+      "",
+      "---INDEX: Concepts---",
+      "multi-head-attention — Parallel multi-head attention variant",
+      "---END INDEX---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/multi-head-attention.md",
         "wiki/sources/multi-head.md",
+        "wiki/index.md",
       ],
       fileContains: {
         "wiki/concepts/multi-head-attention.md": ["[[attention]]"],
+        "wiki/index.md": ["[[attention]]", "[[multi-head-attention]]"],
       },
     },
   },
@@ -253,17 +282,23 @@ export const ingestScenarios: IngestScenario[] = [
       "",
       "关于 [[Transformer]] 的综述。",
       "---END FILE---",
+      "",
+      "---INDEX: Concepts---",
+      "transformer — 基于注意力机制的神经网络架构",
+      "---END INDEX---",
     ].join("\n"),
     expected: {
       writtenPaths: [
         "wiki/concepts/transformer.md",
         "wiki/sources/transformer-survey.md",
+        "wiki/index.md",
       ],
       fileContains: {
         "wiki/concepts/transformer.md": [
           "title: Transformer",
           "[[注意力机制]]",
         ],
+        "wiki/index.md": ["[[注意力机制]]", "[[transformer]]"],
       },
     },
   },

@@ -3,7 +3,7 @@
  *
  * Each scenario materializes an initial project, a source document, and two
  * canned LLM responses (stage 1 analysis, stage 2 generation with FILE +
- * REVIEW blocks). The runner mocks streamChat to emit them sequentially.
+ * INDEX + REVIEW blocks). The runner mocks streamChat to emit them sequentially.
  *
  * After ingest runs, the runner asserts:
  *   - expected files exist on disk with expected substrings
