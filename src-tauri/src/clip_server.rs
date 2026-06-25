@@ -40,6 +40,15 @@ pub fn all_projects() -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// Returns the bind host for the Clip server.
+///
+/// Reads `LLM_WIKI_BIND_HOST` from the environment, falling back to
+/// `127.0.0.1` so existing installs keep their loopback-only behavior.
+/// Set to `0.0.0.0` to accept connections from other machines on the LAN.
+fn bind_host() -> String {
+    std::env::var("LLM_WIKI_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
 pub fn start_clip_server() {
     thread::spawn(|| {
         let mut restart_count: u32 = 0;
@@ -50,7 +59,7 @@ pub fn start_clip_server() {
                 let mut last_err = String::new();
                 let mut bound = None;
                 for attempt in 1..=MAX_BIND_RETRIES {
-                    match Server::http(format!("127.0.0.1:{}", PORT)) {
+                    match Server::http(format!("{}:{}", bind_host(), PORT)) {
                         Ok(s) => {
                             bound = Some(s);
                             break;
@@ -84,7 +93,7 @@ pub fn start_clip_server() {
 
             DAEMON_STATUS.store(1, Ordering::Relaxed); // running
             restart_count = 0; // Reset on successful bind
-            println!("[Clip Server] Listening on http://127.0.0.1:{}", PORT);
+            println!("[Clip Server] Listening on http://{}:{}", bind_host(), PORT);
 
             for mut request in server.incoming_requests() {
                 let cors_headers = vec![
