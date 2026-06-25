@@ -4,6 +4,9 @@
  * Entries are numbered sequentially with [N] prefix across all chunks.
  */
 
+import { streamChat } from "@/lib/llm-client"
+import type { LlmConfig } from "@/stores/wiki-store"
+
 interface IndexEntry {
   category: string
   text: string
@@ -254,4 +257,66 @@ export function appendIndexEntries(indexContent: string, blocks: ParsedIndexBloc
   }
 
   return result.join("\n")
+}
+
+const PREMATCH_CONCURRENCY = 8
+
+/**
+ * Run pre-match LLM calls in parallel across all index chunks.
+ * Returns the union of all matched entry numbers.
+ * Failed chunks are logged and skipped (treated as 0 matches).
+ */
+export async function runPrematchParallel(
+  chunks: string[],
+  sourceContent: string,
+  llmConfig: LlmConfig,
+  signal: AbortSignal | undefined,
+): Promise<number[]> {
+  if (chunks.length === 0) return []
+
+  const results: number[][] = []
+
+  // Process in batches of PREMATCH_CONCURRENCY
+  for (let i = 0; i < chunks.length; i += PREMATCH_CONCURRENCY) {
+    if (signal?.aborted) break
+    const batch = chunks.slice(i, i + PREMATCH_CONCURRENCY)
+
+    const batchResults = await Promise.all(
+      batch.map(async (chunk) => {
+        let output = ""
+        let hadError = false
+
+        try {
+          await streamChat(
+            llmConfig,
+            [
+              { role: "system", content: buildPrematchPrompt(sourceContent, chunk) },
+              { role: "user", content: "Output matching item numbers for the chunk above." },
+            ],
+            {
+              onToken: (token: string) => { output += token },
+              onDone: () => {},
+              onError: (err: Error) => {
+                hadError = true
+                console.warn(`[prematch] chunk failed: ${err.message}`)
+              },
+            },
+            signal,
+            { temperature: 0.1, max_tokens: 256 },
+          )
+        } catch (err) {
+          hadError = true
+          console.warn(`[prematch] chunk threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
+
+        if (hadError) return []
+        return parsePrematchOutput(output)
+      }),
+    )
+
+    results.push(...batchResults)
+  }
+
+  // Flatten and deduplicate
+  return [...new Set(results.flat())]
 }
