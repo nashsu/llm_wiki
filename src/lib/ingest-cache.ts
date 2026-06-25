@@ -15,6 +15,7 @@ interface CacheEntry {
 
 interface CacheData {
   entries: Record<string, CacheEntry> // keyed by source filename
+  prematch?: Record<string, number[]> // keyed by "sourceHash:chunkHash"
 }
 
 async function sha256(content: string): Promise<string> {
@@ -110,6 +111,36 @@ export async function saveIngestCache(
     filesWritten,
   }
   await saveCache(projectPath, { entries: newEntries })
+}
+
+/**
+ * Check if a pre-match result is cached for a source+chunk combination.
+ * Returns the cached matched numbers, or null if not cached.
+ */
+export async function checkPrematchCache(
+  projectPath: string,
+  sourceHash: string,
+  chunkHash: string,
+): Promise<number[] | null> {
+  const cache = await loadCache(projectPath)
+  const key = `${sourceHash}:${chunkHash}`
+  return cache.prematch?.[key] ?? null
+}
+
+/**
+ * Save a pre-match result to the cache.
+ */
+export async function savePrematchCache(
+  projectPath: string,
+  sourceHash: string,
+  chunkHash: string,
+  matchedNumbers: number[],
+): Promise<void> {
+  const cache = await loadCache(projectPath)
+  if (!cache.prematch) cache.prematch = {}
+  const key = `${sourceHash}:${chunkHash}`
+  cache.prematch[key] = matchedNumbers
+  await saveCache(projectPath, cache)
 }
 
 /**
