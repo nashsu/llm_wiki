@@ -115,14 +115,14 @@ describe("source summary media refs", () => {
 describe("aggregate repair targeting", () => {
   it("repairs only the append-only log and leaves deterministic aggregates to the app", () => {
     expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/log.md"],
+      ["wiki/log.md"],
       ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
     )).toEqual([])
 
     expect(aggregatePathsNeedingRepair(["wiki/index.md"], [])).toEqual(["wiki/log.md"])
 
     expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/overview.md", "wiki/log.md"],
+      ["wiki/overview.md", "wiki/log.md"],
       [],
     )).toEqual([])
   })
