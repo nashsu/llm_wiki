@@ -38,7 +38,7 @@ import {
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
-import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
+import { GENERATION_WIKI_TYPES, inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import {
@@ -61,7 +61,7 @@ const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
-const AGGREGATE_WIKI_PATHS = ["wiki/index.md", "wiki/overview.md", "wiki/log.md"] as const
+const AGGREGATE_WIKI_PATHS = ["wiki/overview.md", "wiki/log.md"] as const
 
 function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): string {
   if (images.length === 0) return content
@@ -1169,6 +1169,32 @@ async function autoIngestImpl(
     }
   }
 
+  // ── Step 3.6: Fallback INDEX construction ───────────────
+  // If no INDEX blocks were emitted, construct them from the
+  // written FILE blocks as a fallback. This replaces the old
+  // aggregate-repair-for-index.md path.
+  if (indexBlocks.length === 0 && writtenPaths.length > 1) {
+    try {
+      const fallbackBlocks = buildFallbackIndexBlocks(generation)
+      if (fallbackBlocks.length > 0) {
+        const indexAbs = `${pp}/wiki/index.md`
+        const existingIndex = await tryReadFile(indexAbs)
+        const updatedIndex = appendIndexEntries(existingIndex, fallbackBlocks)
+        await writeFile(indexAbs, updatedIndex)
+        writeWarnings.push("No INDEX blocks in generation — constructed fallback entries from FILE blocks")
+        if (!writtenPaths.includes("wiki/index.md")) {
+          writtenPaths.push("wiki/index.md")
+        }
+        console.log(
+          `[ingest:index-fallback] constructed ${fallbackBlocks.reduce((s, b) => s + b.entries.length, 0)} entries ` +
+          `across ${fallbackBlocks.length} categories from FILE blocks`,
+        )
+      }
+    } catch (err) {
+      writeWarnings.push(`Fallback index construction failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const aggregateRepairPaths = aggregatePathsNeedingRepair(writtenPaths, writeWarnings)
   const repairableAggregatePaths = aggregateRepairPaths.filter((path) =>
     isAggregateRepairSafe(path, index, overview, llmConfig.maxContextSize),
@@ -1432,6 +1458,35 @@ function isListingPath(relativePath: string): boolean {
     relativePath === "wiki/overview.md" ||
     relativePath.endsWith("/overview.md")
   )
+}
+
+/**
+ * When generation output has no ---INDEX: blocks, construct fallback
+ * entries from the FILE blocks that were written. Extracts slug from
+ * path and title from frontmatter.
+ */
+function buildFallbackIndexBlocks(
+  generation: string,
+): import("./index-chunker").ParsedIndexBlock[] {
+  const { blocks } = parseFileBlocks(generation)
+  const byCategory = new Map<string, string[]>()
+
+  for (const block of blocks) {
+    // Skip aggregate files and source summaries
+    if (block.path === "wiki/index.md" || block.path === "wiki/log.md" || block.path === "wiki/overview.md") continue
+    if (block.path.startsWith("wiki/sources/")) continue
+
+    const type = inferWikiTypeFromPath(block.path) ?? "entity"
+    const category = wikiTypeLabel(type) + "s"
+    const slug = block.path.replace(/\.md$/, "").split("/").pop() ?? ""
+    const title = extractGeneratedPageTitle(block.content) ?? slug
+
+    const entry = title === slug ? slug : `${slug} — ${title}`
+    if (!byCategory.has(category)) byCategory.set(category, [])
+    byCategory.get(category)!.push(entry)
+  }
+
+  return [...byCategory.entries()].map(([category, entries]) => ({ category, entries }))
 }
 
 const CJK_OUTPUT_LANGUAGES = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
