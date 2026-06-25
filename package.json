@@ -1,12 +1,13 @@
 {
   "name": "llm-wiki",
   "private": true,
-  "version": "0.4.24",
+  "version": "0.5.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --build --pretty",
     "build": "npm run typecheck && vite build",
+    "build:desktop": "npm --prefix mcp-server ci && npm run mcp:build && npm run build",
     "preview": "vite preview",
     "test": "npm run test:mocks && npm run test:llm",
     "test:mocks": "vitest run --exclude='**/*.real-llm.test.ts' --exclude='**/mcp-server/**'",

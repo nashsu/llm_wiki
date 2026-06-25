@@ -27,6 +27,7 @@ import {
   sourceSummaryMediaRefsForExternalMarkdown,
   aggregatePathsNeedingRepair,
   filterAggregateRepairOutput,
+  rewriteIngestPathFromTitleForTargetLanguage,
 } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
@@ -587,5 +588,40 @@ describe("generated ingest dates", () => {
     expect(prompt).toContain("Today's date is")
     expect(prompt).toContain("Use this exact date")
     expect(prompt).not.toContain("created: 2026-04-29")
+  })
+})
+
+describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
+  it("uses the CJK page title for generated page filenames when the target language is CJK", () => {
+    const content = [
+      "---",
+      "type: concept",
+      "title: 反硝化除磷技术",
+      "created: 2026-06-18",
+      "---",
+      "",
+      "# 反硝化除磷技术",
+      "",
+      "正文。",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/denitrifying-phosphorus-removal.md",
+        content,
+        "Chinese",
+      ),
+    ).toBe("wiki/concepts/反硝化除磷技术.md")
+  })
+
+  it("does not rewrite source summaries or aggregate pages", () => {
+    const content = "---\ntitle: 反硝化除磷技术\n---\n# 反硝化除磷技术"
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage("wiki/sources/source-slug.md", content, "Chinese"),
+    ).toBe("wiki/sources/source-slug.md")
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage("wiki/index.md", content, "Chinese"),
+    ).toBe("wiki/index.md")
   })
 })

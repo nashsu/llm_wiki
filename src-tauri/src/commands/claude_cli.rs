@@ -17,7 +17,7 @@
 //! capabilities JSON.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -212,6 +212,7 @@ pub async fn claude_cli_spawn(
     model: String,
     messages: Vec<ClaudeMessage>,
     isolate_local_config: bool,
+    working_directory: Option<String>,
 ) -> Result<(), String> {
     // Build the turn list: fold any system messages into a preamble on
     // the first user turn rather than using a CLI flag, because
@@ -251,10 +252,12 @@ pub async fn claude_cli_spawn(
         })
         .collect();
 
+    let working_directory = resolve_claude_working_directory(working_directory).await?;
     let claude = find_claude_command().await?;
     let mut cmd = Command::new(&claude);
     suppress_windows_console(&mut cmd);
     cmd.args(build_claude_cli_args(&model, isolate_local_config));
+    cmd.current_dir(&working_directory);
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -415,6 +418,39 @@ fn build_claude_cli_args(model: &str, isolate_local_config: bool) -> Vec<String>
     args
 }
 
+async fn resolve_claude_working_directory(value: Option<String>) -> Result<PathBuf, String> {
+    let raw = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Claude Code CLI requires an active project working directory".to_string())?;
+    let path = Path::new(raw.as_str());
+    if !path.is_absolute() {
+        return Err("Claude Code CLI working directory must be an absolute project path".to_string());
+    }
+    let path_meta = tokio::fs::metadata(path).await.map_err(|e| {
+        eprintln!("[claude-cli] failed to read working directory metadata {raw}: {e}");
+        format!("Claude Code CLI working directory does not exist or cannot be read: {raw}")
+    })?;
+    if !path_meta.is_dir() {
+        return Err(format!("Claude Code CLI working directory is not a directory: {raw}"));
+    }
+    let index_path = path.join("wiki").join("index.md");
+    let index_meta = tokio::fs::metadata(&index_path).await.map_err(|e| {
+        eprintln!("[claude-cli] failed to read wiki/index.md metadata for {raw}: {e}");
+        format!("Claude Code CLI working directory must be an LLM Wiki project containing wiki/index.md: {raw}")
+    })?;
+    if !index_meta.is_file() {
+        return Err(format!(
+            "Claude Code CLI working directory must be an LLM Wiki project containing wiki/index.md: {raw}"
+        ));
+    }
+    tokio::fs::canonicalize(path)
+        .await
+        .map_err(|e| format!("Failed to canonicalize Claude Code CLI working directory {raw}: {e}"))
+}
+
 /// Kill a running child registered under `stream_id`. Called on
 /// AbortSignal in the frontend. No-op if the id is unknown (e.g. the
 /// process already exited).
@@ -503,5 +539,59 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--prompt-suggestions" && pair[1] == "false"));
+    }
+
+    #[tokio::test]
+    async fn claude_working_directory_requires_llm_wiki_project() {
+        assert!(resolve_claude_working_directory(None)
+            .await
+            .unwrap_err()
+            .contains("active project"));
+        assert!(resolve_claude_working_directory(Some("".to_string()))
+            .await
+            .unwrap_err()
+            .contains("active project"));
+        assert!(resolve_claude_working_directory(Some("   ".to_string()))
+            .await
+            .unwrap_err()
+            .contains("active project"));
+        assert!(resolve_claude_working_directory(Some("relative/path".to_string()))
+            .await
+            .unwrap_err()
+            .contains("absolute"));
+
+        let dir = std::env::temp_dir().join(format!(
+            "llm-wiki-claude-cwd-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let raw = dir.to_string_lossy().to_string();
+
+        assert!(resolve_claude_working_directory(Some(raw.clone()))
+            .await
+            .unwrap_err()
+            .contains("wiki/index.md"));
+
+        let wiki_dir = dir.join("wiki");
+        std::fs::create_dir_all(&wiki_dir).expect("wiki dir");
+        let index_dir = wiki_dir.join("index.md");
+        std::fs::create_dir_all(&index_dir).expect("index dir");
+        assert!(resolve_claude_working_directory(Some(raw.clone()))
+            .await
+            .unwrap_err()
+            .contains("wiki/index.md"));
+        std::fs::remove_dir_all(&index_dir).expect("remove index dir");
+        std::fs::write(wiki_dir.join("index.md"), "# Index\n").expect("index");
+
+        let resolved = resolve_claude_working_directory(Some(raw))
+            .await
+            .expect("valid project path");
+        assert_eq!(resolved, dir.canonicalize().expect("canonical tempdir"));
+
+        std::fs::remove_dir_all(&dir).expect("cleanup temp dir");
     }
 }

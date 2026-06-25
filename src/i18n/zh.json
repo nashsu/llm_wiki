@@ -139,6 +139,13 @@
     "typeAMessage": "输入消息...",
     "useWebSearch": "网页搜索",
     "useAnyTxtSearch": "AnyTXT 搜索",
+    "agentMode": "Agent 模式",
+    "agentModes": {
+      "fast": "快速",
+      "standard": "标准",
+      "deep": "深度",
+      "localFirst": "本地优先"
+    },
     "enableAnyTxtInSettings": "请在设置 → 外部信息源中启用 AnyTXT",
     "sendMessage": "发送消息",
     "stopGeneration": "停止生成",
@@ -149,7 +156,24 @@
     "imageInputUnavailable": "当前 Provider 不支持图片输入。请在设置中切换到支持视觉的 Provider。",
     "imageTooLarge": "图片过大（最大 {{max}}MB）：{{name}}",
     "tooManyImages": "图片数量过多（最多 {{max}} 张）",
-    "unsupportedImageType": "不支持的图片类型：{{type}}"
+    "unsupportedImageType": "不支持的图片类型：{{type}}",
+    "referencePreview": "引用预览",
+    "closeReferencePreview": "关闭引用预览",
+    "resizeReferencePreview": "调整引用预览宽度",
+    "noReferencePreviewFragment": "没有返回可预览的片段。",
+    "agent": {
+      "understanding": "理解问题",
+      "routing": "规划下一步",
+      "tool_call": "调用工具",
+      "tool_result": "工具结果",
+      "searching_wiki": "搜索 Wiki",
+      "searching_graph": "探索知识图谱",
+      "searching_web": "搜索网页",
+      "searching_anytxt": "搜索 AnyTXT",
+      "reading_context": "读取上下文",
+      "writing": "生成回答",
+      "resultCount": "{{count}} 条结果"
+    }
   },
   "search": {
     "title": "搜索",
@@ -408,13 +432,24 @@
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
+        "firecrawlHint": "使用 Firecrawl 的匿名搜索 API（`https://api.firecrawl.dev/v2/search`），这里不需要 API Key；但 Firecrawl 可能会拦截可疑 IP。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
         "firecrawlHint": "Firecrawl 自建端点。系统会自动追加路径 `/v1/search`。",
         "searchCategories": "搜索分类",
         "searxngCategoriesHint": "分类会作为 SearXNG 的 `categories` 参数发送。",
         "searchEngine": "搜索引擎 / 分类",
         "customSerpApiPlaceholder": "自定义 SerpApi engine，例如 google_finance",
-        "customSerpApiHint": "自定义 engine 会作为 SerpApi 的 `engine` 参数发送。"
+        "customSerpApiHint": "自定义 engine 会作为 SerpApi 的 `engine` 参数发送。",
+        "testProvider": "测试搜索",
+        "testRunning": "测试中...",
+        "testSuccess": "搜索测试成功（{{count}} 条结果）。",
+        "testSuccess_plural": "搜索测试成功（{{count}} 条结果）。",
+        "testNoResults": "连接可用，但测试查询没有返回结果。",
+        "testFailed": "搜索测试失败：{{message}}",
+        "firecrawlIpBlocked": "Firecrawl 匿名搜索已被当前 IP 拦截。请切换其他网页搜索 Provider，或尝试更换网络。",
+        "firecrawlNetworkError": "无法连接 Firecrawl Search。请检查网络，或切换其他网页搜索 Provider。",
+        "firecrawlInvalidJson": "Firecrawl 返回了无效响应。请稍后重试，或切换其他网页搜索 Provider。",
+        "configureBeforeTesting": "请先配置"
       },
       "network": {
         "title": "网络",

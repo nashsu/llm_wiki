@@ -139,6 +139,13 @@
     "typeAMessage": "Type a message...",
     "useWebSearch": "Web search",
     "useAnyTxtSearch": "AnyTXT search",
+    "agentMode": "Agent mode",
+    "agentModes": {
+      "fast": "Fast",
+      "standard": "Standard",
+      "deep": "Deep",
+      "localFirst": "Local first"
+    },
     "enableAnyTxtInSettings": "Enable AnyTXT in Settings → External Information Sources",
     "sendMessage": "Send message",
     "stopGeneration": "Stop generation",
@@ -149,7 +156,24 @@
     "imageInputUnavailable": "The current provider does not support image input. Switch to a vision-capable provider in Settings.",
     "imageTooLarge": "Image too large (max {{max}}MB): {{name}}",
     "tooManyImages": "Too many images (max {{max}})",
-    "unsupportedImageType": "Unsupported image type: {{type}}"
+    "unsupportedImageType": "Unsupported image type: {{type}}",
+    "referencePreview": "Reference preview",
+    "closeReferencePreview": "Close reference preview",
+    "resizeReferencePreview": "Resize reference preview",
+    "noReferencePreviewFragment": "No preview fragment returned.",
+    "agent": {
+      "understanding": "Understanding request",
+      "routing": "Planning next step",
+      "tool_call": "Calling tool",
+      "tool_result": "Tool result",
+      "searching_wiki": "Searching wiki",
+      "searching_graph": "Exploring knowledge graph",
+      "searching_web": "Searching web",
+      "searching_anytxt": "Searching AnyTXT",
+      "reading_context": "Reading context",
+      "writing": "Writing answer",
+      "resultCount": "results: {{count}}"
+    }
   },
   "search": {
     "title": "Search",
@@ -408,13 +432,24 @@
         "savedBadge": "Saved",
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
+        "firecrawlHint": "Uses Firecrawl's anonymous Search API (`https://api.firecrawl.dev/v2/search`). No API key is required here, but Firecrawl may block suspicious IP addresses.",
         "searxngJsonHint": "The instance must allow JSON search responses (`format=json`).",
         "firecrawlHint": "Firecrawl self-hosted endpoint. Path `/v1/search` is appended automatically.",
         "searchCategories": "Search categories",
         "searxngCategoriesHint": "Categories are sent as the SearXNG `categories` parameter.",
         "searchEngine": "Search engine / category",
         "customSerpApiPlaceholder": "Custom SerpApi engine, e.g. google_finance",
-        "customSerpApiHint": "Custom engine will be sent as the SerpApi `engine` parameter."
+        "customSerpApiHint": "Custom engine will be sent as the SerpApi `engine` parameter.",
+        "testProvider": "Test search",
+        "testRunning": "Testing...",
+        "testSuccess": "Search test succeeded ({{count}} result).",
+        "testSuccess_plural": "Search test succeeded ({{count}} results).",
+        "testNoResults": "Connection worked, but this test query returned no results.",
+        "testFailed": "Search test failed: {{message}}",
+        "firecrawlIpBlocked": "Firecrawl anonymous search is blocked for this IP. Choose another Web Search provider or try a different network.",
+        "firecrawlNetworkError": "Could not reach Firecrawl Search. Check your network or choose another Web Search provider.",
+        "firecrawlInvalidJson": "Firecrawl returned an invalid response. Try again later or choose another Web Search provider.",
+        "configureBeforeTesting": "Configure first"
       },
       "network": {
         "title": "Network",

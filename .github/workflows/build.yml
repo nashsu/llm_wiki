@@ -42,7 +42,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Install protoc (macOS)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         run: brew install protobuf
 
       - name: Install dependencies (Ubuntu)
@@ -58,13 +58,19 @@ jobs:
 
       # The repo ships pre-downloaded PDFium binaries under
       # src-tauri/pdfium/ for every supported architecture
-      # (libpdfium.so = x86_64, libpdfium-arm64.so = aarch64,
-      # libpdfium.dylib = macOS, pdfium.dll = Windows). On the
-      # ARM Linux runner we swap libpdfium.so to the aarch64 build
-      # before tauri-action runs cargo. We do NOT pull from
-      # bblanchon/pdfium-binaries during CI — that download has
-      # historically failed often enough that committing the
+      # (libpdfium.so = Linux x86_64, libpdfium-arm64.so = Linux aarch64,
+      # libpdfium.dylib = macOS arm64, pdfium.dll = Windows).
+      # For architectures whose bundled filename must
+      # stay `libpdfium.*`, swap the matching binary into place before cargo
+      # runs. We do NOT pull from bblanchon/pdfium-binaries during CI — that
+      # download has historically failed often enough that committing the
       # binaries is the maintenance-friendly path.
+      - name: Verify PDFium binary checksums
+        if: matrix.platform != 'windows-latest'
+        run: shasum -a 256 -c src-tauri/pdfium/SHA256SUMS
+
+      # rust_target is empty for both Ubuntu rows, so platform is the
+      # only stable discriminator for the Linux ARM swap.
       - name: Use ARM64 pdfium binary (Ubuntu ARM only)
         if: matrix.platform == 'ubuntu-22.04-arm'
         run: |
@@ -84,6 +90,11 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm install
+
+      - name: Prepare MCP server resources
+        run: |
+          npm --prefix mcp-server ci
+          npm run mcp:build
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

@@ -1,0 +1,5 @@
+b358e7581f8b997313e18bb25117fd1d9acfa78b76c6c159f75469377275eba9  src-tauri/pdfium/libpdfium.so
+f2cd46ddeb297a54082aac22eb23f21030bdd9cee4ac513a341e07dd9c51bcc7  src-tauri/pdfium/libpdfium-arm64.so
+cb8e259f914dda33f8930751e9a70afd3168893a569f7e59d34d29c4bc5701c3  src-tauri/pdfium/libpdfium.dylib
+bdf0118fe2000587dd51e1d00bc76e0eccc036562f3ce7d12d19181335f6b1a7  src-tauri/pdfium/libpdfium-x86_64.dylib
+dd5f90ff69ce85fe52908073be2f47d589502f94d22cac0fbee20df3871d8ddb  src-tauri/pdfium/pdfium.dll

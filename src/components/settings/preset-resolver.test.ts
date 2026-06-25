@@ -30,6 +30,16 @@ describe("resolveConfig", () => {
     ])
   })
 
+  it("exposes Atlas Cloud as an OpenAI-compatible chat-completions preset", () => {
+    const atlas = LLM_PRESETS.find((preset) => preset.id === "atlascloud")
+
+    expect(atlas?.provider).toBe("custom")
+    expect(atlas?.baseUrl).toBe("https://api.atlascloud.ai/v1")
+    expect(atlas?.apiMode).toBe("chat_completions")
+    expect(atlas?.defaultModel).toBe("deepseek-ai/deepseek-v4-pro")
+    expect(atlas?.suggestedModels).toContain("deepseek-ai/deepseek-v4-pro")
+  })
+
   it("keeps Xiaomi MiMo presets aligned with current official and Token Plan endpoints", () => {
     const mimo = LLM_PRESETS.find((preset) => preset.id === "xiaomi-mimo")
 

@@ -52,6 +52,11 @@ jobs:
       - name: Check frontend build
         run: npx vite build
 
+      - name: Prepare MCP server resources
+        run: |
+          npm --prefix mcp-server ci
+          npm run mcp:build
+
       - name: Check Rust build
         working-directory: src-tauri
         run: cargo build

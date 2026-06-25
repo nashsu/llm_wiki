@@ -42,7 +42,7 @@ export const SEARXNG_CATEGORY_OPTIONS: { value: SearXngCategory; label: string; 
 
 export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   const providerConfigs: SearchProviderConfigs = config.providerConfigs ?? {
-    ...(config.provider !== "none" && config.provider !== "ollama" && config.apiKey
+    ...(config.provider !== "none" && config.provider !== "ollama" && config.provider !== "firecrawl" && config.apiKey
       ? {
           [config.provider]: {
             apiKey: config.apiKey,
@@ -150,7 +150,7 @@ export async function webSearch(
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
   if ((resolved.provider === "tavily" || resolved.provider === "serpapi") && !resolved.apiKey) {
-    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a different provider.")
+    throw new Error("Web search not configured. Add a Tavily or SerpApi API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")

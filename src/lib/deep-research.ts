@@ -25,6 +25,28 @@ interface ResearchSourceCollection {
   errors: string[]
 }
 
+export function noResearchSourcesTaskPatch(sourceErrors: string[]): {
+  status: "done" | "error"
+  synthesis: string
+  error: string | null
+} {
+  // If every selected source produced zero usable results and at least
+  // one source failed, surface the failure state explicitly. Otherwise
+  // the UI shows "completed" for a task that could not actually search.
+  if (sourceErrors.length > 0) {
+    return {
+      status: "error",
+      synthesis: "",
+      error: sourceErrors.join("\n"),
+    }
+  }
+  return {
+    status: "done",
+    synthesis: "No research sources found.",
+    error: null,
+  }
+}
+
 export function makeDeepResearchFileName(topic: string, now: Date = new Date()): {
   fileName: string
   date: string
@@ -189,10 +211,7 @@ async function executeResearch(
     if (!updateTaskIfActive(pp, taskId, { webResults })) return
 
     if (webResults.length === 0) {
-      if (!updateTaskIfActive(pp, taskId, {
-        status: "done",
-        synthesis: sourceErrors.length > 0 ? sourceErrors.join("\n") : "No research sources found.",
-      })) return
+      if (!updateTaskIfActive(pp, taskId, noResearchSourcesTaskPatch(sourceErrors))) return
       if (isActiveProjectPath(pp)) onTaskFinished(pp, llmConfig, searchConfig)
       return
     }

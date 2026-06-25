@@ -151,6 +151,15 @@ describe("webSearch", () => {
       .rejects.toThrow("SerpApi search failed: Invalid API key")
   })
 
+  it("does not migrate legacy top-level apiKey into Firecrawl config", () => {
+    const resolved = resolveSearchConfig({
+      provider: "firecrawl",
+      apiKey: "legacy-key",
+    })
+
+    expect(resolved.providerConfigs?.firecrawl).toBeUndefined()
+  })
+
   it("requires a configured search provider and key", async () => {
     await expect(webSearch("x", { provider: "none", apiKey: "" }, 5))
       .rejects.toThrow("Select a search provider")
@@ -196,6 +205,14 @@ describe("webSearch", () => {
         ollama: { ollamaUrl: "https://ollama.com" },
       },
     })).toBe(false)
+  })
+
+  it("treats Firecrawl as configured with an instance URL and without an API key", () => {
+    expect(hasConfiguredSearchProvider({
+      provider: "firecrawl",
+      apiKey: "",
+      firecrawlUrl: "http://localhost:3002",
+    })).toBe(true)
   })
 
   it("does not leak a stale top-level Ollama URL into non-Ollama providers", () => {

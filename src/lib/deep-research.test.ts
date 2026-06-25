@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { collectResearchSources, makeDeepResearchFileName } from "./deep-research"
+import { collectResearchSources, makeDeepResearchFileName, noResearchSourcesTaskPatch } from "./deep-research"
 import type { SearchApiConfig } from "@/stores/wiki-store"
 import type { WebSearchResult } from "./web-search"
 
@@ -45,6 +45,24 @@ describe("makeDeepResearchFileName", () => {
     const localMorning = new Date(2026, 5, 6, 1, 30, 0)
 
     expect(makeDeepResearchFileName("政策版本差异", localMorning).date).toBe("2026-06-06")
+  })
+})
+
+describe("noResearchSourcesTaskPatch", () => {
+  it("marks source failures as an error instead of completed", () => {
+    expect(noResearchSourcesTaskPatch(["Firecrawl blocked this IP", "AnyTXT offline"])).toEqual({
+      status: "error",
+      synthesis: "",
+      error: "Firecrawl blocked this IP\nAnyTXT offline",
+    })
+  })
+
+  it("marks an empty successful search as done", () => {
+    expect(noResearchSourcesTaskPatch([])).toEqual({
+      status: "done",
+      synthesis: "No research sources found.",
+      error: null,
+    })
   })
 })
 

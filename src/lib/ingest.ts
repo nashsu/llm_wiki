@@ -26,6 +26,8 @@ import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import { makeQuerySlug } from "@/lib/wiki-filename"
 import type { FileNode } from "@/types/wiki"
 import {
   extractAndSaveSourceImages,
@@ -1205,6 +1207,48 @@ function isListingPath(relativePath: string): boolean {
   )
 }
 
+const CJK_OUTPUT_LANGUAGES = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
+
+function containsCjk(text: string): boolean {
+  return /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(text)
+}
+
+function extractGeneratedPageTitle(content: string): string | null {
+  const title = parseFrontmatter(content).frontmatter?.title
+  if (typeof title === "string" && title.trim()) return title.trim()
+  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+  return heading || null
+}
+
+export function rewriteIngestPathFromTitleForTargetLanguage(
+  relativePath: string,
+  content: string,
+  targetLang: string | undefined,
+): string {
+  if (!targetLang || targetLang === "auto" || !CJK_OUTPUT_LANGUAGES.has(targetLang)) {
+    return relativePath
+  }
+  if (
+    isLogPath(relativePath) ||
+    isListingPath(relativePath) ||
+    relativePath.startsWith("wiki/sources/")
+  ) {
+    return relativePath
+  }
+  const title = extractGeneratedPageTitle(content)
+  if (!title || !containsCjk(title)) return relativePath
+
+  const slash = relativePath.lastIndexOf("/")
+  const dir = slash >= 0 ? relativePath.slice(0, slash + 1) : ""
+  const fileName = slash >= 0 ? relativePath.slice(slash + 1) : relativePath
+  if (containsCjk(fileName)) return relativePath
+
+  const slug = makeQuerySlug(title)
+  if (!containsCjk(slug)) return relativePath
+  const nextPath = `${dir}${slug}.md`
+  return isSafeIngestPath(nextPath) ? nextPath : relativePath
+}
+
 export function aggregatePathsNeedingRepair(writtenPaths: string[], warnings: string[]): string[] {
   const written = new Set(writtenPaths.map((path) => normalizePath(path)))
   const warningText = warnings.join("\n")
@@ -1518,6 +1562,7 @@ async function writeFileBlocks(
     if (sourceSummaryPath && relativePath === sourceSummaryPath) {
       content = sourceSummaryMediaRefsForExternalMarkdown(content)
     }
+    relativePath = rewriteIngestPathFromTitleForTargetLanguage(relativePath, content, targetLang)
 
     if (
       projectSchemaRouting &&
@@ -1724,6 +1769,7 @@ export function buildAnalysisPrompt(purpose: string, index: string, sourceConten
     "- What are the core claims or results?",
     "- What evidence supports them?",
     "- How strong is the evidence?",
+    "- Which named subject is each claim about? Do not transfer claims, limits, or evaluations from one entity/model/product/method to another just because they share keywords.",
     "",
     "## Connections to Existing Wiki",
     "- What existing pages does this source relate to?",
@@ -1840,6 +1886,9 @@ export function buildGenerationPrompt(
     "Other rules:",
     "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
     "- If you include images, use wiki-root-relative paths such as `media/source-slug/image.png`; never output absolute filesystem paths.",
+    "- Preserve subject boundaries: when a source discusses multiple entities/models/products/methods, keep claims, evaluations, limitations, benchmark results, and recommendations attached to the exact subject they describe.",
+    "- Do not merge or generalize a claim about one subject into another subject's page solely because they share terms (for example context window size, benchmark name, dataset, architecture, or feature name).",
+    "- If a page needs to mention another subject for comparison, write it explicitly as a comparison and cite which source/frontmatter `sources` entry supports that statement.",
     "- Use kebab-case filenames",
     "- Derive filenames from the page title in the mandatory output language, but short proper nouns and technical identifiers take precedence: preserve names such as OpenAI, GPT-5, Transformer, CLIP, ImageNet, PyTorch, CUDA, GitHub, arXiv, React, LanceDB, AnyTXT, MinerU, model names, dataset names, tool names, and code identifiers in their standard original form. Do not put raw URLs, citation strings, or full paper titles directly into file paths; convert surrounding descriptive prose to a safe readable title. For Chinese/Japanese/Korean prose titles, keep readable CJK characters in the filename instead of translating the slug to English.",
     "- Follow the analysis recommendations on what to emphasize",
@@ -2496,26 +2545,7 @@ async function analyzeLongSourceInChunks(
  */
 function buildPageMerger(llmConfig: LlmConfig): MergeFn {
   return async (existingContent, incomingContent, sourceFileName, signal) => {
-    const systemPrompt = [
-      "You are merging two versions of the same wiki page into one coherent document.",
-      "Both versions describe the same entity / concept; one is already on disk,",
-      "the other was just generated from a different source document.",
-      "",
-      "Output ONE merged version that:",
-      "- Preserves every factual claim from both versions (do not drop content)",
-      "- Eliminates redundancy when both versions state the same fact",
-      "- Reorganizes sections so the structure is logical for the merged topic,",
-      "  not just a concatenation of the two inputs",
-      "- Uses consistent markdown structure (headings, tables, lists, callouts)",
-      "- Keeps `[[wikilink]]` references intact",
-      "",
-      "Output requirements:",
-      "- The FIRST character of your response MUST be `-` (the opening of `---`)",
-      "- Output the COMPLETE file: YAML frontmatter + body",
-      "- No preamble (no \"Here is the merged version:\"), no analysis prose",
-      "- The caller will overwrite `sources`/`tags`/`related`/`updated` with",
-      "  deterministic values — your job is the body and any other fields",
-    ].join("\n")
+    const systemPrompt = buildPageMergeSystemPrompt()
 
     const userMessage = [
       `## Existing version on disk`,
@@ -2564,6 +2594,33 @@ function buildPageMerger(llmConfig: LlmConfig): MergeFn {
     if (streamError) throw streamError
     return result
   }
+}
+
+export function buildPageMergeSystemPrompt(): string {
+  return [
+    "You are merging two versions of the same wiki page into one coherent document.",
+    "Both versions target the same wiki page; one is already on disk,",
+    "the other was just generated from a different source document.",
+    "Either version may mention additional subjects for comparison or context.",
+    "",
+    "Output ONE merged version that:",
+    "- Preserves every factual claim from both versions (do not drop content)",
+    "- Eliminates redundancy when both versions state the same fact",
+    "- Preserves subject/source boundaries: if either version mentions other entities/models/products/methods for comparison, keep those comparisons attribution-exact and do not fold them into claims about the main page subject",
+    "- When claims conflict or apply to different subjects, keep them separated and say which source version supports each one instead of synthesizing a single generalized conclusion",
+    "- When in doubt whether two similar-looking claims describe the same fact, prefer keeping them separate",
+    "- Reorganizes sections so the structure is logical for the merged topic,",
+    "  not just a concatenation of the two inputs",
+    "- Uses consistent markdown structure (headings, tables, lists, callouts)",
+    "- Keeps `[[wikilink]]` references intact",
+    "",
+    "Output requirements:",
+    "- The FIRST character of your response MUST be `-` (the opening of `---`)",
+    "- Output the COMPLETE file: YAML frontmatter + body",
+    "- No preamble (no \"Here is the merged version:\"), no analysis prose",
+    "- The caller will overwrite `sources`/`tags`/`related`/`updated` with",
+    "  deterministic values — your job is the body and any other fields",
+  ].join("\n")
 }
 
 /**

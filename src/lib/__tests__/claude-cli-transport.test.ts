@@ -32,11 +32,19 @@ import {
   buildExitError,
   streamClaudeCodeCli,
 } from "../claude-cli-transport"
+import { useWikiStore } from "@/stores/wiki-store"
 
 beforeEach(() => {
   vi.clearAllMocks()
   tauriMocks.reset()
   tauriMocks.invoke.mockResolvedValue(undefined)
+  useWikiStore.setState({
+    project: {
+      id: "project-1",
+      name: "Project",
+      path: "/Users/me/wiki-project",
+    },
+  })
 })
 
 describe("createClaudeCodeStreamParser", () => {
@@ -195,6 +203,7 @@ describe("streamClaudeCodeCli", () => {
       expect.objectContaining({
         model: "claude-sonnet-4-6",
         messages: [{ role: "user", content: "Analyze this source." }],
+        workingDirectory: "/Users/me/wiki-project",
       }),
     )
 
@@ -267,6 +276,75 @@ describe("streamClaudeCodeCli", () => {
     tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 0, stderr: "" })
 
     await stream
+  })
+
+  it("passes the active project path as the Claude CLI working directory", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledWith(
+        "claude_cli_spawn",
+        expect.objectContaining({ workingDirectory: "/Users/me/wiki-project" }),
+      )
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "ok" }] },
+      }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 0, stderr: "" })
+
+    await stream
+  })
+
+  it("surfaces an error without spawning when no project is active", async () => {
+    useWikiStore.setState({ project: null })
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    await streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+
+    expect(tauriMocks.invoke).not.toHaveBeenCalledWith("claude_cli_spawn", expect.anything())
+    expect(tauriMocks.listen).not.toHaveBeenCalled()
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError.mock.calls[0]?.[0]).toMatchObject({
+      message: expect.stringMatching(/working directory/),
+    })
   })
 
   it("surfaces a clear error when completion has no assistant text", async () => {
