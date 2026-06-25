@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import {
   chunkIndexByEntries,
   parsePrematchOutput,
@@ -6,8 +6,17 @@ import {
   buildPrematchPrompt,
   parseIndexBlocks,
   appendIndexEntries,
+  runPrematchParallel,
   type ParsedIndexBlock,
 } from "./index-chunker"
+import { streamChat } from "@/lib/llm-client"
+import type { LlmConfig } from "@/stores/wiki-store"
+
+vi.mock("@/lib/llm-client", () => ({
+  streamChat: vi.fn(),
+}))
+
+const mockStreamChat = vi.mocked(streamChat)
 
 describe("chunkIndexByEntries", () => {
   it("returns empty array for empty index", () => {
@@ -345,5 +354,77 @@ describe("appendIndexEntries", () => {
   it("handles empty blocks array", () => {
     const index = "## Concepts\n- [[a]] — desc"
     expect(appendIndexEntries(index, [])).toBe(index)
+  })
+})
+
+describe("runPrematchParallel", () => {
+  beforeEach(() => {
+    mockStreamChat.mockReset()
+  })
+
+  it("returns matched numbers from all chunks", async () => {
+    const chunks = ["## Concepts\n[1] attention — desc", "## Entities\n[51] openai — desc"]
+    // The prompt includes the chunk content, so we can differentiate by content
+    mockStreamChat.mockImplementation(async (_cfg, messages, callbacks) => {
+      const sys = String(messages[0]?.content ?? "")
+      if (sys.includes("openai")) {
+        callbacks?.onToken?.("[51]")
+      } else {
+        callbacks?.onToken?.("[1, 3]")
+      }
+      callbacks?.onDone?.()
+    })
+
+    const result = await runPrematchParallel(
+      chunks,
+      "source content",
+      {} as LlmConfig,
+      undefined,
+    )
+    expect(result).toContain(1)
+    expect(result).toContain(3)
+    expect(result).toContain(51)
+  })
+
+  it("skips failed chunks and continues", async () => {
+    const chunks = ["chunk0-content", "chunk1-content"]
+    let callCount = 0
+    mockStreamChat.mockImplementation(async (_cfg, _messages, callbacks) => {
+      callCount++
+      if (callCount === 1) {
+        callbacks?.onError?.(new Error("network error"))
+        return
+      }
+      callbacks?.onToken?.("[42]")
+      callbacks?.onDone?.()
+    })
+
+    const result = await runPrematchParallel(
+      chunks,
+      "source content",
+      {} as LlmConfig,
+      undefined,
+    )
+    expect(result).toEqual([42])
+  })
+
+  it("returns empty when all chunks fail", async () => {
+    mockStreamChat.mockImplementation(async (_cfg, _messages, callbacks) => {
+      callbacks?.onError?.(new Error("total failure"))
+    })
+
+    const result = await runPrematchParallel(
+      ["c0", "c1"],
+      "source",
+      {} as LlmConfig,
+      undefined,
+    )
+    expect(result).toEqual([])
+  })
+
+  it("returns empty for empty chunks array", async () => {
+    const result = await runPrematchParallel([], "source", {} as LlmConfig, undefined)
+    expect(result).toEqual([])
+    expect(mockStreamChat).not.toHaveBeenCalled()
   })
 })
