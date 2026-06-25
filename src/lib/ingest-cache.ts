@@ -104,13 +104,12 @@ export async function saveIngestCache(
 ): Promise<void> {
   const cache = await loadCache(projectPath)
   const hash = await sha256(sourceContent)
-  const newEntries = { ...cache.entries }
-  newEntries[sourceFileName] = {
+  cache.entries[sourceFileName] = {
     hash,
     timestamp: Date.now(),
     filesWritten,
   }
-  await saveCache(projectPath, { entries: newEntries })
+  await saveCache(projectPath, cache)
 }
 
 /**
@@ -151,7 +150,6 @@ export async function removeFromIngestCache(
   sourceFileName: string,
 ): Promise<void> {
   const cache = await loadCache(projectPath)
-  const newEntries = { ...cache.entries }
-  delete newEntries[sourceFileName]
-  await saveCache(projectPath, { entries: newEntries })
+  delete cache.entries[sourceFileName]
+  await saveCache(projectPath, cache)
 }
