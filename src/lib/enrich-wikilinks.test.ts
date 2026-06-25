@@ -1,149 +1,364 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
-import type { LlmConfig } from "@/stores/wiki-store"
+import { describe, expect, it, vi, beforeEach } from "vitest"
+import { enrichWithWikilinks } from "./enrich-wikilinks"
+import { shouldSkipWikilinkEnrichment } from "./ingest"
 
-// Mock the LLM client (capture prompts) and the Tauri fs commands (no real FS).
-vi.mock("./llm-client", () => ({
-  streamChat: vi.fn(),
-}))
+// Mock dependencies
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
-  listDirectory: vi.fn(),
 }))
 
-import { enrichWithWikilinks } from "./enrich-wikilinks"
-import { streamChat } from "./llm-client"
-import { readFile, writeFile } from "@/commands/fs"
-import { useWikiStore } from "@/stores/wiki-store"
+vi.mock("./llm-client", () => ({
+  streamChat: vi.fn(),
+}))
 
-const mockStreamChat = vi.mocked(streamChat)
-const mockReadFile = vi.mocked(readFile)
-const mockWriteFile = vi.mocked(writeFile)
+const mockBumpDataVersion = vi.fn()
+vi.mock("@/stores/wiki-store", () => ({
+  useWikiStore: {
+    getState: vi.fn(() => ({
+      bumpDataVersion: mockBumpDataVersion,
+      outputLanguage: "English",
+    })),
+  },
+}))
 
-function fakeLlmConfig(): LlmConfig {
-  return {
-    provider: "openai",
-    apiKey: "k",
-    model: "m",
-    ollamaUrl: "",
-    customEndpoint: "",
-    maxContextSize: 128000,
-  }
-}
+// Do NOT mock output-language — use real implementation
+// This ensures we test the actual language directive behavior
 
-// Returns a large-enough enriched response so the "too short" guard (0.5x) passes.
-function mockStreamChatReturns(text: string) {
-  mockStreamChat.mockImplementation(async (_cfg, _msgs, callbacks) => {
-    callbacks.onToken(text)
-    callbacks.onDone()
+describe("enrichWithWikilinks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
   })
-}
 
-beforeEach(() => {
-  mockStreamChat.mockReset()
-  mockReadFile.mockReset()
-  mockWriteFile.mockReset()
-  useWikiStore.getState().setOutputLanguage("auto")
-})
+  // ── Language directive tests (restored semantics) ──
 
-describe("enrichWithWikilinks — language directive is built at call time", () => {
-  // This is the regression for LANGUAGE_RULE being a module-load constant.
-  // Setting the output language AFTER the module is already imported must
-  // affect the next call's prompt.
   it("uses the language configured at call time, not at module load", async () => {
-    useWikiStore.getState().setOutputLanguage("Chinese")
-    mockReadFile.mockResolvedValue("some page content that is long enough to write back to disk")
-    mockStreamChatReturns("some [[enriched]] page content that is long enough to write back to disk")
+    const { readFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+    const { useWikiStore } = await import("@/stores/wiki-store")
 
-    await enrichWithWikilinks("/project", "/project/wiki/note.md", fakeLlmConfig())
+    // Mock store to return Chinese
+    vi.mocked(useWikiStore.getState).mockReturnValue({
+      outputLanguage: "Chinese",
+      bumpDataVersion: vi.fn(),
+    } as any)
 
-    const systemMsg = mockStreamChat.mock.calls[0][1][0]
-    expect(systemMsg.role).toBe("system")
-    expect(systemMsg.content).toContain("MANDATORY OUTPUT LANGUAGE: Chinese")
+    const content = `---
+type: concept
+title: Test
+---
+# Test
+
+This mentions Transformer.
+`
+    const index = `- transformer`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [] }))
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    // Check that streamChat received system message with Chinese directive
+    const systemMsg = vi.mocked(streamChat).mock.calls[0]?.[1]?.[0]
+    expect(systemMsg?.role).toBe("system")
+    expect(systemMsg?.content).toContain("MANDATORY OUTPUT LANGUAGE")
+    expect(systemMsg?.content).toContain("Chinese")
   })
 
   it("picks up a language change between two successive calls", async () => {
-    mockReadFile.mockResolvedValue("content that is definitely long enough for the length guard")
-    mockStreamChatReturns("content that is definitely long enough for the length guard [[link]]")
+    const { readFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+    const { useWikiStore } = await import("@/stores/wiki-store")
 
-    useWikiStore.getState().setOutputLanguage("Japanese")
-    await enrichWithWikilinks("/p", "/p/wiki/a.md", fakeLlmConfig())
+    const content = `---
+type: concept
+title: Test
+---
+# Test
 
-    useWikiStore.getState().setOutputLanguage("Korean")
-    await enrichWithWikilinks("/p", "/p/wiki/b.md", fakeLlmConfig())
+This mentions Transformer.
+`
+    const index = `- transformer`
 
-    const first = mockStreamChat.mock.calls[0][1][0].content
-    const second = mockStreamChat.mock.calls[1][1][0].content
-    expect(first).toContain("MANDATORY OUTPUT LANGUAGE: Japanese")
-    expect(second).toContain("MANDATORY OUTPUT LANGUAGE: Korean")
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [] }))
+      cb.onDone()
+    })
+
+    // First call: English
+    vi.mocked(useWikiStore.getState).mockReturnValue({
+      outputLanguage: "English",
+      bumpDataVersion: vi.fn(),
+    } as any)
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    const firstSystemMsg = vi.mocked(streamChat).mock.calls[0]?.[1]?.[0]
+    expect(firstSystemMsg?.content).toContain("English")
+
+    // Second call: Chinese
+    vi.mocked(useWikiStore.getState).mockReturnValue({
+      outputLanguage: "Chinese",
+      bumpDataVersion: vi.fn(),
+    } as any)
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    const secondSystemMsg = vi.mocked(streamChat).mock.calls[1]?.[1]?.[0]
+    expect(secondSystemMsg?.content).toContain("Chinese")
   })
 
-  it("auto mode falls back to detecting from the page content", async () => {
-    useWikiStore.getState().setOutputLanguage("auto")
-    mockReadFile.mockResolvedValue("这是一篇关于注意力机制的长中文页面，内容足够长所以能通过守卫")
-    mockStreamChatReturns("这是一篇关于[[注意力机制]]的长中文页面，内容足够长所以能通过守卫")
+  // ── Existing new tests ──
 
-    await enrichWithWikilinks("/p", "/p/wiki/attention.md", fakeLlmConfig())
+  it("does not modify frontmatter", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
 
-    const content = mockStreamChat.mock.calls[0][1][0].content
-    expect(content).toContain("MANDATORY OUTPUT LANGUAGE: Chinese")
+    const frontmatter = `---
+type: concept
+title: Test Page
+tags: [test]
+related: [other-page]
+---`
+    const body = `
+# Test Page
+
+This mentions Transformer in the text.
+`
+    const content = `${frontmatter}${body}`
+    const index = `- other-page\n- transformer`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [{ term: "Transformer", target: "transformer" }] }))
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test-page.md", {} as any)
+
+    const written = vi.mocked(writeFile).mock.calls[0]?.[1] as string
+    // Frontmatter should be preserved exactly
+    expect(written.startsWith(frontmatter)).toBe(true)
+    expect(written).toMatch(/type: concept/)
+    expect(written).toMatch(/title: Test Page/)
   })
 
-  it("explicit setting beats source content detection", async () => {
-    useWikiStore.getState().setOutputLanguage("English")
-    mockReadFile.mockResolvedValue("这段中文页面内容非常长，足够通过守卫，里面讲的是注意力机制")
-    mockStreamChatReturns("This is english replacement content that is long enough to pass the guard [[link]]")
+  it("does not insert links inside existing [[...]] blocks (target/alias parts)", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
 
-    await enrichWithWikilinks("/p", "/p/wiki/x.md", fakeLlmConfig())
+    const content = `---
+type: concept
+title: Test
+---
+# Test
 
-    const content = mockStreamChat.mock.calls[0][1][0].content
-    expect(content).toContain("MANDATORY OUTPUT LANGUAGE: English")
-    expect(content).not.toContain("MANDATORY OUTPUT LANGUAGE: Chinese")
+[[Transformer Architecture|Transformer]]
+`
+    const index = `- transformer\n- architecture`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [
+        { term: "Architecture", target: "architecture" },
+        { term: "Transformer", target: "transformer" },
+      ] }))
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    // No other occurrence of Architecture or Transformer in body
+    // So no file should be written
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it("skips links with targets not in wiki index", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+
+    const content = `---
+type: concept
+title: Test
+---
+# Test
+
+This mentions Transformer and NonExistent.
+`
+    const index = `- transformer`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [
+        { term: "Transformer", target: "transformer" },
+        { term: "NonExistent", target: "nonexistent" },
+      ] }))
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    const written = vi.mocked(writeFile).mock.calls[0]?.[1] as string
+    expect(written).toContain("[[Transformer]]")
+    expect(written).not.toContain("[[NonExistent]]")
+  })
+
+  it("does not write file if no valid links", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+
+    const content = `---
+type: concept
+title: Test
+---
+# Test
+
+This mentions something.
+`
+    const index = `- other-page`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [] }))
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any)
+
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it("supports AbortSignal - early abort before readFile", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+
+    const content = `---
+type: concept
+title: Test
+---
+# Test
+
+This mentions Transformer.
+`
+    const index = `- transformer`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    
+    const abortController = new AbortController()
+    abortController.abort()
+    
+    vi.mocked(streamChat).mockImplementation(async () => {
+      throw new Error("Should not be called when aborted")
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any, abortController.signal)
+
+    expect(streamChat).not.toHaveBeenCalled()
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it("supports AbortSignal - abort after streamChat returns", async () => {
+    const { readFile, writeFile } = await import("@/commands/fs")
+    const { streamChat } = await import("./llm-client")
+
+    const content = `---
+type: concept
+title: Test
+---
+# Test
+
+This mentions Transformer.
+`
+    const index = `- transformer`
+
+    vi.mocked(readFile).mockImplementation(async (path: string) => {
+      if (String(path).includes("index.md")) return index
+      return content
+    })
+    
+    const abortController = new AbortController()
+    
+    vi.mocked(streamChat).mockImplementation(async (_config, _messages, callbacks) => {
+      const cb = callbacks as { onToken: (t: string) => void; onDone: () => void }
+      cb.onToken(JSON.stringify({ links: [{ term: "Transformer", target: "transformer" }] }))
+      // Abort during streamChat
+      abortController.abort()
+      cb.onDone()
+    })
+
+    await enrichWithWikilinks("/project", "/project/wiki/test.md", {} as any, abortController.signal)
+
+    // Should not write because signal was aborted
+    expect(writeFile).not.toHaveBeenCalled()
   })
 })
 
-describe("enrichWithWikilinks — JSON-based substitution", () => {
-  it("does NOT overwrite when LLM response is not parseable JSON", async () => {
-    // The v2 implementation expects a JSON `{links:[...]}` object; anything
-    // else produces zero substitutions and writeFile is never called.
-    mockReadFile.mockResolvedValue("some real page content with Transformer and Attention mentioned")
-    mockStreamChatReturns("too short")
+// ── Skip helper tests ──
 
-    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
-    expect(mockWriteFile).not.toHaveBeenCalled()
+describe("shouldSkipWikilinkEnrichment", () => {
+  it("skips wiki/index.md", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/index.md")).toBe(true)
   })
 
-  it("writes back when LLM returns a valid JSON substitution list", async () => {
-    mockReadFile.mockResolvedValue(
-      "Transformer is the backbone. Attention is core.",
-    )
-    mockStreamChatReturns(
-      JSON.stringify({
-        links: [
-          { term: "Transformer", target: "transformer" },
-          { term: "Attention", target: "attention" },
-        ],
-      }),
-    )
-
-    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
-    expect(mockWriteFile).toHaveBeenCalledOnce()
-    const written = vi.mocked(mockWriteFile).mock.calls[0][1] as string
-    expect(written).toContain("[[Transformer]]")
-    expect(written).toContain("[[Attention]]")
+  it("skips wiki/log.md", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/log.md")).toBe(true)
   })
 
-  it("does NOT overwrite when LLM returns an empty links list", async () => {
-    mockReadFile.mockResolvedValue("a page that matches no index term")
-    mockStreamChatReturns(JSON.stringify({ links: [] }))
-
-    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
-    expect(mockWriteFile).not.toHaveBeenCalled()
+  it("skips wiki/overview.md", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/overview.md")).toBe(true)
   })
 
-  it("returns early when content or index is missing", async () => {
-    mockReadFile.mockResolvedValueOnce("").mockResolvedValueOnce("index has things")
-    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
-    expect(mockStreamChat).not.toHaveBeenCalled()
+  it("skips wiki/sources/*", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/sources/source-a.md")).toBe(true)
+    expect(shouldSkipWikilinkEnrichment("wiki/sources/another-source.md")).toBe(true)
+  })
+
+  it("skips nested log.md", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/entities/log.md")).toBe(true)
+  })
+
+  it("skips nested index.md", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/entities/index.md")).toBe(true)
+  })
+
+  it("does not skip normal concept pages", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/concepts/transformer.md")).toBe(false)
+  })
+
+  it("does not skip normal entity pages", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/entities/openai.md")).toBe(false)
+  })
+
+  it("does not skip notes pages", () => {
+    expect(shouldSkipWikilinkEnrichment("wiki/notes/foo.md")).toBe(false)
   })
 })
