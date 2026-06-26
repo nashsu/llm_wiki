@@ -48,6 +48,14 @@ import {
   parseIndexBlocks,
   appendIndexEntries,
 } from "./index-chunker"
+import {
+  chunkOverviewBySections,
+  runOverviewPrematchParallel,
+  assembleReducedOverview,
+  parseOverviewBlocks,
+  appendOverviewContent,
+  createInitialOverview,
+} from "@/lib/overview-blocks"
 
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
@@ -61,7 +69,7 @@ const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
-const AGGREGATE_WIKI_PATHS = ["wiki/overview.md", "wiki/log.md"] as const
+const AGGREGATE_WIKI_PATHS = ["wiki/log.md"] as const
 
 function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): string {
   if (images.length === 0) return content
@@ -519,10 +527,11 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
       i++
     }
 
-    // index.md is updated exclusively via INDEX blocks (append mode).
-    // If the model produces a FILE block for it (despite explicit prompt
+    // index.md and overview.md are updated exclusively via INDEX/OVERVIEW
+    // blocks (append mode).
+    // If the model produces a FILE block for either (despite explicit prompt
     // instructions not to), silently skip — no warning, no truncation error.
-    if (path === "wiki/index.md") {
+    if (path === "wiki/index.md" || path === "wiki/overview.md") {
       continue
     }
 
@@ -992,6 +1001,31 @@ async function autoIngestImpl(
     }
   }
 
+  // ── Step 0.8: Pre-match overview sections ─────────────────────
+  let reducedOverview = overview
+  if (overview.trim()) {
+    const overviewChunks = chunkOverviewBySections(overview, 2000)
+    if (overviewChunks.length > 1) {
+      activity.updateItem(activityId, {
+        detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
+      })
+      const matchedSections = await runOverviewPrematchParallel(
+        overviewChunks,
+        sourceContext,
+        llmConfig,
+        signal,
+      )
+      reducedOverview = assembleReducedOverview(overview, matchedSections)
+      if (!reducedOverview) {
+        reducedOverview = "(no matching overview sections found)"
+      }
+      console.log(
+        `[ingest:overview-prematch] overview reduced from ${overview.length} to ${reducedOverview.length} chars ` +
+        `(${matchedSections.length} sections matched from ${overviewChunks.length} chunks)`,
+      )
+    }
+  }
+
   // ── Step 1: Analysis ──────────────────────────────────────────
   // LLM reads the source and produces a structured analysis:
   // key entities, concepts, main arguments, connections to existing wiki, contradictions
@@ -1039,7 +1073,7 @@ async function autoIngestImpl(
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, reducedIndex, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
+      { role: "system", content: buildGenerationPrompt(schema, purpose, reducedIndex, sourceIdentity, reducedOverview, sourceContext, sourceSummaryPath) },
       {
         role: "user",
         content: [
@@ -1172,6 +1206,29 @@ async function autoIngestImpl(
     } catch (err) {
       writeWarnings.push(
         `Failed to append INDEX blocks: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  // ── Step 3.6: Process OVERVIEW blocks ──────────────────────
+  const overviewBlocks = parseOverviewBlocks(generation)
+  if (overviewBlocks.length > 0) {
+    try {
+      const overviewAbs = `${pp}/wiki/overview.md`
+      const existingOverview = await tryReadFile(overviewAbs)
+      const updatedOverview = existingOverview
+        ? appendOverviewContent(existingOverview, overviewBlocks)
+        : createInitialOverview(overviewBlocks)
+      await writeFile(overviewAbs, updatedOverview)
+      console.log(
+        `[ingest:overview] appended ${overviewBlocks.length} section(s) to overview.md`,
+      )
+      if (!writtenPaths.includes("wiki/overview.md")) {
+        writtenPaths.push("wiki/overview.md")
+      }
+    } catch (err) {
+      writeWarnings.push(
+        `Failed to append OVERVIEW blocks: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
@@ -2103,7 +2160,7 @@ export function buildGenerationPrompt(
   purpose: string,
   index: string,
   sourceFileName: string,
-  overview?: string,
+  reducedOverview?: string,
   sourceContent: string = "",
   sourceSummaryPath?: string,
 ): string {
@@ -2142,7 +2199,7 @@ export function buildGenerationPrompt(
     "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
     "4. INDEX blocks for new entries (see INDEX block format below) — do NOT output a complete wiki/index.md file",
     "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "6. An OVERVIEW block (see format below) with 1-2 paragraphs summarizing the current source's key topics for the wiki overview.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
@@ -2223,7 +2280,7 @@ export function buildGenerationPrompt(
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     index ? `## Current Wiki Index (for reference only — do NOT reproduce it)\n${index}` : "",
-    overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
+    reducedOverview ? `## Current Overview (relevant sections only — for reference)\n${reducedOverview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──
     "## Output Format (MUST FOLLOW EXACTLY — this is how the parser reads your response)",
@@ -2257,6 +2314,17 @@ export function buildGenerationPrompt(
     "Output one INDEX block per category that has new entries.",
     "CategoryName must match an existing ## heading in the index.",
     "Do NOT output a FILE block for the index page. The index is updated ONLY via INDEX blocks.",
+    "",
+    "OVERVIEW block template (for overview paragraphs):",
+    "```",
+    "---OVERVIEW: SectionName---",
+    "1-2 paragraphs about this source's key topics.",
+    "---END OVERVIEW---",
+    "```",
+    "",
+    "Output one OVERVIEW block. SectionName should match an existing ## heading",
+    "in the overview context below, or create a new section name if the topic is new.",
+    "Do NOT output a FILE block for the overview page. Use OVERVIEW blocks instead.",
     "",
     "## Output Requirements (STRICT — deviations will cause parse failure)",
     "",
