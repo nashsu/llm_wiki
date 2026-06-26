@@ -73,7 +73,7 @@ pub fn start_api_server(app: AppHandle) {
         };
 
         API_STATUS.store(1, Ordering::Relaxed);
-        eprintln!("[API Server] Listening on http://127.0.0.1:{PORT}{API_PREFIX}");
+        eprintln!("[API Server] Listening on http://{}:{PORT}{API_PREFIX}", bind_host());
 
         for request in server.incoming_requests() {
             let method = request.method().clone();
@@ -104,13 +104,24 @@ pub fn start_api_server(app: AppHandle) {
     });
 }
 
+/// Returns the bind host for the API server.
+///
+/// Reads `LLM_WIKI_BIND_HOST` from the environment, falling back to
+/// `127.0.0.1` so existing installs keep their loopback-only behavior.
+/// Set to `0.0.0.0` to accept connections from other machines on the LAN.
+fn bind_host() -> String {
+    std::env::var("LLM_WIKI_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
 fn bind_server_with_retry() -> Option<Server> {
+    let host = bind_host();
+    let addr = format!("{host}:{PORT}");
     for attempt in 1..=MAX_BIND_RETRIES {
-        match Server::http(format!("127.0.0.1:{PORT}")) {
+        match Server::http(&addr) {
             Ok(server) => return Some(server),
             Err(err) => {
                 eprintln!(
-                    "[API Server] Failed to bind 127.0.0.1:{PORT} (attempt {attempt}/{MAX_BIND_RETRIES}): {err}"
+                    "[API Server] Failed to bind {addr} (attempt {attempt}/{MAX_BIND_RETRIES}): {err}"
                 );
                 if attempt < MAX_BIND_RETRIES {
                     thread::sleep(Duration::from_secs(BIND_RETRY_DELAY_SECS));
