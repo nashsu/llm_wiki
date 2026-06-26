@@ -955,7 +955,7 @@ async function autoIngestImpl(
   let reducedIndex = index
   if (index.trim()) {
     const chunks = chunkIndexByEntries(index, CHUNK_SIZE)
-    if (chunks.length > 1) {
+    if (chunks.length > 0) {
       activity.updateItem(activityId, {
         detail: `Step 0.7: Pre-matching index (${chunks.length} chunks)...`,
       })
@@ -980,7 +980,7 @@ async function autoIngestImpl(
   let reducedOverview = overview
   if (overview.trim()) {
     const overviewChunks = chunkOverviewBySections(overview, 8000)
-    if (overviewChunks.length > 1) {
+    if (overviewChunks.length > 0) {
       activity.updateItem(activityId, {
         detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
       })
