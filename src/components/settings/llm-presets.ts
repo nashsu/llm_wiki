@@ -182,7 +182,7 @@ export const LLM_PRESETS: LlmPreset[] = [
       "deepseek-chat",
       "deepseek-reasoner",
     ],
-    suggestedContextSize: 64000,
+    suggestedContextSize: 1000000,
   },
   {
     id: "atlascloud",
