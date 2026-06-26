@@ -520,6 +520,13 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
       i++
     }
 
+    // index.md is updated exclusively via INDEX blocks (append mode).
+    // If the model produces a FILE block for it (despite explicit prompt
+    // instructions not to), silently skip — no warning, no truncation error.
+    if (path === "wiki/index.md") {
+      continue
+    }
+
     if (!closed) {
       // H2 fix (partial): we can't fabricate content the LLM never
       // sent, but we surface the drop instead of silently hiding it.
@@ -2309,7 +2316,7 @@ export function buildGenerationPrompt(
     "",
     "Output one INDEX block per category that has new entries.",
     "CategoryName must match an existing ## heading in the index.",
-    "Do NOT output ---FILE: wiki/index.md---. Use INDEX blocks instead.",
+    "Do NOT output a FILE block for the index page. The index is updated ONLY via INDEX blocks.",
     "",
     "## Output Requirements (STRICT — deviations will cause parse failure)",
     "",
@@ -2324,7 +2331,7 @@ export function buildGenerationPrompt(
     "8. INDEX blocks appear AFTER all FILE blocks and BEFORE any REVIEW blocks.",
     "9. Each INDEX block must specify a category name after ---INDEX:.",
     "10. Each entry line in an INDEX block must start with a slug followed by \" — \" and a description.",
-    "11. Do NOT output ---FILE: wiki/index.md---. Use INDEX blocks instead.",
+    "11. Do NOT output a FILE block for the index page. The index is updated ONLY via INDEX blocks.",
     "",
     "If you start with anything other than `---FILE:`, the entire response will be discarded.",
     "",
