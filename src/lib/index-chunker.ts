@@ -302,7 +302,7 @@ export async function runPrematchParallel(
               },
             },
             signal,
-            { temperature: 0.1, max_tokens: 256 },
+            { temperature: 0.1, max_tokens: 256, reasoning: { mode: "off" } },
           )
         } catch (err) {
           hadError = true
