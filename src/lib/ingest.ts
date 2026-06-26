@@ -945,37 +945,11 @@ async function autoIngestImpl(
     }
   }
 
-  const stableContextLength = schema.length + purpose.length + index.length + overview.length
-  const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
-  let sourceContext = enrichedSourceContent
-  let precomputedAnalysis = ""
-  let longSourceCheckpointPath: string | undefined
-
-  if (enrichedSourceContent.length > sourceBudget) {
-    const longSourcePlan = await analyzeLongSourceInChunks(
-      pp,
-      llmConfig,
-      purpose,
-      schema,
-      index,
-      sourceIdentity,
-      sourceSummarySlug,
-      folderContext,
-      enrichedSourceContent,
-      sourceBudget,
-      activityId,
-      signal,
-    )
-    if (longSourcePlan.chunked) {
-      sourceContext = longSourcePlan.sourceContext
-      precomputedAnalysis = longSourcePlan.analysis
-      longSourceCheckpointPath = longSourcePlan.checkpointPath
-    }
-  }
-
   // ── Step 0.7: Pre-match index chunks ─────────────────────
   // Split index into chunks, run parallel LLM calls to find
   // entries relevant to this source, assemble a reduced index.
+  // Runs BEFORE budget calculation so stableContextLength reflects
+  // the actual (reduced) context size, not the full index length.
   const CHUNK_SIZE = 50
   let reducedIndex = index
   if (index.trim()) {
@@ -986,7 +960,7 @@ async function autoIngestImpl(
       })
       const matchedNumbers = await runPrematchParallel(
         chunks,
-        sourceContext,
+        enrichedSourceContent,
         llmConfig,
         signal,
       )
@@ -1011,7 +985,7 @@ async function autoIngestImpl(
       })
       const matchedSections = await runOverviewPrematchParallel(
         overviewChunks,
-        sourceContext,
+        enrichedSourceContent,
         llmConfig,
         signal,
       )
@@ -1023,6 +997,36 @@ async function autoIngestImpl(
         `[ingest:overview-prematch] overview reduced from ${overview.length} to ${reducedOverview.length} chars ` +
         `(${matchedSections.length} sections matched from ${overviewChunks.length} chunks)`,
       )
+    }
+  }
+
+  // Compute budget with REDUCED sizes (post-prematch) so sourceBudget
+  // is not artificially constrained by the full index/overview length.
+  const stableContextLength = schema.length + purpose.length + reducedIndex.length + reducedOverview.length
+  const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
+  let sourceContext = enrichedSourceContent
+  let precomputedAnalysis = ""
+  let longSourceCheckpointPath: string | undefined
+
+  if (enrichedSourceContent.length > sourceBudget) {
+    const longSourcePlan = await analyzeLongSourceInChunks(
+      pp,
+      llmConfig,
+      purpose,
+      schema,
+      reducedIndex,
+      sourceIdentity,
+      sourceSummarySlug,
+      folderContext,
+      enrichedSourceContent,
+      sourceBudget,
+      activityId,
+      signal,
+    )
+    if (longSourcePlan.chunked) {
+      sourceContext = longSourcePlan.sourceContext
+      precomputedAnalysis = longSourcePlan.analysis
+      longSourceCheckpointPath = longSourcePlan.checkpointPath
     }
   }
 
