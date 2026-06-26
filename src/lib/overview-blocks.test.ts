@@ -5,6 +5,10 @@ import {
   buildOverviewPrematchPrompt,
   assembleReducedOverview,
   runOverviewPrematchParallel,
+  parseOverviewBlocks,
+  appendOverviewContent,
+  createInitialOverview,
+  type ParsedOverviewBlock,
 } from "./overview-blocks"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -157,5 +161,122 @@ describe("runOverviewPrematchParallel", () => {
     })
     const result = await runOverviewPrematchParallel(["chunk1"], "source", mockLlmConfig, undefined)
     expect(result).toEqual([])
+  })
+})
+
+describe("parseOverviewBlocks", () => {
+  it("parses a single OVERVIEW block", () => {
+    const text = [
+      "---OVERVIEW: 操作系统---",
+      "操作系统是管理硬件资源的软件。",
+      "",
+      "它负责进程调度、内存管理和文件系统。",
+      "---END OVERVIEW---",
+    ].join("\n")
+    const blocks = parseOverviewBlocks(text)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].section).toBe("操作系统")
+    expect(blocks[0].content).toContain("操作系统是管理硬件资源的软件。")
+  })
+
+  it("parses multiple OVERVIEW blocks", () => {
+    const text = [
+      "---OVERVIEW: 操作系统---",
+      "OS content",
+      "---END OVERVIEW---",
+      "",
+      "---OVERVIEW: 网络---",
+      "Network content",
+      "---END OVERVIEW---",
+    ].join("\n")
+    const blocks = parseOverviewBlocks(text)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].section).toBe("操作系统")
+    expect(blocks[1].section).toBe("网络")
+  })
+
+  it("returns empty array when no OVERVIEW blocks", () => {
+    expect(parseOverviewBlocks("just some text")).toEqual([])
+    expect(parseOverviewBlocks("")).toEqual([])
+  })
+
+  it("handles extra whitespace in section name", () => {
+    const text = "---OVERVIEW:  操作系统  ---\ncontent\n---END OVERVIEW---"
+    const blocks = parseOverviewBlocks(text)
+    expect(blocks[0].section).toBe("操作系统")
+  })
+})
+
+describe("appendOverviewContent", () => {
+  it("appends to existing section", () => {
+    const existing = [
+      "# Overview", "",
+      "## 操作系统", "OS original content", "",
+      "## 网络", "Network content",
+    ].join("\n")
+    const blocks: ParsedOverviewBlock[] = [
+      { section: "操作系统", content: "New OS paragraph." },
+    ]
+    const result = appendOverviewContent(existing, blocks)
+    expect(result).toContain("## 操作系统")
+    expect(result).toContain("OS original content")
+    expect(result).toContain("New OS paragraph.")
+    expect(result.indexOf("OS original content")).toBeLessThan(result.indexOf("New OS paragraph."))
+    expect(result).toContain("## 网络")
+    expect(result).toContain("Network content")
+  })
+
+  it("creates new section at end when section does not exist", () => {
+    const existing = ["# Overview", "", "## 操作系统", "OS content"].join("\n")
+    const blocks: ParsedOverviewBlock[] = [
+      { section: "数据库", content: "DB content." },
+    ]
+    const result = appendOverviewContent(existing, blocks)
+    expect(result).toContain("## 数据库")
+    expect(result).toContain("DB content.")
+    expect(result.indexOf("## 操作系统")).toBeLessThan(result.indexOf("## 数据库"))
+  })
+
+  it("handles multiple blocks", () => {
+    const existing = "# Overview\n\n## 操作系统\nOS content"
+    const blocks: ParsedOverviewBlock[] = [
+      { section: "操作系统", content: "OS new." },
+      { section: "网络", content: "Network new." },
+    ]
+    const result = appendOverviewContent(existing, blocks)
+    expect(result).toContain("OS new.")
+    expect(result).toContain("## 网络")
+    expect(result).toContain("Network new.")
+  })
+
+  it("returns original when no blocks", () => {
+    const existing = "# Overview\n\n## A\ncontent"
+    expect(appendOverviewContent(existing, [])).toBe(existing)
+  })
+})
+
+describe("createInitialOverview", () => {
+  it("creates overview with frontmatter and sections", () => {
+    const blocks: ParsedOverviewBlock[] = [
+      { section: "操作系统", content: "OS content." },
+    ]
+    const result = createInitialOverview(blocks, "2026-06-26")
+    expect(result).toContain("type: overview")
+    expect(result).toContain("---")
+    expect(result).toContain("# Overview")
+    expect(result).toContain("## 操作系统")
+    expect(result).toContain("OS content.")
+    expect(result).toContain("created: 2026-06-26")
+    expect(result).toContain("updated: 2026-06-26")
+  })
+
+  it("handles multiple sections", () => {
+    const blocks: ParsedOverviewBlock[] = [
+      { section: "A", content: "Content A." },
+      { section: "B", content: "Content B." },
+    ]
+    const result = createInitialOverview(blocks, "2026-06-26")
+    expect(result).toContain("## A")
+    expect(result).toContain("## B")
   })
 })

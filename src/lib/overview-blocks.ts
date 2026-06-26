@@ -8,6 +8,7 @@
  */
 
 import { streamChat } from "@/lib/llm-client"
+import { currentWikiDate } from "@/lib/ingest"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 interface OverviewSection {
@@ -205,4 +206,114 @@ export async function runOverviewPrematchParallel(
 
   // Flatten and deduplicate
   return [...new Set(results.flat())]
+}
+
+export interface ParsedOverviewBlock {
+  section: string
+  content: string
+}
+
+const OVERVIEW_BLOCK_REGEX = /---OVERVIEW:\s*(.+?)\s*---\n([\s\S]*?)---END OVERVIEW---/g
+
+/**
+ * Parse ---OVERVIEW: SectionName--- blocks from LLM generation output.
+ * Symmetric to parseIndexBlocks in index-chunker.ts.
+ */
+export function parseOverviewBlocks(text: string): ParsedOverviewBlock[] {
+  const normalized = text.replace(/\r\n/g, "\n")
+  const blocks: ParsedOverviewBlock[] = []
+  for (const match of normalized.matchAll(OVERVIEW_BLOCK_REGEX)) {
+    const section = match[1].trim()
+    const content = match[2].trim()
+    blocks.push({ section, content })
+  }
+  return blocks
+}
+
+/**
+ * Programmatically append parsed OVERVIEW block content to existing overview.md.
+ * - Appends to existing `## Section` (before the next ## or EOF)
+ * - Creates a new `## Section` at the end if it does not exist
+ * - Updates the `updated:` field in frontmatter to today's date (when present)
+ * - Returns the original content unchanged when no blocks are provided
+ * Symmetric to appendIndexEntries in index-chunker.ts.
+ */
+export function appendOverviewContent(
+  overviewContent: string,
+  blocks: ParsedOverviewBlock[],
+): string {
+  if (blocks.length === 0) return overviewContent
+
+  const lines = overviewContent.split("\n")
+  const result = [...lines]
+
+  for (const block of blocks) {
+    if (!block.content.trim()) continue
+    const sectionHeader = `## ${block.section}`
+
+    let sectionStartIdx = -1
+    for (let i = 0; i < result.length; i++) {
+      if (result[i].trim() === sectionHeader) {
+        sectionStartIdx = i
+        break
+      }
+    }
+
+    if (sectionStartIdx >= 0) {
+      let insertIdx = result.length
+      for (let i = sectionStartIdx + 1; i < result.length; i++) {
+        if (/^##\s/.test(result[i].trim())) {
+          insertIdx = i
+          break
+        }
+      }
+      result.splice(insertIdx, 0, "", block.content)
+    } else {
+      result.push("", sectionHeader, block.content)
+    }
+  }
+
+  // Update frontmatter `updated:` date if present
+  if (result[0]?.trim() === "---") {
+    for (let i = 1; i < result.length; i++) {
+      if (result[i].trim() === "---") break
+      if (/^updated:/.test(result[i])) {
+        result[i] = `updated: ${currentWikiDate()}`
+        break
+      }
+    }
+  }
+
+  return result.join("\n")
+}
+
+/**
+ * Create the initial overview.md with frontmatter for the first ingest.
+ * Symmetric to the index.md bootstrap, but for prose overview sections.
+ */
+export function createInitialOverview(
+  blocks: ParsedOverviewBlock[],
+  date?: string,
+): string {
+  const d = date ?? currentWikiDate()
+  const lines: string[] = [
+    "---",
+    "type: overview",
+    'title: "Overview"',
+    `created: ${d}`,
+    `updated: ${d}`,
+    "tags: []",
+    "related: []",
+    "---",
+    "",
+    "# Overview",
+  ]
+
+  for (const block of blocks) {
+    lines.push("")
+    lines.push(`## ${block.section}`)
+    lines.push(block.content)
+  }
+
+  return lines.join("\n")
 }
