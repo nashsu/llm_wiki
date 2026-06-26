@@ -968,6 +968,12 @@ async function autoIngestImpl(
       if (!reducedIndex) {
         reducedIndex = "(no matching wiki entries found)"
       }
+      // If prematch returned nothing meaningful, keep the full index
+      // as fallback — an empty reduced index would make the model
+      // skip all page generation.
+      if (reducedIndex.length < 10) {
+        reducedIndex = index
+      }
       console.log(
         `[ingest:prematch] index reduced from ${index.length} to ${reducedIndex.length} chars ` +
         `(${matchedNumbers.length} matches from ${chunks.length} chunks)`,
@@ -983,19 +989,19 @@ async function autoIngestImpl(
       activity.updateItem(activityId, {
         detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
       })
-      const matchedSections = await runOverviewPrematchParallel(
+      const matchedParagraphs = await runOverviewPrematchParallel(
         overviewChunks,
         enrichedSourceContent,
         llmConfig,
         signal,
       )
-      reducedOverview = assembleReducedOverview(overview, matchedSections)
+      reducedOverview = assembleReducedOverview(overview, matchedParagraphs)
       if (!reducedOverview) {
-        reducedOverview = "(no matching overview sections found)"
+        reducedOverview = "(no matching overview paragraphs found)"
       }
       console.log(
         `[ingest:overview-prematch] overview reduced from ${overview.length} to ${reducedOverview.length} chars ` +
-        `(${matchedSections.length} sections matched from ${overviewChunks.length} chunks)`,
+        `(${matchedParagraphs.length} paragraphs matched from ${overviewChunks.length} chunks)`,
       )
     }
   }

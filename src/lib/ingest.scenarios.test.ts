@@ -104,7 +104,12 @@ async function setup(scenario: IngestScenario): Promise<Ctx> {
     maxContextSize: 128000,
   })
 
-  // Queue up the two sequenced LLM responses
+  // Queue up the sequenced LLM responses:
+  //   1. Index prematch: BASIC_INDEX has 1 entry ([[attention]]), so [1] matches.
+  //   2. Overview prematch: skipped if no overview.md exists.
+  //   3. Analysis (Stage 1)
+  //   4. Generation (Stage 2)
+  //   5. Review suggestion (if triggered)
   const analysis = await fs.readFile(
     path.join(FIXTURES_ROOT, scenario.name, "llm-analysis.txt"),
     "utf-8",
@@ -113,7 +118,7 @@ async function setup(scenario: IngestScenario): Promise<Ctx> {
     path.join(FIXTURES_ROOT, scenario.name, "llm-generation.txt"),
     "utf-8",
   )
-  pendingResponses = [analysis, generation]
+  pendingResponses = ["[1]", analysis, generation]
 
   return { tmp }
 }
@@ -244,6 +249,7 @@ describe("ingest scenarios (fixture-driven)", () => {
     })
 
     pendingResponses = [
+      "[1]",
       "analysis",
       [
         "---FILE: wiki/sources/schema-routing.md---",
