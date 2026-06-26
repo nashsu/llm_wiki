@@ -950,7 +950,7 @@ async function autoIngestImpl(
   // entries relevant to this source, assemble a reduced index.
   // Runs BEFORE budget calculation so stableContextLength reflects
   // the actual (reduced) context size, not the full index length.
-  const CHUNK_SIZE = 50
+  const CHUNK_SIZE = 200
   let reducedIndex = index
   if (index.trim()) {
     const chunks = chunkIndexByEntries(index, CHUNK_SIZE)
@@ -978,7 +978,7 @@ async function autoIngestImpl(
   // ── Step 0.8: Pre-match overview sections ─────────────────────
   let reducedOverview = overview
   if (overview.trim()) {
-    const overviewChunks = chunkOverviewBySections(overview, 2000)
+    const overviewChunks = chunkOverviewBySections(overview, 8000)
     if (overviewChunks.length > 1) {
       activity.updateItem(activityId, {
         detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
@@ -2516,7 +2516,7 @@ export function computeIngestGenerationMaxTokens(maxContextSize: number | undefi
 }
 
 export function computeIngestReviewMaxTokens(maxContextSize: number | undefined): number {
-  return Math.min(8_192, Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)))
+  return Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2))
 }
 
 function splitOversizedBlock(block: string, targetChars: number): string[] {

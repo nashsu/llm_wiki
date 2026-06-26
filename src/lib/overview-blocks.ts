@@ -189,7 +189,7 @@ export async function runOverviewPrematchParallel(
               },
             },
             signal,
-            { temperature: 0.1, max_tokens: 256, reasoning: { mode: "off" } },
+            { temperature: 0.1, reasoning: { mode: "off" } },
           )
         } catch (err) {
           hadError = true
