@@ -18,6 +18,13 @@ jobs:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
             rust_target: aarch64-apple-darwin
+          # Intel macOS build. macos-13 is GitHub's last x86_64 runner
+          # (macos-14+ are Apple Silicon), so this is a NATIVE build —
+          # no cross-compile. Restores the Intel .dmg dropped after
+          # v0.2.0, when the macOS matrix narrowed to aarch64 only.
+          - platform: macos-13
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
@@ -59,7 +66,8 @@ jobs:
       # The repo ships pre-downloaded PDFium binaries under
       # src-tauri/pdfium/ for every supported architecture
       # (libpdfium.so = Linux x86_64, libpdfium-arm64.so = Linux aarch64,
-      # libpdfium.dylib = macOS arm64, pdfium.dll = Windows).
+      # libpdfium.dylib = macOS arm64, libpdfium-x86_64.dylib = macOS Intel,
+      # pdfium.dll = Windows).
       # For architectures whose bundled filename must
       # stay `libpdfium.*`, swap the matching binary into place before cargo
       # runs. We do NOT pull from bblanchon/pdfium-binaries during CI — that
@@ -76,6 +84,12 @@ jobs:
         run: |
           cp src-tauri/pdfium/libpdfium-arm64.so src-tauri/pdfium/libpdfium.so
           file src-tauri/pdfium/libpdfium.so
+
+      - name: Use x86_64 pdfium binary (macOS Intel only)
+        if: matrix.rust_target == 'x86_64-apple-darwin'
+        run: |
+          cp src-tauri/pdfium/libpdfium-x86_64.dylib src-tauri/pdfium/libpdfium.dylib
+          file src-tauri/pdfium/libpdfium.dylib
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
