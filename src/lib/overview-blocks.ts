@@ -16,6 +16,12 @@ interface OverviewSection {
   content: string
 }
 
+interface OverviewParagraph {
+  sectionHeading: string | null
+  number: number
+  text: string
+}
+
 function parseOverviewSections(overview: string): OverviewSection[] {
   const lines = overview.split("\n")
   const sections: OverviewSection[] = []
@@ -43,104 +49,135 @@ function extractHeading(line: string): string | null {
   return match ? match[1].trim() : null
 }
 
-export function chunkOverviewBySections(overview: string, maxChunkChars: number): string[] {
-  if (!overview.trim()) return []
-
+/** Parse overview into globally-numbered paragraphs (split by \n\n within ## sections). */
+function parseOverviewParagraphs(overview: string): OverviewParagraph[] {
   const sections = parseOverviewSections(overview)
-  if (!sections.some((s) => s.heading !== null)) {
-    return [overview]
-  }
-  const chunks: string[] = []
-  let current = ""
-  let sectionNum = 0
+  const paragraphs: OverviewParagraph[] = []
+  let num = 1
 
   for (const section of sections) {
-    const prefix = section.heading
-      ? `[${++sectionNum}] ## ${section.heading}`
-      : `[${++sectionNum}] (preamble)`
-    const numbered = prefix + "\n" + section.content.replace(/^##\s.*$/m, "").trim()
+    // Split section body by one or more blank lines
+    let body = section.heading
+      ? section.content.replace(/^##\s.*$/m, "").trim()
+      : section.content.trim()
+    if (!body) continue
 
-    if (current.length + numbered.length + 2 > maxChunkChars && current) {
-      chunks.push(current)
-      current = numbered
-    } else {
-      current = current ? `${current}\n\n${numbered}` : numbered
+    const parts = body.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 0)
+    for (const part of parts) {
+      paragraphs.push({ sectionHeading: section.heading, number: num++, text: part })
     }
   }
 
+  return paragraphs
+}
+
+/**
+ * Chunk overview paragraphs into groups, numbered globally for prematch.
+ * Each chunk is prefixed with paragraph numbers for LLM reference.
+ */
+export function chunkOverviewBySections(overview: string, maxChunkChars: number): string[] {
+  if (!overview.trim()) return []
+
+  const paragraphs = parseOverviewParagraphs(overview)
+  if (paragraphs.length === 0) return []
+  if (paragraphs.length === 1) return [`[${paragraphs[0].number}] ${paragraphs[0].text}`]
+
+  const chunks: string[] = []
+  let current = ""
+
+  for (const p of paragraphs) {
+    const line = `[${p.number}] ${p.text}`
+    if (current && current.length + line.length + 2 > maxChunkChars) {
+      chunks.push(current)
+      current = line
+    } else {
+      current = current ? `${current}\n\n${line}` : line
+    }
+  }
   if (current) chunks.push(current)
   return chunks
 }
 
 /**
- * Parse prematch LLM output into section names.
- * Tolerant: handles [操作系统, 进程管理], none, 无, surrounding text.
- * Returns deduplicated section names, or empty array if none.
+ * Parse prematch LLM output into paragraph numbers.
+ * Tolerant: handles [2, 5, 12], none, surrounding text.
+ * Returns deduplicated paragraph numbers, or empty array if none.
  */
-export function parseOverviewPrematchOutput(output: string): string[] {
+export function parseOverviewPrematchOutput(output: string): number[] {
   const trimmed = output.trim()
   if (!trimmed) return []
 
   const lower = trimmed.toLowerCase()
   if (lower === "none" || trimmed === "无") return []
 
-  // Try to extract bracketed names first: [操作系统, 进程管理]
+  // Try to extract bracketed numbers first: [2, 5, 12]
   const bracketMatch = trimmed.match(/\[([^\]]+)\]/)
   const source = bracketMatch ? bracketMatch[1] : trimmed
 
-  return source
+  const numbers = source
     .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0)
+
+  return [...new Set(numbers)]
 }
 
 /**
  * Build the system prompt for an overview pre-match LLM call.
- * The LLM reads the source document and a chunk of overview sections,
- * then outputs matching section names.
+ * The LLM reads the source document and a chunk of overview paragraphs,
+ * then outputs matching paragraph numbers.
  */
 export function buildOverviewPrematchPrompt(sourceContent: string, chunk: string): string {
   return [
     "You are a relevance matcher. Read the source document and determine",
-    "which overview sections are related to it.",
+    "which overview paragraphs are related to it.",
     "",
     "## Source Document",
     sourceContent,
     "",
-    "## Overview Sections",
-    "Below is a chunk of the wiki overview. Each section starts with [N] and a heading.",
-    "For each section, determine whether it covers the same subject as any",
-    "topic in the source document. A match means the section discusses the",
+    "## Overview Paragraphs",
+    "Below is a chunk of the wiki overview. Each numbered item is a paragraph.",
+    "For each paragraph, determine whether it covers the same subject as any",
+    "topic in the source document. A match means the paragraph discusses the",
     "same entity, concept, method, or topic area.",
     "",
     chunk,
     "",
     "## Output Format (STRICT)",
     "",
-    "Output ONLY matching section names in bracket format: [操作系统, 进程管理]",
-    "Use the exact heading text (without the ## prefix).",
-    "If no sections match, output exactly: none",
+    "Output ONLY matching paragraph numbers in bracket format: [2, 5, 12]",
+    "If no paragraphs match, output exactly: none",
     "",
     "Do not output explanations, reasoning, or any other text.",
   ].join("\n")
 }
 
 /**
- * Assemble a reduced overview from the original overview.md and matched section names.
- * Only includes sections whose heading matches. Preserves original section content.
+ * Assemble a reduced overview from the original overview.md and matched paragraph numbers.
+ * Only includes matched paragraphs, grouped under their ## section headings.
  */
-export function assembleReducedOverview(overview: string, matchedSections: string[]): string {
-  if (matchedSections.length === 0) return ""
+export function assembleReducedOverview(overview: string, matchedParagraphs: number[]): string {
+  if (matchedParagraphs.length === 0) return ""
 
-  const matchSet = new Set(matchedSections.map((s) => s.trim()))
-  const sections = parseOverviewSections(overview)
-  const lines: string[] = []
+  const matchSet = new Set(matchedParagraphs)
+  const paragraphs = parseOverviewParagraphs(overview)
+  const grouped = new Map<string | null, string[]>()
 
-  for (const section of sections) {
-    if (section.heading && matchSet.has(section.heading)) {
-      lines.push(section.content.trim())
-      lines.push("")
+  for (const p of paragraphs) {
+    if (matchSet.has(p.number)) {
+      const key = p.sectionHeading
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(p.text)
     }
+  }
+
+  if (grouped.size === 0) return ""
+
+  const lines: string[] = []
+  for (const [heading, texts] of grouped) {
+    if (heading) lines.push(`## ${heading}`)
+    for (const t of texts) lines.push(t)
+    lines.push("")
   }
 
   return lines.join("\n").trim()
@@ -158,10 +195,10 @@ export async function runOverviewPrematchParallel(
   sourceContent: string,
   llmConfig: LlmConfig,
   signal: AbortSignal | undefined,
-): Promise<string[]> {
+): Promise<number[]> {
   if (chunks.length === 0) return []
 
-  const results: string[][] = []
+  const results: number[][] = []
 
   // Process in batches of OVERVIEW_PREMATCH_CONCURRENCY
   for (let i = 0; i < chunks.length; i += OVERVIEW_PREMATCH_CONCURRENCY) {
@@ -178,7 +215,7 @@ export async function runOverviewPrematchParallel(
             llmConfig,
             [
               { role: "system", content: buildOverviewPrematchPrompt(sourceContent, chunk) },
-              { role: "user", content: "Output matching section names for the chunk above." },
+              { role: "user", content: "Output matching paragraph numbers for the chunk above." },
             ],
             {
               onToken: (token: string) => { output += token },
