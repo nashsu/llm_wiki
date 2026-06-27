@@ -30,87 +30,102 @@ interface ReviewState {
   clearResolved: () => void
 }
 
-let counter = 0
-
-function reviewCounterFromId(id: string): number | null {
-  const match = /^review-(\d+)$/.exec(id)
-  if (!match) return null
-  const n = Number(match[1])
-  return Number.isSafeInteger(n) && n > 0 ? n : null
-}
-
-function advanceCounterForItems(items: ReviewItem[]): void {
-  let max = counter
-  for (const item of items) {
-    const n = reviewCounterFromId(item.id)
-    if (n !== null && n > max) max = n
+/**
+ * Content-derived stable id. The SAME logical review (same type + same
+ * normalized title) always gets the SAME id, so it survives ingest
+ * regeneration, file moves, and reloads — and an external caller (the
+ * resolve API) can target it reliably.
+ *
+ * Deliberately NOT counter-based (the old `review-N` scheme re-numbered
+ * every review whenever the queue rebuilt, discarding resolved state)
+ * and deliberately NOT keyed on sourcePath (mutable — a file rename
+ * would re-id the review, the exact instability we're removing).
+ *
+ * "Collision" — two inputs sharing an id — is the intended behaviour:
+ * identical content is the same review. Stability is bounded by
+ * `normalizeReviewTitle` across LLM regenerations, the same ceiling the
+ * previous dedup already accepted.
+ */
+export function reviewIdFor(item: Pick<ReviewItem, "type" | "title">): string {
+  const key = `${item.type}::${normalizeReviewTitle(item.title)}`
+  // FNV-1a (32-bit) — small, deterministic, dependency-free.
+  let h = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
   }
-  counter = max
+  return `review-${(h >>> 0).toString(16).padStart(8, "0")}`
 }
 
-function nextReviewId(existingItems: ReviewItem[]): string {
-  advanceCounterForItems(existingItems)
-  return `review-${++counter}`
+/** Union two optional string arrays, dropping the field when empty. */
+function unionField(a?: string[], b?: string[]): string[] | undefined {
+  const merged = Array.from(new Set([...(a ?? []), ...(b ?? [])]))
+  return merged.length > 0 ? merged : undefined
+}
+
+/**
+ * Collapse two items that resolved to the same stable id. resolved
+ * wins (if either was resolved, the survivor is), union the array
+ * fields, keep the earliest createdAt, prefer a non-empty description.
+ */
+function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
+  return {
+    ...a, // a.id is kept; both share it by construction
+    resolved: a.resolved || b.resolved,
+    resolvedAction: a.resolved ? a.resolvedAction : b.resolved ? b.resolvedAction : a.resolvedAction,
+    description: a.description || b.description,
+    sourcePath: a.sourcePath ?? b.sourcePath,
+    affectedPages: unionField(a.affectedPages, b.affectedPages),
+    searchQueries: unionField(a.searchQueries, b.searchQueries),
+    createdAt: Math.min(a.createdAt, b.createdAt),
+  }
 }
 
 export const useReviewStore = create<ReviewState>((set) => ({
   items: [],
 
   addItem: (item) =>
-    set((state) => ({
-      items: [
-        ...state.items,
-        {
-          ...item,
-          id: nextReviewId(state.items),
-          resolved: false,
-          createdAt: Date.now(),
-        },
-      ],
-    })),
+    set((state) => {
+      const id = reviewIdFor(item)
+      // Same-content item already present (possibly resolved) → keep it
+      // as-is so resolved state survives. The stable id makes this a
+      // simple identity check, no separate dedup key.
+      if (state.items.some((it) => it.id === id)) {
+        return { items: state.items }
+      }
+      return {
+        items: [...state.items, { ...item, id, resolved: false, createdAt: Date.now() }],
+      }
+    }),
 
   addItems: (items) =>
     set((state) => {
-      // De-dupe against pending items with same type + normalized title (all
-      // 5 types — bulk ingest can re-surface the same contradiction/confirm
-      // from multiple files).
-      // Merge affectedPages / searchQueries / sourcePath instead of duplicating.
+      // Dedup on the content-stable id against ALL existing items —
+      // including resolved ones. The previous scheme only deduped
+      // against *pending* items, which is exactly why re-surfacing a
+      // review during ingest discarded its resolved state. Now a
+      // resolved review with the same content is preserved (resolved
+      // wins), with array fields merged.
       const result = [...state.items]
-      const keyFor = (t: string, title: string) => `${t}::${normalizeReviewTitle(title)}`
-
-      // Build index of existing pending items for fast lookup
-      const pendingIndex = new Map<string, number>()
-      result.forEach((it, idx) => {
-        if (!it.resolved) {
-          pendingIndex.set(keyFor(it.type, it.title), idx)
-        }
-      })
+      const indexById = new Map<string, number>()
+      result.forEach((it, idx) => indexById.set(it.id, idx))
 
       for (const incoming of items) {
-        const k = keyFor(incoming.type, incoming.title)
-        const existingIdx = pendingIndex.get(k)
+        const id = reviewIdFor(incoming)
+        const existingIdx = indexById.get(id)
 
         if (existingIdx !== undefined) {
-          // Merge into existing
           const old = result[existingIdx]
-          const mergedPages = Array.from(new Set([...(old.affectedPages ?? []), ...(incoming.affectedPages ?? [])]))
-          const mergedQueries = Array.from(new Set([...(old.searchQueries ?? []), ...(incoming.searchQueries ?? [])]))
           result[existingIdx] = {
-            ...old,
-            description: incoming.description || old.description, // prefer newer description
+            ...old, // preserves resolved / resolvedAction / createdAt / id
+            description: incoming.description || old.description,
             sourcePath: incoming.sourcePath ?? old.sourcePath,
-            affectedPages: mergedPages.length > 0 ? mergedPages : undefined,
-            searchQueries: mergedQueries.length > 0 ? mergedQueries : undefined,
+            affectedPages: unionField(old.affectedPages, incoming.affectedPages),
+            searchQueries: unionField(old.searchQueries, incoming.searchQueries),
           }
         } else {
-          const newItem = {
-            ...incoming,
-            id: nextReviewId(result),
-            resolved: false,
-            createdAt: Date.now(),
-          }
-          result.push(newItem)
-          pendingIndex.set(k, result.length - 1)
+          result.push({ ...incoming, id, resolved: false, createdAt: Date.now() })
+          indexById.set(id, result.length - 1)
         }
       }
 
@@ -118,8 +133,19 @@ export const useReviewStore = create<ReviewState>((set) => ({
     }),
 
   setItems: (items) => {
-    advanceCounterForItems(items)
-    set({ items })
+    // Migrate-on-load: remap every item to its content-stable id,
+    // collapsing any that share one. Old counter ids (review-N) and
+    // their resolved state are folded in here (resolved wins), so a
+    // resolved review keeps its resolution across the id-scheme change.
+    // Computing the id from content (not the old id) makes this
+    // idempotent — no migration-version flag needed.
+    const byId = new Map<string, ReviewItem>()
+    for (const raw of items) {
+      const remapped: ReviewItem = { ...raw, id: reviewIdFor(raw) }
+      const existing = byId.get(remapped.id)
+      byId.set(remapped.id, existing ? mergeReviewItems(existing, remapped) : remapped)
+    }
+    set({ items: [...byId.values()] })
   },
 
   resolveItem: (id, action) =>

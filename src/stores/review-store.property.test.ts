@@ -90,7 +90,10 @@ describe("review-store addItems — dedupe invariants", () => {
     )
   })
 
-  it("resolveItem always makes resolved item eligible for a NEW pending item of same key", () => {
+  it("re-adding the same key after resolve preserves the resolved item (resolved wins)", () => {
+    // Content-stable ids: re-surfacing a review during ingest must fold
+    // into the resolved item (same id, stays resolved), not spawn a new
+    // pending duplicate — that revival was the bug being fixed.
     fc.assert(
       fc.property(
         fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
@@ -109,9 +112,11 @@ describe("review-store addItems — dedupe invariants", () => {
           ])
 
           const all = useReviewStore.getState().items
-          expect(all.length).toBe(2)
-          expect(all.filter((i) => i.resolved)).toHaveLength(1)
-          expect(all.filter((i) => !i.resolved)).toHaveLength(1)
+          expect(all.length).toBe(1)
+          expect(all[0].id).toBe(firstId)
+          expect(all[0].resolved).toBe(true)
+          expect(all[0].resolvedAction).toBe("auto-resolved")
+          expect(all[0].affectedPages).toEqual(expect.arrayContaining(["second.md"]))
         },
       ),
     )
