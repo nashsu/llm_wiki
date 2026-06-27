@@ -43,7 +43,16 @@ const TYPE_DISPLAY_ORDER = [
 ]
 
 // Aggregate / structural files that are never themselves index entries.
-const EXCLUDED_BASENAMES = new Set(["index.md", "log.md", "overview.md"])
+// schema.md and purpose.md are project-scaffolding pages (some projects
+// place them under wiki/); excluding them by basename keeps stray
+// `[[schema]]` / `[[purpose]]` entries out of the index.
+const EXCLUDED_BASENAMES = new Set([
+  "index.md",
+  "log.md",
+  "overview.md",
+  "schema.md",
+  "purpose.md",
+])
 
 interface IndexEntry {
   slug: string

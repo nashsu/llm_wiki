@@ -157,6 +157,17 @@ async function assertOutcome(
     }
   }
 
+  // 2b. Forbidden substrings must NOT appear (drop-guard assertions)
+  if (expected.fileExcludes) {
+    for (const [relPath, substrs] of Object.entries(expected.fileExcludes)) {
+      const full = path.join(tmpPath, relPath)
+      const content = await readFileRaw(full)
+      for (const sub of substrs) {
+        expect(content, `${relPath} unexpectedly contains "${sub}"`).not.toContain(sub)
+      }
+    }
+  }
+
   // 3. Review store has the expected items
   const expectedReviews = expected.reviewsCreated ?? []
   const actualReviews = useReviewStore.getState().items
