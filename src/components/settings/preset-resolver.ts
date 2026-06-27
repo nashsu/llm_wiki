@@ -80,6 +80,7 @@ export function resolveConfig(
       reasoning,
       localCliIsolation,
       codexCliTimeoutMinutes: preset.provider === "codex-cli" ? codexCliTimeoutMinutes : undefined,
+      claudeConfigDir: preset.provider === "claude-code" ? ov.claudeConfigDir : undefined,
     }
   }
 

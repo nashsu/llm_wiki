@@ -115,6 +115,13 @@ fn claude_content_blocks(content: &ClaudeContent) -> Vec<serde_json::Value> {
     }
 }
 
+/// Expand a leading `~/` to the user's home directory; leave other paths unchanged.
+fn expand_path(raw: &str) -> PathBuf {
+    raw.strip_prefix("~/")
+        .and_then(|rest| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest)))
+        .unwrap_or_else(|| PathBuf::from(raw))
+}
+
 async fn find_claude_command() -> Result<PathBuf, String> {
     find_cli_command("claude", &["claude.cmd", "claude.exe"]).await
 }
@@ -213,6 +220,7 @@ pub async fn claude_cli_spawn(
     messages: Vec<ClaudeMessage>,
     isolate_local_config: bool,
     working_directory: Option<String>,
+    claude_config_dir: Option<String>,
 ) -> Result<(), String> {
     // Build the turn list: fold any system messages into a preamble on
     // the first user turn rather than using a CLI flag, because
@@ -258,6 +266,9 @@ pub async fn claude_cli_spawn(
     suppress_windows_console(&mut cmd);
     cmd.args(build_claude_cli_args(&model, isolate_local_config));
     cmd.current_dir(&working_directory);
+    if let Some(dir) = claude_config_dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        cmd.env("CLAUDE_CONFIG_DIR", expand_path(dir));
+    }
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -593,5 +604,21 @@ mod tests {
         assert_eq!(resolved, dir.canonicalize().expect("canonical tempdir"));
 
         std::fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn expand_path_expands_tilde_slash_to_home_directory() {
+        let home = std::env::var_os("HOME").expect("HOME must be set");
+        assert_eq!(expand_path("~/.claude-personal"), PathBuf::from(home).join(".claude-personal"));
+    }
+
+    #[test]
+    fn expand_path_leaves_absolute_path_unchanged() {
+        assert_eq!(expand_path("/home/user/.claude"), PathBuf::from("/home/user/.claude"));
+    }
+
+    #[test]
+    fn expand_path_does_not_expand_bare_tilde_without_slash() {
+        assert_eq!(expand_path("~"), PathBuf::from("~"));
     }
 }

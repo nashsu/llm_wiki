@@ -305,6 +305,8 @@
         "localCliIsolationHint": "Optional for Claude Code and Codex CLI. When enabled, LLM Wiki asks the CLI to ignore user-level rules/config/MCP/tools where supported. This is configuration isolation, not a process sandbox: the CLI still uses your local login credentials and network access. Leave off if you intentionally rely on your local CLI setup.",
         "localCliIsolationOn": "Isolation on: user CLI rules, MCP/tools, and persisted sessions are disabled where the CLI supports it. Local credentials and network access are still controlled by the CLI itself.",
         "localCliIsolationOff": "Isolation off: this provider can use your normal local CLI configuration.",
+        "claudeConfigDir": "Claude config directory",
+        "claudeConfigDirHint": "Injected as CLAUDE_CONFIG_DIR when spawning the CLI. Use this when your config lives outside the default ~/.claude location (e.g. ~/.claude-personal). Leave empty to use the CLI default.",
         "codexCliTimeout": "Codex CLI timeout",
         "codexCliTimeoutUnit": "minutes",
         "codexCliTimeoutHint": "Overall timeout for one Codex CLI request. Raise this for long PDF ingest or slower local/network sessions.",

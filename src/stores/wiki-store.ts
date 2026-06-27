@@ -36,6 +36,12 @@ interface LlmConfig {
   localCliIsolation?: boolean
   /** Codex CLI provider only. Overall subprocess timeout in minutes. */
   codexCliTimeoutMinutes?: number
+  /**
+   * Claude Code CLI only. Injected as CLAUDE_CONFIG_DIR when spawning the
+   * subprocess. Set this when the config lives outside the default ~/.claude
+   * location (e.g. ~/.claude-personal). Omit to let the CLI use its default.
+   */
+  claudeConfigDir?: string
 }
 
 export type SearchProvider = "tavily" | "serpapi" | "searxng" | "ollama" | "firecrawl" | "none"
@@ -286,6 +292,7 @@ export interface ProviderOverride {
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
+  claudeConfigDir?: string
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>

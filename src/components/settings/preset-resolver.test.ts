@@ -156,6 +156,32 @@ describe("resolveConfig", () => {
     ).codexCliTimeoutMinutes).toBeUndefined()
   })
 
+  it("carries claudeConfigDir only for the Claude Code preset", () => {
+    const claudePreset: LlmPreset = {
+      id: "claude-code-cli",
+      label: "Claude Code CLI",
+      provider: "claude-code",
+      defaultModel: "sonnet",
+    }
+    const codexPreset: LlmPreset = {
+      id: "codex-cli",
+      label: "Codex CLI",
+      provider: "codex-cli",
+      defaultModel: "gpt-5",
+    }
+
+    expect(resolveConfig(
+      claudePreset,
+      { claudeConfigDir: "~/.claude-personal" },
+      fallbackConfig(),
+    ).claudeConfigDir).toBe("~/.claude-personal")
+    expect(resolveConfig(
+      codexPreset,
+      { claudeConfigDir: "~/.claude-personal" },
+      fallbackConfig(),
+    ).claudeConfigDir).toBeUndefined()
+  })
+
   it("does not apply local CLI isolation to hosted providers", () => {
     const preset: LlmPreset = {
       id: "openai",

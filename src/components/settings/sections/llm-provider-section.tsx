@@ -129,6 +129,7 @@ function PresetRow({
   const context = ov.maxContextSize ?? preset.suggestedContextSize ?? 131072
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
   const localCliIsolation = ov.localCliIsolation === true
+  const claudeConfigDir = ov.claudeConfigDir ?? ""
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
@@ -351,6 +352,22 @@ function PresetRow({
                   ? t("settings.sections.llm.localCliIsolationOn")
                   : t("settings.sections.llm.localCliIsolationOff")}
               </div>
+            </div>
+          )}
+
+          {preset.provider === "claude-code" && (
+            <div className="space-y-2 rounded-md border p-3">
+              <Label>{t("settings.sections.llm.claudeConfigDir")}</Label>
+              <Input
+                type="text"
+                placeholder="~/.claude"
+                value={claudeConfigDir}
+                onChange={(e) => onChange({ claudeConfigDir: e.target.value || undefined })}
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.claudeConfigDirHint")}
+              </p>
             </div>
           )}
 
