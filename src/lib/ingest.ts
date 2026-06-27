@@ -1688,17 +1688,6 @@ export function stampGeneratedFrontmatterDates(content: string, date: string): s
   return `${match[1]}${payload}${match[3]}${content.slice(match[0].length)}`
 }
 
-export function stampGeneratedLogDate(content: string, date: string): string {
-  const normalized = content.replace(/\bYYYY-MM-DD\b/g, date)
-  if (/^\s*##\s*\[?\d{4}-\d{2}-\d{2}\]?/m.test(normalized)) {
-    return normalized.replace(
-      /^(\s*##\s*\[?)\d{4}-\d{2}-\d{2}(\]?)/m,
-      `$1${date}$2`,
-    )
-  }
-  return normalized
-}
-
 function setOrAppendFrontmatterDate(payload: string, key: "created" | "updated", date: string): string {
   const lineRe = new RegExp(`(^|\\n)(${key}\\s*:\\s*)[^\\n\\r]*`, "i")
   if (lineRe.test(payload)) {

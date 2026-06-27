@@ -22,7 +22,6 @@ import {
   parseFileBlocks,
   isSafeIngestPath,
   stampGeneratedFrontmatterDates,
-  stampGeneratedLogDate,
   buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
   aggregatePathsNeedingRepair,
@@ -573,13 +572,6 @@ describe("generated ingest dates", () => {
 
     expect(out).toContain("created: 2026-06-07")
     expect(out).toContain("updated: 2026-06-07")
-  })
-
-  it("stamps generated log headings to the application date", () => {
-    expect(stampGeneratedLogDate("## [2024-01-01] ingest | Foo", "2026-06-07"))
-      .toBe("## [2026-06-07] ingest | Foo")
-    expect(stampGeneratedLogDate("## [YYYY-MM-DD] ingest | Foo", "2026-06-07"))
-      .toBe("## [2026-06-07] ingest | Foo")
   })
 
   it("tells the model the exact current date in the generation prompt", () => {
