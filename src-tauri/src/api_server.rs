@@ -1218,6 +1218,15 @@ struct ApiGraphEdge {
     weight: f64,
 }
 
+#[derive(Debug, Clone)]
+struct RawGraphNode {
+    id: String,
+    label: String,
+    node_type: String,
+    path: String,
+    links: Vec<String>,
+}
+
 fn handle_graph(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
     let project = match resolve_project(app, project_id) {
         Ok(project) => project,
@@ -1232,43 +1241,44 @@ fn handle_graph(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         .unwrap_or(200)
         .clamp(1, 1000);
 
-    match build_graph(&project.path) {
-        Ok((mut nodes, edges)) => {
-            if let Some(ref q) = q {
-                nodes.retain(|n| {
-                    n.id.to_lowercase().contains(q) || n.label.to_lowercase().contains(q)
-                });
-            }
-            if let Some(ref node_type) = node_type {
-                nodes.retain(|n| n.node_type == *node_type);
-            }
-            nodes.truncate(limit);
-            let ids: BTreeSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
-            let edges: Vec<ApiGraphEdge> = edges
-                .into_iter()
-                .filter(|e| ids.contains(&e.source) && ids.contains(&e.target))
-                .collect();
+    match build_graph(&project.path, q.as_deref(), node_type.as_deref(), limit) {
+        Ok((nodes, edges)) => {
             ok(json!({ "ok": true, "projectId": project.id, "nodes": nodes, "edges": edges }))
         }
         Err(e) => err(500, e),
     }
 }
 
-fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdge>), String> {
+fn build_graph(
+    project_path: &str,
+    q: Option<&str>,
+    node_type: Option<&str>,
+    limit: usize,
+) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdge>), String> {
     let wiki_root = Path::new(project_path).join("wiki");
-    let mut raw: BTreeMap<String, (String, String, String, Vec<String>)> = BTreeMap::new();
-    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file()
-            || entry.path().extension().and_then(|s| s.to_str()) != Some("md")
-        {
-            continue;
-        }
-        let content = match fs::read_to_string(entry.path()) {
+    let mut files: Vec<PathBuf> = WalkDir::new(&wiki_root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && entry.path().extension().and_then(|s| s.to_str()) == Some("md")
+        })
+        .map(|entry| entry.path().to_path_buf())
+        .collect();
+    files.sort_by_key(|path| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase()
+    });
+
+    let mut raw: Vec<RawGraphNode> = Vec::new();
+    for path in files {
+        let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(_) => continue,
         };
-        let id = entry
-            .path()
+        let id = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("")
@@ -1276,35 +1286,62 @@ fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdg
         if id.is_empty() {
             continue;
         }
-        let title =
-            commands::search::extract_title(&content, entry.file_name().to_string_lossy().as_ref());
-        let node_type = extract_type(&content);
-        let path = relative_to_project(project_path, entry.path());
+        let title = commands::search::extract_title(
+            &content,
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(id.as_str()),
+        );
+        let file_node_type = extract_type(&content);
+        if file_node_type == "query" {
+            continue;
+        }
+        if let Some(node_type) = node_type {
+            if file_node_type != node_type {
+                continue;
+            }
+        }
+        if let Some(q) = q {
+            if !id.to_lowercase().contains(q) && !title.to_lowercase().contains(q) {
+                continue;
+            }
+        }
+        let rel_path = relative_to_project(project_path, &path);
         let links = extract_wikilinks(&content);
-        raw.insert(id, (title, node_type, path, links));
+        raw.push(RawGraphNode {
+            id,
+            label: title,
+            node_type: file_node_type,
+            path: rel_path,
+            links,
+        });
+        if raw.len() >= limit {
+            break;
+        }
     }
-    let ids: BTreeSet<String> = raw.keys().cloned().collect();
-    let mut link_count: BTreeMap<String, usize> = raw.keys().map(|id| (id.clone(), 0)).collect();
+    let ids: BTreeSet<String> = raw.iter().map(|node| node.id.clone()).collect();
+    let mut link_count: BTreeMap<String, usize> =
+        ids.iter().map(|id| (id.clone(), 0)).collect();
     let mut seen = BTreeSet::new();
     let mut edges = Vec::new();
-    for (source, (_, _, _, links)) in &raw {
-        for link in links {
+    for node in &raw {
+        for link in &node.links {
             let Some(target) = resolve_link(link, &ids) else {
                 continue;
             };
-            if &target == source {
+            if target == node.id {
                 continue;
             }
-            let key = if source < &target {
-                format!("{source}::{target}")
+            let key = if node.id < target {
+                format!("{}::{target}", node.id)
             } else {
-                format!("{target}::{source}")
+                format!("{target}::{}", node.id)
             };
             if seen.insert(key) {
-                *link_count.entry(source.clone()).or_default() += 1;
+                *link_count.entry(node.id.clone()).or_default() += 1;
                 *link_count.entry(target.clone()).or_default() += 1;
                 edges.push(ApiGraphEdge {
-                    source: source.clone(),
+                    source: node.id.clone(),
                     target,
                     weight: 1.0,
                 });
@@ -1313,13 +1350,12 @@ fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdg
     }
     let nodes = raw
         .into_iter()
-        .filter(|(_, (_, node_type, _, _))| node_type != "query")
-        .map(|(id, (label, node_type, path, _))| ApiGraphNode {
-            link_count: *link_count.get(&id).unwrap_or(&0),
-            id,
-            label,
-            node_type,
-            path,
+        .map(|node| ApiGraphNode {
+            link_count: *link_count.get(&node.id).unwrap_or(&0),
+            id: node.id,
+            label: node.label,
+            node_type: node.node_type,
+            path: node.path,
         })
         .collect();
     Ok((nodes, edges))
@@ -1542,6 +1578,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["r1", "r2"]
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_build_applies_limit_before_edge_expansion() {
+        let root = test_project_dir();
+        let wiki = root.join("wiki");
+        fs::write(
+            wiki.join("alpha.md"),
+            "---\ntype: concept\n---\n# Alpha\n[[beta]]\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("beta.md"),
+            "---\ntype: term\n---\n# Beta\n[[alpha]]\n",
+        )
+        .unwrap();
+        fs::write(
+            wiki.join("gamma.md"),
+            "---\ntype: query\n---\n# Gamma\n[[alpha]]\n",
+        )
+        .unwrap();
+
+        let root_str = root.to_string_lossy();
+        let (nodes, edges) = build_graph(&root_str, None, None, 2).unwrap();
+
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].id, "alpha");
+        assert_eq!(nodes[1].id, "beta");
+        assert_eq!(edges.len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
