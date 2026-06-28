@@ -130,7 +130,7 @@ export function parseOverviewPrematchOutput(output: string): number[] {
 export function buildOverviewPrematchPrompt(sourceContent: string, chunk: string): string {
   return [
     "You are a relevance matcher. Read the source document and determine",
-    "which overview paragraphs are related to it.",
+    "which overview paragraphs would need to be UPDATED based on it.",
     "",
     "## Source Document",
     sourceContent,
@@ -226,7 +226,7 @@ export async function runOverviewPrematchParallel(
               },
             },
             signal,
-            { temperature: 0.1, reasoning: { mode: "off" } },
+            { temperature: 0.1, reasoning: { mode: "max" } },
           )
         } catch (err) {
           hadError = true

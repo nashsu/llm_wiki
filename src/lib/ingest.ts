@@ -67,6 +67,7 @@ const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
 const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
+const INGEST_GENERATION_TOKENS_1M = 384_000
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
 const AGGREGATE_WIKI_PATHS = ["wiki/log.md"] as const
@@ -950,7 +951,7 @@ async function autoIngestImpl(
   // entries relevant to this source, assemble a reduced index.
   // Runs BEFORE budget calculation so stableContextLength reflects
   // the actual (reduced) context size, not the full index length.
-  const CHUNK_SIZE = 200
+  const CHUNK_SIZE = 500
   let reducedIndex = index
   if (index.trim()) {
     const chunks = chunkIndexByEntries(index, CHUNK_SIZE)
@@ -984,7 +985,7 @@ async function autoIngestImpl(
   // ── Step 0.8: Pre-match overview sections ─────────────────────
   let reducedOverview = overview
   if (overview.trim()) {
-    const overviewChunks = chunkOverviewBySections(overview, 8000)
+    const overviewChunks = chunkOverviewBySections(overview, 16000)
     if (overviewChunks.length > 0) {
       activity.updateItem(activityId, {
         detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
@@ -1062,7 +1063,7 @@ async function autoIngestImpl(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize) },
     )
   }
 
@@ -1151,7 +1152,7 @@ async function autoIngestImpl(
           },
           {
             role: "user",
-            content: "Emit only high-value REVIEW blocks for follow-up research or unresolved knowledge gaps. Output nothing if there are none.",
+            content: "Emit only high-value REVIEW blocks for follow-up research or unresolved knowledge gaps. If there are none, output exactly: none",
           },
         ],
         {
@@ -2515,6 +2516,7 @@ export function computeIngestSourceBudget(
 
 export function computeIngestGenerationMaxTokens(maxContextSize: number | undefined): number {
   const { maxCtx } = computeContextBudget(maxContextSize)
+  if (maxCtx >= 1_000_000) return INGEST_GENERATION_TOKENS_1M
   if (maxCtx >= 512_000) return INGEST_GENERATION_TOKENS_512K
   if (maxCtx >= 256_000) return INGEST_GENERATION_TOKENS_256K
   if (maxCtx >= 128_000) return INGEST_GENERATION_TOKENS_128K
@@ -2522,7 +2524,7 @@ export function computeIngestGenerationMaxTokens(maxContextSize: number | undefi
 }
 
 export function computeIngestReviewMaxTokens(maxContextSize: number | undefined): number {
-  return Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2))
+  return Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize)))
 }
 
 function splitOversizedBlock(block: string, targetChars: number): string[] {
@@ -2882,7 +2884,7 @@ async function analyzeLongSourceInChunks(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize) },
     )
 
     throwIfIngestAborted(signal, activityId)
