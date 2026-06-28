@@ -202,8 +202,8 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(64_000)).toBe(8_192)
     expect(computeIngestGenerationMaxTokens(128_000)).toBe(16_384)
     expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
-    expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
-    expect(computeIngestReviewMaxTokens(1_000_000)).toBe(16_384)
+    expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(384_000)
+    expect(computeIngestReviewMaxTokens(1_000_000)).toBe(384_000)
   })
 
   it("scales source budget from the configured context window instead of a fixed 50k cap", () => {

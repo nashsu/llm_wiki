@@ -540,7 +540,23 @@ describe("reasoning controls", () => {
     expect(body.reasoning).toBeUndefined()
   })
 
-  it("maps DeepSeek V4 reasoning off to thinking disabled for structured tasks", () => {
+  it("maps DeepSeek V4 pro reasoning off to thinking disabled for structured tasks", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "deepseek-v4-pro",
+      customEndpoint: "https://api.deepseek.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "disabled" })
+    expect(body.reasoning).toBeUndefined()
+  })
+
+  it("maps DeepSeek V4 flash reasoning off to thinking disabled", () => {
     const cfg = mkConfig({
       provider: "custom",
       model: "deepseek-v4-flash",
@@ -553,7 +569,22 @@ describe("reasoning controls", () => {
     ) as Record<string, unknown>
 
     expect(body.thinking).toEqual({ type: "disabled" })
-    expect(body.reasoning).toBeUndefined()
+  })
+
+  it("sends thinking=enabled for flash when reasoning mode is max", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "deepseek-v4-flash",
+      customEndpoint: "https://api.deepseek.com/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "max" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "enabled" })
+    expect(body.reasoning_effort).toBe("max")
   })
 
   it("maps DeepSeek V4 high reasoning to thinking enabled plus reasoning_effort", () => {
