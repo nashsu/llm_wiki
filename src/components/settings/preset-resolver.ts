@@ -4,6 +4,22 @@ import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import type { LlmPreset } from "./llm-presets"
 
 /**
+ * Build the deliberately unusable sentinel config persisted when every
+ * LLM preset is disabled.  A keyed provider with an empty key makes
+ * hasUsableLlm() return false even if the previously active provider
+ * was keyless, such as Ollama, Claude Code CLI, or Codex CLI.  The
+ * spread keeps saved details available for settings forms; re-enabling
+ * a preset reads its real values from providerConfigs[].
+ */
+export function disabledLlmConfig(fallback: LlmConfig): LlmConfig {
+  return {
+    ...fallback,
+    provider: "openai",
+    apiKey: "",
+  }
+}
+
+/**
  * Build a full LlmConfig from a preset template + the user's saved
  * override fields for that preset. Falls back to the preset defaults
  * (or the existing LlmConfig) when an override is missing.

@@ -4,10 +4,10 @@ import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useWikiStore, type LlmConfig, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
+import { useWikiStore, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
 import { LLM_PRESETS, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
-import { resolveConfig } from "../preset-resolver"
+import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
 import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
@@ -48,7 +48,7 @@ export function LlmProviderSection() {
       // the case where the previous provider was a keyless local CLI.
       // resolveConfig() on re-enable reads from providerConfigs[], not llmConfig,
       // so the cleared values here do not affect the user's saved settings.
-      const cleared: LlmConfig = { ...llmConfig, provider: "openai", apiKey: "" }
+      const cleared = disabledLlmConfig(llmConfig)
       setLlmConfig(cleared)
       await saveLlmConfig(cleared)
     }
