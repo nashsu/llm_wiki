@@ -482,6 +482,17 @@ export async function autoIngest(
   )
 }
 
+function throwIfIngestAborted(signal: AbortSignal | undefined, activityId?: string): void {
+  if (!signal?.aborted) return
+  if (activityId) {
+    useActivityStore.getState().updateItem(activityId, {
+      status: "error",
+      detail: "Ingest cancelled",
+    })
+  }
+  throw new Error("Ingest cancelled")
+}
+
 async function autoIngestImpl(
   projectPath: string,
   sourcePath: string,
@@ -527,7 +538,7 @@ async function autoIngestImpl(
       mineruSucceeded = true
       console.log(`[ingest:mineru] cached MinerU output for "${fileName}" (${markdown.length} chars)`)
     } catch (err) {
-      if (signal?.aborted) throw err
+      throwIfIngestAborted(signal, activityId)
       const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
       console.warn(`[ingest:mineru] MinerU parsing failed, falling back to pdfium: ${msg}`)
       activity.updateItem(activityId, {
@@ -886,6 +897,7 @@ async function autoIngestImpl(
   if (generationActivity?.status === "error") {
     throw new Error(generationActivity.detail || "Generation stream failed")
   }
+  throwIfIngestAborted(signal, activityId)
 
   let reviewSuggestionOutput = ""
   if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
@@ -927,14 +939,15 @@ async function autoIngestImpl(
         },
       )
     } catch (err) {
-      if (signal?.aborted) throw err
+      throwIfIngestAborted(signal, activityId)
       console.warn(`[ingest] Review suggestion generation failed for "${sourceIdentity}":`, err)
     }
-    if (signal?.aborted) throw new Error("Ingest cancelled")
+    throwIfIngestAborted(signal, activityId)
     if (reviewStageHadError) reviewSuggestionOutput = ""
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
+  throwIfIngestAborted(signal, activityId)
   activity.updateItem(activityId, { detail: "Writing files..." })
   await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
   const writeResult = await writeFileBlocks(
@@ -944,7 +957,9 @@ async function autoIngestImpl(
     sourceIdentity,
     sourceSummaryPath,
     signal,
+    activityId,
   )
+  throwIfIngestAborted(signal, activityId)
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
@@ -1003,7 +1018,7 @@ async function autoIngestImpl(
           max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
         },
       )
-      if (signal?.aborted) throw new Error("Ingest cancelled")
+      throwIfIngestAborted(signal, activityId)
       if (aggregateRepairOutput.trim()) {
         const filteredRepair = filterAggregateRepairOutput(
           aggregateRepairOutput,
@@ -1017,13 +1032,14 @@ async function autoIngestImpl(
           sourceIdentity,
           sourceSummaryPath,
           signal,
+          activityId,
         )
         writtenPaths.push(...repairResult.writtenPaths)
         writeWarnings.push(...repairResult.warnings)
         hardFailures.push(...repairResult.hardFailures)
       }
     } catch (err) {
-      if (signal?.aborted) throw err
+      throwIfIngestAborted(signal, activityId)
       writeWarnings.push(
         `Aggregate repair failed: ${err instanceof Error ? err.message : String(err)}`,
       )
@@ -1097,6 +1113,7 @@ async function autoIngestImpl(
   }
 
   // ── Step 4: Parse review items ────────────────────────────────
+  throwIfIngestAborted(signal, activityId)
   const reviewItems = [
     ...parseReviewBlocks(generation, sp),
     ...parseReviewBlocks(reviewSuggestionOutput, sp),
@@ -1518,6 +1535,7 @@ async function writeFileBlocks(
   sourceFileName: string,
   sourceSummaryPath?: string,
   signal?: AbortSignal,
+  activityId?: string,
 ): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
   const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
@@ -1537,6 +1555,7 @@ async function writeFileBlocks(
   const today = currentWikiDate()
 
   for (const { path: rawRelativePath, content: rawContent } of blocks) {
+    throwIfIngestAborted(signal, activityId)
     let relativePath = rawRelativePath
     if (sourceSummaryPath && relativePath.startsWith("wiki/sources/")) {
       relativePath = sourceSummaryPath
@@ -2465,7 +2484,7 @@ async function analyzeLongSourceInChunks(
 
   for (const chunk of chunks) {
     if (chunk.index <= completedThrough) continue
-    if (signal?.aborted) throw new Error("Ingest cancelled")
+    throwIfIngestAborted(signal, activityId)
     activity.updateItem(activityId, {
       detail: `Analyzing long source chunk ${chunk.index}/${chunk.total}...`,
     })
@@ -2498,7 +2517,7 @@ async function analyzeLongSourceInChunks(
       { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
     )
 
-    if (signal?.aborted) throw new Error("Ingest cancelled")
+    throwIfIngestAborted(signal, activityId)
     if (hadError) throw new Error("Chunk analysis stream failed")
 
     const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
