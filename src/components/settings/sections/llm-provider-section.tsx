@@ -288,11 +288,12 @@ function PresetRow({
               <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
               <textarea
                 value={headersText}
-                onChange={(e) => {
-                  const text = e.target.value
-                  setHeadersText(text)
-                  onChange({ customHeaders: parseHeadersText(text) })
-                }}
+onChange={(e) => {
+  const text = e.target.value
+  setHeadersText(text)
+  const parsed = parseHeadersText(text)
+  onChange({ customHeaders: Object.keys(parsed).length ? parsed : undefined })
+}}
                 placeholder={"X-Model-Provider-Id: siliconflow\nX-Custom-Header: value"}
                 rows={3}
                 className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
