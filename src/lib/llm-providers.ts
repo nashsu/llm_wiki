@@ -935,7 +935,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         const url = buildAnthropicUrl(customEndpoint)
         return {
           url,
-          headers: buildAnthropicHeaders(apiKey, url),
+          headers: { ...buildAnthropicHeaders(apiKey, url), ...(config.customHeaders ?? {}) },
           buildBody: (messages, overrides) => {
             assertMiniMaxImageSupport(url, model, messages)
             return {
@@ -975,6 +975,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           // workaround. Public custom gateways may reject unexpected
           // browser Origin headers, so leave them untouched.
           ...(!azure && isLocalOrPrivateHttpEndpoint(url) ? localLlmOriginHeader() : {}),
+          ...(config.customHeaders ?? {}),
         },
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides)
