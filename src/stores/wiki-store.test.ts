@@ -1,7 +1,72 @@
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 import { useWikiStore } from "./wiki-store"
 
 describe("wiki preview store actions", () => {
+  beforeEach(() => {
+    useWikiStore.getState().setFileTree([])
+    useWikiStore.setState({
+      activeView: "wiki",
+      selectedFile: null,
+      fileContent: "",
+      previewContentPath: null,
+      externalPreview: null,
+    })
+  })
+
+  it("keeps the project path index in sync when setting the file tree", () => {
+    useWikiStore.getState().setFileTree([
+      {
+        name: "wiki",
+        path: "/project/wiki",
+        is_dir: true,
+        children: [
+          {
+            name: "entities",
+            path: "/project/wiki/entities",
+            is_dir: true,
+            children: [
+              { name: "foo.md", path: "/project/wiki/entities/foo.md", is_dir: false },
+            ],
+          },
+        ],
+      },
+    ])
+
+    const index = useWikiStore.getState().projectPathIndex
+    expect(index.byPath.get("/project/wiki/entities/foo.md")?.name).toBe("foo.md")
+    expect(index.filesByName.get("foo.md")?.[0]?.path).toBe(
+      "/project/wiki/entities/foo.md",
+    )
+  })
+
+  it("clears the project path index when clearing the file tree", () => {
+    useWikiStore.getState().setFileTree([
+      { name: "foo.md", path: "/project/wiki/foo.md", is_dir: false },
+    ])
+    expect(useWikiStore.getState().projectPathIndex.byPath.size).toBe(1)
+
+    useWikiStore.getState().setFileTree([])
+
+    const index = useWikiStore.getState().projectPathIndex
+    expect(index.byPath.size).toBe(0)
+    expect(index.filesByName.size).toBe(0)
+  })
+
+  it("replaces the project path index when replacing the file tree", () => {
+    useWikiStore.getState().setFileTree([
+      { name: "old.md", path: "/project/wiki/old.md", is_dir: false },
+    ])
+
+    useWikiStore.getState().setFileTree([
+      { name: "new.md", path: "/project/wiki/new.md", is_dir: false },
+    ])
+
+    const index = useWikiStore.getState().projectPathIndex
+    expect(index.filesByName.get("old.md")).toBeUndefined()
+    expect(index.byPath.get("/project/wiki/old.md")).toBeUndefined()
+    expect(index.filesByName.get("new.md")?.[0]?.path).toBe("/project/wiki/new.md")
+  })
+
   it("opens a path in the wiki preview and clears external previews", () => {
     useWikiStore.setState({
       activeView: "chat",

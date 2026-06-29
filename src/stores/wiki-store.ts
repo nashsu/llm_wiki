@@ -1,6 +1,11 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
+import {
+  buildProjectPathIndexFromTree,
+  createEmptyProjectPathIndex,
+  type ProjectPathIndex,
+} from "@/lib/wiki-page-resolver"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -308,6 +313,13 @@ export interface ExternalPreview {
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
+  /**
+   * Lightweight lookup index derived from `fileTree`. Production code must
+   * update fileTree through `setFileTree` so this stays in sync; direct
+   * `useWikiStore.setState({ fileTree })` is only for tests that also reset or
+   * do not read path resolution.
+   */
+  projectPathIndex: ProjectPathIndex
   selectedFile: string | null
   fileContent: string
   previewContentPath: string | null
@@ -373,6 +385,7 @@ interface WikiState {
 export const useWikiStore = create<WikiState>((set) => ({
   project: null,
   fileTree: [],
+  projectPathIndex: createEmptyProjectPathIndex(),
   selectedFile: null,
   fileContent: "",
   previewContentPath: null,
@@ -396,7 +409,8 @@ export const useWikiStore = create<WikiState>((set) => ({
   dataVersion: 0,
 
   setProject: (project) => set({ project }),
-  setFileTree: (fileTree) => set({ fileTree }),
+  setFileTree: (fileTree) =>
+    set({ fileTree, projectPathIndex: buildProjectPathIndexFromTree(fileTree) }),
   setSelectedFile: (selectedFile) =>
     set({ selectedFile, previewContentPath: null, externalPreview: null }),
   setFileContent: (fileContent) => set({ fileContent }),
