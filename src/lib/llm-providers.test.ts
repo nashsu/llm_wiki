@@ -840,3 +840,93 @@ describe("reasoning controls", () => {
     expect(body.reasoning_effort).toBeUndefined()
   })
 })
+
+describe("maxTokensParam override (custom OpenAI-compatible path)", () => {
+  it("forces max_completion_tokens on a plain custom endpoint", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "some-router-model",
+      customEndpoint: "https://gateway.example.com/v1",
+      apiMode: "chat_completions",
+      maxTokensParam: "max_completion_tokens",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.max_completion_tokens).toBe(4096)
+    expect(body.max_tokens).toBeUndefined()
+  })
+
+  it("wins over an adapter rename (Xiaomi MiMo) and forces back to max_tokens", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "mimo-v2.5-pro",
+      customEndpoint: "https://api.xiaomimimo.com/v1",
+      apiMode: "chat_completions",
+      maxTokensParam: "max_tokens",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 2048 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBe(2048)
+    expect(body.max_completion_tokens).toBeUndefined()
+  })
+
+  it("is byte-identical to current behavior when omitted or auto", () => {
+    const base = {
+      provider: "custom" as const,
+      model: "some-router-model",
+      customEndpoint: "https://gateway.example.com/v1",
+      apiMode: "chat_completions" as const,
+    }
+    const omitted = getProviderConfig(mkConfig(base)).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 1234 },
+    ) as Record<string, unknown>
+    const auto = getProviderConfig(mkConfig({ ...base, maxTokensParam: "auto" })).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 1234 },
+    ) as Record<string, unknown>
+
+    expect(auto).toEqual(omitted)
+    expect(omitted.max_tokens).toBe(1234)
+    expect(omitted.max_completion_tokens).toBeUndefined()
+  })
+
+  it("is a no-op when the caller passes no token budget", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "some-router-model",
+      customEndpoint: "https://gateway.example.com/v1",
+      apiMode: "chat_completions",
+      maxTokensParam: "max_completion_tokens",
+    })
+    const body = getProviderConfig(cfg).buildBody([
+      { role: "user", content: "hi" },
+    ]) as Record<string, unknown>
+
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBeUndefined()
+  })
+
+  it("still applies on the DeepSeek early-return path", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "deepseek-v4-flash",
+      customEndpoint: "https://api.deepseek.com/v1",
+      apiMode: "chat_completions",
+      maxTokensParam: "max_completion_tokens",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 1024 },
+    ) as Record<string, unknown>
+
+    expect(body.max_completion_tokens).toBe(1024)
+    expect(body.max_tokens).toBeUndefined()
+  })
+})

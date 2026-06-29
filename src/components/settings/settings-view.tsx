@@ -127,6 +127,7 @@ function initialDraft(
     azureModelFamily: llm.azureModelFamily ?? "auto",
     maxContextSize: llm.maxContextSize ?? 204800,
     apiMode: llm.apiMode,
+    maxTokensParam: llm.maxTokensParam ?? "auto",
     reasoning: llm.reasoning,
     localCliIsolation: llm.localCliIsolation === true,
     embeddingEnabled: embed.enabled,
@@ -347,6 +348,7 @@ export function SettingsView() {
       azureModelFamily: draft.provider === "azure" ? draft.azureModelFamily : undefined,
       maxContextSize: draft.maxContextSize,
       apiMode: draft.provider === "custom" ? draft.apiMode : undefined,
+      maxTokensParam: draft.provider === "custom" ? draft.maxTokensParam : undefined,
       reasoning: draft.reasoning,
       localCliIsolation: draft.localCliIsolation,
     }

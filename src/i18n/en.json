@@ -321,6 +321,11 @@
         "azureModelFamilyAuto": "Auto-detect from deployment name",
         "azureModelFamilyGpt5": "GPT-5 / o-series strict parameters",
         "azureModelFamilyHint": "Azure deployment names are arbitrary. Choose GPT-5 / o-series if this deployment rejects max_tokens or non-default temperature.",
+        "maxTokensParam": "Max-tokens field",
+        "maxTokensParamAuto": "Auto (recommended)",
+        "maxTokensParamMaxTokens": "Force max_tokens",
+        "maxTokensParamMaxCompletionTokens": "Force max_completion_tokens",
+        "maxTokensParamHint": "Which wire field carries the token budget on the OpenAI-compatible path. Auto lets LLM Wiki pick per endpoint; a forced choice can be rejected by strict endpoints (e.g. a custom Azure GPT-5 deployment rejects max_tokens), so leave on Auto unless your endpoint requires a specific field.",
         "reasoning": {
           "title": "Reasoning / thinking",
           "auto": "Auto",

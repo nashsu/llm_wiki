@@ -50,6 +50,7 @@ export function resolveConfig(
       customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
       maxContextSize,
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
+      maxTokensParam: ov.maxTokensParam ?? preset.maxTokensParam ?? "auto",
       reasoning,
       localCliIsolation: false,
     }

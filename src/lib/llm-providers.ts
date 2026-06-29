@@ -383,6 +383,25 @@ function adaptXiaomiMimoBody(
   }
 }
 
+/**
+ * Force the token-budget wire field name when the user picked one
+ * explicitly (`maxTokensParam` !== "auto"). Runs as the final body
+ * transform so it wins over the strict-OpenAI/Azure/Kimi/MiMo adapters.
+ * No-op when the choice is "auto" or when no token budget is present.
+ */
+function applyMaxTokensParamOverride(config: LlmConfig, body: Record<string, unknown>): void {
+  const choice = config.maxTokensParam ?? "auto"
+  if (choice === "auto") return
+  const value =
+    typeof body.max_tokens === "number" ? body.max_tokens
+    : typeof body.max_completion_tokens === "number" ? body.max_completion_tokens
+    : undefined
+  if (value === undefined) return
+  delete body.max_tokens
+  delete body.max_completion_tokens
+  body[choice] = value
+}
+
 function buildOpenAiCompatibleBody(
   config: LlmConfig,
   messages: ChatMessage[],
@@ -410,10 +429,7 @@ function buildOpenAiCompatibleBody(
         }
       }
     }
-    return body
-  }
-
-  if (config.provider === "ollama") {
+  } else if (config.provider === "ollama") {
     // Ollama's OpenAI-compatible /v1/chat/completions maps reasoning
     // control onto `reasoning_effort` ("high"|"medium"|"low"|"none";
     // "none" disables thinking). This is the only lever that stops a
@@ -438,19 +454,23 @@ function buildOpenAiCompatibleBody(
     } else if (reasoning.mode === "max") {
       body.reasoning_effort = "high"
     }
-    return body
-  }
+  } else {
+    if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
+      body.chat_template_kwargs = { enable_thinking: false }
+    }
 
-  if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
-    body.chat_template_kwargs = { enable_thinking: false }
-  }
-
-  if (config.provider === "openai" && reasoning.mode !== "auto" && reasoning.mode !== "off") {
-    if (reasoning.mode === "low" || reasoning.mode === "medium" || reasoning.mode === "high") {
-      body.reasoning_effort = reasoning.mode
+    if (config.provider === "openai" && reasoning.mode !== "auto" && reasoning.mode !== "off") {
+      if (reasoning.mode === "low" || reasoning.mode === "medium" || reasoning.mode === "high") {
+        body.reasoning_effort = reasoning.mode
+      }
     }
   }
 
+  // Last transform so the user's explicit choice wins over the
+  // strict-OpenAI, Azure, Kimi and MiMo adapters above. Single exit
+  // point guarantees it also covers the DeepSeek path (itself a custom
+  // OpenAI-compatible endpoint), which previously returned early.
+  applyMaxTokensParamOverride(config, body)
   return body
 }
 

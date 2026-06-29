@@ -10,6 +10,15 @@ import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
  */
 export type CustomApiMode = "chat_completions" | "anthropic_messages"
 export type AzureModelFamily = "auto" | "gpt5"
+/**
+ * Which wire field carries the token budget on the OpenAI-compatible
+ * custom path. `auto` keeps the existing per-endpoint heuristic
+ * (the adapters in src/lib/llm-providers.ts decide `max_tokens` vs
+ * `max_completion_tokens`). `max_tokens` / `max_completion_tokens`
+ * force that key regardless of the heuristic. `undefined` resolves to
+ * `auto` for backward compatibility with older saved configs.
+ */
+export type MaxTokensParam = "auto" | "max_tokens" | "max_completion_tokens"
 export type ReasoningMode = "auto" | "off" | "low" | "medium" | "high" | "max" | "custom"
 
 export interface ReasoningConfig {
@@ -27,6 +36,11 @@ interface LlmConfig {
   azureModelFamily?: AzureModelFamily
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
+  /**
+   * Custom OpenAI-compatible path only. Forces the token-budget wire
+   * field name. Defaults to `auto` (existing heuristic) when missing.
+   */
+  maxTokensParam?: MaxTokensParam
   reasoning?: ReasoningConfig
   /**
    * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
@@ -289,6 +303,7 @@ export interface ProviderOverride {
   azureApiVersion?: string
   azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
+  maxTokensParam?: MaxTokensParam
   maxContextSize?: number
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean
