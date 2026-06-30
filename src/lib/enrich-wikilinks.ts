@@ -3,6 +3,10 @@ import { streamChat } from "./llm-client"
 import { useWikiStore, type LlmConfig } from "@/stores/wiki-store"
 import { buildLanguageDirective } from "./output-language"
 import { normalizePath } from "@/lib/path-utils"
+import { parseFrontmatter } from "./frontmatter"
+import type { LinkEntry } from "@/lib/auto-link-types"
+
+export type { LinkEntry } from "@/lib/auto-link-types"
 
 /**
  * Lightweight post-save enrichment: ask LLM to add [[wikilinks]] to a saved wiki page.
@@ -22,24 +26,35 @@ import { normalizePath } from "@/lib/path-utils"
  *   - catastrophic LLM output (rewrites, translations, commentary) can't
  *     corrupt the user's page
  */
-export async function enrichWithWikilinks(
+export async function suggestWikilinks(
   projectPath: string,
   filePath: string,
   llmConfig: LlmConfig,
-): Promise<void> {
-  const pp = normalizePath(projectPath)
+): Promise<LinkEntry[]> {
+  const pp = normalizePath(projectPath).replace(/\/+$/, "")
   const fp = normalizePath(filePath)
   const [content, index] = await Promise.all([
     readFile(fp),
     readFile(`${pp}/wiki/index.md`).catch(() => ""),
   ])
 
-  if (!content || !index) return
+  if (!content || !index) return []
 
   // Ask the LLM to return a JSON list of {term, target} substitutions.
   // Much easier task than rewriting the whole page, and the model can't
   // corrupt anything it doesn't put in the list.
   let raw = ""
+  let streamError: Error | null = null
+  let terminalSettled = false
+  let resolveTerminal!: () => void
+  const terminal = new Promise<void>((resolve) => {
+    resolveTerminal = resolve
+  })
+  const settleTerminal = () => {
+    if (terminalSettled) return
+    terminalSettled = true
+    resolveTerminal()
+  }
 
   await streamChat(
     llmConfig,
@@ -82,30 +97,47 @@ export async function enrichWithWikilinks(
     ],
     {
       onToken: (token) => { raw += token },
-      onDone: () => {},
-      onError: () => {},
+      onDone: settleTerminal,
+      onError: (error) => {
+        streamError ??= error
+        settleTerminal()
+      },
     },
   )
 
-  // Parse the LLM response. Be tolerant of fences / prose wrappers.
-  const links = parseLinkResponse(raw)
-  if (links.length === 0) return // nothing to do
+  if (!terminalSettled) await terminal
+  if (streamError) throw streamError
+  return parseLinkResponse(raw)
+}
+
+export async function applyWikilinks(
+  _projectPath: string,
+  filePath: string,
+  selectedLinks: LinkEntry[],
+): Promise<void> {
+  const fp = normalizePath(filePath)
+  const content = await readFile(fp)
 
   // Apply substitutions to the ORIGINAL content. This guarantees the only
   // change is inserted [[...]] brackets.
-  const enriched = applyLinks(content, links)
+  const enriched = applyLinks(content, selectedLinks)
   if (enriched === content) return
 
   await writeFile(fp, enriched)
   useWikiStore.getState().bumpDataVersion()
 }
 
-interface LinkEntry {
-  term: string
-  target: string
+export async function enrichWithWikilinks(
+  projectPath: string,
+  filePath: string,
+  llmConfig: LlmConfig,
+): Promise<void> {
+  const links = await suggestWikilinks(projectPath, filePath, llmConfig)
+  if (links.length === 0) return
+  await applyWikilinks(projectPath, filePath, links)
 }
 
-function parseLinkResponse(raw: string): LinkEntry[] {
+export function parseLinkResponse(raw: string): LinkEntry[] {
   if (!raw.trim()) return []
   // Extract the first balanced {...}
   let text = raw.trim()
@@ -163,16 +195,21 @@ function parseLinkResponse(raw: string): LinkEntry[] {
  * already match case-insensitively. Skip terms that don't appear as a
  * literal substring. Skip terms already inside an existing wikilink.
  */
-function applyLinks(content: string, links: LinkEntry[]): string {
-  // Split off YAML frontmatter so we don't touch it
-  const fmEnd = content.startsWith("---\n") ? content.indexOf("\n---\n", 3) : -1
-  const frontmatter = fmEnd > 0 ? content.slice(0, fmEnd + 5) : ""
-  let body = fmEnd > 0 ? content.slice(fmEnd + 5) : content
+export function applyLinks(content: string, links: LinkEntry[]): string {
+  const { rawBlock } = parseFrontmatter(content)
+  const rawBlockStart = rawBlock ? content.indexOf(rawBlock) : -1
+  const bodyStart = rawBlockStart >= 0 ? rawBlockStart + rawBlock.length : 0
+  const protectedPrefix = content.slice(0, bodyStart)
+  let body = content.slice(bodyStart)
 
   // Track what we've already linked so we don't double-link
   const linkedTargets = new Set<string>()
 
-  for (const { term, target } of links) {
+  const longestTermsFirst = [...links].sort(
+    (left, right) => right.term.length - left.term.length,
+  )
+
+  for (const { term, target } of longestTermsFirst) {
     if (linkedTargets.has(target.toLowerCase())) continue
     if (!term || !target) continue
 
@@ -188,23 +225,34 @@ function applyLinks(content: string, links: LinkEntry[]): string {
     linkedTargets.add(target.toLowerCase())
   }
 
-  return frontmatter + body
+  return protectedPrefix + body
 }
 
 /** Find the first occurrence of `term` in text that isn't already wrapped in [[...]]. */
 function findUnlinkedOccurrence(text: string, term: string): number {
+  const wikilinkRanges = findWikilinkRanges(text)
   let searchFrom = 0
   while (searchFrom < text.length) {
     const idx = text.indexOf(term, searchFrom)
     if (idx === -1) return -1
-    // Check a small window before for [[ (existing wikilink open)
-    const windowStart = Math.max(0, idx - 2)
-    const window = text.slice(windowStart, idx)
-    if (window.endsWith("[[")) {
-      searchFrom = idx + term.length
+    const termEnd = idx + term.length
+    const overlapsWikilink = wikilinkRanges.some(
+      ([start, end]) => idx < end && termEnd > start,
+    )
+    if (overlapsWikilink) {
+      searchFrom = idx + 1
       continue
     }
     return idx
   }
   return -1
+}
+
+function findWikilinkRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  const wikilinkPattern = /\[\[[\s\S]*?\]\]/g
+  for (const match of text.matchAll(wikilinkPattern)) {
+    ranges.push([match.index, match.index + match[0].length])
+  }
+  return ranges
 }
