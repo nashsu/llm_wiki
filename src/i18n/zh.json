@@ -318,6 +318,8 @@
         "localCliIsolationHint": "仅用于 Claude Code 和 Codex CLI。开启后，LLM Wiki 会让 CLI 尽量忽略用户级 rules / config / MCP / tools。这是配置隔离，不是进程沙箱：CLI 仍会使用你的本机登录凭据和网络能力。若你有意依赖本机 CLI 配置，请保持关闭。",
         "localCliIsolationOn": "隔离已开启：在 CLI 支持的范围内禁用用户规则、MCP/tools 和持久会话。本机凭据和网络访问仍由 CLI 自身控制。",
         "localCliIsolationOff": "隔离已关闭：该 Provider 可以使用你平时的本地 CLI 配置。",
+        "claudeConfigDir": "Claude 配置目录",
+        "claudeConfigDirHint": "启动 CLI 时将作为 CLAUDE_CONFIG_DIR 注入。适用于配置文件不在默认 ~/.claude 目录的情况（如 ~/.claude-personal）。留空则使用 CLI 默认路径。",
         "codexCliTimeout": "Codex CLI 超时时间",
         "codexCliTimeoutUnit": "分钟",
         "codexCliTimeoutHint": "单次 Codex CLI 请求的总超时时间。长 PDF 摄取或较慢的本地 / 网络会话可适当调大。",
