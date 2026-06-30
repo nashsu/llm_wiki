@@ -1,4 +1,4 @@
-import type { AzureModelFamily } from "@/stores/wiki-store"
+import type { AzureModelFamily, MaxTokensParam } from "@/stores/wiki-store"
 
 /**
  * Curated LLM provider presets.
@@ -55,6 +55,11 @@ export interface LlmPreset {
   suggestedModels?: string[]
   /** Custom providers only: which wire protocol to speak. */
   apiMode?: CustomApiMode
+  /**
+   * Custom OpenAI-compatible providers only: force the token-budget wire
+   * field name (`max_tokens` / `max_completion_tokens`). Omitted = `auto`.
+   */
+  maxTokensParam?: MaxTokensParam
   /** Suggested context window; user can override. */
   suggestedContextSize?: number
 }
