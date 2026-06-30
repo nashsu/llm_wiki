@@ -13,6 +13,7 @@ import {
   legacyVectorRowCount,
 } from "@/lib/embedding"
 import { testEmbeddingConnection, testEmbeddingFunction, type ProviderTestResult } from "@/lib/connection-tests"
+import { headersToText, parseHeadersText } from "@/lib/http-headers"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
 interface Props {
@@ -39,14 +40,6 @@ function parsePositiveInteger(value: string): number | undefined {
   return Math.floor(n)
 }
 
-const RESERVED_HEADER_NAMES = new Set([
-  "authorization",
-  "content-type",
-  "host",
-  "content-length",
-  "x-goog-api-key",
-])
-const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 const EMBEDDING_MODEL_SUGGESTIONS = [
   "text-embedding-3-small",
   "text-embedding-3-large",
@@ -60,26 +53,6 @@ const EMBEDDING_MODEL_SUGGESTIONS = [
   "mxbai-embed-large",
 ]
 
-function headersToText(headers: Record<string, string>): string {
-  return Object.entries(headers)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join("\n")
-}
-
-function parseHeadersText(text: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim()
-    if (!line || line.startsWith("#")) continue
-    const idx = line.indexOf(":")
-    if (idx <= 0) continue
-    const name = line.slice(0, idx).trim()
-    const value = line.slice(idx + 1).trim()
-    if (!name || !value || !HTTP_HEADER_NAME_RE.test(name) || RESERVED_HEADER_NAMES.has(name.toLowerCase())) continue
-    out[name] = value
-  }
-  return out
-}
 
 export function EmbeddingSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()

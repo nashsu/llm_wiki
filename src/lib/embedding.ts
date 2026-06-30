@@ -114,6 +114,7 @@ export async function fetchEmbedding(
 
   const isGoogleNative = isGoogleEmbeddingConfig(cfg)
   const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg)
+  const isTei = isTeiEmbeddingConfig(cfg)
   const endpoint = isGoogleNative
     ? googleEmbeddingEndpoint(cfg)
     : volcengineEmbeddingEndpoint(cfg)
@@ -151,17 +152,31 @@ export async function fetchEmbedding(
             ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
             : isDoubaoMultimodal
               ? doubaoMultimodalEmbeddingBody(cfg.model, current)
-              : { model: cfg.model, input: current },
+              : isTei
+                ? { inputs: current }
+                : { model: cfg.model, input: current },
         ),
       })
 
       if (resp.ok) {
         const data = await resp.json()
-        const embedding = isGoogleNative
-          ? data?.embedding?.values ?? null
-          : isDoubaoMultimodal
-            ? data?.data?.embedding ?? null
-            : data?.data?.[0]?.embedding ?? null
+        let embedding: unknown = null
+        if (isGoogleNative) {
+          embedding = data?.embedding?.values ?? null
+        } else if (isDoubaoMultimodal) {
+          embedding = data?.data?.embedding ?? null
+        } else if (isTei) {
+          if (Array.isArray(data)) {
+            if (Array.isArray(data[0])) {
+              embedding = data[0]
+            } else if (typeof data[0] === "number") {
+              embedding = data
+            }
+          }
+        } else {
+          embedding = data?.data?.[0]?.embedding ?? null
+        }
+        
         if (isNonEmptyNumberArray(embedding)) {
           lastEmbeddingError = null
           return embedding
@@ -170,7 +185,9 @@ export async function fetchEmbedding(
           ? "embedding.values"
           : isDoubaoMultimodal
             ? "data.embedding"
-            : "data[0].embedding"
+            : isTei
+              ? "[ [...] ]"
+              : "data[0].embedding"
         lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
         console.warn(`[Embedding] ${lastEmbeddingError}`)
         return null
@@ -229,6 +246,10 @@ function isNonEmptyNumberArray(value: unknown): value is number[] {
   return Array.isArray(value)
     && value.length > 0
     && value.every((item) => typeof item === "number" && Number.isFinite(item))
+}
+
+function isTeiEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+  return cfg.endpoint.replace(/\/+$/, "").toLowerCase().endsWith("/embed")
 }
 
 function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {

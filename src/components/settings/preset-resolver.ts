@@ -40,6 +40,7 @@ export function resolveConfig(
     typeof ov.codexCliTimeoutMinutes === "number" && Number.isFinite(ov.codexCliTimeoutMinutes)
       ? Math.max(1, Math.min(240, Math.floor(ov.codexCliTimeoutMinutes)))
       : undefined
+  const customHeaders = ov.customHeaders ?? preset.customHeaders
 
   if (preset.provider === "custom") {
     return {
@@ -50,6 +51,7 @@ export function resolveConfig(
       customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
       maxContextSize,
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
+      customHeaders,
       reasoning,
       localCliIsolation: false,
     }
