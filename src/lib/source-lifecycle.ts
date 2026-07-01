@@ -29,6 +29,7 @@ import { removePageEmbedding } from "@/lib/embedding"
 import {
   buildDeletedKeys,
   cleanIndexListing,
+  extractFrontmatterTitle,
   normalizeWikiRefKey,
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
@@ -413,9 +414,19 @@ export async function cleanupDeletedWikiPages(
   relativePaths: string[],
 ): Promise<void> {
   const pp = normalizePath(projectPath)
-  const deletedInfos = relativePaths
-    .map((path) => ({ slug: getFileStem(path), title: "" }))
-    .filter((info) => info.slug.length > 0 && !info.slug.startsWith("."))
+    const deletedInfos = (await Promise.all(
+    relativePaths.map(async (path) => {
+      const slug = getFileStem(path)
+      let title = ""
+      try {
+        const content = await readFile(`${pp}/${path}`)
+        title = extractFrontmatterTitle(content)
+      } catch {
+        // page already deleted or unreadable — slug-only match is best-effort
+      }
+      return { slug, title }
+    }),
+  )).filter((info) => info.slug.length > 0 && !info.slug.startsWith("."))
 
   if (deletedInfos.length === 0) return
 
