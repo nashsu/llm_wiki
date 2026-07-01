@@ -7,7 +7,7 @@
  * incremental append on top of this file.
  */
 
-import { streamChat } from "@/lib/llm-client"
+import { streamChat, isReasoningOnlyResponseError } from "@/lib/llm-client"
 import { currentWikiDate } from "@/lib/ingest"
 import type { LlmConfig } from "@/stores/wiki-store"
 
@@ -229,6 +229,7 @@ export async function runOverviewPrematchParallel(
             { temperature: 0.1, reasoning: { mode: "high" } },
           )
         } catch (err) {
+          if (isReasoningOnlyResponseError(err)) return []
           hadError = true
           console.warn(`[overview-prematch] chunk threw: ${err instanceof Error ? err.message : String(err)}`)
         }

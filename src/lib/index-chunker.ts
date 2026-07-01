@@ -4,7 +4,7 @@
  * Entries are numbered sequentially with [N] prefix across all chunks.
  */
 
-import { streamChat } from "@/lib/llm-client"
+import { streamChat, isReasoningOnlyResponseError } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 interface IndexEntry {
@@ -305,6 +305,7 @@ export async function runPrematchParallel(
             { temperature: 0.1, reasoning: { mode: "high" } },
           )
         } catch (err) {
+          if (isReasoningOnlyResponseError(err)) return []
           hadError = true
           console.warn(`[prematch] chunk threw: ${err instanceof Error ? err.message : String(err)}`)
         }
