@@ -38,9 +38,24 @@ import {
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
 import type { MultimodalConfig } from "@/stores/wiki-store"
-import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
+import { GENERATION_WIKI_TYPES, inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import {
+  chunkIndexByEntries,
+  assembleReducedIndex,
+  runPrematchParallel,
+  parseIndexBlocks,
+  appendIndexEntries,
+} from "./index-chunker"
+import {
+  chunkOverviewBySections,
+  runOverviewPrematchParallel,
+  assembleReducedOverview,
+  parseOverviewBlocks,
+  appendOverviewContent,
+  createInitialOverview,
+} from "@/lib/overview-blocks"
 
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
@@ -52,9 +67,10 @@ const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
 const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
+const INGEST_GENERATION_TOKENS_1M = 384_000
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
-const AGGREGATE_WIKI_PATHS = ["wiki/index.md", "wiki/overview.md", "wiki/log.md"] as const
+const AGGREGATE_WIKI_PATHS = ["wiki/log.md"] as const
 
 function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): string {
   if (images.length === 0) return content
@@ -512,6 +528,14 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
       i++
     }
 
+    // index.md and overview.md are updated exclusively via INDEX/OVERVIEW
+    // blocks (append mode).
+    // If the model produces a FILE block for either (despite explicit prompt
+    // instructions not to), silently skip — no warning, no truncation error.
+    if (path === "wiki/index.md" || path === "wiki/overview.md") {
+      continue
+    }
+
     if (!closed) {
       // H2 fix (partial): we can't fabricate content the LLM never
       // sent, but we surface the drop instead of silently hiding it.
@@ -922,7 +946,70 @@ async function autoIngestImpl(
     }
   }
 
-  const stableContextLength = schema.length + purpose.length + index.length + overview.length
+  // ── Step 0.7: Pre-match index chunks ─────────────────────
+  // Split index into chunks, run parallel LLM calls to find
+  // entries relevant to this source, assemble a reduced index.
+  // Runs BEFORE budget calculation so stableContextLength reflects
+  // the actual (reduced) context size, not the full index length.
+  const CHUNK_SIZE = 500
+  let reducedIndex = index
+  if (index.trim()) {
+    const chunks = chunkIndexByEntries(index, CHUNK_SIZE)
+    if (chunks.length > 0) {
+      activity.updateItem(activityId, {
+        detail: `Step 0.7: Pre-matching index (${chunks.length} chunks)...`,
+      })
+      const matchedNumbers = await runPrematchParallel(
+        chunks,
+        enrichedSourceContent,
+        llmConfig,
+        signal,
+      )
+      reducedIndex = assembleReducedIndex(index, matchedNumbers)
+      if (!reducedIndex) {
+        reducedIndex = "(no matching wiki entries found)"
+      }
+      // If prematch returned nothing meaningful, keep the full index
+      // as fallback — an empty reduced index would make the model
+      // skip all page generation.
+      if (reducedIndex.length < 10) {
+        reducedIndex = index
+      }
+      console.log(
+        `[ingest:prematch] index reduced from ${index.length} to ${reducedIndex.length} chars ` +
+        `(${matchedNumbers.length} matches from ${chunks.length} chunks)`,
+      )
+    }
+  }
+
+  // ── Step 0.8: Pre-match overview sections ─────────────────────
+  let reducedOverview = overview
+  if (overview.trim()) {
+    const overviewChunks = chunkOverviewBySections(overview, 16000)
+    if (overviewChunks.length > 0) {
+      activity.updateItem(activityId, {
+        detail: `Step 0.8: Pre-matching overview (${overviewChunks.length} chunks)...`,
+      })
+      const matchedParagraphs = await runOverviewPrematchParallel(
+        overviewChunks,
+        enrichedSourceContent,
+        llmConfig,
+        signal,
+      )
+      reducedOverview = assembleReducedOverview(overview, matchedParagraphs)
+      if (!reducedOverview) {
+        reducedOverview = "(no matching overview paragraphs found)"
+      }
+      console.log(
+        `[ingest:overview-prematch] overview reduced from ${overview.length} to ${reducedOverview.length} chars ` +
+        `(${matchedParagraphs.length} paragraphs matched from ${overviewChunks.length} chunks)`,
+      )
+    }
+  }
+
+  // Compute budget with REDUCED sizes (post-prematch) so sourceBudget
+  // is not artificially constrained by the full index/overview length.
+  const stableContextLength = schema.length + purpose.length + reducedIndex.length + reducedOverview.length
   const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
   let sourceContext = enrichedSourceContent
   let precomputedAnalysis = ""
@@ -934,7 +1021,7 @@ async function autoIngestImpl(
       llmConfig,
       purpose,
       schema,
-      index,
+      reducedIndex,
       sourceIdentity,
       sourceSummarySlug,
       folderContext,
@@ -965,7 +1052,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext, schema) },
+        { role: "system", content: buildAnalysisPrompt(purpose, reducedIndex, sourceContext, schema) },
         { role: "user", content: `Analyze this source document:\n\n**File:** ${sourceIdentity}${folderContext ? `\n**Folder context:** ${folderContext}` : ""}\n\n---\n\n${sourceContext}` },
       ],
       {
@@ -976,7 +1063,7 @@ async function autoIngestImpl(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize) },
     )
   }
 
@@ -997,7 +1084,7 @@ async function autoIngestImpl(
   await streamChat(
     llmConfig,
     [
-      { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
+      { role: "system", content: buildGenerationPrompt(schema, purpose, reducedIndex, sourceIdentity, reducedOverview, sourceContext, sourceSummaryPath) },
       {
         role: "user",
         content: [
@@ -1055,7 +1142,7 @@ async function autoIngestImpl(
             role: "system",
             content: buildReviewSuggestionPrompt(
               purpose,
-              index,
+              reducedIndex,
               sourceIdentity,
               analysis,
               sourceContext,
@@ -1065,7 +1152,7 @@ async function autoIngestImpl(
           },
           {
             role: "user",
-            content: "Emit only high-value REVIEW blocks for follow-up research or unresolved knowledge gaps. Output nothing if there are none.",
+            content: "Emit only high-value REVIEW blocks for follow-up research or unresolved knowledge gaps. If there are none, output exactly: none",
           },
         ],
         {
@@ -1110,6 +1197,79 @@ async function autoIngestImpl(
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
 
+  // ── Step 3.5: Process INDEX blocks ──────────────────────
+  // Parse ---INDEX: blocks from generation output and append
+  // entries to the existing index.md programmatically.
+  const indexBlocks = parseIndexBlocks(generation)
+  if (indexBlocks.length > 0) {
+    try {
+      const indexAbs = `${pp}/wiki/index.md`
+      const existingIndex = await tryReadFile(indexAbs)
+      const updatedIndex = appendIndexEntries(existingIndex, indexBlocks)
+      await writeFile(indexAbs, updatedIndex)
+      console.log(
+        `[ingest:index] appended ${indexBlocks.reduce((s, b) => s + b.entries.length, 0)} entries ` +
+        `across ${indexBlocks.length} categories to index.md`,
+      )
+      if (!writtenPaths.includes("wiki/index.md")) {
+        writtenPaths.push("wiki/index.md")
+      }
+    } catch (err) {
+      writeWarnings.push(
+        `Failed to append INDEX blocks: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  // ── Step 3.6: Process OVERVIEW blocks ──────────────────────
+  const overviewBlocks = parseOverviewBlocks(generation)
+  if (overviewBlocks.length > 0) {
+    try {
+      const overviewAbs = `${pp}/wiki/overview.md`
+      const existingOverview = await tryReadFile(overviewAbs)
+      const updatedOverview = existingOverview
+        ? appendOverviewContent(existingOverview, overviewBlocks)
+        : createInitialOverview(overviewBlocks)
+      await writeFile(overviewAbs, updatedOverview)
+      console.log(
+        `[ingest:overview] appended ${overviewBlocks.length} section(s) to overview.md`,
+      )
+      if (!writtenPaths.includes("wiki/overview.md")) {
+        writtenPaths.push("wiki/overview.md")
+      }
+    } catch (err) {
+      writeWarnings.push(
+        `Failed to append OVERVIEW blocks: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  // ── Step 3.6: Fallback INDEX construction ───────────────
+  // If no INDEX blocks were emitted, construct them from the
+  // written FILE blocks as a fallback. This replaces the old
+  // aggregate-repair-for-index.md path.
+  if (indexBlocks.length === 0 && writtenPaths.length > 1) {
+    try {
+      const fallbackBlocks = buildFallbackIndexBlocks(generation)
+      if (fallbackBlocks.length > 0) {
+        const indexAbs = `${pp}/wiki/index.md`
+        const existingIndex = await tryReadFile(indexAbs)
+        const updatedIndex = appendIndexEntries(existingIndex, fallbackBlocks)
+        await writeFile(indexAbs, updatedIndex)
+        writeWarnings.push("No INDEX blocks in generation — constructed fallback entries from FILE blocks")
+        if (!writtenPaths.includes("wiki/index.md")) {
+          writtenPaths.push("wiki/index.md")
+        }
+        console.log(
+          `[ingest:index-fallback] constructed ${fallbackBlocks.reduce((s, b) => s + b.entries.length, 0)} entries ` +
+          `across ${fallbackBlocks.length} categories from FILE blocks`,
+        )
+      }
+    } catch (err) {
+      writeWarnings.push(`Fallback index construction failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const aggregateRepairPaths = aggregatePathsNeedingRepair(writtenPaths, writeWarnings)
   const repairableAggregatePaths = aggregateRepairPaths.filter((path) =>
     isAggregateRepairSafe(path, index, overview, llmConfig.maxContextSize),
@@ -1136,8 +1296,8 @@ async function autoIngestImpl(
             content: buildAggregateRepairPrompt(
               repairableAggregatePaths,
               purpose,
-              index,
-              overview,
+              "",
+              "",
               sourceIdentity,
               analysis,
               sourceContext,
@@ -1260,11 +1420,12 @@ async function autoIngestImpl(
     }
   }
 
-  // ── Step 4: Parse review items ────────────────────────────────
+   // ── Step 4: Parse review items ────────────────────────────────
   throwIfIngestAborted(signal, activityId)
   const reviewItems = [
     ...parseReviewBlocks(generation, sp),
     ...parseReviewBlocks(reviewSuggestionOutput, sp),
+    ...detectCodeReviewItems(generation, index, sp),
   ]
   if (reviewItems.length > 0) {
     useReviewStore.getState().addItems(reviewItems)
@@ -1373,6 +1534,35 @@ function isListingPath(relativePath: string): boolean {
     relativePath === "wiki/overview.md" ||
     relativePath.endsWith("/overview.md")
   )
+}
+
+/**
+ * When generation output has no ---INDEX: blocks, construct fallback
+ * entries from the FILE blocks that were written. Extracts slug from
+ * path and title from frontmatter.
+ */
+function buildFallbackIndexBlocks(
+  generation: string,
+): import("./index-chunker").ParsedIndexBlock[] {
+  const { blocks } = parseFileBlocks(generation)
+  const byCategory = new Map<string, string[]>()
+
+  for (const block of blocks) {
+    // Skip aggregate files and source summaries
+    if (block.path === "wiki/index.md" || block.path === "wiki/log.md" || block.path === "wiki/overview.md") continue
+    if (block.path.startsWith("wiki/sources/")) continue
+
+    const type = inferWikiTypeFromPath(block.path) ?? "entity"
+    const category = wikiTypeLabel(type) + "s"
+    const slug = block.path.replace(/\.md$/, "").split("/").pop() ?? ""
+    const title = extractGeneratedPageTitle(block.content) ?? slug
+
+    const entry = title === slug ? slug : `${slug} — ${title}`
+    if (!byCategory.has(category)) byCategory.set(category, [])
+    byCategory.get(category)!.push(entry)
+  }
+
+  return [...byCategory.entries()].map(([category, entries]) => ({ category, entries }))
 }
 
 const CJK_OUTPUT_LANGUAGES = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
@@ -1839,6 +2029,66 @@ async function writeFileBlocks(
 
 const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
 
+/**
+ * Scan generation output for wikilinks and detect missing pages / duplicates
+ * purely from the wiki index — no LLM call needed.
+ */
+function detectCodeReviewItems(
+  generation: string,
+  index: string,
+  sourcePath: string,
+): Omit<ReviewItem, "id" | "resolved" | "createdAt">[] {
+  if (!generation.trim() || !index.trim()) return []
+
+  // Collect existing slugs from the wiki index
+  const existingSlugs = new Set<string>()
+  for (const m of index.matchAll(/\[\[([^\]|#]+)(?:\|[^\]]*)?\]\]/g)) {
+    existingSlugs.add(m[1].trim().toLowerCase())
+  }
+
+  // Also collect slugs from FILE blocks in the generation output —
+  // pages being created by this ingest should not be reported as missing.
+  // Match: ---FILE: wiki/.../slug.md AND title: "Title Name" inside frontmatter.
+  const FILE_BLOCK_REGEX = /---FILE:\s*(wiki\/[^\n]+?\.md)[^\n]*\n([\s\S]*?)---END FILE---/g
+  for (const fb of generation.matchAll(FILE_BLOCK_REGEX)) {
+    const filePath = fb[1].trim()
+    const frontmatter = fb[2]
+    // Add file-stem slug (wiki/concepts/rope → rope)
+    const stem = filePath.replace(/^wiki\/[^/]+\/(.+)\.md$/, "$1")
+    existingSlugs.add(stem.toLowerCase())
+    // Add frontmatter title
+    const titleMatch = frontmatter.match(/^title:\s*"?(.+?)"?\s*$/m)
+    if (titleMatch) existingSlugs.add(titleMatch[1].trim().toLowerCase())
+  }
+
+  // Extract referenced slugs from the generation output
+  const wikilinkRegex = /\[\[([^\]|#]+)(?:\|[^\]]*)?\]\]/g
+  const referencedSlugs = new Map<string, string>()
+  for (const m of generation.matchAll(wikilinkRegex)) {
+    const slug = m[1].trim()
+    const key = slug.toLowerCase()
+    if (!referencedSlugs.has(key)) referencedSlugs.set(key, slug)
+  }
+
+  const items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[] = []
+  for (const [key, original] of referencedSlugs) {
+    if (!existingSlugs.has(key)) {
+      items.push({
+        type: "missing-page",
+        title: original,
+        description: `Page "[[${original}]]" is referenced but does not exist in the wiki. Created automatically from source ingestion.`,
+        sourcePath,
+        options: [
+          { label: "Create Page", action: "Create Page" },
+          { label: "Skip", action: "Skip" },
+        ],
+      })
+    }
+  }
+  return items
+}
+
+
 function parseReviewBlocks(
   text: string,
   sourcePath: string,
@@ -1982,7 +2232,7 @@ export function buildGenerationPrompt(
   purpose: string,
   index: string,
   sourceFileName: string,
-  overview?: string,
+  reducedOverview?: string,
   sourceContent: string = "",
   sourceSummaryPath?: string,
 ): string {
@@ -2019,9 +2269,9 @@ export function buildGenerationPrompt(
     `1. A source summary page at **${summaryPath}** (MUST use this exact path)`,
     "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
     "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
-    "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
+    "4. INDEX blocks for new entries (see INDEX block format below) — do NOT output a complete wiki/index.md file",
     "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+    "6. An OVERVIEW block (see format below) with 1-2 paragraphs summarizing the current source's key topics for the wiki overview.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
@@ -2101,8 +2351,8 @@ export function buildGenerationPrompt(
     "  SEARCH: automated technical debt detection AI generated code | software quality metrics LLM code generation | static analysis tools agentic software development",
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
-    index ? `## Current Wiki Index (preserve all existing entries, add new ones)\n${index}` : "",
-    overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
+    index ? `## Current Wiki Index (for reference only — do NOT reproduce it)\n${index}` : "",
+    reducedOverview ? `## Current Overview (relevant sections only — for reference)\nIf the source only restates information already covered in this context,\noutput NO OVERVIEW block — skip it entirely.\n\n${reducedOverview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──
     "## Output Format (MUST FOLLOW EXACTLY — this is how the parser reads your response)",
@@ -2126,6 +2376,28 @@ export function buildGenerationPrompt(
     "---END REVIEW---",
     "```",
     "",
+    "INDEX block template (for new index entries only):",
+    "```",
+    "---INDEX: CategoryName---",
+    "slug — one-line description",
+    "---END INDEX---",
+    "```",
+    "",
+    "Output one INDEX block per category that has new entries.",
+    "CategoryName must match an existing ## heading in the index.",
+    "Do NOT output a FILE block for the index page. The index is updated ONLY via INDEX blocks.",
+    "",
+    "OVERVIEW block template (for overview paragraphs):",
+    "```",
+    "---OVERVIEW: SectionName---",
+    "1-2 paragraphs about this source's key topics.",
+    "---END OVERVIEW---",
+    "```",
+    "",
+    "Output one OVERVIEW block. SectionName should match an existing ## heading",
+    "in the overview context below, or create a new section name if the topic is new.",
+    "Do NOT output a FILE block for the overview page. Use OVERVIEW blocks instead.",
+    "",
     "## Output Requirements (STRICT — deviations will cause parse failure)",
     "",
     "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
@@ -2135,6 +2407,11 @@ export function buildGenerationPrompt(
     "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
     "6. Between blocks, use only blank lines — no prose.",
     "7. FILE block prose (body, explanations, descriptions, section text) must use the mandatory output language specified below. Preserve proper nouns, acronyms, model names, dataset names, tool/library names, code identifiers, URLs, file names, citation strings, paper titles, and technical terms with no widely-used localized equivalent in their standard original form, including in page names and section headings.",
+    "",
+    "8. INDEX blocks appear AFTER all FILE blocks and BEFORE any REVIEW blocks.",
+    "9. Each INDEX block must specify a category name after ---INDEX:.",
+    "10. Each entry line in an INDEX block must start with a slug followed by \" — \" and a description.",
+    "11. Do NOT output a FILE block for the index page. The index is updated ONLY via INDEX blocks.",
     "",
     "If you start with anything other than `---FILE:`, the entire response will be discarded.",
     "",
@@ -2149,7 +2426,7 @@ export function buildGenerationPrompt(
 
 function buildReviewSuggestionPrompt(
   purpose: string,
-  index: string,
+  reducedIndex: string,
   sourceIdentity: string,
   analysis: string,
   sourceContext: string,
@@ -2158,7 +2435,6 @@ function buildReviewSuggestionPrompt(
 ): string {
   const { maxCtx } = computeContextBudget(maxContextSize)
   const sectionCap = Math.max(4_000, Math.floor(maxCtx * 0.15))
-  const indexCap = Math.max(3_000, Math.floor(sectionCap * 0.8))
   return [
     "You are identifying high-value follow-up research items for a personal wiki.",
     "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
@@ -2166,16 +2442,13 @@ function buildReviewSuggestionPrompt(
     languageRule(sourceContext),
     "",
     "Your job is NOT to generate wiki pages. The wiki page generation already happened.",
-    "Output only REVIEW blocks for unresolved knowledge gaps that deserve human attention or Deep Research.",
+    "Missing-page and duplicate checks are handled automatically. Your focus:",
     "",
-    "Create REVIEW blocks only for genuinely useful follow-up work:",
-    "- missing-page: an important entity/concept is referenced but still lacks a dedicated page",
     "- suggestion: a research question, source type, or comparison that would materially improve the wiki",
     "- contradiction: a conflict or tension that requires user judgment",
-    "- duplicate: likely duplicate pages/names that need user review",
     "",
-    "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output nothing.",
-    "For suggestion and missing-page reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
+    "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output exactly: none.",
+    "For suggestion reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
     "Use only these options: OPTIONS: Create Page | Skip",
     "",
     "REVIEW block template:",
@@ -2191,7 +2464,7 @@ function buildReviewSuggestionPrompt(
     "Return REVIEW blocks only. Do not output FILE blocks. Do not wrap the response in markdown fences.",
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
+    reducedIndex ? `## Relevant Wiki Index\n${reducedIndex}` : "",
     "",
     `## Source\n${sourceIdentity}`,
     "",
@@ -2233,8 +2506,6 @@ function buildAggregateRepairPrompt(
     "",
     "Rules:",
     `- Use today's date ${today} for log entries and frontmatter dates.`,
-    "- For wiki/index.md: output the complete updated index, preserving existing entries and adding the new source-derived entries.",
-    "- For wiki/overview.md: output the complete updated overview, reflecting the full wiki plus this new source.",
     "- For wiki/log.md: output only the new log entry to append, format `## [YYYY-MM-DD] ingest | Title`.",
     "- Output only FILE blocks. Nothing else.",
     "",
@@ -2300,6 +2571,7 @@ export function computeIngestSourceBudget(
 
 export function computeIngestGenerationMaxTokens(maxContextSize: number | undefined): number {
   const { maxCtx } = computeContextBudget(maxContextSize)
+  if (maxCtx >= 1_000_000) return INGEST_GENERATION_TOKENS_1M
   if (maxCtx >= 512_000) return INGEST_GENERATION_TOKENS_512K
   if (maxCtx >= 256_000) return INGEST_GENERATION_TOKENS_256K
   if (maxCtx >= 128_000) return INGEST_GENERATION_TOKENS_128K
@@ -2307,7 +2579,7 @@ export function computeIngestGenerationMaxTokens(maxContextSize: number | undefi
 }
 
 export function computeIngestReviewMaxTokens(maxContextSize: number | undefined): number {
-  return Math.min(8_192, Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)))
+  return Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize)))
 }
 
 function splitOversizedBlock(block: string, targetChars: number): string[] {
@@ -2667,7 +2939,7 @@ async function analyzeLongSourceInChunks(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize) },
     )
 
     throwIfIngestAborted(signal, activityId)
