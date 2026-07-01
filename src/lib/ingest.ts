@@ -1142,7 +1142,7 @@ async function autoIngestImpl(
             role: "system",
             content: buildReviewSuggestionPrompt(
               purpose,
-              index,
+              reducedIndex,
               sourceIdentity,
               analysis,
               sourceContext,
@@ -1420,11 +1420,12 @@ async function autoIngestImpl(
     }
   }
 
-  // ── Step 4: Parse review items ────────────────────────────────
+   // ── Step 4: Parse review items ────────────────────────────────
   throwIfIngestAborted(signal, activityId)
   const reviewItems = [
     ...parseReviewBlocks(generation, sp),
     ...parseReviewBlocks(reviewSuggestionOutput, sp),
+    ...detectCodeReviewItems(generation, index, sp),
   ]
   if (reviewItems.length > 0) {
     useReviewStore.getState().addItems(reviewItems)
@@ -2028,6 +2029,66 @@ async function writeFileBlocks(
 
 const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
 
+/**
+ * Scan generation output for wikilinks and detect missing pages / duplicates
+ * purely from the wiki index — no LLM call needed.
+ */
+function detectCodeReviewItems(
+  generation: string,
+  index: string,
+  sourcePath: string,
+): Omit<ReviewItem, "id" | "resolved" | "createdAt">[] {
+  if (!generation.trim() || !index.trim()) return []
+
+  // Collect existing slugs from the wiki index
+  const existingSlugs = new Set<string>()
+  for (const m of index.matchAll(/\[\[([^\]|#]+)(?:\|[^\]]*)?\]\]/g)) {
+    existingSlugs.add(m[1].trim().toLowerCase())
+  }
+
+  // Also collect slugs from FILE blocks in the generation output —
+  // pages being created by this ingest should not be reported as missing.
+  // Match: ---FILE: wiki/.../slug.md AND title: "Title Name" inside frontmatter.
+  const FILE_BLOCK_REGEX = /---FILE:\s*(wiki\/[^\n]+?\.md)[^\n]*\n([\s\S]*?)---END FILE---/g
+  for (const fb of generation.matchAll(FILE_BLOCK_REGEX)) {
+    const filePath = fb[1].trim()
+    const frontmatter = fb[2]
+    // Add file-stem slug (wiki/concepts/rope → rope)
+    const stem = filePath.replace(/^wiki\/[^/]+\/(.+)\.md$/, "$1")
+    existingSlugs.add(stem.toLowerCase())
+    // Add frontmatter title
+    const titleMatch = frontmatter.match(/^title:\s*"?(.+?)"?\s*$/m)
+    if (titleMatch) existingSlugs.add(titleMatch[1].trim().toLowerCase())
+  }
+
+  // Extract referenced slugs from the generation output
+  const wikilinkRegex = /\[\[([^\]|#]+)(?:\|[^\]]*)?\]\]/g
+  const referencedSlugs = new Map<string, string>()
+  for (const m of generation.matchAll(wikilinkRegex)) {
+    const slug = m[1].trim()
+    const key = slug.toLowerCase()
+    if (!referencedSlugs.has(key)) referencedSlugs.set(key, slug)
+  }
+
+  const items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[] = []
+  for (const [key, original] of referencedSlugs) {
+    if (!existingSlugs.has(key)) {
+      items.push({
+        type: "missing-page",
+        title: original,
+        description: `Page "[[${original}]]" is referenced but does not exist in the wiki. Created automatically from source ingestion.`,
+        sourcePath,
+        options: [
+          { label: "Create Page", action: "Create Page" },
+          { label: "Skip", action: "Skip" },
+        ],
+      })
+    }
+  }
+  return items
+}
+
+
 function parseReviewBlocks(
   text: string,
   sourcePath: string,
@@ -2365,7 +2426,7 @@ export function buildGenerationPrompt(
 
 function buildReviewSuggestionPrompt(
   purpose: string,
-  index: string,
+  reducedIndex: string,
   sourceIdentity: string,
   analysis: string,
   sourceContext: string,
@@ -2374,7 +2435,6 @@ function buildReviewSuggestionPrompt(
 ): string {
   const { maxCtx } = computeContextBudget(maxContextSize)
   const sectionCap = Math.max(4_000, Math.floor(maxCtx * 0.15))
-  const indexCap = Math.max(3_000, Math.floor(sectionCap * 0.8))
   return [
     "You are identifying high-value follow-up research items for a personal wiki.",
     "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
@@ -2382,16 +2442,13 @@ function buildReviewSuggestionPrompt(
     languageRule(sourceContext),
     "",
     "Your job is NOT to generate wiki pages. The wiki page generation already happened.",
-    "Output only REVIEW blocks for unresolved knowledge gaps that deserve human attention or Deep Research.",
+    "Missing-page and duplicate checks are handled automatically. Your focus:",
     "",
-    "Create REVIEW blocks only for genuinely useful follow-up work:",
-    "- missing-page: an important entity/concept is referenced but still lacks a dedicated page",
     "- suggestion: a research question, source type, or comparison that would materially improve the wiki",
     "- contradiction: a conflict or tension that requires user judgment",
-    "- duplicate: likely duplicate pages/names that need user review",
     "",
-    "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output nothing.",
-    "For suggestion and missing-page reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
+    "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output exactly: none.",
+    "For suggestion reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
     "Use only these options: OPTIONS: Create Page | Skip",
     "",
     "REVIEW block template:",
@@ -2407,7 +2464,7 @@ function buildReviewSuggestionPrompt(
     "Return REVIEW blocks only. Do not output FILE blocks. Do not wrap the response in markdown fences.",
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, indexCap)}` : "",
+    reducedIndex ? `## Relevant Wiki Index\n${reducedIndex}` : "",
     "",
     `## Source\n${sourceIdentity}`,
     "",
