@@ -50,3 +50,6 @@ pnpm-debug.log*
 .superpowers/
 .claude/
 .playwright-mcp/
+
+# Worktrees
+.worktrees/
