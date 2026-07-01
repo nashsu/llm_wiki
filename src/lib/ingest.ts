@@ -2412,7 +2412,7 @@ export function buildGenerationPrompt(
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     index ? `## Current Wiki Index (for reference only — do NOT reproduce it)\n${index}` : "",
-    reducedOverview ? `## Current Overview (relevant sections only — for reference)\n${reducedOverview}` : "",
+    reducedOverview ? `## Current Overview (relevant sections only — for reference)\nIf the source only restates information already covered in this context,\noutput NO OVERVIEW block — skip it entirely.\n\n${reducedOverview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──
     "## Output Format (MUST FOLLOW EXACTLY — this is how the parser reads your response)",
