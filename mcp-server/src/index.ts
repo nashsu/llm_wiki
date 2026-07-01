@@ -11,6 +11,7 @@ import {
   LlmWikiApiClient,
   type ApiFileNode,
   type ApiGraphNode,
+  type ApiProject,
   type ApiReviewItem,
   type ApiReviewsResponse,
   type ApiSearchResult,
@@ -22,9 +23,16 @@ const MAX_TEXT_BYTES = 120_000
 
 const client = new LlmWikiApiClient()
 
+const SERVER_INSTRUCTIONS =
+  "llm-wiki exposes a local desktop app that manages multiple independent projects. " +
+  "Each project is an isolated knowledge base. Always default to currentProject " +
+  "(project_id: 'current', the default on every tool); treat it as authoritative over " +
+  "name- or path-matching. Never query a non-current project, or enumerate multiple " +
+  "projects' contents, without explicit user confirmation."
+
 const server = new Server(
   { name: "llm-wiki", version: VERSION },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
 )
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -140,11 +148,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           client.health(),
           client.projects().catch(() => ({ projects: [], currentProject: null })),
         ])
-        return textResult(JSON.stringify({ ...health, ...projects }, null, 2))
+        return textResult(JSON.stringify({ ...health, ...projects, ...multiProjectWarning(projects.projects, projects.currentProject) }, null, 2))
       }
       case "llm_wiki_projects": {
         await assertMcpEnabled()
-        return textResult(JSON.stringify(await client.projects(), null, 2))
+        const projects = await client.projects()
+        return textResult(JSON.stringify({ ...projects, ...multiProjectWarning(projects.projects, projects.currentProject) }, null, 2))
       }
       case "llm_wiki_files": {
         await assertMcpEnabled()
@@ -211,6 +220,14 @@ async function assertMcpEnabled(): Promise<void> {
       ErrorCode.InvalidRequest,
       "LLM Wiki MCP access is disabled. Enable Settings -> API + MCP -> Enable MCP access in the desktop app.",
     )
+  }
+}
+
+function multiProjectWarning(projects: ApiProject[], currentProject: ApiProject | null): { warning?: string } {
+  if (projects.length <= 1) return {}
+  const current = currentProject ? `"${currentProject.name}" (id: ${currentProject.id})` : "none"
+  return {
+    warning: `${projects.length} projects registered — only currentProject (${current}) is active; confirm with user before targeting another.`,
   }
 }
 
