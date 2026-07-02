@@ -383,10 +383,12 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.70+
+# Prerequisites: Node.js 20+, Rust 1.70+, protobuf (macOS: brew install protobuf / Windows: choco install protoc)
+# If Rust was just installed via rustup, open a new terminal (or run `source ~/.cargo/env`) first
 git clone https://github.com/nashsu/llm_wiki.git
 cd llm_wiki
 npm install
+npm --prefix mcp-server ci && npm run mcp:build   # Build the bundled MCP server (required by the Tauri bundle)
 npm run tauri dev      # Development
 npm run tauri build    # Production build
 ```
