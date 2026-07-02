@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { ReviewItem } from "@/stores/review-store"
-import { buildReviewPageContent, createReviewPageDrafts } from "./review-create-page"
+import {
+  buildReviewPageContent,
+  collectReviewSourceIdentities,
+  createReviewPageDrafts,
+} from "./review-create-page"
 
 function review(overrides: Partial<ReviewItem>): ReviewItem {
   return {
@@ -118,6 +122,39 @@ describe("buildReviewPageContent", () => {
     )
 
     expect(content).toContain('title: "He said \\"no\\""')
+  })
+
+  it("collectReviewSourceIdentities unions own source with affected pages' sources", async () => {
+    const pages: Record<string, string> = {
+      "/p/wiki/concepts/rubin-dram-reduction.md":
+        '---\ntype: concept\ntitle: "x"\nsources: ["260601-另一篇纪要.docx"]\ntags: []\nrelated: []\n---\n\n# x\n',
+    }
+    const readFile = async (path: string) => {
+      const content = pages[path]
+      if (content === undefined) throw new Error("not found")
+      return content
+    }
+
+    const ids = await collectReviewSourceIdentities(
+      "/p",
+      review({
+        sourcePath: "/p/raw/sources/260607-久谦论坛-调研周报.md",
+        affectedPages: ["wiki/concepts/rubin-dram-reduction.md", "wiki/gone/missing.md"],
+      }),
+      readFile,
+    )
+
+    expect(ids).toEqual(["260607-久谦论坛-调研周报.md", "260601-另一篇纪要.docx"])
+  })
+
+  it("collectReviewSourceIdentities drops non-raw sourcePath instead of faking an identity", async () => {
+    const ids = await collectReviewSourceIdentities(
+      "/p",
+      review({ sourcePath: "/p/wiki/queries/research-x.md" }),
+      async () => { throw new Error("not found") },
+    )
+
+    expect(ids).toEqual([])
   })
 
   it("escapes backslashes so YAML double-quoted scalars stay valid", () => {

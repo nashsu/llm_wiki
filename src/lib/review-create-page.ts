@@ -1,4 +1,6 @@
 import { getFileStem } from "@/lib/path-utils"
+import { rawSourceIdentityOrNull } from "@/lib/source-identity"
+import { parseSources } from "@/lib/sources-merge"
 import { unwrapWikilink } from "@/lib/wiki-page-resolver"
 import type { ReviewItem } from "@/stores/review-store"
 
@@ -86,6 +88,36 @@ function dirForPageType(pageType: ReviewPageType): string {
 
 /** 把字符串转为带双引号的 YAML 标量（先转义反斜杠再转义双引号，保证标量合法闭合）。 */
 const yamlStr = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+
+/**
+ * 收集审阅项的全部来源身份并集。
+ *
+ * 组成：审阅项自身来源（仅当 sourcePath 位于 raw/sources 下）
+ * + 各受影响页面 frontmatter sources 中记录的来源。
+ * 用于建页写入 sources 与审阅卡片的来源展示，使跨来源矛盾可直接核对全部原始文档。
+ *
+ * :param projectPath: 项目根路径（已规范化）
+ * :param item: 审阅项
+ * :param readFile: 文件读取函数（注入以保持纯逻辑可测）
+ * :returns: 去重后的来源身份列表（自身来源在前）
+ */
+export async function collectReviewSourceIdentities(
+  projectPath: string,
+  item: ReviewItem,
+  readFile: (path: string) => Promise<string>,
+): Promise<string[]> {
+  const identities: string[] = []
+  const own = item.sourcePath ? rawSourceIdentityOrNull(projectPath, item.sourcePath) : null
+  if (own) identities.push(own)
+  for (const page of item.affectedPages ?? []) {
+    try {
+      identities.push(...parseSources(await readFile(`${projectPath}/${page}`)))
+    } catch {
+      // 受影响页面可能已不存在或不是有效路径，跳过
+    }
+  }
+  return Array.from(new Set(identities))
+}
 
 /**
  * 由审阅项构造新建 wiki 页面的完整内容（frontmatter + 正文）。

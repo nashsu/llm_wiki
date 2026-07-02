@@ -350,6 +350,8 @@ interface WikiState {
   fileContent: string
   previewContentPath: string | null
   externalPreview: ExternalPreview | null
+  /** 预览导航历史（后退栈），随文件切换自动入栈，供预览面板的返回按钮使用。 */
+  previewHistory: string[]
   /**
    * One-shot scroll target for the markdown preview. When the user
    * clicks an image in search results and chooses "jump to source",
@@ -391,6 +393,8 @@ interface WikiState {
   setFileContent: (content: string) => void
   openPathInPreview: (path: string) => void
   openFileInPreview: (path: string, content: string) => void
+  /** 后退到上一个预览文件；历史为空时是安全的空操作。 */
+  goBackInPreview: () => void
   setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
   setActiveView: (view: WikiState["activeView"]) => void
@@ -412,6 +416,18 @@ interface WikiState {
   bumpDataVersion: () => void
 }
 
+const PREVIEW_HISTORY_LIMIT = 20
+
+/** 切换预览文件时把上一个文件压入历史栈（同文件重开与关闭预览不入栈）。 */
+function pushPreviewHistory(
+  state: Pick<WikiState, "selectedFile" | "previewHistory">,
+  nextFile: string | null,
+): string[] {
+  const previous = state.selectedFile
+  if (!previous || previous === nextFile) return state.previewHistory
+  return [...state.previewHistory, previous].slice(-PREVIEW_HISTORY_LIMIT)
+}
+
 export const useWikiStore = create<WikiState>((set) => ({
   project: null,
   fileTree: [],
@@ -420,6 +436,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   fileContent: "",
   previewContentPath: null,
   externalPreview: null,
+  previewHistory: [],
   pendingScrollImageSrc: null,
   activeView: "wiki",
   llmConfig: {
@@ -449,17 +466,41 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProjectPathIndexFromTree: (tree) =>
     set({ projectPathIndex: buildProjectPathIndexFromTree(tree) }),
   setSelectedFile: (selectedFile) =>
-    set({ selectedFile, previewContentPath: null, externalPreview: null }),
+    set((state) => ({
+      selectedFile,
+      previewContentPath: null,
+      externalPreview: null,
+      previewHistory: pushPreviewHistory(state, selectedFile),
+    })),
   setFileContent: (fileContent) => set({ fileContent }),
   openPathInPreview: (selectedFile) =>
-    set({ selectedFile, previewContentPath: null, externalPreview: null, activeView: "wiki" }),
+    set((state) => ({
+      selectedFile,
+      previewContentPath: null,
+      externalPreview: null,
+      activeView: "wiki",
+      previewHistory: pushPreviewHistory(state, selectedFile),
+    })),
   openFileInPreview: (selectedFile, fileContent) =>
-    set({
+    set((state) => ({
       selectedFile,
       fileContent,
       previewContentPath: selectedFile,
       externalPreview: null,
       activeView: "wiki",
+      previewHistory: pushPreviewHistory(state, selectedFile),
+    })),
+  goBackInPreview: () =>
+    set((state) => {
+      const previous = state.previewHistory[state.previewHistory.length - 1]
+      if (previous === undefined) return {}
+      // 后退本身不入栈，否则会在两个文件间来回循环
+      return {
+        selectedFile: previous,
+        previewContentPath: null,
+        externalPreview: null,
+        previewHistory: state.previewHistory.slice(0, -1),
+      }
     }),
   setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),

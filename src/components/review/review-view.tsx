@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -20,9 +20,11 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
-import { buildReviewPageContent, createReviewPageDrafts } from "@/lib/review-create-page"
-import { rawSourceIdentityOrNull } from "@/lib/source-identity"
-import { parseSources } from "@/lib/sources-merge"
+import {
+  buildReviewPageContent,
+  collectReviewSourceIdentities,
+  createReviewPageDrafts,
+} from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
 
@@ -209,21 +211,8 @@ export function ReviewView() {
             date: string
           }> = []
 
-          // 溯源链：审阅项自身来源（仅限 raw/sources 下的真实源文件）
-          // 与受影响页面 frontmatter 中的来源取并集，一并写入新页 sources，
-          // 使跨来源矛盾可以直接核对所有原始文档
-          const sourceIdentities: string[] = []
-          const ownIdentity = item.sourcePath
-            ? rawSourceIdentityOrNull(pp, item.sourcePath)
-            : null
-          if (ownIdentity) sourceIdentities.push(ownIdentity)
-          for (const page of item.affectedPages ?? []) {
-            try {
-              sourceIdentities.push(...parseSources(await readFile(`${pp}/${page}`)))
-            } catch {
-              // 受影响页面可能已不存在或不是有效路径，跳过
-            }
-          }
+          // 溯源链：自身来源与受影响页面来源的并集，写入新页 sources
+          const sourceIdentities = await collectReviewSourceIdentities(pp, item, readFile)
           for (const draft of drafts) {
             const { date, fileName } = makeQueryFileName(draft.title)
             const filePath = `${pp}/wiki/${draft.dir}/${fileName}`
@@ -321,6 +310,8 @@ export function ReviewView() {
     setSelectedReviewIds(new Set())
   }, [dismissItem, selectedPendingIds])
 
+  const projectPath = project ? normalizePath(project.path) : ""
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -400,6 +391,7 @@ export function ReviewView() {
               <ReviewCard
                 key={item.id}
                 item={item}
+                projectPath={projectPath}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
@@ -415,6 +407,7 @@ export function ReviewView() {
               <ReviewCard
                 key={item.id}
                 item={item}
+                projectPath={projectPath}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
@@ -430,12 +423,14 @@ export function ReviewView() {
 
 function ReviewCard({
   item,
+  projectPath,
   onResolve,
   onDismiss,
   selected,
   onSelectedChange,
 }: {
   item: ReviewItem
+  projectPath: string
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
   selected: boolean
@@ -444,7 +439,18 @@ function ReviewCard({
   const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
-  const sourcePath = item.sourcePath
+  // 来源并集（自身来源 + 受影响页面的来源），异步解析后展示为可点击列表
+  const [sourceIdentities, setSourceIdentities] = useState<string[]>([])
+  useEffect(() => {
+    if (!projectPath) return
+    let cancelled = false
+    void collectReviewSourceIdentities(projectPath, item, readFile).then((ids) => {
+      if (!cancelled) setSourceIdentities(ids)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectPath, item])
 
   return (
     <div
@@ -482,16 +488,23 @@ function ReviewCard({
         </div>
       )}
 
-      {sourcePath && (
+      {sourceIdentities.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
           {t("review.source")}:{" "}
-          <button
-            onClick={() => useWikiStore.getState().openPathInPreview(sourcePath)}
-            className="underline decoration-dotted underline-offset-2 hover:text-foreground"
-            title={sourcePath}
-          >
-            {getFileName(sourcePath)}
-          </button>
+          {sourceIdentities.map((identity, index) => (
+            <span key={identity}>
+              {index > 0 && ", "}
+              <button
+                onClick={() =>
+                  useWikiStore.getState().openPathInPreview(`${projectPath}/raw/sources/${identity}`)
+                }
+                className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                title={identity}
+              >
+                {getFileName(identity)}
+              </button>
+            </span>
+          ))}
         </div>
       )}
 
