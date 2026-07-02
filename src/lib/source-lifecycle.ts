@@ -24,6 +24,14 @@ import {
   writeFrontmatterArray,
   writeSources,
 } from "@/lib/sources-merge"
+import {
+  appendRenameMap,
+  buildFinanceFileName,
+  fileDateFallback,
+  isFinanceNamingEnabled,
+  loadStockBasic,
+  type RenameRecord,
+} from "@/lib/finance-naming"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
 import { removePageEmbedding } from "@/lib/embedding"
 import {
@@ -167,8 +175,23 @@ export async function importSourceFiles(
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
 
+  // 金融命名规范化：项目启用时导入前重命名（yyyymmdd-代码-简称-标题），
+  // 开关与个股表每批只读一次
+  const financeNaming = await isFinanceNamingEnabled(pp)
+  const stockTable = financeNaming ? await loadStockBasic(pp) : []
+  const renameRecords: RenameRecord[] = []
+
   for (const sourcePath of sourcePaths) {
-    const originalName = getFileName(sourcePath) || "unknown"
+    let originalName = getFileName(sourcePath) || "unknown"
+    if (financeNaming) {
+      const { fileName, record } = buildFinanceFileName(
+        originalName,
+        stockTable,
+        await fileDateFallback(sourcePath),
+      )
+      if (fileName !== originalName) renameRecords.push(record)
+      originalName = fileName
+    }
     if (isSensitiveConfigSourceFile(sourcePath)) {
       continue
     }
@@ -192,6 +215,7 @@ export async function importSourceFiles(
     }
   }
 
+  await appendRenameMap(pp, renameRecords)
   await enqueueSourceIngest(project, importedPaths, llmConfig)
 
   return importedPaths

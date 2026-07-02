@@ -69,7 +69,8 @@
     "browse": "Select Parent Directory",
     "aiOutputLanguage": "AI Output Language",
     "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Settings → Output.",
-    "pickLanguage": "Pick a language…"
+    "pickLanguage": "Pick a language…",
+    "financeNaming": "Normalize imported source filenames (yyyymmdd-code-name-title)"
   },
   "templates": {
     "research": {

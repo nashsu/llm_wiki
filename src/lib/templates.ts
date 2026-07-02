@@ -637,11 +637,104 @@ ${BASE_CONTRADICTION}
 `,
 }
 
+const financeTemplate: WikiTemplate = {
+  id: "finance",
+  name: "Finance Research",
+  description: "Market research on meeting notes — time-stamped sources, ticker-anchored entities",
+  icon: "📈",
+  extraDirs: ["wiki/findings", "wiki/thesis"],
+  schema: `# Wiki Schema — Finance Market Research
+
+## Page Types
+
+| Type | Directory | Purpose |
+|------|-----------|---------|
+${BASE_SCHEMA_TYPES}
+| thesis | wiki/thesis/ | Working investment thesis and its evolution over time |
+| finding | wiki/findings/ | Individual data points or claims from meeting notes |
+
+## Naming Conventions
+
+${BASE_NAMING}
+- Theses: hypothesis as slug (e.g., \`tantalum-supply-tightening.md\`)
+- Findings: descriptive slug with the subject (e.g., \`yuean-powder-mass-production-2026.md\`)
+
+## Source File Naming (IMPORTANT)
+
+Raw source files follow \`yyyymmdd-<ts_code|NA>-<name>-<title>.<ext>\`
+(e.g., \`20260701-688786.SH-悦安新材-电感材料专家交流.docx\`). The leading
+date is the MEETING/PUBLICATION date of the note — treat it as the
+authoritative timestamp for every claim extracted from that source.
+
+## Frontmatter
+
+${BASE_FRONTMATTER}
+
+Stock entity pages MUST also include:
+\`\`\`yaml
+ts_code: "688786.SH"   # exchange ticker; omit only if the entity is not listed
+industry: "小金属"      # sector/industry classification
+\`\`\`
+
+Finding pages also include:
+\`\`\`yaml
+source: "[[source-slug]]"
+as_of: YYYY-MM-DD       # the date the data point was stated (from the source's filename date)
+\`\`\`
+
+## Index Format
+
+${BASE_INDEX_FORMAT}
+
+## Log Format
+
+${BASE_LOG_FORMAT}
+
+## Cross-referencing Rules
+
+${BASE_CROSSREF}
+
+## Contradiction Handling (time-aware)
+
+${BASE_CONTRADICTION}
+
+Additionally, because market data is time-sensitive:
+- Always compare the SOURCE DATES of conflicting claims (from the yyyymmdd filename prefix).
+- Newer sources supersede older ones for point-in-time facts (prices, capacity, guidance); note the supersession instead of treating it as an open contradiction.
+- Only treat same-period conflicts as true contradictions worth a query page.
+- Never present a dated claim without its as-of date.`,
+  purpose: `# Wiki Purpose
+
+## Goal
+
+Build a time-aware knowledge base from financial meeting notes (调研纪要/交流纪要/专家访谈),
+tracking companies, industry chains, and the evolution of supply/demand and pricing views.
+
+## Key Questions
+
+> e.g. Which companies' fundamentals are inflecting? Where do sources disagree on timing?
+
+- TBD
+
+## Scope
+
+- In scope: meeting notes, expert calls, research weeklies imported into raw/sources
+- Out of scope: TBD
+
+## Evolving Thesis
+
+> Updated as evidence accumulates; every thesis links its supporting findings with dates.
+
+- TBD
+`,
+}
+
 export const templates: WikiTemplate[] = [
   researchTemplate,
   readingTemplate,
   personalTemplate,
   businessTemplate,
+  financeTemplate,
   generalTemplate,
 ]
 
