@@ -105,7 +105,10 @@ export function parseStockBasicCsv(csv: string): StockRecord[] {
   const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase())
   const tsCodeIdx = headers.indexOf("ts_code")
   const nameIdx = headers.indexOf("name")
-  const cnspellIdx = headers.indexOf("cnspell")
+  // A 股表列名为 cnspell，港股表（hk_basic）为 cn_spell，两者都认
+  const cnspellIdx = headers.indexOf("cnspell") >= 0
+    ? headers.indexOf("cnspell")
+    : headers.indexOf("cn_spell")
   if (tsCodeIdx < 0 || nameIdx < 0) return []
 
   const records: StockRecord[] = []
@@ -231,8 +234,32 @@ export function buildFinanceFileName(
 
 const NAMING_CONFIG_FILE = ".llm-wiki/source-naming.json"
 const RENAME_MAP_FILE = ".llm-wiki/rename-map.json"
-/** 项目根下个股基础表的约定位置。 */
+/** 项目根下 A 股基础表的约定位置。 */
 export const STOCK_BASIC_FILE = "stock_basic.csv"
+/** 项目根下港股基础表的约定位置（可选，tushare hk_basic 导出）。 */
+export const HK_BASIC_FILE = "hk_basic.csv"
+
+/**
+ * 合并多张个股表并按简称去重，靠前的表优先。
+ *
+ * A+H 两地上市公司在两张表中同名，若不去重会造成匹配歧义
+ * （永远落 NA）；按加载顺序保留首个记录即"A 股代码优先"。
+ *
+ * :param tables: 个股表列表（按优先级排列）
+ * :returns: 去重后的合并表
+ */
+export function mergeStockRecords(...tables: StockRecord[][]): StockRecord[] {
+  const merged: StockRecord[] = []
+  const seenNames = new Set<string>()
+  for (const table of tables) {
+    for (const record of table) {
+      if (seenNames.has(record.name)) continue
+      seenNames.add(record.name)
+      merged.push(record)
+    }
+  }
+  return merged
+}
 
 /** 项目是否启用了金融来源命名规范化。 */
 export async function isFinanceNamingEnabled(projectPath: string): Promise<boolean> {
@@ -251,13 +278,25 @@ export async function enableFinanceNaming(projectPath: string): Promise<void> {
   await writeFile(`${pp}/${NAMING_CONFIG_FILE}`, JSON.stringify({ mode: "finance" }, null, 2))
 }
 
-/** 读取项目根的 stock_basic.csv；缺失时返回空表（仅做日期规范化）。 */
+/**
+ * 读取项目根的个股基础表：stock_basic.csv（A 股）+ 可选 hk_basic.csv（港股）。
+ *
+ * 两文件均可缺失（缺失时该市场为空表）；合并按简称去重，A 股优先，
+ * 使 A+H 两地上市公司稳定解析到 A 股代码而非落入歧义。
+ *
+ * :param projectPath: 项目根路径
+ * :returns: 合并去重后的个股表；全部缺失时为空（仅做日期规范化）
+ */
 export async function loadStockBasic(projectPath: string): Promise<StockRecord[]> {
-  try {
-    return parseStockBasicCsv(await readFile(`${normalizePath(projectPath)}/${STOCK_BASIC_FILE}`))
-  } catch {
-    return []
+  const pp = normalizePath(projectPath)
+  const readTable = async (fileName: string): Promise<StockRecord[]> => {
+    try {
+      return parseStockBasicCsv(await readFile(`${pp}/${fileName}`))
+    } catch {
+      return []
+    }
   }
+  return mergeStockRecords(await readTable(STOCK_BASIC_FILE), await readTable(HK_BASIC_FILE))
 }
 
 /** 追加改名审计记录到 .llm-wiki/rename-map.json（仅供排错，无运行时消费方）。 */

@@ -58,8 +58,21 @@ df = pro.stock_basic(exchange="", list_status="L",
 df.to_csv("stock_basic.csv", index=False)
 ```
 
-港股/美股不在 tushare `stock_basic` 表内；相关纪要会落到 `NA` 格式。
-需要的话可以把同样三列结构的港股清单追加到同一个 CSV 里。
+### 港股：hk_basic.csv（可选）
+
+港股不在 `stock_basic` 表内。把 tushare `hk_basic` 导出为**单独的**
+`hk_basic.csv`，同样放在项目根目录即可（不要与 A 股表合并成一个文件——
+两表列顺序不同且拼音列名不同，`hk_basic` 是 `cn_spell`，两种列名都能识别）：
+
+```python
+df = pro.hk_basic(list_status="L",
+                  fields="ts_code,name,fullname,enname,cn_spell,market")
+df.to_csv("hk_basic.csv", index=False)
+```
+
+A+H 两地上市的公司（如中芯国际）在两张表中同名，匹配时**A 股代码优先**；
+若某篇纪要明确谈的是港股主体，可在导入后按审计表手工核对。
+美股暂无约定文件，相关纪要落 `NA` 格式。
 
 ## 命名规则细节
 

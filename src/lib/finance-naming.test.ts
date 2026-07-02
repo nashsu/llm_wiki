@@ -3,6 +3,7 @@ import {
   buildFinanceFileName,
   extractSourceDate,
   matchStock,
+  mergeStockRecords,
   parseStockBasicCsv,
   type StockRecord,
 } from "./finance-naming"
@@ -71,6 +72,32 @@ describe("parseStockBasicCsv", () => {
 
   it("returns empty list for missing required headers", () => {
     expect(parseStockBasicCsv("foo,bar\n1,2")).toEqual([])
+  })
+
+  it("accepts hk_basic's cn_spell header (with underscore) for the spell column", () => {
+    const csv = [
+      "ts_code,name,fullname,enname,cn_spell,market",
+      "00700.HK,腾讯控股,腾讯控股有限公司,TENCENT,txkg,主板",
+    ].join("\n")
+
+    expect(parseStockBasicCsv(csv)).toEqual([
+      { tsCode: "00700.HK", name: "腾讯控股", cnspell: "txkg" },
+    ])
+  })
+})
+
+describe("mergeStockRecords", () => {
+  it("dedupes by name with earlier tables taking priority (A股优先于港股)", () => {
+    const aShare: StockRecord[] = [{ tsCode: "688981.SH", name: "中芯国际", cnspell: "zxgj" }]
+    const hk: StockRecord[] = [
+      { tsCode: "00981.HK", name: "中芯国际", cnspell: "zxgj" },
+      { tsCode: "00700.HK", name: "腾讯控股", cnspell: "txkg" },
+    ]
+
+    expect(mergeStockRecords(aShare, hk)).toEqual([
+      { tsCode: "688981.SH", name: "中芯国际", cnspell: "zxgj" },
+      { tsCode: "00700.HK", name: "腾讯控股", cnspell: "txkg" },
+    ])
   })
 })
 
