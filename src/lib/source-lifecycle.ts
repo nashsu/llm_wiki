@@ -251,9 +251,13 @@ export async function importSourceFolder(
   // keys / tool config do not enter ingest.
   const sourceFiles = flattenFiles(await listDirectory(selectedFolder, true))
 
+  // 金融命名规范化：启用时仅规范"叶子文件名"，目录结构原样保留
+  const financeNaming = await isFinanceNamingEnabled(pp)
+  const stockTable = financeNaming ? await loadStockBasic(pp) : []
+  const renameRecords: RenameRecord[] = []
+
   for (const file of sourceFiles) {
     const relativeSourcePath = getRelativePath(file.path, sourceRoot)
-    const destPath = `${destDir}/${relativeSourcePath}`
     const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
     if (isSensitiveConfigSourceFile(file.path)) {
       continue
@@ -267,12 +271,43 @@ export async function importSourceFolder(
       }
     }
     if (!allowed) continue
+
+    let destRelativePath = relativeSourcePath
+    let financeRecord: RenameRecord | null = null
+    if (financeNaming) {
+      const baseName = getFileName(relativeSourcePath) || relativeSourcePath
+      const { fileName, record } = buildFinanceFileName(
+        baseName,
+        stockTable,
+        await fileDateFallback(file.path),
+      )
+      if (fileName !== baseName) {
+        financeRecord = record
+        const dirPart = relativeSourcePath.slice(0, relativeSourcePath.length - baseName.length)
+        destRelativePath = `${dirPart}${fileName}`
+      }
+    }
+
+    let destPath = `${destDir}/${destRelativePath}`
     const parent = parentPath(destPath)
     if (parent) await createDirectory(parent)
-    await copyFile(file.path, destPath)
-    allowedFiles.push(destPath)
-    preprocessFile(destPath).catch(() => {})
+    // 仅在发生改名时做落盘去重：不同原名可能规范化成同名（同日同标的同标题）
+    if (financeRecord && parent) {
+      destPath = await getUniqueDestPath(parent, getFileName(destPath) || destRelativePath)
+    }
+    try {
+      await copyFile(file.path, destPath)
+      allowedFiles.push(destPath)
+      if (financeRecord) {
+        renameRecords.push({ ...financeRecord, renamed: getFileName(destPath) })
+      }
+      preprocessFile(destPath).catch(() => {})
+    } catch (err) {
+      console.error(`Failed to import ${relativeSourcePath}:`, err)
+    }
   }
+
+  await appendRenameMap(pp, renameRecords)
 
   const naturallyOrderedFiles = [...allowedFiles].sort((a, b) =>
     naturalCompare(getRelativePath(a, destDir), getRelativePath(b, destDir)),

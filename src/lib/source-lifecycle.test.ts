@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   listDirectory: vi.fn(),
   preprocessFile: vi.fn(),
   enqueueBatch: vi.fn(),
+  isFinanceNamingEnabled: vi.fn(),
+  loadStockBasic: vi.fn(),
+  fileDateFallback: vi.fn(),
+  appendRenameMap: vi.fn(),
 }))
 
 vi.mock("@/commands/fs", async () => {
@@ -29,6 +33,17 @@ vi.mock("@/lib/ingest-queue", () => ({
   enqueueBatch: mocks.enqueueBatch,
 }))
 
+vi.mock("@/lib/finance-naming", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/finance-naming")>("@/lib/finance-naming")
+  return {
+    ...actual,
+    isFinanceNamingEnabled: mocks.isFinanceNamingEnabled,
+    loadStockBasic: mocks.loadStockBasic,
+    fileDateFallback: mocks.fileDateFallback,
+    appendRenameMap: mocks.appendRenameMap,
+  }
+})
+
 import {
   enqueueSourceIngest,
   folderContextForSourcePath,
@@ -47,6 +62,80 @@ beforeEach(() => {
   mocks.listDirectory.mockResolvedValue([])
   mocks.preprocessFile.mockResolvedValue("")
   mocks.enqueueBatch.mockResolvedValue(["task"])
+  mocks.isFinanceNamingEnabled.mockResolvedValue(false)
+  mocks.loadStockBasic.mockResolvedValue([])
+  mocks.fileDateFallback.mockResolvedValue(new Date("2026-07-02T00:00:00Z"))
+  mocks.appendRenameMap.mockResolvedValue(undefined)
+})
+
+describe("importSourceFolder finance naming", () => {
+  it("renames leaf filenames while preserving folder structure when finance naming is on", async () => {
+    mocks.isFinanceNamingEnabled.mockResolvedValue(true)
+    mocks.loadStockBasic.mockResolvedValue([
+      { tsCode: "688786.SH", name: "悦安新材", cnspell: "yaxc" },
+    ])
+    mocks.listDirectory.mockResolvedValue([
+      {
+        name: "sub",
+        path: "/external/notes/sub",
+        is_dir: true,
+        children: [
+          { name: "悦安电感材料专家交流260701.docx", path: "/external/notes/sub/悦安电感材料专家交流260701.docx", is_dir: false },
+        ],
+      },
+    ])
+
+    const copied = await importSourceFolder(
+      { id: "p1", name: "Project", path: "/project" },
+      "/external/notes",
+      { provider: "openai", apiKey: "key", model: "model" } as never,
+      {
+        enabled: true,
+        autoIngest: true,
+        includeExtensions: ["docx"],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
+    )
+
+    // 目录结构保留（sub/），叶子文件名被规范化
+    expect(copied).toEqual([
+      "/project/raw/sources/notes/sub/20260701-688786.SH-悦安新材-电感材料专家交流.docx",
+    ])
+    expect(mocks.appendRenameMap).toHaveBeenCalledWith("/project", [
+      expect.objectContaining({
+        original: "悦安电感材料专家交流260701.docx",
+        renamed: "20260701-688786.SH-悦安新材-电感材料专家交流.docx",
+        tsCode: "688786.SH",
+      }),
+    ])
+  })
+
+  it("keeps original names when finance naming is off", async () => {
+    mocks.listDirectory.mockResolvedValue([
+      { name: "悦安交流260701.docx", path: "/external/notes/悦安交流260701.docx", is_dir: false },
+    ])
+
+    const copied = await importSourceFolder(
+      { id: "p1", name: "Project", path: "/project" },
+      "/external/notes",
+      { provider: "openai", apiKey: "key", model: "model" } as never,
+      {
+        enabled: true,
+        autoIngest: true,
+        includeExtensions: ["docx"],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
+    )
+
+    expect(copied).toEqual(["/project/raw/sources/notes/悦安交流260701.docx"])
+    expect(mocks.appendRenameMap).toHaveBeenCalledWith("/project", [])
+  })
 })
 
 describe("source-lifecycle path helpers", () => {
