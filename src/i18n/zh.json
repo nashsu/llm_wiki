@@ -70,7 +70,8 @@
     "aiOutputLanguage": "AI 输出语言",
     "aiOutputLanguageHint": "所有 AI 生成的内容（Wiki 页面、聊天回复、Research 结果）都将使用此语言。您可以在设置 → 输出 中稍后更改。",
     "pickLanguage": "选择语言...",
-    "financeNaming": "导入来源时规范化文件名（yyyymmdd-代码-简称-标题）"
+    "financeNaming": "导入来源时规范化文件名（yyyymmdd-代码-简称-标题）",
+    "financeNamingHint": "读取项目根或应用数据目录中的 stock_basic.csv / hk_basic.csv。成分股随上市/退市持续变化，表中数据可能已过旧，建议定期自行更新。"
   },
   "templates": {
     "research": {

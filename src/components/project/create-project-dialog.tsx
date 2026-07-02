@@ -227,15 +227,20 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
             <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
           </div>
           {selectedTemplate === "finance" && (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5"
-                checked={financeNaming}
-                onChange={(event) => setFinanceNaming(event.target.checked)}
-              />
-              {t("project.financeNaming")}
-            </label>
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5"
+                  checked={financeNaming}
+                  onChange={(event) => setFinanceNaming(event.target.checked)}
+                />
+                {t("project.financeNaming")}
+              </label>
+              <p className="text-xs text-muted-foreground">
+                {t("project.financeNamingHint")}
+              </p>
+            </div>
           )}
         </div>
         <DialogFooter className="mx-0 mb-0 flex-col border-t bg-background/95 px-6 py-4 sm:flex-row sm:items-center">

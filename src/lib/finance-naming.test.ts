@@ -74,6 +74,17 @@ describe("parseStockBasicCsv", () => {
     expect(parseStockBasicCsv("foo,bar\n1,2")).toEqual([])
   })
 
+  it("tolerates a leading unnamed index column (pandas to_csv without index=False)", () => {
+    const csv = [
+      ",ts_code,symbol,name,area,industry,cnspell,market",
+      "0,688786.SH,688786,悦安新材,福建,小金属,yaxc,科创板",
+    ].join("\n")
+
+    expect(parseStockBasicCsv(csv)).toEqual([
+      { tsCode: "688786.SH", name: "悦安新材", cnspell: "yaxc" },
+    ])
+  })
+
   it("accepts hk_basic's cn_spell header (with underscore) for the spell column", () => {
     const csv = [
       "ts_code,name,fullname,enname,cn_spell,market",

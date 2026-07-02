@@ -5,6 +5,7 @@
  * 让时间与标的锚点进入来源身份，全链路（摘要页/检索/LLM 上下文）可见。
  * 纯逻辑与 IO 分离：解析/匹配/构名为纯函数，磁盘读写在文件末尾的包装函数。
  */
+import { appDataDir } from "@tauri-apps/api/path"
 import { readFile, writeFile, createDirectory, getFileModifiedTime } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -278,23 +279,38 @@ export async function enableFinanceNaming(projectPath: string): Promise<void> {
   await writeFile(`${pp}/${NAMING_CONFIG_FILE}`, JSON.stringify({ mode: "finance" }, null, 2))
 }
 
+/** 全局个股表目录（应用数据目录）；非 Tauri 环境（如单测）返回 null。 */
+async function globalStockTableDir(): Promise<string | null> {
+  try {
+    return normalizePath(await appDataDir())
+  } catch {
+    return null
+  }
+}
+
 /**
- * 读取项目根的个股基础表：stock_basic.csv（A 股）+ 可选 hk_basic.csv（港股）。
+ * 读取个股基础表：stock_basic.csv（A 股）+ 可选 hk_basic.csv（港股）。
  *
- * 两文件均可缺失（缺失时该市场为空表）；合并按简称去重，A 股优先，
- * 使 A+H 两地上市公司稳定解析到 A 股代码而非落入歧义。
+ * 每个文件按"项目根 → 应用数据目录"顺序取首个可读的——全局放一份
+ * 即可供所有金融项目共享（更新一处全部生效），项目根同名文件可覆盖。
+ * 合并按简称去重、A 股优先，使 A+H 两地上市公司稳定解析到 A 股代码。
  *
  * :param projectPath: 项目根路径
- * :returns: 合并去重后的个股表；全部缺失时为空（仅做日期规范化）
+ * :returns: 合并去重后的个股表；两处均缺失时为空（仅做日期规范化）
  */
 export async function loadStockBasic(projectPath: string): Promise<StockRecord[]> {
   const pp = normalizePath(projectPath)
+  const globalDir = await globalStockTableDir()
   const readTable = async (fileName: string): Promise<StockRecord[]> => {
-    try {
-      return parseStockBasicCsv(await readFile(`${pp}/${fileName}`))
-    } catch {
-      return []
+    for (const dir of [pp, globalDir]) {
+      if (!dir) continue
+      try {
+        return parseStockBasicCsv(await readFile(`${dir}/${fileName}`))
+      } catch {
+        // 该位置缺失/不可读，尝试下一个
+      }
     }
+    return []
   }
   return mergeStockRecords(await readTable(STOCK_BASIC_FILE), await readTable(HK_BASIC_FILE))
 }
