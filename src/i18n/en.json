@@ -92,6 +92,10 @@
     "general": {
       "name": "General",
       "description": "Minimal setup — a blank slate for any purpose"
+    },
+    "finance": {
+      "name": "Finance Research",
+      "description": "Market research on meeting notes — time-stamped sources, ticker-anchored entities"
     }
   },
   "sources": {

@@ -9,7 +9,8 @@
  * 不再消费脏引用。
  */
 import { listDirectory, readFile } from "@/commands/fs"
-import { getFileStem, normalizePath } from "@/lib/path-utils"
+import { parseFrontmatter } from "@/lib/frontmatter"
+import { getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { unwrapWikilink } from "@/lib/wiki-page-resolver"
 import type { FileNode } from "@/types/wiki"
 
@@ -97,7 +98,12 @@ export function resolveAffectedPages(
 function lookupCandidate(candidate: string, index: PageResolutionIndex): string | null {
   const normalized = candidate.replace(/^\.\//, "")
   const withMd = normalized.endsWith(".md") ? normalized : `${normalized}.md`
-  const pathVariants = [normalized, withMd, `wiki/${normalized}`, `wiki/${withMd}`]
+  // 按需补 wiki/ 前缀与 .md 后缀，Set 去重避免无意义的重复/嵌套键查询
+  const pathVariants = new Set([normalized, withMd])
+  if (!normalized.startsWith("wiki/")) {
+    pathVariants.add(`wiki/${normalized}`)
+    pathVariants.add(`wiki/${withMd}`)
+  }
   for (const variant of pathVariants) {
     const hit = index.byPath.get(pageKey(variant))
     if (hit) return hit
@@ -109,8 +115,8 @@ function lookupCandidate(candidate: string, index: PageResolutionIndex): string 
   return null
 }
 
-/** 递归收集 wiki 树下全部 .md 文件节点。 */
-function flattenMdFiles(nodes: FileNode[]): FileNode[] {
+/** 递归收集 wiki 树下全部 .md 文件节点（大小写不敏感，供本模块与 sweep-reviews 共用）。 */
+export function flattenMdFiles(nodes: FileNode[]): FileNode[] {
   const files: FileNode[] = []
   for (const node of nodes) {
     if (node.is_dir && node.children) files.push(...flattenMdFiles(node.children))
@@ -119,40 +125,57 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
   return files
 }
 
-const TITLE_RE = /^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m
-
-/**
- * 扫描项目 wiki 目录构建解析索引（IO 包装）。
- *
- * :param projectPath: 项目根路径
- * :returns: 解析索引；wiki 目录缺失或不可读时返回空索引
- */
-export async function buildPageResolutionIndexFromDisk(
-  projectPath: string,
-): Promise<PageResolutionIndex> {
-  const pp = normalizePath(projectPath)
-  const entries: PageIndexEntry[] = []
-  try {
-    const tree = await listDirectory(`${pp}/wiki`)
-    for (const file of flattenMdFiles(tree)) {
-      const relativePath = normalizePath(file.path).startsWith(`${pp}/`)
-        ? normalizePath(file.path).slice(pp.length + 1)
-        : `wiki/${file.name}`
-      let title: string | null = null
-      try {
-        title = readFileTitle(await readFile(file.path))
-      } catch {
-        // 单页不可读不影响整体索引
-      }
-      entries.push({ relativePath, title })
-    }
-  } catch {
-    // wiki 目录尚不存在：返回空索引，调用方将把全部引用计入 dropped
-  }
-  return buildPageResolutionIndex(entries)
+export interface PageResolver {
+  /** 解析一批 PAGES 引用；未命中时才惰性读盘补建标题索引（每实例最多一次）。 */
+  resolve: (refs: string[]) => Promise<{ resolved: string[]; dropped: string[] }>
 }
 
-function readFileTitle(content: string): string | null {
-  const match = content.match(TITLE_RE)
-  return match ? match[1].trim() : null
+/**
+ * 创建页面引用解析器（IO 包装，一次 ingest 建一个实例供全部审阅项共用）。
+ *
+ * 两阶段策略：先用一次 listDirectory 建路径/主干索引（零逐页读取），
+ * 大多数引用在此命中；仅当存在未解析引用时才逐页读 frontmatter 标题
+ * （经 parseFrontmatter 宽容解析）补建完整索引，且每实例只做一次。
+ *
+ * :param projectPath: 项目根路径
+ * :returns: PageResolver；wiki 目录缺失时全部引用计入 dropped
+ */
+export async function createPageResolver(projectPath: string): Promise<PageResolver> {
+  const pp = normalizePath(projectPath)
+  let files: FileNode[] = []
+  try {
+    files = flattenMdFiles(await listDirectory(`${pp}/wiki`))
+  } catch {
+    // wiki 目录尚不存在：空索引，全部引用 dropped
+  }
+  const relativeOf = (file: FileNode) => {
+    const relative = getRelativePath(file.path, pp)
+    return relative.startsWith("wiki/") ? relative : `wiki/${file.name}`
+  }
+
+  let index = buildPageResolutionIndex(files.map((f) => ({ relativePath: relativeOf(f), title: null })))
+  let titlesLoaded = false
+
+  return {
+    async resolve(refs) {
+      let result = resolveAffectedPages(refs, index)
+      if (result.dropped.length > 0 && !titlesLoaded && files.length > 0) {
+        titlesLoaded = true
+        const entries: PageIndexEntry[] = []
+        for (const file of files) {
+          let title: string | null = null
+          try {
+            const parsed = parseFrontmatter(await readFile(file.path)).frontmatter
+            title = typeof parsed?.title === "string" ? parsed.title : null
+          } catch {
+            // 单页不可读不影响整体索引
+          }
+          entries.push({ relativePath: relativeOf(file), title })
+        }
+        index = buildPageResolutionIndex(entries)
+        result = resolveAffectedPages(refs, index)
+      }
+      return result
+    },
+  }
 }

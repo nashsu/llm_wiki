@@ -17,28 +17,40 @@ const FALLBACK = new Date("2026-07-02T00:00:00Z")
 
 describe("extractSourceDate", () => {
   it("prefers full yyyymmdd dates", () => {
-    expect(extractSourceDate("20260630-稀美资源-小范围交流（附0401参观调研纪要）.docx", FALLBACK))
-      .toEqual({ date: "20260630", source: "filename" })
+    expect(extractSourceDate("20260630-稀美资源-小范围交流（附0401参观调研纪要）", FALLBACK))
+      .toEqual({ date: "20260630", source: "filename", matchedText: "20260630" })
   })
 
   it("expands yymmdd with the century", () => {
-    expect(extractSourceDate("260607-久谦论坛-调研周报.md", FALLBACK))
-      .toEqual({ date: "20260607", source: "filename" })
+    expect(extractSourceDate("260607-久谦论坛-调研周报", FALLBACK))
+      .toEqual({ date: "20260607", source: "filename", matchedText: "260607" })
   })
 
-  it("expands mmdd with the reference year", () => {
-    expect(extractSourceDate("悦安电感材料专家交流0701.docx", FALLBACK))
-      .toEqual({ date: "20260701", source: "filename" })
+  it("expands trailing mmdd with the reference year", () => {
+    expect(extractSourceDate("悦安电感材料专家交流0701", FALLBACK))
+      .toEqual({ date: "20260701", source: "filename", matchedText: "0701" })
   })
 
-  it("does not mistake a 6-digit stock code for a date", () => {
+  it("does not mistake a 6-digit stock code for a date (invalid month)", () => {
     // 688786 → 月份 87 非法，不是日期
-    expect(extractSourceDate("688786调研摘录.docx", FALLBACK))
+    expect(extractSourceDate("688786调研摘录", FALLBACK))
+      .toEqual({ date: "20260702", source: "fallback" })
+  })
+
+  it("does not mistake a bare ticker like 600519 for a yymmdd date (year window)", () => {
+    // 60/05/19 月日合法，但年份 2060 超出 20-39 合理窗口 → 拒绝
+    expect(extractSourceDate("600519调研纪要", FALLBACK))
+      .toEqual({ date: "20260702", source: "fallback" })
+  })
+
+  it("does not treat a leading 4-digit model number as mmdd (end-anchored only)", () => {
+    // 1206 是封装尺寸而非日期；mmdd 仅在主干结尾时才认
+    expect(extractSourceDate("1206阻容专家交流", FALLBACK))
       .toEqual({ date: "20260702", source: "fallback" })
   })
 
   it("falls back to the reference date when nothing parses", () => {
-    expect(extractSourceDate("汉钟精机学习笔记.docx", FALLBACK))
+    expect(extractSourceDate("汉钟精机学习笔记", FALLBACK))
       .toEqual({ date: "20260702", source: "fallback" })
   })
 })
@@ -114,5 +126,16 @@ describe("buildFinanceFileName", () => {
   it("uses a placeholder title when nothing is left after cleaning", () => {
     const { fileName } = buildFinanceFileName("悦安新材0701.docx", stocks, FALLBACK)
     expect(fileName).toBe("20260701-688786.SH-悦安新材-纪要.docx")
+  })
+
+  it("preserves meaningful digits in the title (only the adopted date is stripped)", () => {
+    const { fileName } = buildFinanceFileName("悦安2028年产能规划260701.docx", stocks, FALLBACK)
+    expect(fileName).toBe("20260701-688786.SH-悦安新材-2028年产能规划.docx")
+  })
+
+  it("keeps a bare ticker in the title instead of misreading it as a date", () => {
+    const { fileName, record } = buildFinanceFileName("600519调研纪要.docx", stocks, FALLBACK)
+    expect(fileName).toBe("20260702-NA-600519调研纪要.docx")
+    expect(record.dateSource).toBe("fallback")
   })
 })

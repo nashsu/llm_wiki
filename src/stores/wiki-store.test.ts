@@ -43,6 +43,26 @@ describe("wiki preview store actions", () => {
     expect(useWikiStore.getState().previewHistory).toEqual([])
   })
 
+  it("closing the preview (select null) does not push history", () => {
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+    useWikiStore.getState().setSelectedFile(null)
+
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+    // 关闭后再打开别的文件，不应出现指向已关闭文件的 Back
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+  })
+
+  it("does not push an external-preview path (back cannot restore its state)", () => {
+    useWikiStore.getState().openFileInPreview("/p/external-ref", "snippet")
+    useWikiStore.setState({
+      externalPreview: { path: "/p/external-ref", url: "https://x", title: "t", source: "web", snippet: "s" },
+    })
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+  })
+
   it("keeps the project path index in sync when setting the file tree", () => {
     useWikiStore.getState().setFileTree([
       {

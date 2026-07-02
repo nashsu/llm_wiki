@@ -13,9 +13,13 @@ import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useResearchStore } from "@/stores/research-store"
+import { useWikiStore } from "@/stores/wiki-store"
 
 export async function resetProjectState(): Promise<void> {
   // Zustand stores — clear all per-project data (synchronous)
+  // 预览导航历史存的是上一项目的绝对路径，切项目必须清空，
+  // 否则新项目里点 Back 会打开旧项目的文件
+  useWikiStore.setState({ previewHistory: [] })
   useChatStore.setState({
     conversations: [],
     messages: [],

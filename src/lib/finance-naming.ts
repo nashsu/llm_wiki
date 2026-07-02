@@ -30,35 +30,45 @@ function isValidMonthDay(mm: number, dd: number): boolean {
   return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31
 }
 
+/** yymmdd 补世纪时可信的两位年份窗口（2020-2039），窗口外视为非日期（如裸代码 600519）。 */
+const YY_MIN = 20
+const YY_MAX = 39
+
 /**
  * 从文件名中提取日期，统一为 yyyymmdd。
  *
- * 提取优先级：yyyymmdd → yymmdd（补世纪）→ mmdd（补参考年份）。
- * 每级都做月/日合法性校验，避免把 6 位股票代码误判为日期；
- * 全部落空时回退参考日期（通常为文件修改时间）并标注来源。
+ * 提取优先级：yyyymmdd → yymmdd（补世纪，年份限 20-39 窗口）→
+ * mmdd（补参考年份，仅认主干结尾位置，避免把型号/规格误判）。
+ * 每级都做月/日合法性校验；全部落空时回退参考日期（通常为文件
+ * 修改时间）。matchedText 返回被采用的原文片段，供构名时精确剥除，
+ * 不误伤标题中的其他数字。
  *
- * :param fileName: 原始文件名
+ * :param fileName: 原始文件名（不含扩展名为佳）
  * :param fallback: 回退参考日期
- * :returns: { date: yyyymmdd, source: "filename" | "fallback" }
+ * :returns: { date: yyyymmdd, source: 来源, matchedText?: 采用的原文片段 }
  */
 export function extractSourceDate(
   fileName: string,
   fallback: Date,
-): { date: string; source: "filename" | "fallback" } {
+): { date: string; source: "filename" | "fallback"; matchedText?: string } {
   for (const match of fileName.matchAll(/(20\d{2})(\d{2})(\d{2})/g)) {
     if (isValidMonthDay(Number(match[2]), Number(match[3]))) {
-      return { date: `${match[1]}${match[2]}${match[3]}`, source: "filename" }
+      return { date: match[0], source: "filename", matchedText: match[0] }
     }
   }
   for (const match of fileName.matchAll(/(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)/g)) {
-    if (isValidMonthDay(Number(match[2]), Number(match[3]))) {
-      return { date: `20${match[1]}${match[2]}${match[3]}`, source: "filename" }
+    const yy = Number(match[1])
+    if (yy >= YY_MIN && yy <= YY_MAX && isValidMonthDay(Number(match[2]), Number(match[3]))) {
+      return { date: `20${match[0]}`, source: "filename", matchedText: match[0] }
     }
   }
   const referenceYear = fallback.toISOString().slice(0, 4)
-  for (const match of fileName.matchAll(/(?<!\d)(\d{2})(\d{2})(?!\d)/g)) {
-    if (isValidMonthDay(Number(match[1]), Number(match[2]))) {
-      return { date: `${referenceYear}${match[1]}${match[2]}`, source: "filename" }
+  const trailing = fileName.match(/(?<!\d)(\d{2})(\d{2})$/)
+  if (trailing && isValidMonthDay(Number(trailing[1]), Number(trailing[2]))) {
+    return {
+      date: `${referenceYear}${trailing[0]}`,
+      source: "filename",
+      matchedText: trailing[0],
     }
   }
   return { date: fallback.toISOString().slice(0, 10).replace(/-/g, ""), source: "fallback" }
@@ -183,20 +193,18 @@ export function buildFinanceFileName(
   const stem = ext ? originalName.slice(0, -ext.length) : originalName
 
   // 幂等：重复处理已规范化的文件名时，先剥掉 ts_code 形状的段
-  // （避免其中 6 位数字被下面的日期剥离误伤），再剥日期段重建
+  // （避免其中 6 位数字被日期提取误判），再仅剥"实际采用"的日期片段——
+  // 标题中的其他数字（年份/规格/型号）原样保留
   const codeStripped = stem.replace(/\d{6}\.[A-Z]{2}/g, "")
-  const { date, source: dateSource } = extractSourceDate(codeStripped, fallbackDate)
-  const dateStripped = codeStripped
-    .replace(/(20\d{6}|(?<!\d)\d{6}(?!\d)|(?<!\d)\d{4}(?!\d))/g, "")
+  const { date, source: dateSource, matchedText } = extractSourceDate(codeStripped, fallbackDate)
+  const dateStripped = matchedText ? codeStripped.replace(matchedText, "") : codeStripped
 
   const match = matchStock(dateStripped, stocks)
   let fileName: string
   if (match) {
+    // matchedText 即文本中实际命中的片段（全称或其前缀），删它即可
     const title = cleanSegment(
-      dateStripped
-        .replace(match.stock.name, "")
-        .replace(match.matchedText, "")
-        .replace(/^-?NA-?/, ""),
+      dateStripped.replace(match.matchedText, "").replace(/^-?NA-?/, ""),
     ) || "纪要"
     fileName = `${date}-${match.stock.tsCode}-${match.stock.name}-${title}${ext}`
   } else {

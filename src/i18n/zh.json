@@ -92,6 +92,10 @@
     "general": {
       "name": "通用",
       "description": "最小化初始结构，适合从空白开始"
+    },
+    "finance": {
+      "name": "金融研究",
+      "description": "基于调研纪要的市场研究——来源带时间戳，实体锚定股票代码"
     }
   },
   "sources": {

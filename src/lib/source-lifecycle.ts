@@ -16,6 +16,7 @@ import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
+  sourceIdentityKey,
   sourceReferenceIdentity,
 } from "@/lib/source-identity"
 import {
@@ -182,16 +183,6 @@ export async function importSourceFiles(
   const renameRecords: RenameRecord[] = []
 
   for (const sourcePath of sourcePaths) {
-    let originalName = getFileName(sourcePath) || "unknown"
-    if (financeNaming) {
-      const { fileName, record } = buildFinanceFileName(
-        originalName,
-        stockTable,
-        await fileDateFallback(sourcePath),
-      )
-      if (fileName !== originalName) renameRecords.push(record)
-      originalName = fileName
-    }
     if (isSensitiveConfigSourceFile(sourcePath)) {
       continue
     }
@@ -205,10 +196,27 @@ export async function importSourceFiles(
     }
     if (!allowed) continue
 
+    // 改名在全部过滤检查之后计算，审计记录只在复制成功后追加，
+    // 且以实际落盘文件名为准（getUniqueDestPath 碰撞时会加后缀）
+    let originalName = getFileName(sourcePath) || "unknown"
+    let financeRecord: RenameRecord | null = null
+    if (financeNaming) {
+      const { fileName, record } = buildFinanceFileName(
+        originalName,
+        stockTable,
+        await fileDateFallback(sourcePath),
+      )
+      if (fileName !== originalName) financeRecord = record
+      originalName = fileName
+    }
+
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
       await copyFile(sourcePath, destPath)
       importedPaths.push(destPath)
+      if (financeRecord) {
+        renameRecords.push({ ...financeRecord, renamed: getFileName(destPath) })
+      }
       preprocessFile(destPath).catch(() => {})
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
@@ -313,9 +321,10 @@ export async function deleteSourceFiles(
     return { deletedWikiPaths: [], rewrittenSourcePages: 0, skippedPages: 0 }
   }
 
-  const deletingNames = new Set(sourceInfos.map((info) => info.fileName.toLowerCase()))
+  // NFC 身份键：macOS 磁盘名（NFD）与 frontmatter 记录（可能 NFC）跨平台失配防护
+  const deletingNames = new Set(sourceInfos.map((info) => sourceIdentityKey(info.fileName)))
   const deletingIdentities = new Set(
-    sourceInfos.map((info) => sourceReferenceIdentity(info.identity).toLowerCase()),
+    sourceInfos.map((info) => sourceIdentityKey(sourceReferenceIdentity(info.identity))),
   )
 
   if (!options.fileAlreadyDeleted) {
@@ -554,7 +563,7 @@ function sourceNameMatchesAny(
   deletingNames: Set<string>,
 ): boolean {
   const normalized = normalizePath(source)
-  const identity = sourceReferenceIdentity(normalized).toLowerCase()
+  const identity = sourceIdentityKey(sourceReferenceIdentity(normalized))
   if (deletingIdentities.has(identity)) return true
 
   // Legacy wiki pages stored only basenames in `sources`. Keep that fallback
@@ -562,8 +571,7 @@ function sourceNameMatchesAny(
   // `project-b/config.yaml` match a different deleted `config.yaml`.
   if (normalized.includes("/")) return false
 
-  const normalizedSource = normalized.toLowerCase()
-  return deletingNames.has(normalizedSource)
+  return deletingNames.has(sourceIdentityKey(normalized))
 }
 
 function withRootContext(context: string, rootContext?: string): string {

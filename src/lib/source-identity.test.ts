@@ -3,6 +3,7 @@ import {
   legacySourceSummarySlugFromIdentity,
   rawSourceIdentityOrNull,
   sourceIdentityForPath,
+  sourceIdentityKey,
   sourceReferenceIdentity,
   sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
@@ -19,6 +20,16 @@ describe("source identity helpers", () => {
     expect(
       rawSourceIdentityOrNull("/tmp/project", "/tmp/project/wiki/queries/research-x.md"),
     ).toBeNull()
+  })
+
+  it("sourceIdentityKey equates NFC/NFD forms case-insensitively", () => {
+    expect(sourceIdentityKey("café-Report.docx".normalize("NFD")))
+      .toBe(sourceIdentityKey("café-report.docx".normalize("NFC")))
+  })
+
+  it("sourceIdentityKey keeps fullwidth and halfwidth punctuation distinct", () => {
+    // 全角/半角括号在磁盘上是不同文件，身份键不得折叠（NFKC 会误删）
+    expect(sourceIdentityKey("报告（附录）.docx")).not.toBe(sourceIdentityKey("报告(附录).docx"))
   })
 
   it("keeps raw/sources relative folder context as the source identity", () => {

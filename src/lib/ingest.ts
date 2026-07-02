@@ -22,10 +22,7 @@ import {
   sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
-import {
-  buildPageResolutionIndexFromDisk,
-  resolveAffectedPages,
-} from "@/lib/affected-pages-resolver"
+import { createPageResolver } from "@/lib/affected-pages-resolver"
 import { parseSources, writeSources } from "@/lib/sources-merge"
 import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
@@ -1273,11 +1270,11 @@ async function autoIngestImpl(
   if (reviewItems.length > 0) {
     // PAGES 引用确定性校验：解析为真实存在的页面路径（含标题/主干模糊
     // 匹配），臆造引用在入库前丢弃并记入警告，杜绝下游消费脏引用
-    const pageIndex = await buildPageResolutionIndexFromDisk(pp)
+    const pageResolver = await createPageResolver(pp)
     const pageWarnings: string[] = []
     for (const reviewItem of reviewItems) {
       if (!reviewItem.affectedPages || reviewItem.affectedPages.length === 0) continue
-      const { resolved, dropped } = resolveAffectedPages(reviewItem.affectedPages, pageIndex)
+      const { resolved, dropped } = await pageResolver.resolve(reviewItem.affectedPages)
       reviewItem.affectedPages = resolved.length > 0 ? resolved : undefined
       for (const ref of dropped) {
         pageWarnings.push(

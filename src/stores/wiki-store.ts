@@ -418,13 +418,20 @@ interface WikiState {
 
 const PREVIEW_HISTORY_LIMIT = 20
 
-/** 切换预览文件时把上一个文件压入历史栈（同文件重开与关闭预览不入栈）。 */
+/**
+ * 切换预览文件时把上一个文件压入历史栈。
+ *
+ * 不入栈的情形：同文件重开、关闭预览（nextFile 为 null——否则关闭再
+ * 打开别的文件后 Back 会回到用户已主动关闭的文件）、上一个是外部引用
+ * 预览（历史只存路径，externalPreview 状态无法随 Back 还原）。
+ */
 function pushPreviewHistory(
-  state: Pick<WikiState, "selectedFile" | "previewHistory">,
+  state: Pick<WikiState, "selectedFile" | "previewHistory" | "externalPreview">,
   nextFile: string | null,
 ): string[] {
   const previous = state.selectedFile
-  if (!previous || previous === nextFile) return state.previewHistory
+  if (!previous || nextFile === null || previous === nextFile) return state.previewHistory
+  if (state.externalPreview?.path === previous) return state.previewHistory
   return [...state.previewHistory, previous].slice(-PREVIEW_HISTORY_LIMIT)
 }
 

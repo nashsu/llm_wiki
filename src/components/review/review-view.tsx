@@ -517,14 +517,14 @@ function ReviewCard({
                 className="underline decoration-dotted underline-offset-2 hover:text-foreground"
                 title={provenance.wikiSourcePage}
               >
-                🌐 {getFileName(provenance.wikiSourcePage)}（{t("review.researchReport")}）
+                🌐 {getFileName(provenance.wikiSourcePage)} · {t("review.researchReport")}
               </button>
             </span>
           )}
         </div>
       ) : provenance && (item.sourcePath || (item.affectedPages?.length ?? 0) > 0) ? (
         <div className="mb-3 text-xs text-muted-foreground/70">
-          {t("review.untraceable")}：
+          {t("review.untraceable")}:{" "}
           {[
             provenance.missingPages.length > 0
               ? t("review.untraceableMissing", { count: provenance.missingPages.length })
@@ -532,7 +532,7 @@ function ReviewCard({
             provenance.pagesWithoutSources.length > 0
               ? t("review.untraceableNoSources", { count: provenance.pagesWithoutSources.length })
               : null,
-          ].filter(Boolean).join("；") || t("review.untraceableNone")}
+          ].filter(Boolean).join("; ") || t("review.untraceableNone")}
         </div>
       ) : null}
 

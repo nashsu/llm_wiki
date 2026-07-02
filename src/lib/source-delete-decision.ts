@@ -8,6 +8,8 @@
  * substring match).
  */
 
+import { sourceIdentityKey as identityKey } from "@/lib/source-identity"
+
 export type DeleteDecision =
   /** Keep the page on disk; rewrite its sources to the returned list. */
   | { action: "keep"; updatedSources: string[] }
@@ -30,11 +32,6 @@ export type DeleteDecision =
  *     filtered list so caller can rewrite the frontmatter.
  *   - If it IS and it's the ONLY source → delete.
  */
-/**
- * 身份比较键：NFC 统一 Unicode 组合形式（macOS 文件系统常存 NFD）后小写。
- * 刻意不用 NFKC——全角/半角括号等兼容字符在磁盘上是不同文件，折叠会误删。
- */
-const identityKey = (s: string) => s.normalize("NFC").toLowerCase()
 
 export function decidePageFate(
   frontmatterSources: readonly string[],
