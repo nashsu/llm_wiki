@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { ReviewItem } from "@/stores/review-store"
 import {
   buildReviewPageContent,
+  collectReviewProvenance,
   collectReviewSourceIdentities,
   createReviewPageDrafts,
 } from "./review-create-page"
@@ -155,6 +156,48 @@ describe("buildReviewPageContent", () => {
     )
 
     expect(ids).toEqual([])
+  })
+
+  it("collectReviewProvenance reports the wiki research page as a web-derived source", async () => {
+    const provenance = await collectReviewProvenance(
+      "/p",
+      review({ sourcePath: "/p/wiki/queries/research-金刚石散热.md" }),
+      async () => { throw new Error("not found") },
+    )
+
+    expect(provenance.sourceIdentities).toEqual([])
+    expect(provenance.wikiSourcePage).toBe("wiki/queries/research-金刚石散热.md")
+  })
+
+  it("collectReviewProvenance classifies missing pages and pages without sources", async () => {
+    const pages: Record<string, string> = {
+      "/p/wiki/concepts/exists-no-sources.md":
+        '---\ntype: concept\ntitle: "x"\ntags: []\nrelated: []\n---\n\n# x\n',
+      "/p/wiki/concepts/exists-with-sources.md":
+        '---\ntype: concept\ntitle: "y"\nsources: ["a.docx"]\ntags: []\nrelated: []\n---\n\n# y\n',
+    }
+    const readFile = async (path: string) => {
+      const content = pages[path]
+      if (content === undefined) throw new Error("not found")
+      return content
+    }
+
+    const provenance = await collectReviewProvenance(
+      "/p",
+      review({
+        affectedPages: [
+          "wiki/concepts/exists-with-sources.md",
+          "wiki/concepts/exists-no-sources.md",
+          "wiki/queries/invented-slug.md",
+        ],
+      }),
+      readFile,
+    )
+
+    expect(provenance.sourceIdentities).toEqual(["a.docx"])
+    expect(provenance.pagesWithoutSources).toEqual(["wiki/concepts/exists-no-sources.md"])
+    expect(provenance.missingPages).toEqual(["wiki/queries/invented-slug.md"])
+    expect(provenance.wikiSourcePage).toBeNull()
   })
 
   it("escapes backslashes so YAML double-quoted scalars stay valid", () => {

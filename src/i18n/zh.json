@@ -235,7 +235,12 @@
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —",
     "pages": "页面",
-    "source": "来源"
+    "source": "来源",
+    "researchReport": "网络研究报告",
+    "untraceable": "来源不可追溯",
+    "untraceableMissing": "引用的 {{count}} 个页面不存在（可能为旧审阅项的臆造引用）",
+    "untraceableNoSources": "{{count}} 个引用页面未记录来源",
+    "untraceableNone": "该审阅项未携带来源信息"
   },
   "settings": {
     "title": "设置",

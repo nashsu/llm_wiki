@@ -235,7 +235,12 @@
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —",
     "pages": "Pages",
-    "source": "Source"
+    "source": "Source",
+    "researchReport": "web research",
+    "untraceable": "Source untraceable",
+    "untraceableMissing": "{{count}} referenced page(s) missing on disk (likely stale/invented references)",
+    "untraceableNoSources": "{{count}} referenced page(s) carry no source record",
+    "untraceableNone": "this item carries no source info"
   },
   "settings": {
     "title": "Settings",

@@ -22,8 +22,10 @@ import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import {
   buildReviewPageContent,
+  collectReviewProvenance,
   collectReviewSourceIdentities,
   createReviewPageDrafts,
+  type ReviewProvenance,
 } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
@@ -439,13 +441,13 @@ function ReviewCard({
   const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
-  // 来源并集（自身来源 + 受影响页面的来源），异步解析后展示为可点击列表
-  const [sourceIdentities, setSourceIdentities] = useState<string[]>([])
+  // 溯源诊断（来源并集 + 断链原因），异步解析后展示
+  const [provenance, setProvenance] = useState<ReviewProvenance | null>(null)
   useEffect(() => {
     if (!projectPath) return
     let cancelled = false
-    void collectReviewSourceIdentities(projectPath, item, readFile).then((ids) => {
-      if (!cancelled) setSourceIdentities(ids)
+    void collectReviewProvenance(projectPath, item, readFile).then((result) => {
+      if (!cancelled) setProvenance(result)
     })
     return () => {
       cancelled = true
@@ -488,10 +490,10 @@ function ReviewCard({
         </div>
       )}
 
-      {sourceIdentities.length > 0 && (
+      {provenance && (provenance.sourceIdentities.length > 0 || provenance.wikiSourcePage) ? (
         <div className="mb-3 text-xs text-muted-foreground">
           {t("review.source")}:{" "}
-          {sourceIdentities.map((identity, index) => (
+          {provenance.sourceIdentities.map((identity, index) => (
             <span key={identity}>
               {index > 0 && ", "}
               <button
@@ -505,8 +507,34 @@ function ReviewCard({
               </button>
             </span>
           ))}
+          {provenance.wikiSourcePage && (
+            <span>
+              {provenance.sourceIdentities.length > 0 && ", "}
+              <button
+                onClick={() =>
+                  useWikiStore.getState().openPathInPreview(`${projectPath}/${provenance.wikiSourcePage}`)
+                }
+                className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                title={provenance.wikiSourcePage}
+              >
+                🌐 {getFileName(provenance.wikiSourcePage)}（{t("review.researchReport")}）
+              </button>
+            </span>
+          )}
         </div>
-      )}
+      ) : provenance && (item.sourcePath || (item.affectedPages?.length ?? 0) > 0) ? (
+        <div className="mb-3 text-xs text-muted-foreground/70">
+          {t("review.untraceable")}：
+          {[
+            provenance.missingPages.length > 0
+              ? t("review.untraceableMissing", { count: provenance.missingPages.length })
+              : null,
+            provenance.pagesWithoutSources.length > 0
+              ? t("review.untraceableNoSources", { count: provenance.pagesWithoutSources.length })
+              : null,
+          ].filter(Boolean).join("；") || t("review.untraceableNone")}
+        </div>
+      ) : null}
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">

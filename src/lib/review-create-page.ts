@@ -106,17 +106,70 @@ export async function collectReviewSourceIdentities(
   item: ReviewItem,
   readFile: (path: string) => Promise<string>,
 ): Promise<string[]> {
+  return (await collectReviewProvenance(projectPath, item, readFile)).sourceIdentities
+}
+
+/** 审阅项溯源诊断结果：来源并集 + 不可追溯时的原因分类。 */
+export interface ReviewProvenance {
+  /** raw/sources 来源身份并集（自身来源在前） */
+  sourceIdentities: string[]
+  /** sourcePath 指向 wiki 页时（deep-research 链路）的相对路径，证据为其 References 网络文献 */
+  wikiSourcePage: string | null
+  /** 引用了但读取失败（磁盘上不存在）的页面 */
+  missingPages: string[]
+  /** 存在但 frontmatter 未记录 sources 的页面 */
+  pagesWithoutSources: string[]
+}
+
+/**
+ * 收集审阅项的完整溯源信息：来源并集 + 断链原因分类。
+ *
+ * 与 collectReviewSourceIdentities 相同的并集逻辑，额外区分三类
+ * "不可追溯"原因（wiki 研究页来源 / 引用页面不存在 / 页面无来源记录），
+ * 供审阅卡片向用户解释来源为何为空。
+ *
+ * :param projectPath: 项目根路径（已规范化）
+ * :param item: 审阅项
+ * :param readFile: 文件读取函数（注入以保持纯逻辑可测）
+ * :returns: 溯源诊断结果
+ */
+export async function collectReviewProvenance(
+  projectPath: string,
+  item: ReviewItem,
+  readFile: (path: string) => Promise<string>,
+): Promise<ReviewProvenance> {
   const identities: string[] = []
+  const missingPages: string[] = []
+  const pagesWithoutSources: string[] = []
+
   const own = item.sourcePath ? rawSourceIdentityOrNull(projectPath, item.sourcePath) : null
   if (own) identities.push(own)
+
+  // sourcePath 在项目内但不在 raw/sources 下 → deep-research 摄取的 wiki 研究页
+  let wikiSourcePage: string | null = null
+  if (item.sourcePath && !own) {
+    const sp = item.sourcePath.replace(/\\/g, "/")
+    const marker = "/wiki/"
+    const markerIndex = sp.indexOf(marker)
+    if (markerIndex >= 0) wikiSourcePage = `wiki/${sp.slice(markerIndex + marker.length)}`
+  }
+
   for (const page of item.affectedPages ?? []) {
     try {
-      identities.push(...parseSources(await readFile(`${projectPath}/${page}`)))
+      const sources = parseSources(await readFile(`${projectPath}/${page}`))
+      if (sources.length === 0) pagesWithoutSources.push(page)
+      identities.push(...sources)
     } catch {
-      // 受影响页面可能已不存在或不是有效路径，跳过
+      missingPages.push(page)
     }
   }
-  return Array.from(new Set(identities))
+
+  return {
+    sourceIdentities: Array.from(new Set(identities)),
+    wikiSourcePage,
+    missingPages,
+    pagesWithoutSources,
+  }
 }
 
 /**
