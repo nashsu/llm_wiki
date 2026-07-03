@@ -130,18 +130,48 @@ export interface StockMatch {
   matchedBy: "name" | "name-prefix"
 }
 
-/** 去掉名称尾部的 A/B 市场类别后缀（含全角），如 京东方A → 京东方、万科Ａ → 万科。 */
-function baseStockName(name: string): string {
-  return name.replace(/[ABＡＢ]$/, "")
+/**
+ * 匹配用归一化：全角 ASCII 区（！-～）折半角、小写字母折大写。
+ *
+ * 逐 UTF-16 单元 1:1 变换，长度与索引严格保持——归一化文本上的命中
+ * 区间可直接切回原文（matchedText 需要原文切片供构名精确剥除）。
+ */
+function normalizeForMatch(text: string): string {
+  let out = ""
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    let ch = text[i]
+    if (code >= 0xff01 && code <= 0xff5e) ch = String.fromCharCode(code - 0xfee0)
+    if (ch >= "a" && ch <= "z") ch = ch.toUpperCase()
+    out += ch
+  }
+  return out
 }
 
 /**
- * 在文本中匹配个股：全称包含优先，其次简称前缀递减匹配（最短 2 字）。
+ * 剥除股票名中的市场标记，得到主体基名（输入须已归一化）。
  *
- * 纪要文件名常用简称缩写（如"悦安"指悦安新材），故按前缀长度分级取最长
- * 命中。命中恰等于基名（全称去掉 A/B 市场后缀）视为完整名命中——文件名
- * 里"京东方"即指京东方A。同长度多命中时完整名命中优先（解决 A+H 前缀
- * 撞车，如 京东方A vs 京东方精电）；仍多解视为歧义，返回 null
+ * 前缀：ST/*ST/SST/S*ST（风险警示）、S（未股改，后随非拉丁字母，
+ * 避免误伤 SOHO 中国类英文名）；后缀：连字符标记 -U/-W/-UW/-WD/-SW 等
+ * （统一按 -大写字母段 剥除）、裸 A/B（深市老 A/B 股类别）。
+ */
+function stripStockMarkers(name: string): string {
+  return name
+    .replace(/^S?\*?ST/, "")
+    .replace(/^S(?![A-Z])/, "")
+    .replace(/-[A-Z]{1,3}$/, "")
+    .replace(/[AB]$/, "")
+}
+
+/**
+ * 在文本中匹配个股：全名（含标记）包含优先，其次基名前缀递减匹配（最短 2 字）。
+ *
+ * 归一化（全角折半角、大小写不敏感）后比较；基名 = 全称剥除市场标记
+ * （ST/*ST/S 前缀、-U/-W 类连字符后缀、裸 A/B 后缀）——文件名里
+ * "京东方"即指京东方A、"春兴"即指*ST春兴。纪要文件名常用简称缩写
+ * （如"悦安"指悦安新材），故按命中长度分级取最长；基名整名命中视为
+ * 完整名命中，同长度平局时完整名命中优先（解决 A+H 前缀撞车，如
+ * 京东方A vs 京东方精电）；仍多解视为歧义，返回 null
  * （宁可落行业格式也不猜）。
  *
  * :param subject: 待匹配文本（通常为去掉日期与扩展名的文件名）
@@ -149,31 +179,43 @@ function baseStockName(name: string): string {
  * :returns: 唯一最长命中，歧义或零命中为 null
  */
 export function matchStock(subject: string, stocks: StockRecord[]): StockMatch | null {
+  const normSubject = normalizeForMatch(subject)
   let bestLength = 0
   let winners: StockMatch[] = []
+
+  // 在归一化文本上找 needle，命中则按原文切片登记；同长度并列保留待平局裁决
+  function consider(stock: StockRecord, needle: string, matchedBy: "name" | "name-prefix"): boolean {
+    const idx = normSubject.indexOf(needle)
+    if (idx < 0) return false
+    const match: StockMatch = {
+      stock,
+      matchedText: subject.slice(idx, idx + needle.length),
+      matchedBy,
+    }
+    if (needle.length > bestLength) {
+      bestLength = needle.length
+      winners = [match]
+    } else if (needle.length === bestLength) {
+      winners.push(match)
+    }
+    return true
+  }
+
   for (const stock of stocks) {
-    if (stock.name.length < 2) continue
-    // 从全称往短试，找到该股在文本中的最长前缀命中
-    for (let length = stock.name.length; length >= 2; length--) {
-      const prefix = stock.name.slice(0, length)
-      if (!subject.includes(prefix)) continue
-      const isFullName = length === stock.name.length || prefix === baseStockName(stock.name)
-      const match: StockMatch = {
-        stock,
-        matchedText: prefix,
-        matchedBy: isFullName ? "name" : "name-prefix",
-      }
-      if (length > bestLength) {
-        bestLength = length
-        winners = [match]
-      } else if (length === bestLength) {
-        winners.push(match)
-      }
-      break
+    const normName = normalizeForMatch(stock.name)
+    if (normName.length < 2) continue
+    // 1) 全名（含标记）直接包含——最强命中，如文件名里写明 "ST海王"
+    if (consider(stock, normName, "name")) continue
+    // 2) 基名前缀阶梯，从整基名往短试
+    const base = stripStockMarkers(normName)
+    if (base.length < 2) continue
+    for (let length = base.length; length >= 2; length--) {
+      if (consider(stock, base.slice(0, length), length === base.length ? "name" : "name-prefix")) break
     }
   }
+
   if (winners.length === 1) return winners[0]
-  // 同长度平局：完整名命中（含基名命中）唯一时胜出，否则维持歧义
+  // 同长度平局：完整名命中（全名或基名整名）唯一时胜出，否则维持歧义
   const fullNameWinners = winners.filter((w) => w.matchedBy === "name")
   return fullNameWinners.length === 1 ? fullNameWinners[0] : null
 }

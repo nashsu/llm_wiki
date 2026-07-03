@@ -158,6 +158,49 @@ describe("matchStock", () => {
     ]
     expect(matchStock("东方专家电话会", tied)).toBeNull()
   })
+
+  it("matches *ST stocks by base name (marker prefix stripped)", () => {
+    const st: StockRecord[] = [{ tsCode: "002447.SZ", name: "*ST春兴", cnspell: "stcx" }]
+    const match = matchStock("春兴精工债务进展交流", st)
+    expect(match?.stock.tsCode).toBe("002447.SZ")
+    expect(match?.matchedBy).toBe("name") // 基名「春兴」整名命中
+    expect(match?.matchedText).toBe("春兴")
+  })
+
+  it("matches the literal marker-bearing name when the filename carries it", () => {
+    const st: StockRecord[] = [{ tsCode: "000078.SZ", name: "ST海王", cnspell: "sthw" }]
+    const match = matchStock("ST海王重整进展纪要", st)
+    expect(match?.stock.tsCode).toBe("000078.SZ")
+    expect(match?.matchedBy).toBe("name")
+    expect(match?.matchedText).toBe("ST海王")
+  })
+
+  it("matches case-insensitively and returns the original substring for stripping", () => {
+    const st: StockRecord[] = [{ tsCode: "002602.SZ", name: "ST华通", cnspell: "stht" }]
+    const match = matchStock("st华通游戏业务专家会", st)
+    expect(match?.stock.tsCode).toBe("002602.SZ")
+    expect(match?.matchedText).toBe("st华通") // 原文切片，供构名精确剥除
+  })
+
+  it("strips hyphenated market tags (-U/-W/-SW) before matching", () => {
+    const tagged: StockRecord[] = [
+      { tsCode: "688256.SH", name: "寒武纪-U", cnspell: "hwj" },
+      { tsCode: "09618.HK", name: "京东集团-SW", cnspell: "jdjt" },
+    ]
+    expect(matchStock("寒武纪三季报交流", tagged)?.stock.tsCode).toBe("688256.SH")
+    expect(matchStock("京东集团物流业务纪要", tagged)?.stock.tsCode).toBe("09618.HK")
+  })
+
+  it("strips the 未股改 S prefix (S佳通 → 佳通)", () => {
+    const s: StockRecord[] = [{ tsCode: "600182.SH", name: "S佳通", cnspell: "sjt" }]
+    expect(matchStock("佳通轮胎渠道调研", s)?.stock.tsCode).toBe("600182.SH")
+  })
+
+  it("does not strip a leading S from Latin-lettered names (SOHO中国)", () => {
+    const soho: StockRecord[] = [{ tsCode: "00410.HK", name: "SOHO中国", cnspell: "soho" }]
+    expect(matchStock("SOHO中国租金交流", soho)?.stock.tsCode).toBe("00410.HK")
+    expect(matchStock("OHO中国纪要", soho)).toBeNull() // S 不能被误剥
+  })
 })
 
 describe("buildFinanceFileName", () => {
