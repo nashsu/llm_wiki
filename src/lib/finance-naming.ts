@@ -130,11 +130,19 @@ export interface StockMatch {
   matchedBy: "name" | "name-prefix"
 }
 
+/** 去掉名称尾部的 A/B 市场类别后缀（含全角），如 京东方A → 京东方、万科Ａ → 万科。 */
+function baseStockName(name: string): string {
+  return name.replace(/[ABＡＢ]$/, "")
+}
+
 /**
  * 在文本中匹配个股：全称包含优先，其次简称前缀递减匹配（最短 2 字）。
  *
  * 纪要文件名常用简称缩写（如"悦安"指悦安新材），故按前缀长度分级取最长
- * 命中；同一长度命中多只个股视为歧义，返回 null（宁可落行业格式也不猜）。
+ * 命中。命中恰等于基名（全称去掉 A/B 市场后缀）视为完整名命中——文件名
+ * 里"京东方"即指京东方A。同长度多命中时完整名命中优先（解决 A+H 前缀
+ * 撞车，如 京东方A vs 京东方精电）；仍多解视为歧义，返回 null
+ * （宁可落行业格式也不猜）。
  *
  * :param subject: 待匹配文本（通常为去掉日期与扩展名的文件名）
  * :param stocks: 个股基础表
@@ -149,10 +157,11 @@ export function matchStock(subject: string, stocks: StockRecord[]): StockMatch |
     for (let length = stock.name.length; length >= 2; length--) {
       const prefix = stock.name.slice(0, length)
       if (!subject.includes(prefix)) continue
+      const isFullName = length === stock.name.length || prefix === baseStockName(stock.name)
       const match: StockMatch = {
         stock,
         matchedText: prefix,
-        matchedBy: length === stock.name.length ? "name" : "name-prefix",
+        matchedBy: isFullName ? "name" : "name-prefix",
       }
       if (length > bestLength) {
         bestLength = length
@@ -163,7 +172,10 @@ export function matchStock(subject: string, stocks: StockRecord[]): StockMatch |
       break
     }
   }
-  return winners.length === 1 ? winners[0] : null
+  if (winners.length === 1) return winners[0]
+  // 同长度平局：完整名命中（含基名命中）唯一时胜出，否则维持歧义
+  const fullNameWinners = winners.filter((w) => w.matchedBy === "name")
+  return fullNameWinners.length === 1 ? fullNameWinners[0] : null
 }
 
 /** 清理分段分隔符残渣（连续/首尾的 -、_、空白、全半角括号内空壳）。 */

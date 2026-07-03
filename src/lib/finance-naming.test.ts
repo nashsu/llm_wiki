@@ -130,6 +130,34 @@ describe("matchStock", () => {
   it("returns null when nothing matches", () => {
     expect(matchStock("久谦论坛-调研周报", stocks)).toBeNull()
   })
+
+  it("resolves A/B-suffix base-name hit over an HK sibling's prefix hit (京东方A vs 京东方精电)", () => {
+    // A+H 前缀撞车：两者都以「京东方」（长度 3）命中；「京东方A」的基名
+    // （去掉市场类别后缀 A）恰为「京东方」，应视为完整名命中并胜出
+    const ahStocks: StockRecord[] = [
+      { tsCode: "000725.SZ", name: "京东方A", cnspell: "jdfa" },
+      { tsCode: "00710.HK", name: "京东方精电", cnspell: "jdfjd" },
+    ]
+    const match = matchStock("京东方投资者交流日纪要", ahStocks)
+    expect(match?.stock.tsCode).toBe("000725.SZ")
+    expect(match?.matchedBy).toBe("name")
+  })
+
+  it("treats a full-width Ａ suffix the same way (万科Ａ vs 万科企业)", () => {
+    const ahStocks: StockRecord[] = [
+      { tsCode: "000002.SZ", name: "万科Ａ", cnspell: "wka" },
+      { tsCode: "02202.HK", name: "万科企业", cnspell: "wkqy" },
+    ]
+    expect(matchStock("万科年度业绩会纪要", ahStocks)?.stock.tsCode).toBe("000002.SZ")
+  })
+
+  it("still ambiguous when tied prefix hits have no base-name winner", () => {
+    const tied: StockRecord[] = [
+      { tsCode: "300059.SZ", name: "东方财富", cnspell: "dfcf" },
+      { tsCode: "600958.SH", name: "东方证券", cnspell: "dfzq" },
+    ]
+    expect(matchStock("东方专家电话会", tied)).toBeNull()
+  })
 })
 
 describe("buildFinanceFileName", () => {
@@ -143,6 +171,22 @@ describe("buildFinanceFileName", () => {
     expect(record.tsCode).toBe("688786.SH")
     expect(record.matchedBy).toBe("name-prefix")
     expect(record.dateSource).toBe("filename")
+  })
+
+  it("resolves the reported 京东方 A+H collision end-to-end (regression)", () => {
+    // 用户报告：此文件曾因 京东方A/京东方精电 前缀撞车落到 NA
+    const ahStocks: StockRecord[] = [
+      { tsCode: "000725.SZ", name: "京东方A", cnspell: "jdfa" },
+      { tsCode: "00710.HK", name: "京东方精电", cnspell: "jdfjd" },
+    ]
+    const { fileName, record } = buildFinanceFileName(
+      "京东方投资者交流日纪要20260702.docx",
+      ahStocks,
+      FALLBACK,
+    )
+    expect(fileName).toBe("20260702-000725.SZ-京东方A-投资者交流日纪要.docx")
+    expect(record.tsCode).toBe("000725.SZ")
+    expect(record.matchedBy).toBe("name")
   })
 
   it("builds date-NA-stem for unmatched industry documents", () => {
