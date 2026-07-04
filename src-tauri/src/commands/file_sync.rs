@@ -200,7 +200,7 @@ pub fn start_project_file_watcher(
         let watcher_generation = WATCHER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         ensure_sync_dir(&root)?;
         with_queue_lock(&root, || reset_processing_tasks(&root, &project_id))?;
-        enqueue_rescan_changes(&root, &project_id, &source_watch_config)?;
+        enqueue_startup_rescan_changes(&root, &project_id, &source_watch_config)?;
         let changed_tasks = process_queue(&app, &root, &project_id)?;
 
         let (tx, rx) = mpsc::sync_channel::<PathBuf>(8_192);
@@ -634,6 +634,19 @@ fn enqueue_rescan_changes(
         }
     }
     enqueue_paths(root, project_id, rels)
+}
+
+fn enqueue_startup_rescan_changes(
+    root: &Path,
+    project_id: &str,
+    source_watch_config: &SourceWatchConfig,
+) -> Result<(), String> {
+    enqueue_rescan_changes_for_prefixes(
+        root,
+        project_id,
+        &["raw/sources", "wiki", "purpose.md", "schema.md"],
+        source_watch_config,
+    )
 }
 
 fn enqueue_rescan_changes_for_prefixes(
@@ -1506,6 +1519,35 @@ mod tests {
 
         assert_eq!(by_path.get(old), Some(&FileChangeKind::Deleted));
         assert_eq!(by_path.get(new), Some(&FileChangeKind::Created));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_rescan_scans_watch_roots_without_full_project_walk() {
+        let root = temp_root("startup-prefixes");
+        fs::create_dir_all(root.join("wiki/entities")).unwrap();
+        fs::create_dir_all(root.join("unwatched/deep")).unwrap();
+        fs::write(root.join("raw/sources/source.md"), "source").unwrap();
+        fs::write(root.join("wiki/entities/topic.md"), "---\ntitle: Topic\n---\n").unwrap();
+        fs::write(root.join("purpose.md"), "purpose").unwrap();
+        fs::write(root.join("schema.md"), "schema").unwrap();
+        fs::write(root.join("unwatched/deep/note.md"), "ignore").unwrap();
+
+        ensure_sync_dir(&root).unwrap();
+        enqueue_startup_rescan_changes(&root, "p1", &default_watch_config()).unwrap();
+        let queue = read_queue(&root).unwrap();
+        let paths = queue
+            .tasks
+            .iter()
+            .map(|task| task.path.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(paths.contains("raw/sources/source.md"));
+        assert!(paths.contains("wiki/entities/topic.md"));
+        assert!(paths.contains("purpose.md"));
+        assert!(paths.contains("schema.md"));
+        assert!(!paths.contains("unwatched/deep/note.md"));
 
         let _ = fs::remove_dir_all(root);
     }

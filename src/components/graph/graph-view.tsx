@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent } from "react"
+import { useEffect, useCallback, useMemo, useState, useRef, type ChangeEvent, type SetStateAction } from "react"
 import Graph from "graphology"
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSetSettings, useSigma } from "@react-sigma/core"
 import "@react-sigma/core/lib/style.css"
@@ -9,7 +9,7 @@ import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, 
 import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
-import { useWikiStore } from "@/stores/wiki-store"
+import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
@@ -19,7 +19,7 @@ import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { getFileCategory } from "@/lib/file-types"
-import { applyGraphFilters, DEFAULT_GRAPH_FILTERS, hasActiveGraphFilters, type GraphFilterState } from "@/lib/graph-filters"
+import { applyGraphFilters, hasActiveGraphFilters, type GraphFilterState } from "@/lib/graph-filters"
 import { applyGraphSearch } from "@/lib/graph-search"
 import { wikiTypeLabel } from "@/lib/wiki-page-types"
 import { useTranslation } from "react-i18next"
@@ -64,7 +64,6 @@ const COMMUNITY_COLORS = [
   "#fbbf24",  // amber-400
 ]
 
-type ColorMode = "type" | "community"
 type GraphThemePalette = {
   defaultEdge: string
   label: string
@@ -79,7 +78,6 @@ type GraphThemePalette = {
 
 const BASE_NODE_SIZE = 8
 const MAX_NODE_SIZE = 28
-const DEFAULT_NODE_SCALE = 1
 const DEFAULT_GRAPH_SPACING = 1
 const GRAPH_SPACING_DEBOUNCE_MS = 180
 const WORKER_LAYOUT_NODE_THRESHOLD = 220
@@ -313,7 +311,7 @@ function GraphLoader({
 }: {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  colorMode: ColorMode
+  colorMode: GraphColorMode
   nodeScale: number
   graphSpacing: number
 }) {
@@ -643,7 +641,13 @@ export function GraphView() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hoveredType, setHoveredType] = useState<string | null>(null)
-  const [colorMode, setColorMode] = useState<ColorMode>("type")
+  const graphUiState = useWikiStore((s) => s.graphUiState)
+  const setGraphUiState = useWikiStore((s) => s.setGraphUiState)
+  const resetGraphUiState = useWikiStore((s) => s.resetGraphUiState)
+  const colorMode = graphUiState.colorMode
+  const filters = graphUiState.filters
+  const nodeScale = graphUiState.nodeScale
+  const graphSpacingDraft = graphUiState.graphSpacingDraft
   const [showInsights, setShowInsights] = useState(false)
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set())
   const [hoverState, setHoverState] = useState<HoverState>(null)
@@ -654,21 +658,33 @@ export function GraphView() {
   const [showFilters, setShowFilters] = useState(false)
   const [graphSearchOpen, setGraphSearchOpen] = useState(false)
   const [graphSearch, setGraphSearch] = useState("")
-  const [nodeScale, setNodeScale] = useState(DEFAULT_NODE_SCALE)
-  const [graphSpacingDraft, setGraphSpacingDraft] = useState(DEFAULT_GRAPH_SPACING)
-  const [graphSpacing, setGraphSpacing] = useState(DEFAULT_GRAPH_SPACING)
+  const [graphSpacing, setGraphSpacing] = useState(graphSpacingDraft)
   const [graphPreview, setGraphPreview] = useState<GraphPreview | null>(null)
-  const [filters, setFilters] = useState<GraphFilterState>(() => ({
-    ...DEFAULT_GRAPH_FILTERS,
-    hiddenTypes: new Set(),
-    hiddenNodeIds: new Set(),
-  }))
   const [nodeMenu, setNodeMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement>(null)
   const researchDialogTokenRef = useRef(0)
   // i18n node type labels (populated after mount to support language switching)
   const [nodeTypeLabels, setNodeTypeLabels] = useState<Record<string, string>>({})
   const graphSearchInputRef = useRef<HTMLInputElement>(null)
+
+  const setColorMode = useCallback((colorMode: GraphColorMode) => {
+    setGraphUiState((prev) => ({ ...prev, colorMode }))
+  }, [setGraphUiState])
+
+  const setFilters = useCallback((next: SetStateAction<GraphFilterState>) => {
+    setGraphUiState((prev) => ({
+      ...prev,
+      filters: typeof next === "function" ? next(prev.filters) : next,
+    }))
+  }, [setGraphUiState])
+
+  const setNodeScale = useCallback((nodeScale: number) => {
+    setGraphUiState((prev) => ({ ...prev, nodeScale }))
+  }, [setGraphUiState])
+
+  const setGraphSpacingDraft = useCallback((graphSpacingDraft: number) => {
+    setGraphUiState((prev) => ({ ...prev, graphSpacingDraft }))
+  }, [setGraphUiState])
 
   // Research confirmation dialog
   const [researchDialog, setResearchDialog] = useState<{
@@ -767,16 +783,10 @@ export function GraphView() {
   }, [])
 
   const resetFilters = useCallback(() => {
-    setFilters({
-      ...DEFAULT_GRAPH_FILTERS,
-      hiddenTypes: new Set(),
-      hiddenNodeIds: new Set(),
-    })
-    setNodeScale(DEFAULT_NODE_SCALE)
-    setGraphSpacingDraft(DEFAULT_GRAPH_SPACING)
+    resetGraphUiState()
     setGraphSpacing(DEFAULT_GRAPH_SPACING)
     setNodeMenu(null)
-  }, [])
+  }, [resetGraphUiState])
 
   const knowledgeGapKey = useCallback((gap: KnowledgeGap) => (
     `gap:${gap.type}:${gap.title}:${gap.nodeIds.join(",")}`
@@ -1189,6 +1199,28 @@ export function GraphView() {
                     />
                     <span>{t("graph.hideIsolated")}</span>
                   </label>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="font-medium text-muted-foreground">{t("graph.minLinks")}</div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      className="h-7 w-20 rounded border bg-background px-2 text-xs"
+                      value={filters.minLinks ?? ""}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim()
+                        const value = Number(raw)
+                        setFilters((prev) => ({
+                          ...prev,
+                          minLinks: raw === "" || !Number.isFinite(value) ? undefined : Math.max(0, value),
+                        }))
+                      }}
+                      placeholder="Any"
+                    />
+                    <span className="text-muted-foreground">{t("graph.minLinksHint")}</span>
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">

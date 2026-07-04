@@ -14,7 +14,7 @@ use tiny_http::{Header, Method, Response, Server, StatusCode};
 use walkdir::WalkDir;
 
 use crate::cors::{local_cors_headers, request_origin};
-use crate::{clip_server, commands};
+use crate::{clip_server, commands, server_bind};
 
 const PORT: u16 = 19828;
 const API_PREFIX: &str = "/api/v1";
@@ -64,8 +64,8 @@ pub fn invalidate_config_cache() {
 pub fn start_api_server(app: AppHandle) {
     thread::spawn(move || loop {
         API_STATUS.store(0, Ordering::Relaxed);
-        let server = match bind_server_with_retry() {
-            Some(server) => server,
+        let (server, addr) = match bind_server_with_retry(&app) {
+            Some(bound) => bound,
             None => {
                 API_STATUS.store(2, Ordering::Relaxed);
                 thread::sleep(Duration::from_secs(BIND_RETRY_DELAY_SECS));
@@ -74,7 +74,7 @@ pub fn start_api_server(app: AppHandle) {
         };
 
         API_STATUS.store(1, Ordering::Relaxed);
-        eprintln!("[API Server] Listening on http://127.0.0.1:{PORT}{API_PREFIX}");
+        eprintln!("[API Server] Listening on http://{addr}{API_PREFIX}");
 
         for request in server.incoming_requests() {
             let method = request.method().clone();
@@ -106,13 +106,15 @@ pub fn start_api_server(app: AppHandle) {
     });
 }
 
-fn bind_server_with_retry() -> Option<Server> {
+fn bind_server_with_retry(app: &AppHandle) -> Option<(Server, String)> {
+    let host = server_bind::configured_bind_host(app);
+    let addr = server_bind::bind_addr(&host, PORT);
     for attempt in 1..=MAX_BIND_RETRIES {
-        match Server::http(format!("127.0.0.1:{PORT}")) {
-            Ok(server) => return Some(server),
+        match Server::http(&addr) {
+            Ok(server) => return Some((server, addr)),
             Err(err) => {
                 eprintln!(
-                    "[API Server] Failed to bind 127.0.0.1:{PORT} (attempt {attempt}/{MAX_BIND_RETRIES}): {err}"
+                    "[API Server] Failed to bind {addr} (attempt {attempt}/{MAX_BIND_RETRIES}): {err}"
                 );
                 if attempt < MAX_BIND_RETRIES {
                     thread::sleep(Duration::from_secs(BIND_RETRY_DELAY_SECS));
@@ -227,6 +229,7 @@ fn handle_request(
             "enabled": api_enabled(app),
             "mcpEnabled": api_mcp_enabled(app),
             "allowUnauthenticated": api_allow_unauthenticated(app),
+            "allowLanAccess": api_allow_lan_access(app),
         }));
     }
     if !path.starts_with(API_PREFIX) {
@@ -461,6 +464,17 @@ fn api_allow_unauthenticated(app: &AppHandle) -> bool {
     parsed
         .get("apiConfig")
         .and_then(|v| v.get("allowUnauthenticated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn api_allow_lan_access(app: &AppHandle) -> bool {
+    let Some(parsed) = load_app_state(app) else {
+        return false;
+    };
+    parsed
+        .get("apiConfig")
+        .and_then(|v| v.get("allowLanAccess"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
 }
@@ -2425,6 +2439,7 @@ mod tests {
             "apiConfig": {
                 "enabled": false,
                 "allowUnauthenticated": true,
+                "allowLanAccess": true,
                 "mcpEnabled": true,
                 "token": "abc"
             }
@@ -2441,6 +2456,12 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         assert!(allow_unauthenticated);
+        let allow_lan_access = payload
+            .get("apiConfig")
+            .and_then(|v| v.get("allowLanAccess"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(allow_lan_access);
         let mcp_enabled = payload
             .get("apiConfig")
             .and_then(|v| v.get("mcpEnabled"))
@@ -2470,5 +2491,11 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         assert!(!mcp_enabled_missing);
+        let allow_lan_access_missing = missing
+            .get("apiConfig")
+            .and_then(|v| v.get("allowLanAccess"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(!allow_lan_access_missing);
     }
 }

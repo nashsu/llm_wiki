@@ -20,6 +20,7 @@ import {
   importSourceFolder,
 } from "@/lib/source-lifecycle"
 import { filterRawSourceTree } from "@/lib/source-filter"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -30,7 +31,6 @@ export function SourcesView() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const dataVersion = useWikiStore((s) => s.dataVersion)
@@ -187,9 +187,10 @@ export function SourcesView() {
       // Step 8: Refresh everything (UI side — must run with parent
       // context, hence kept here rather than inside the helper).
       await loadSources()
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, {
+        projectId: project.id,
+        bumpDataVersion: true,
+      })
       if (
         selectedFile === node.path ||
         result.deletedWikiPaths.includes(selectedFile ?? "")
@@ -222,9 +223,10 @@ export function SourcesView() {
     try {
       const result = await deleteSourceFolder(pp, folder)
       await loadSources()
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, {
+        projectId: project.id,
+        bumpDataVersion: true,
+      })
       if (
         selectedFile?.startsWith(folder.path + "/") ||
         result.deletedWikiPaths.includes(selectedFile ?? "")

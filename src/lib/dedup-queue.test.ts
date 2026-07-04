@@ -35,6 +35,7 @@ import {
   getQueueSummary,
   pauseQueue,
   restoreQueue,
+  resumeProcessing,
 } from "./dedup-queue"
 import { executeMerge } from "./dedup-runner"
 import { readFile, writeFile } from "@/commands/fs"
@@ -285,7 +286,7 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
     expect(restored[0].group.slugs).toEqual(["a", "b"])
   })
 
-  it("restoreQueue reverts processing tasks to pending so they re-run", async () => {
+  it("restoreQueue reverts processing tasks to pending without auto-running them", async () => {
     const persisted = JSON.stringify([
       {
         id: "dedup-old",
@@ -310,6 +311,118 @@ describe("dedup-queue — pauseQueue / restoreQueue", () => {
     })
 
     await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(20)
+
+    expect(mockExecuteMerge).not.toHaveBeenCalled()
+    const restored = getQueue()
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({
+      id: "dedup-old",
+      status: "pending",
+    })
+    expect(getQueueSummary().restoredBacklogWaiting).toBe(true)
+  })
+
+  it("runs new live merge tasks while restored backlog waits", async () => {
+    const persisted = JSON.stringify([
+      {
+        id: "dedup-restored",
+        projectId: TEST_ID,
+        group: { slugs: ["old-a", "old-b"], confidence: "high", reason: "x" },
+        canonicalSlug: "old-a",
+        status: "pending",
+        addedAt: 1,
+        error: null,
+        retryCount: 0,
+      },
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.startsWith(TEST_PATH) ? persisted : Promise.reject(new Error("ENOENT")),
+    )
+    mockExecuteMerge.mockResolvedValue({
+      canonicalContent: "",
+      canonicalPath: "",
+      rewrites: [],
+      pagesToDelete: [],
+      backup: [],
+    })
+
+    await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(5)
+    expect(mockExecuteMerge).not.toHaveBeenCalled()
+
+    await enqueueMerge(TEST_ID, makeGroup(["new-a", "new-b"]), "new-a")
+    await flushMicrotasks(20)
+
+    expect(mockExecuteMerge).toHaveBeenCalledOnce()
+    expect(mockExecuteMerge.mock.calls[0][1].slugs).toEqual(["new-a", "new-b"])
+    expect(getQueue().map((task) => task.id)).toEqual(["dedup-restored"])
+    expect(getQueueSummary().restoredBacklogWaiting).toBe(true)
+  })
+
+  it("promotes a restored merge when a live enqueue touches the same group", async () => {
+    const persisted = JSON.stringify([
+      {
+        id: "dedup-restored",
+        projectId: TEST_ID,
+        group: { slugs: ["a", "b"], confidence: "high", reason: "old" },
+        canonicalSlug: "a",
+        status: "pending",
+        addedAt: 1,
+        error: null,
+        retryCount: 0,
+      },
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.startsWith(TEST_PATH) ? persisted : Promise.reject(new Error("ENOENT")),
+    )
+    mockExecuteMerge.mockResolvedValue({
+      canonicalContent: "",
+      canonicalPath: "",
+      rewrites: [],
+      pagesToDelete: [],
+      backup: [],
+    })
+
+    await restoreQueue(TEST_ID, TEST_PATH)
+    const id = await enqueueMerge(TEST_ID, makeGroup(["b", "a"]), "b")
+    await flushMicrotasks(20)
+
+    expect(id).toBe("dedup-restored")
+    expect(mockExecuteMerge).toHaveBeenCalledOnce()
+    expect(getQueue()).toHaveLength(0)
+    expect(getQueueSummary().restoredBacklogWaiting).toBe(false)
+  })
+
+  it("resumeProcessing runs restored pending merge tasks", async () => {
+    const persisted = JSON.stringify([
+      {
+        id: "dedup-restored",
+        projectId: TEST_ID,
+        group: { slugs: ["a", "b"], confidence: "high", reason: "x" },
+        canonicalSlug: "a",
+        status: "pending",
+        addedAt: 1,
+        error: null,
+        retryCount: 0,
+      },
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.startsWith(TEST_PATH) ? persisted : Promise.reject(new Error("ENOENT")),
+    )
+    mockExecuteMerge.mockResolvedValue({
+      canonicalContent: "",
+      canonicalPath: "",
+      rewrites: [],
+      pagesToDelete: [],
+      backup: [],
+    })
+
+    await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(5)
+    expect(mockExecuteMerge).not.toHaveBeenCalled()
+
+    resumeProcessing()
     await flushMicrotasks(20)
 
     expect(mockExecuteMerge).toHaveBeenCalledOnce()

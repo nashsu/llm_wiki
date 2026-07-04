@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -15,8 +15,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { writeFile, readFile, listDirectory, deleteFile } from "@/commands/fs"
+import { writeFile, readFile, deleteFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { createReviewPageDrafts } from "@/lib/review-create-page"
@@ -39,8 +40,8 @@ export function ReviewView() {
   const clearResolved = useReviewStore((s) => s.clearResolved)
   const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const [refreshing, setRefreshing] = useState(false)
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
 
   // Reload review items from disk. The review pane has no equivalent of
   // lint's re-run, so external writers — the resolve API, another window,
@@ -53,6 +54,7 @@ export function ReviewView() {
       const { loadReviewItems } = await import("@/lib/persist")
       const loaded = await loadReviewItems(project.path)
       setItems(loaded)
+      setSelectedReviewIds(new Set())
     } catch (err) {
       console.error("Failed to refresh review items:", err)
     } finally {
@@ -116,11 +118,11 @@ export function ReviewView() {
         try { logContent = await readFile(logPath) } catch { logContent = "# Wiki Log\n" }
         await writeFile(logPath, logContent.trimEnd() + `\n- ${date}: Saved query page \`${fileName}\`\n`)
 
-        // Refresh tree
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
         useWikiStore.getState().openFileInPreview(filePath, pageContent)
-        useWikiStore.getState().bumpDataVersion()
 
         resolveItem(id, "Saved to Wiki")
       } catch (err) {
@@ -154,8 +156,10 @@ export function ReviewView() {
       const filePath = action.slice(7)
       try {
         await deleteFile(filePath)
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
         resolveItem(id, "Deleted")
       } catch (err) {
         console.error("Failed to delete:", err)
@@ -237,12 +241,12 @@ export function ReviewView() {
           const logDate = created[0]?.date ?? makeQueryFileName("review").date
           await writeFile(logPath, logContent.trimEnd() + `\n- ${logDate}: Created ${created.length} page${created.length === 1 ? "" : "s"} from review: ${createdNames}\n`)
 
-          // Refresh
-          const tree = await listDirectory(pp)
-          setFileTree(tree)
+          await refreshProjectFileTree(pp, {
+            projectId: project.id,
+            bumpDataVersion: true,
+          })
           const first = created[0]
           if (first) useWikiStore.getState().openFileInPreview(first.filePath, first.pageContent)
-          useWikiStore.getState().bumpDataVersion()
 
           resolveItem(id, created.length === 1
             ? `Created: wiki/${created[0].dir}/${created[0].fileName}`
@@ -257,10 +261,50 @@ export function ReviewView() {
     } else {
       resolveItem(id, action)
     }
-  }, [project, items, resolveItem, setFileTree])
+  }, [project, items, resolveItem])
 
   const pending = items.filter((i) => !i.resolved)
   const resolved = items.filter((i) => i.resolved)
+  const selectedPendingIds = useMemo(
+    () => pending.map((item) => item.id).filter((id) => selectedReviewIds.has(id)),
+    [pending, selectedReviewIds],
+  )
+  const allPendingSelected = pending.length > 0 && selectedPendingIds.length === pending.length
+
+  const setReviewSelected = useCallback((id: string, selected: boolean) => {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev)
+      if (selected) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+
+  const toggleAllPending = useCallback(() => {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev)
+      if (allPendingSelected) {
+        for (const item of pending) next.delete(item.id)
+      } else {
+        for (const item of pending) next.add(item.id)
+      }
+      return next
+    })
+  }, [allPendingSelected, pending])
+
+  const handleBatchResolve = useCallback(() => {
+    for (const id of selectedPendingIds) {
+      resolveItem(id, "Bulk resolved")
+    }
+    setSelectedReviewIds(new Set())
+  }, [resolveItem, selectedPendingIds])
+
+  const handleBatchDismiss = useCallback(() => {
+    for (const id of selectedPendingIds) {
+      dismissItem(id)
+    }
+    setSelectedReviewIds(new Set())
+  }, [dismissItem, selectedPendingIds])
 
   return (
     <div className="flex h-full flex-col">
@@ -294,6 +338,41 @@ export function ReviewView() {
         </div>
       </div>
 
+      {pending.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
+          <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={allPendingSelected}
+              onChange={toggleAllPending}
+            />
+            {t("review.selectPending")}
+          </label>
+          <span className="text-muted-foreground">
+            {t("review.selectedCount", { count: selectedPendingIds.length })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={selectedPendingIds.length === 0}
+            onClick={handleBatchResolve}
+          >
+            {t("review.markSelectedResolved")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs text-destructive hover:text-destructive"
+            disabled={selectedPendingIds.length === 0}
+            onClick={handleBatchDismiss}
+          >
+            {t("review.dismissSelected")}
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
@@ -308,6 +387,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                selected={selectedReviewIds.has(item.id)}
+                onSelectedChange={setReviewSelected}
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -321,6 +402,8 @@ export function ReviewView() {
                 item={item}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
+                selected={selectedReviewIds.has(item.id)}
+                onSelectedChange={setReviewSelected}
               />
             ))}
           </div>
@@ -334,10 +417,14 @@ function ReviewCard({
   item,
   onResolve,
   onDismiss,
+  selected,
+  onSelectedChange,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
+  selected: boolean
+  onSelectedChange: (id: string, selected: boolean) => void
 }) {
   const { t } = useTranslation()
   const config = typeConfig[item.type]
@@ -351,6 +438,15 @@ function ReviewCard({
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
+          {!item.resolved && (
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5"
+              checked={selected}
+              onChange={(event) => onSelectedChange(item.id, event.target.checked)}
+              aria-label={t("review.selectItem", { title: item.title })}
+            />
+          )}
           <Icon className={`h-4 w-4 shrink-0 ${config.color}`} />
           <span className="font-medium">{item.title}</span>
         </div>

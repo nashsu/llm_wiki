@@ -858,6 +858,34 @@ describe("ingest-queue — pause/resume processing", () => {
     clearQueueState()
     expect(isQueuePaused()).toBe(false)
   })
+
+  it("auto-pauses on provider usage limits and resumes later without burning retries", async () => {
+    vi.useFakeTimers()
+    try {
+      mockAutoIngest
+        .mockRejectedValueOnce(new Error("429 rate limit exceeded"))
+        .mockResolvedValueOnce(["wiki/sources/only.md"])
+
+      await enqueueIngest(TEST_ID, "only.md")
+      await flushMicrotasks(10)
+
+      const pausedTask = getQueue().find((t) => t.sourcePath === "only.md")
+      expect(pausedTask?.status).toBe("pending")
+      expect(pausedTask?.retryCount).toBe(0)
+      expect(pausedTask?.error).toContain("Paused after provider usage limit")
+      expect(getQueueSummary().paused).toBe(true)
+      expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000)
+      await flushMicrotasks(10)
+
+      expect(mockAutoIngest).toHaveBeenCalledTimes(2)
+      expect(getQueue()).toHaveLength(0)
+      expect(getQueueSummary().paused).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 // ── cleanupWrittenFiles — file delete + LanceDB chunk cascade ──────

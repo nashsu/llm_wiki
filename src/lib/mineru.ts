@@ -3,6 +3,7 @@ import type { MineruConfig } from "@/stores/wiki-store"
 import { createDirectory, getFileSize, readFileAsBase64, writeFileBase64 } from "@/commands/fs"
 import { getHttpFetch } from "@/lib/tauri-fetch"
 import { getFileName, normalizePath } from "@/lib/path-utils"
+import type { SavedImage } from "@/lib/extract-source-images"
 
 const API_BASE = "https://mineru.net/api/v4"
 const POLL_INTERVAL_MS = 3_000
@@ -70,6 +71,11 @@ interface MineruAssetOptions {
   sourceSummarySlug: string
 }
 
+interface MineruExtractedMarkdown {
+  markdown: string
+  savedImages: SavedImage[]
+}
+
 // ── API calls ──
 
 async function mineruHeaders(token: string): Promise<HeadersInit> {
@@ -135,6 +141,37 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk)
   }
   return btoa(binary)
+}
+
+async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytesToUploadBody(bytes))
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+function mineruImageMimeType(path: string): string {
+  const ext = getFileName(path).split(".").pop()?.toLowerCase() ?? ""
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg"
+    case "png":
+      return "image/png"
+    case "gif":
+      return "image/gif"
+    case "webp":
+      return "image/webp"
+    case "bmp":
+      return "image/bmp"
+    case "svg":
+      return "image/svg+xml"
+    case "tif":
+    case "tiff":
+      return "image/tiff"
+    default:
+      return "application/octet-stream"
+  }
 }
 
 function safeMineruAssetSegment(segment: string): string {
@@ -484,10 +521,11 @@ async function saveMineruZipImages(
   zip: JSZip,
   options: MineruAssetOptions,
   signal?: AbortSignal,
-): Promise<Map<string, string>> {
+): Promise<{ pathMap: Map<string, string>; savedImages: SavedImage[] }> {
   const pp = normalizePath(options.projectPath)
   const rootDir = `${pp}/wiki/media/${options.sourceSummarySlug}/mineru`
   const pathMap = new Map<string, string>()
+  const savedImages: SavedImage[] = []
   const imageEntries: Array<[string, JSZip.JSZipObject]> = []
   const basenameCounts = new Map<string, number>()
 
@@ -500,7 +538,7 @@ async function saveMineruZipImages(
     }
   })
 
-  if (imageEntries.length === 0) return pathMap
+  if (imageEntries.length === 0) return { pathMap, savedImages }
 
   await createDirectory(rootDir)
   for (const [zipPath, file] of imageEntries) {
@@ -516,16 +554,26 @@ async function saveMineruZipImages(
       pathMap.set(basename, relPath)
       pathMap.set(decodeMineruPath(basename), relPath)
     }
+    savedImages.push({
+      index: savedImages.length + 1,
+      mimeType: mineruImageMimeType(relPath),
+      page: null,
+      width: 0,
+      height: 0,
+      relPath,
+      absPath,
+      sha256: await sha256OfBytes(bytes),
+    })
   }
 
-  return pathMap
+  return { pathMap, savedImages }
 }
 
 async function downloadAndExtractMarkdown(
   zipUrl: string,
   signal?: AbortSignal,
   assetOptions?: MineruAssetOptions,
-): Promise<string> {
+): Promise<MineruExtractedMarkdown> {
   const httpFetch = await getHttpFetch()
   throwIfAborted(signal)
   const res = await httpFetch(zipUrl, { signal })
@@ -553,20 +601,23 @@ async function downloadAndExtractMarkdown(
   )
   const markdown = await (fullMd ?? mdEntries[0])[1].async("string")
   const markdownWithTables = convertHtmlTablesToMarkdown(markdown)
-  if (!assetOptions) return markdownWithTables
+  if (!assetOptions) return { markdown: markdownWithTables, savedImages: [] }
 
   try {
-    const pathMap = await saveMineruZipImages(zip, assetOptions, signal)
-    return pathMap.size > 0
+    const { pathMap, savedImages } = await saveMineruZipImages(zip, assetOptions, signal)
+    return {
+      markdown: pathMap.size > 0
       ? rewriteMineruMarkdownImages(markdownWithTables, pathMap)
-      : markdownWithTables
+      : markdownWithTables,
+      savedImages,
+    }
   } catch (err) {
     if (signal?.aborted) throw err
     console.warn(
       "[MinerU] failed to save extracted images; keeping parsed Markdown text:",
       err instanceof Error ? err.message : err,
     )
-    return markdownWithTables
+    return { markdown: markdownWithTables, savedImages: [] }
   }
 }
 
@@ -589,6 +640,17 @@ export async function parseWithMineru(
   signal?: AbortSignal,
   assetOptions?: MineruAssetOptions,
 ): Promise<string> {
+  return (await parseWithMineruResult(config, sourcePath, sourceUrl, onProgress, signal, assetOptions)).markdown
+}
+
+export async function parseWithMineruResult(
+  config: MineruConfig,
+  sourcePath: string,
+  sourceUrl?: string,
+  onProgress?: (msg: string) => void,
+  signal?: AbortSignal,
+  assetOptions?: MineruAssetOptions,
+): Promise<MineruExtractedMarkdown> {
   throwIfAborted(signal)
   if (!config.token) throw new Error("MinerU API token not configured")
   if (config.modelVersion !== "pipeline" && config.modelVersion !== "vlm") {
@@ -627,10 +689,10 @@ export async function parseWithMineru(
   }
 
   onProgress?.("Downloading parsed result...")
-  const markdown = await downloadAndExtractMarkdown(zipUrl, signal, assetOptions)
+  const result = await downloadAndExtractMarkdown(zipUrl, signal, assetOptions)
   onProgress?.("Done")
 
-  return markdown
+  return result
 }
 
 /**
@@ -659,7 +721,12 @@ export async function testMineruConnection(token: string): Promise<void> {
 
 // Test-only hooks for MinerU's browser/Tauri boundary helpers.
 export const __mineruTest = {
-  downloadAndExtractMarkdown,
+  downloadAndExtractMarkdown: async (
+    zipUrl: string,
+    signal?: AbortSignal,
+    assetOptions?: MineruAssetOptions,
+  ) => (await downloadAndExtractMarkdown(zipUrl, signal, assetOptions)).markdown,
+  downloadAndExtractMarkdownResult: downloadAndExtractMarkdown,
   mineruApiErrorMessage,
   decodeBase64ToBytes,
   rewriteMineruMarkdownImages,

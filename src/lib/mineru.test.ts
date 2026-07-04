@@ -21,7 +21,7 @@ vi.mock("@/commands/fs", () => ({
   writeFileBase64: fsMocks.writeFileBase64,
 }))
 
-import { __mineruTest, parseWithMineru, testMineruConnection } from "./mineru"
+import { __mineruTest, parseWithMineru, parseWithMineruResult, testMineruConnection } from "./mineru"
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -191,6 +191,32 @@ describe("MinerU API helpers", () => {
     expect(markdown).toContain("![Chart](media/paper/mineru/images/chart.png)")
     expect(markdown).toContain("![Table](media/paper/mineru/figures/table%201.jpg)")
     expect(markdown).toContain("![Remote](https://example.test/x.png)")
+  })
+
+  it("returns SavedImage metadata for MinerU zip images", async () => {
+    mockHttpFetch.mockResolvedValueOnce(await zipResponse({
+      "full.md": "![Chart](images/chart.png)",
+      "images/chart.png": "chart-bytes",
+    }))
+
+    const result = await __mineruTest.downloadAndExtractMarkdownResult(
+      "https://cdn/result.zip",
+      undefined,
+      { projectPath: "/project", sourceSummarySlug: "paper" },
+    )
+
+    expect(result.markdown).toBe("![Chart](media/paper/mineru/images/chart.png)")
+    expect(result.savedImages).toHaveLength(1)
+    expect(result.savedImages[0]).toMatchObject({
+      index: 1,
+      mimeType: "image/png",
+      page: null,
+      width: 0,
+      height: 0,
+      relPath: "media/paper/mineru/images/chart.png",
+      absPath: "/project/wiki/media/paper/mineru/images/chart.png",
+    })
+    expect(result.savedImages[0].sha256).toMatch(/^[0-9a-f]{64}$/)
   })
 
   it("rewrites Markdown image paths containing spaces", async () => {
@@ -442,6 +468,42 @@ describe("parseWithMineru", () => {
       "/project/wiki/media/doc/mineru/images/chart.png",
       btoa("chart-bytes"),
     )
+  })
+
+  it("returns saved MinerU images from local parsing result", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: { batch_id: "batch-1", file_urls: ["https://upload"] },
+      }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        msg: "ok",
+        data: {
+          batch_id: "batch-1",
+          extract_result: [{ file_name: "doc.pdf", state: "done", full_zip_url: "https://zip" }],
+        },
+      }))
+      .mockResolvedValueOnce(await zipResponse({
+        "full.md": "![Chart](images/chart.png)",
+        "images/chart.png": "chart-bytes",
+      }))
+
+    const result = await parseWithMineruResult({
+      enabled: true,
+      token: "token",
+      modelVersion: "vlm",
+    }, "/tmp/doc.pdf", undefined, undefined, undefined, {
+      projectPath: "/project",
+      sourceSummarySlug: "doc",
+    })
+
+    expect(result.markdown).toBe("![Chart](media/doc/mineru/images/chart.png)")
+    expect(result.savedImages.map((image) => image.relPath)).toEqual([
+      "media/doc/mineru/images/chart.png",
+    ])
   })
 
   it("submits URL tasks without reading or uploading a local file", async () => {

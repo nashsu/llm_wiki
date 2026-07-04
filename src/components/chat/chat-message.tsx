@@ -32,6 +32,7 @@ import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import type { ChatAgentEvent, ChatAgentEventStage, ChatAgentStep } from "@/lib/chat-agent"
 import { filterRawSourceTree } from "@/lib/source-filter"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -229,7 +230,6 @@ function CopyButton({ content }: { content: string }) {
 
 function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
   const project = useWikiStore((s) => s.project)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -294,9 +294,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       await writeFile(logPath, logContent.trimEnd() + "\n" + logEntry)
 
       // Refresh file tree and update graph
-      const tree = await listDirectory(pp)
-      setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, { bumpDataVersion: true })
 
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -314,7 +312,7 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
     } finally {
       setSaving(false)
     }
-  }, [project, content, saving, setFileTree])
+  }, [project, content, saving])
 
   if (!visible && !saved) return null
 

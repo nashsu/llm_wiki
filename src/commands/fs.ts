@@ -40,11 +40,55 @@ export async function writeFileAtomic(path: string, contents: string): Promise<v
  * only for the `raw/sources` content area, where dotfolders are
  * legitimate user-added sources. See `entry_is_visible` in fs.rs.
  */
+export interface ListDirectoryOptions {
+  includeHidden?: boolean
+  maxDepth?: number
+}
+
+// In-flight dedupe only: entries are removed when the request settles. Each
+// caller receives its own tree copy when a request is actually shared, so
+// accidental in-place mutations do not leak across concurrent waiters.
+interface PendingListDirectory {
+  request: Promise<FileNode[]>
+  shared: boolean
+}
+
+const pendingListDirectory = new Map<string, PendingListDirectory>()
+
+function cloneFileNodes(nodes: FileNode[]): FileNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    children: node.children ? cloneFileNodes(node.children) : node.children,
+  }))
+}
+
 export async function listDirectory(
   path: string,
-  includeHidden = false,
+  includeHiddenOrOptions: boolean | ListDirectoryOptions = false,
 ): Promise<FileNode[]> {
-  return invoke<FileNode[]>("list_directory", { path, includeHidden })
+  const options =
+    typeof includeHiddenOrOptions === "boolean"
+      ? { includeHidden: includeHiddenOrOptions }
+      : includeHiddenOrOptions
+  const includeHidden = options.includeHidden ?? false
+  const maxDepth = options.maxDepth
+  const requestKey = JSON.stringify([path, includeHidden, maxDepth ?? null])
+  const pending = pendingListDirectory.get(requestKey)
+  if (pending) {
+    pending.shared = true
+    return pending.request.then(cloneFileNodes)
+  }
+
+  const request = invoke<FileNode[]>("list_directory", {
+    path,
+    includeHidden,
+    maxDepth,
+  }).finally(() => {
+    pendingListDirectory.delete(requestKey)
+  })
+  const entry: PendingListDirectory = { request, shared: false }
+  pendingListDirectory.set(requestKey, entry)
+  return request.then((nodes) => (entry.shared ? cloneFileNodes(nodes) : nodes))
 }
 
 export async function copyFile(

@@ -326,6 +326,7 @@ export async function cancelTask(taskId: string): Promise<void> {
   queue = queue.filter((t) => t.id !== taskId)
   if (!queue.some((t) => t.status === "pending" || t.status === "processing")) {
     paused = false
+    clearUsageLimitAutoResume()
   }
   await saveQueue(currentProjectPath)
   console.log(`[Ingest Queue] Cancelled: ${task.sourcePath}`)
@@ -367,6 +368,7 @@ export async function cancelAllTasks(): Promise<number> {
   }
   queue = queue.filter((t) => t.status === "failed")
   paused = false
+  clearUsageLimitAutoResume()
   const removed = before - queue.length
 
   await saveQueue(currentProjectPath)
@@ -384,6 +386,7 @@ export async function cancelAllTasks(): Promise<number> {
  * switch (pending tasks are picked up by restoreQueue).
  */
 export function pauseProcessing(): void {
+  clearUsageLimitAutoResume()
   paused = true
   const processingTask = queue.find(
     (t) => t.projectId === currentProjectId && t.status === "processing",
@@ -407,6 +410,7 @@ export function pauseProcessing(): void {
  * (the existing `if (processing) return` guard handles that).
  */
 export function resumeProcessing(): void {
+  clearUsageLimitAutoResume()
   paused = false
   restoredPausedTaskIds.clear()
   console.log("[Ingest Queue] Resumed")
@@ -464,6 +468,7 @@ export function getQueueSummary(): {
  * disk before clearing memory.
  */
 export function clearQueueState(): void {
+  clearUsageLimitAutoResume()
   if (currentAbortController) {
     currentAbortController.abort()
   }
@@ -493,6 +498,7 @@ export function clearQueueState(): void {
  * Must be `await`ed — the disk flush is async.
  */
 export async function pauseQueue(): Promise<void> {
+  clearUsageLimitAutoResume()
   if (!currentProjectId || !currentProjectPath) {
     // Nothing to pause (no active project)
     return
@@ -550,6 +556,7 @@ export async function restoreQueue(
   queue = []
   restoredPausedTaskIds.clear()
   processing = false
+  clearUsageLimitAutoResume()
   // Every project loads un-paused. Pause is a current-session control;
   // it does not carry across project switches or app restarts.
   paused = false
@@ -601,6 +608,30 @@ export async function restoreQueue(
 // ── Processing ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 3
+const USAGE_LIMIT_AUTO_RESUME_MS = 15 * 60 * 1000
+let usageLimitResumeTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearUsageLimitAutoResume(): void {
+  if (usageLimitResumeTimer) {
+    clearTimeout(usageLimitResumeTimer)
+    usageLimitResumeTimer = null
+  }
+}
+
+function isUsageLimitError(message: string): boolean {
+  return /\b429\b|rate[_\s-]*limit|usage\s+limit|quota|too many requests/i.test(message)
+}
+
+function scheduleUsageLimitAutoResume(projectId: string): void {
+  if (usageLimitResumeTimer) return
+  usageLimitResumeTimer = setTimeout(() => {
+    usageLimitResumeTimer = null
+    if (currentProjectId !== projectId) return
+    paused = false
+    console.log("[Ingest Queue] Auto-resuming after provider usage limit pause")
+    processNext(projectId)
+  }, USAGE_LIMIT_AUTO_RESUME_MS)
+}
 
 async function onQueueDrained(projectId: string, projectPath: string): Promise<void> {
   if (!processedSinceDrain) return
@@ -758,6 +789,19 @@ async function processNext(projectId: string): Promise<void> {
       return
     }
     const message = err instanceof Error ? err.message : String(err)
+    if (isUsageLimitError(message)) {
+      next.status = "pending"
+      next.error = `Paused after provider usage limit: ${message}`
+      paused = true
+      processing = false
+      await saveQueue(pp)
+      scheduleUsageLimitAutoResume(projectId)
+      console.log(
+        `[Ingest Queue] Paused after provider usage limit; will retry automatically in ${Math.round(USAGE_LIMIT_AUTO_RESUME_MS / 60000)} minutes: ${message}`,
+      )
+      return
+    }
+
     next.retryCount++
     next.error = message
 

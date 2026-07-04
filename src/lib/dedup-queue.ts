@@ -40,6 +40,11 @@ export interface DedupTask {
 
 let queue: DedupTask[] = []
 let processing = false
+/** Pending tasks restored from disk on startup/project open. These are
+ * intentionally hydrated without auto-running so opening a project does
+ * not immediately spend LLM tokens on historical merge work. A fresh
+ * enqueue for the same group promotes the restored task out of this set. */
+let restoredPausedTaskIds = new Set<string>()
 let currentProjectId = ""
 let currentProjectPath = ""
 let currentAbortController: AbortController | null = null
@@ -113,7 +118,17 @@ export async function enqueueMerge(
       t.status !== "done" &&
       groupKey(t.group.slugs) === key,
   )
-  if (existing) return existing.id
+  if (existing) {
+    restoredPausedTaskIds.delete(existing.id)
+    if (existing.status === "failed") {
+      existing.status = "pending"
+      existing.error = null
+      existing.retryCount = 0
+    }
+    await saveQueue(currentProjectPath)
+    processNext(currentProjectId)
+    return existing.id
+  }
 
   const task: DedupTask = {
     id: generateId(),
@@ -142,11 +157,18 @@ export async function retryTask(taskId: string): Promise<void> {
   if (!task) return
   if (task.projectId !== currentProjectId) return
 
+  restoredPausedTaskIds.delete(task.id)
   task.status = "pending"
   task.error = null
   task.retryCount = 0
   await saveQueue(currentProjectPath)
   processNext(currentProjectId)
+}
+
+/** Resume merge tasks restored from disk during project open. */
+export function resumeProcessing(): void {
+  restoredPausedTaskIds.clear()
+  if (currentProjectId) processNext(currentProjectId)
 }
 
 /**
@@ -167,6 +189,7 @@ export async function cancelTask(taskId: string): Promise<void> {
     processing = false
   }
 
+  restoredPausedTaskIds.delete(taskId)
   queue = queue.filter((t) => t.id !== taskId)
   await saveQueue(currentProjectPath)
   processNext(currentProjectId)
@@ -181,12 +204,16 @@ export function getQueueSummary(): {
   processing: number
   failed: number
   total: number
+  restoredBacklogWaiting: boolean
 } {
   return {
     pending: queue.filter((t) => t.status === "pending").length,
     processing: queue.filter((t) => t.status === "processing").length,
     failed: queue.filter((t) => t.status === "failed").length,
     total: queue.length,
+    restoredBacklogWaiting: queue.some((t) =>
+      t.status === "pending" && restoredPausedTaskIds.has(t.id)
+    ),
   }
 }
 
@@ -200,6 +227,7 @@ export function clearQueueState(): void {
     currentAbortController.abort()
   }
   queue = []
+  restoredPausedTaskIds.clear()
   processing = false
   currentProjectId = ""
   currentProjectPath = ""
@@ -231,14 +259,15 @@ export async function pauseQueue(): Promise<void> {
   await saveQueue(pausedProjectPath)
 
   queue = []
+  restoredPausedTaskIds.clear()
   currentProjectId = ""
   currentProjectPath = ""
 }
 
 /**
- * Load a project's queue from disk and resume processing. Tasks left
- * in "processing" by an abrupt exit get reverted to "pending" so they
- * pick up on next process tick.
+ * Load a project's queue from disk. Restored pending tasks are visible
+ * but do not auto-run; a fresh enqueue for the same group promotes the
+ * existing task, and retryTask can also resume one explicitly.
  */
 export async function restoreQueue(
   projectId: string,
@@ -246,6 +275,7 @@ export async function restoreQueue(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   queue = []
+  restoredPausedTaskIds.clear()
   processing = false
   currentAbortController = null
   currentProjectId = projectId
@@ -270,15 +300,19 @@ export async function restoreQueue(
   }
 
   queue = mine
+  restoredPausedTaskIds = new Set(
+    queue
+      .filter((t) => t.status === "pending")
+      .map((t) => t.id),
+  )
   await saveQueue(pp)
 
   const pending = queue.filter((t) => t.status === "pending").length
   const failed = queue.filter((t) => t.status === "failed").length
   if (pending > 0 || restored > 0) {
     console.log(
-      `[Dedup Queue] Restored: ${pending} pending, ${failed} failed, ${restored} resumed from interrupted`,
+      `[Dedup Queue] Restored: ${pending} pending paused for manual resume, ${failed} failed, ${restored} reset from interrupted`,
     )
-    processNext(projectId)
   }
 }
 
@@ -290,8 +324,10 @@ async function processNext(projectId: string): Promise<void> {
   if (processing) return
   if (currentProjectId !== projectId) return
 
-  const next = queue.find(
-    (t) => t.projectId === projectId && t.status === "pending",
+  const next = queue.find((t) =>
+    t.projectId === projectId &&
+    t.status === "pending" &&
+    !restoredPausedTaskIds.has(t.id)
   )
   if (!next) return
 
@@ -335,6 +371,7 @@ async function processNext(projectId: string): Promise<void> {
     if (currentProjectId !== projectId) return
 
     currentAbortController = null
+    restoredPausedTaskIds.delete(next.id)
     queue = queue.filter((t) => t.id !== next.id)
     await saveQueue(pp)
     // Tell the rest of the app the wiki tree changed.

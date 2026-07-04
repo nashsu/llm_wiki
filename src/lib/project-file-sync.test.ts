@@ -486,7 +486,8 @@ describe("project file sync", () => {
 
     await rescanProjectFileSync(project)
 
-    expect(mocks.listDirectory).toHaveBeenCalledWith("/tmp/a")
+    expect(mocks.listDirectory).toHaveBeenNthCalledWith(1, "/tmp/a", { maxDepth: 2 })
+    expect(mocks.listDirectory).toHaveBeenNthCalledWith(2, "/tmp/a", undefined)
   })
 
   it("manual rescan respects auto ingest disabled", async () => {

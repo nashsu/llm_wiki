@@ -79,7 +79,7 @@ export function ActivityPanel() {
   const setFileSyncTasks = useFileSyncStore((s) => s.setTasks)
   const fileSyncError = useFileSyncStore((s) => s.lastError)
   const [expanded, setExpanded] = useState(false)
-  const [queueTasks, setQueueTasks] = useState<IngestTask[]>([])
+  const [queueTasks, setQueueTasks] = useState<IngestTask[]>(() => [...getQueue()])
   const prevRunningRef = useRef(0)
 
   const runningCount = items.filter((i) => i.status === "running").length

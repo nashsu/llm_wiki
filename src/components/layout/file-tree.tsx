@@ -1,14 +1,25 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react"
 import { message } from "@tauri-apps/plugin-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
-import { openProjectFolder } from "@/commands/fs"
+import { listDirectory, openProjectFolder } from "@/commands/fs"
+import { replaceNodeChildren } from "./file-tree-utils"
 
-function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
+function TreeNode({
+  node,
+  depth,
+  onLoadChildren,
+}: {
+  node: FileNode
+  depth: number
+  onLoadChildren: (node: FileNode) => Promise<void>
+}) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(depth < 1)
+  const [loadingChildren, setLoadingChildren] = useState(false)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
@@ -16,10 +27,22 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
   const paddingLeft = 12 + depth * 16
 
   if (node.is_dir) {
+    const handleToggle = async () => {
+      const nextExpanded = !expanded
+      setExpanded(nextExpanded)
+      if (!nextExpanded || node.children) return
+      setLoadingChildren(true)
+      try {
+        await onLoadChildren(node)
+      } finally {
+        setLoadingChildren(false)
+      }
+    }
+
     return (
       <div>
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => void handleToggle()}
           className="flex w-full items-center gap-1 py-1 text-sm text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
           style={{ paddingLeft }}
         >
@@ -30,9 +53,19 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
           )}
           <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <span className="truncate">{node.name}</span>
+          {loadingChildren && (
+            <span className="ml-auto pr-2 text-[10px] text-muted-foreground">
+              {t("common.loading", { defaultValue: "Loading..." })}
+            </span>
+          )}
         </button>
         {expanded && node.children?.map((child) => (
-          <TreeNode key={child.path} node={child} depth={depth + 1} />
+          <TreeNode
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            onLoadChildren={onLoadChildren}
+          />
         ))}
       </div>
     )
@@ -57,7 +90,15 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 export function FileTree() {
   const { t } = useTranslation()
   const fileTree = useWikiStore((s) => s.fileTree)
+  const setFileTree = useWikiStore((s) => s.setFileTree)
   const project = useWikiStore((s) => s.project)
+  const loadedPaths = useRef(new Set<string>())
+  const loadingPaths = useRef(new Set<string>())
+
+  useEffect(() => {
+    loadedPaths.current.clear()
+    loadingPaths.current.clear()
+  }, [project?.id])
 
   const handleOpenProjectFolder = async () => {
     if (!project) return
@@ -80,6 +121,28 @@ export function FileTree() {
     }
   }
 
+  const handleLoadChildren = async (node: FileNode) => {
+    if (!project) return
+    if (loadedPaths.current.has(node.path) || loadingPaths.current.has(node.path)) return
+    loadingPaths.current.add(node.path)
+    const projectId = project.id
+    try {
+      const children = await listDirectory(node.path, { maxDepth: 1 })
+      if (useWikiStore.getState().project?.id !== projectId) return
+      const currentTree = useWikiStore.getState().fileTree
+      const result = replaceNodeChildren(currentTree, node.path, children)
+      if (!result.matched) return
+      loadedPaths.current.add(node.path)
+      setFileTree(result.nodes, {
+        syncPathIndex: false,
+      })
+    } catch (err) {
+      console.error("[FileTree] load children failed:", err)
+    } finally {
+      loadingPaths.current.delete(node.path)
+    }
+  }
+
   if (!project) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
@@ -96,7 +159,12 @@ export function FileTree() {
             {project.name}
           </div>
           {fileTree.map((node) => (
-            <TreeNode key={node.path} node={node} depth={0} />
+            <TreeNode
+              key={node.path}
+              node={node}
+              depth={0}
+              onLoadChildren={handleLoadChildren}
+            />
           ))}
         </div>
       </ScrollArea>

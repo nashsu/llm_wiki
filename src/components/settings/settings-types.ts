@@ -84,6 +84,7 @@ export interface SettingsDraft {
   // Local HTTP API server
   apiEnabled: boolean
   apiAllowUnauthenticated: boolean
+  apiAllowLanAccess: boolean
   apiMcpEnabled: boolean
   apiToken: string
 }

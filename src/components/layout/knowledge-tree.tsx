@@ -8,6 +8,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { filterRawSourceTree } from "@/lib/source-filter"
@@ -42,9 +43,7 @@ export function KnowledgeTree() {
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
-  const fileTree = useWikiStore((s) => s.fileTree)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
-  const bumpDataVersion = useWikiStore((s) => s.bumpDataVersion)
+  const dataVersion = useWikiStore((s) => s.dataVersion)
   const [pages, setPages] = useState<WikiPageInfo[]>([])
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["overview", "entity", "concept", "source"]))
   // Two-stage delete: first click arms the row, second click executes.
@@ -83,10 +82,12 @@ export function KnowledgeTree() {
     }
   }, [project])
 
-  // Reload when file tree changes (after ingest writes new pages)
+  // Reload when wiki data changes. Do not key this off the visible
+  // sidebar file tree: lazy directory expansion mutates that tree and
+  // should not force a full wiki metadata re-parse.
   useEffect(() => {
     loadPages()
-  }, [loadPages, fileTree])
+  }, [loadPages, dataVersion])
 
   const handleDeleteClick = useCallback(
     async (pagePath: string) => {
@@ -104,12 +105,13 @@ export function KnowledgeTree() {
         // Refresh: page list, file tree, any data-version subscribers.
         await loadPages()
         try {
-          const tree = await listDirectory(pp)
-          setFileTree(tree)
+          await refreshProjectFileTree(pp, {
+            projectId: project.id,
+            bumpDataVersion: true,
+          })
         } catch {
           // non-critical
         }
-        bumpDataVersion()
         if (selectedFile === pagePath) setSelectedFile(null)
       } catch (err) {
         console.error("[KnowledgeTree] delete failed:", err)
@@ -118,7 +120,7 @@ export function KnowledgeTree() {
         setDeletingPath(null)
       }
     },
-    [project, armedPath, loadPages, selectedFile, setSelectedFile, setFileTree, bumpDataVersion],
+    [project, armedPath, loadPages, selectedFile, setSelectedFile],
   )
 
   if (!project) {

@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
 
 describe("getAppLayoutVisibility", () => {
-  it("keeps chat as a standalone view even when research panel is open", () => {
+  it("keeps chat research panel hidden while using the standard project side panel", () => {
     expect(getAppLayoutVisibility("chat", true)).toEqual({
-      showLeftPanel: false,
+      showLeftPanel: true,
       hasRightPanel: false,
     })
   })

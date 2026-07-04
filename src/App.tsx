@@ -8,7 +8,7 @@ import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
-import { listDirectory, openProject } from "@/commands/fs"
+import { openProject } from "@/commands/fs"
 import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
@@ -31,6 +31,74 @@ function App() {
   const zoomLevel = useZoomStore((s) => s.level)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  function isCurrentProject(proj: WikiProject): boolean {
+    const current = useWikiStore.getState().project
+    return current?.id === proj.id && current.path === proj.path
+  }
+
+  async function hydrateProjectSideStores(proj: WikiProject): Promise<void> {
+    try {
+      const savedReview = await loadReviewItems(proj.path)
+      if (savedReview.length > 0 && isCurrentProject(proj)) {
+        useReviewStore.getState().setItems(savedReview)
+      }
+    } catch (err) {
+      console.warn("[startup] failed to load review items:", err)
+    }
+
+    try {
+      const savedLint = await loadLintItems(proj.path)
+      if (savedLint.length > 0 && isCurrentProject(proj)) {
+        useLintStore.getState().setItems(savedLint)
+      }
+    } catch (err) {
+      console.warn("[startup] failed to load lint items:", err)
+    }
+
+    try {
+      const savedChat = await loadChatHistory(proj.path)
+      if (!isCurrentProject(proj)) return
+      if (savedChat.conversations.length > 0) {
+        useChatStore.getState().setConversations(savedChat.conversations)
+        useChatStore.getState().setMessages(savedChat.messages)
+        const sorted = [...savedChat.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+        if (sorted[0]) {
+          useChatStore.getState().setActiveConversation(sorted[0].id)
+        }
+      }
+    } catch (err) {
+      console.warn("[startup] failed to load chat history:", err)
+    }
+  }
+
+  async function hydrateScheduledImportAfterOpen(proj: WikiProject): Promise<void> {
+    try {
+      const savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      if (!isCurrentProject(proj)) return
+      if (savedScheduledImport) {
+        // Migrate relative path to absolute (backward compatibility)
+        let path = savedScheduledImport.path
+        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
+          path = `${proj.path}/${path}`
+        }
+        useWikiStore.getState().setScheduledImportConfig({
+          ...savedScheduledImport,
+          path,
+        })
+      }
+
+      const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
+      if (!isCurrentProject(proj)) return
+      if (scheduledImportConfig.enabled && scheduledImportConfig.path && scheduledImportConfig.interval > 0) {
+        const { startScheduledImport } = await import("@/lib/scheduled-import")
+        if (!isCurrentProject(proj)) return
+        startScheduledImport(proj, scheduledImportConfig)
+      }
+    } catch (err) {
+      console.warn("[startup] failed to hydrate scheduled import:", err)
+    }
+  }
 
   // Set up auto-save and clip watcher once on mount
   useEffect(() => {
@@ -249,7 +317,7 @@ function App() {
         }
         // Local HTTP API server config — global (single token + enable
         // flag for the whole install, not per-project). The Rust side
-        // reads `apiConfig.{enabled,token,mcpEnabled}` from `app-state.json`
+        // reads `apiConfig.{enabled,token,mcpEnabled,allowLanAccess}` from `app-state.json`
         // directly; this only hydrates the Zustand store so the
         // Settings UI reflects the persisted values.
         const savedApi = await loadApiConfig()
@@ -260,6 +328,8 @@ function App() {
               typeof savedApi.allowUnauthenticated === "boolean"
                 ? savedApi.allowUnauthenticated
                 : false,
+            allowLanAccess:
+              typeof savedApi.allowLanAccess === "boolean" ? savedApi.allowLanAccess : false,
             mcpEnabled:
               typeof savedApi.mcpEnabled === "boolean"
                 ? savedApi.mcpEnabled
@@ -324,7 +394,14 @@ function App() {
       const projectOutputLang = await loadOutputLanguage(proj.id)
       useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
       setSelectedFile(null)
+      setFileTree([])
       setActiveView("wiki")
+      useWikiStore.getState().setScheduledImportConfig({
+        enabled: false,
+        path: `${proj.path}/raw/sources`,
+        interval: 60,
+        lastScan: null,
+      })
       // Bump data version so any cached graphs/views invalidate
       useWikiStore.getState().bumpDataVersion()
       await saveLastProject(proj)
@@ -346,44 +423,10 @@ function App() {
           console.error("Failed to restore dedup queue:", err)
         )
       })
-      // Load per-project scheduled import config
-      try {
-        const savedScheduledImport = await loadScheduledImportConfig(proj.path)
-        if (savedScheduledImport) {
-          // Migrate relative path to absolute (backward compatibility)
-          let path = savedScheduledImport.path
-          if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
-            path = `${proj.path}/${path}`
-          }
-          useWikiStore.getState().setScheduledImportConfig({
-            ...savedScheduledImport,
-            path,
-          })
-        } else {
-          // Reset to default for new projects
-          useWikiStore.getState().setScheduledImportConfig({
-            enabled: false,
-            path: `${proj.path}/raw/sources`,
-            interval: 60,
-            lastScan: null,
-          })
-        }
-      } catch {
-        // ignore
-      }
-      // Start scheduled import if enabled
-      const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
-      if (scheduledImportConfig.enabled && scheduledImportConfig.path && scheduledImportConfig.interval > 0) {
-        import("@/lib/scheduled-import").then(({ startScheduledImport }) => {
-          startScheduledImport(proj, scheduledImportConfig)
-        }).catch((err) =>
-          console.error("Failed to start scheduled import:", err)
-        )
-      }
-
       // Start project source watch if enabled
       import("@/lib/project-file-sync").then(async ({ startProjectFileSync, stopProjectFileSync }) => {
         const config = await loadSourceWatchConfig(proj.id)
+        if (!isCurrentProject(proj)) return
         useWikiStore.getState().setSourceWatchConfig(config)
         if (config.enabled) {
           startProjectFileSync(proj, config).catch((err) =>
@@ -409,45 +452,14 @@ function App() {
           body: JSON.stringify({ projects }),
         }).catch(() => {})
       }).catch(() => {})
-      try {
-        const tree = await listDirectory(proj.path)
-        setFileTree(tree)
-      } catch (err) {
-        console.error("Failed to load file tree:", err)
-      }
-      // Load persisted review items
-      try {
-        const savedReview = await loadReviewItems(proj.path)
-        if (savedReview.length > 0) {
-          useReviewStore.getState().setItems(savedReview)
-        }
-      } catch {
-        // ignore, start fresh
-      }
-      // Load persisted lint items
-      useLintStore.getState().setItems([])
-      try {
-        const savedLint = await loadLintItems(proj.path)
-        useLintStore.getState().setItems(savedLint)
-      } catch {
-        useLintStore.getState().setItems([])
-      }
-      // Load persisted chat history
+      // Load lightweight chat preferences before first paint so the chat
+      // controls reflect the user's saved tool toggles. The heavier per-
+      // conversation history load is deferred below.
       try {
         const savedChatPreferences = await loadChatPreferences(proj.path)
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
         useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)
-        const savedChat = await loadChatHistory(proj.path)
-        if (savedChat.conversations.length > 0) {
-          useChatStore.getState().setConversations(savedChat.conversations)
-          useChatStore.getState().setMessages(savedChat.messages)
-          // Set most recent conversation as active
-          const sorted = [...savedChat.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
-          if (sorted[0]) {
-            useChatStore.getState().setActiveConversation(sorted[0].id)
-          }
-        }
       } catch {
         // ignore, start fresh
       }
@@ -459,6 +471,11 @@ function App() {
       setFileTree([])
       setSelectedFile(null)
     })
+    void hydrateScheduledImportAfterOpen(proj)
+    // Heavy side-store hydration happens after the project shell is allowed
+    // to render. Each write has a stale-project guard so a fast project switch
+    // cannot apply old review/lint/chat state to the new project.
+    void hydrateProjectSideStores(proj)
   }
 
   async function handleSelectRecent(proj: WikiProject) {

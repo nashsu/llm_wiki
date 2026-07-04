@@ -39,7 +39,7 @@ interface WikiReaderProps {
  */
 export function WikiReader({ body, filePath }: WikiReaderProps) {
   const project = useWikiStore((s) => s.project)
-  const fileTree = useWikiStore((s) => s.fileTree)
+  const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
 
   // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
@@ -74,7 +74,7 @@ export function WikiReader({ body, filePath }: WikiReaderProps) {
         return href.slice(1)
       }
     })()
-    const path = resolveRelatedSlug(fileTree, slug, wikiRoot)
+    const path = resolveRelatedSlug(projectPathIndex, slug, wikiRoot)
     if (path) openPathInPreview(path)
   }
 

@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
-import { readFile, listDirectory } from "@/commands/fs"
+import { readFile } from "@/commands/fs"
 import {
   rescanProjectFiles,
   startProjectFileWatcher,
@@ -19,6 +19,7 @@ import {
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
 import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 let unlistenQueue: UnlistenFn | null = null
 let unlistenChanged: UnlistenFn | null = null
@@ -184,14 +185,10 @@ async function processFileChangeBatch(
 async function refreshAfterFileChanges(project: WikiProject, relativePaths: string[]): Promise<void> {
   const pp = normalizePath(project.path)
   const store = useWikiStore.getState()
-  try {
-    const tree = await listDirectory(pp)
-    useWikiStore.getState().setFileTree(tree)
-  } catch (err) {
-    console.warn("[file-sync] failed to refresh file tree:", err)
-  }
-
-  store.bumpDataVersion()
+  await refreshProjectFileTree(pp, {
+    projectId: project.id,
+    bumpDataVersion: true,
+  })
 
   const selected = store.selectedFile ? normalizePath(store.selectedFile) : null
   if (!selected) return

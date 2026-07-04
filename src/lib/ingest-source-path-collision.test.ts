@@ -110,14 +110,15 @@ vi.mock("./llm-client", () => ({
 
 vi.mock("./mineru", () => ({
   parseWithMineru: vi.fn(),
+  parseWithMineruResult: vi.fn(),
 }))
 
 import { autoIngest, executeIngestWrites, hasMineruImageRefs } from "./ingest"
 import { streamChat } from "./llm-client"
-import { parseWithMineru } from "./mineru"
+import { parseWithMineruResult } from "./mineru"
 
 const mockStreamChat = vi.mocked(streamChat)
-const mockParseWithMineru = vi.mocked(parseWithMineru)
+const mockParseWithMineru = vi.mocked(parseWithMineruResult)
 
 describe("autoIngest source summary paths", () => {
   let tmp: { path: string; cleanup: () => Promise<void> } | undefined
@@ -506,7 +507,7 @@ describe("autoIngest source summary paths", () => {
         controller.signal,
         "project-a",
       ),
-    ).rejects.toThrow("AbortError")
+    ).rejects.toThrow("Ingest cancelled")
   })
 
   it("falls back to built-in PDF extraction when MinerU fails for a non-cancelled ingest", async () => {
@@ -563,7 +564,7 @@ describe("autoIngest source summary paths", () => {
         controller.signal,
         "project-a",
       ),
-    ).rejects.toThrow("MinerU parsing cancelled")
+    ).rejects.toThrow("Ingest cancelled")
 
     expect(
       useActivityStore.getState().items.some((item) =>

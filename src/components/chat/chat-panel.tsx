@@ -9,7 +9,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
 import { executeIngestWrites } from "@/lib/ingest"
-import { listDirectory, deleteFile } from "@/commands/fs"
+import { deleteFile } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
 import { buildChatAgentMessages, type ChatAgentEvent } from "@/lib/chat-agent"
@@ -18,6 +18,7 @@ import { WikiReader } from "@/components/editor/wiki-reader"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { getFileCategory } from "@/lib/file-types"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
 export let lastQueryPages: { title: string; path: string }[] = []
@@ -155,7 +156,6 @@ export function ChatPanel() {
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
   const imageInputAvailable = supportsImageInput(llmConfig)
-  const setFileTree = useWikiStore((s) => s.setFileTree)
 
   const abortRef = useRef<AbortController | null>(null)
   const runIdRef = useRef(0)
@@ -360,16 +360,11 @@ export function ChatPanel() {
     const pp = normalizePath(project.path)
     try {
       await executeIngestWrites(pp, llmConfig, undefined, undefined)
-      try {
-        const tree = await listDirectory(pp)
-        setFileTree(tree)
-      } catch {
-        // ignore
-      }
+      await refreshProjectFileTree(pp, { bumpDataVersion: true })
     } catch (err) {
       console.error("Failed to write to wiki:", err)
     }
-  }, [project, llmConfig, setFileTree])
+  }, [project, llmConfig])
 
   const hasAssistantMessages = activeMessages.some((m) => m.role === "assistant")
   const showWriteButton = mode === "ingest" && !isStreaming && hasAssistantMessages

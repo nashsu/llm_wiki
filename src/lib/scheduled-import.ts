@@ -21,6 +21,7 @@ import {
   isIngestableSourcePath,
 } from "@/lib/source-lifecycle"
 import { useActivityStore } from "@/stores/activity-store"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 interface ImportDb {
   files: Record<string, string>
@@ -413,9 +414,10 @@ export async function scanAndImport(
           for (const file of changedFiles) {
             nextDb.files[file.key] = file.md5
           }
-          const projectTree = await listDirectory(projectPath)
-          useWikiStore.getState().setFileTree(projectTree)
-          useWikiStore.getState().bumpDataVersion()
+          await refreshProjectFileTree(projectPath, {
+            projectId: project.id,
+            bumpDataVersion: true,
+          })
         } else {
           console.warn("[scheduled-import] LLM is not configured; changed files were not marked imported")
         }

@@ -21,6 +21,8 @@ import {
   cancelTask,
   retryTask,
   getQueue,
+  getQueueSummary,
+  resumeProcessing,
   groupKey,
   type DedupTask,
 } from "@/lib/dedup-queue"
@@ -58,9 +60,14 @@ export function MaintenanceSection() {
   // that completed while the user was on a different settings tab).
   // Same pattern activity-panel uses for ingest-queue.
   const [tasks, setTasks] = useState<readonly DedupTask[]>([])
+  const [queueSummary, setQueueSummary] = useState(() => getQueueSummary())
   useEffect(() => {
     setTasks([...getQueue()])
-    const id = setInterval(() => setTasks([...getQueue()]), 1000)
+    setQueueSummary(getQueueSummary())
+    const id = setInterval(() => {
+      setTasks([...getQueue()])
+      setQueueSummary(getQueueSummary())
+    }, 1000)
     return () => clearInterval(id)
   }, [])
 
@@ -107,6 +114,7 @@ export function MaintenanceSection() {
         // Refresh immediately so the card flips to "queued" without
         // waiting for the next 1s poll tick.
         setTasks([...getQueue()])
+        setQueueSummary(getQueueSummary())
       } catch (err) {
         console.error("[Maintenance] enqueue failed:", err)
       }
@@ -117,11 +125,19 @@ export function MaintenanceSection() {
   const handleCancel = useCallback(async (taskId: string) => {
     await cancelTask(taskId)
     setTasks([...getQueue()])
+    setQueueSummary(getQueueSummary())
   }, [])
 
   const handleRetry = useCallback(async (taskId: string) => {
     await retryTask(taskId)
     setTasks([...getQueue()])
+    setQueueSummary(getQueueSummary())
+  }, [])
+
+  const handleResumeRestoredQueue = useCallback(() => {
+    resumeProcessing()
+    setTasks([...getQueue()])
+    setQueueSummary(getQueueSummary())
   }, [])
 
   const handleNotDuplicate = useCallback(
@@ -278,6 +294,8 @@ export function MaintenanceSection() {
       <QueueOrphanList
         tasks={tasks}
         groups={groups}
+        restoredBacklogWaiting={queueSummary.restoredBacklogWaiting}
+        onResumeRestored={handleResumeRestoredQueue}
         onCancel={(id) => void handleCancel(id)}
         onRetry={(id) => void handleRetry(id)}
         pendingPositionByTaskId={pendingPositionByTaskId}
@@ -325,6 +343,8 @@ function useRefInit<T>(init: () => T): { current: T } {
 interface QueueOrphanListProps {
   tasks: readonly DedupTask[]
   groups: GroupUiEntry[]
+  restoredBacklogWaiting: boolean
+  onResumeRestored: () => void
   onCancel: (taskId: string) => void
   onRetry: (taskId: string) => void
   pendingPositionByTaskId: Map<string, number>
@@ -340,6 +360,8 @@ interface QueueOrphanListProps {
 function QueueOrphanList({
   tasks,
   groups,
+  restoredBacklogWaiting,
+  onResumeRestored,
   onCancel,
   onRetry,
   pendingPositionByTaskId,
@@ -366,6 +388,22 @@ function QueueOrphanList({
             "Tasks queued from a previous scan that haven't finished yet. Merges run one at a time.",
         })}
       </p>
+      {restoredBacklogWaiting && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
+          <span className="text-amber-800 dark:text-amber-300">
+            {t("settings.sections.maintenance.dedup.restoredBacklog", {
+              defaultValue:
+                "These merge tasks were restored from the previous session and are paused to avoid unexpected LLM usage.",
+            })}
+          </span>
+          <Button size="sm" variant="secondary" onClick={onResumeRestored}>
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("settings.sections.maintenance.dedup.resumeRestored", {
+              defaultValue: "Resume merges",
+            })}
+          </Button>
+        </div>
+      )}
       {orphans.map((task) => (
         <div
           key={task.id}

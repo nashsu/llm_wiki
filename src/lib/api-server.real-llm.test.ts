@@ -46,6 +46,7 @@ interface ApiHealth extends ApiEnvelope {
   authRequired?: boolean
   authConfigured?: boolean
   allowUnauthenticated?: boolean
+  allowLanAccess?: boolean
   tokenSource?: "env" | "store" | "none"
 }
 
@@ -259,10 +260,11 @@ async function readAppState(): Promise<Record<string, unknown>> {
 async function writeApiConfig(config: {
   enabled: boolean
   allowUnauthenticated: boolean
+  allowLanAccess?: boolean
   token: string
 }): Promise<void> {
   const state = await readAppState()
-  state.apiConfig = config
+  state.apiConfig = { allowLanAccess: false, ...config }
   await fs.writeFile(appStatePath!, `${JSON.stringify(state, null, 2)}\n`, "utf8")
   appStateMutated = true
 }

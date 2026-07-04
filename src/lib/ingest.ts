@@ -5,13 +5,14 @@ import {
   getFileModifiedTime,
   getFileSize,
   readFile,
+  readFileAsBase64,
   writeFile,
   listDirectory,
 } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { parseWithMineru } from "@/lib/mineru"
+import { parseWithMineruResult } from "@/lib/mineru"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
@@ -39,6 +40,7 @@ import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pip
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
@@ -136,6 +138,99 @@ function isSavedImagePromptUrl(projectPath: string, sourceSummarySlug: string, u
 
 function promptImageUrlToAbs(projectPath: string, url: string): string {
   return url.startsWith("media/") ? `${projectPath}/wiki/${url}` : url
+}
+
+function imageMimeTypeFromPath(path: string): string {
+  const ext = getFileName(path).split(".").pop()?.toLowerCase() ?? ""
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg"
+    case "png":
+      return "image/png"
+    case "gif":
+      return "image/gif"
+    case "webp":
+      return "image/webp"
+    case "bmp":
+      return "image/bmp"
+    case "svg":
+      return "image/svg+xml"
+    case "tif":
+    case "tiff":
+      return "image/tiff"
+    default:
+      return "application/octet-stream"
+  }
+}
+
+async function sha256OfBase64(b64: string): Promise<string> {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  const digest = await crypto.subtle.digest("SHA-256", buffer)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+async function savedImagesFromMineruMarkdown(
+  projectPath: string,
+  sourceSummarySlug: string,
+  markdown: string,
+): Promise<SavedImage[]> {
+  const pp = normalizePath(projectPath)
+  const prefix = `media/${sourceSummarySlug}/mineru/`
+  const encodedPrefix = `media/${encodeMarkdownPathSegment(sourceSummarySlug)}/mineru/`
+  const refs: string[] = []
+  const seen = new Set<string>()
+
+  for (const match of markdown.matchAll(/!\[[^\]]*]\(((?:[^()]|\([^()]*\))*)\)/g)) {
+    const rawTarget = (match[1] ?? "").trim()
+    const url = rawTarget.startsWith("<") && rawTarget.includes(">")
+      ? rawTarget.slice(1, rawTarget.indexOf(">"))
+      : rawTarget.split(/\s+["']/)[0]
+    if (!url) continue
+    let decoded = url
+    try {
+      decoded = decodeURIComponent(url)
+    } catch {
+      // Keep the raw URL if it is not valid percent-encoding.
+    }
+    const normalized = normalizePath(decoded.replace(/^\.\//, ""))
+    if (!normalized.startsWith(prefix) && !normalized.startsWith(encodedPrefix)) continue
+    const relPath = normalized.startsWith(encodedPrefix)
+      ? `media/${sourceSummarySlug}/mineru/${normalized.slice(encodedPrefix.length)}`
+      : normalized
+    if (seen.has(relPath)) continue
+    seen.add(relPath)
+    refs.push(relPath)
+  }
+
+  const images: SavedImage[] = []
+  for (const relPath of refs) {
+    const absPath = `${pp}/wiki/${relPath}`
+    try {
+      const { base64 } = await readFileAsBase64(absPath)
+      images.push({
+        index: images.length + 1,
+        mimeType: imageMimeTypeFromPath(relPath),
+        page: null,
+        width: 0,
+        height: 0,
+        relPath,
+        absPath,
+        sha256: await sha256OfBase64(base64),
+      })
+    } catch (err) {
+      console.warn(
+        `[ingest:mineru] failed to read cached MinerU image "${relPath}":`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+  return images
 }
 
 function stripWikiMediaAbsPaths(projectPath: string, content: string): string {
@@ -494,6 +589,39 @@ function throwIfIngestAborted(signal: AbortSignal | undefined, activityId?: stri
   throw new Error("Ingest cancelled")
 }
 
+export function formatIngestWarningLogEntry(
+  sourceIdentity: string,
+  warnings: readonly string[],
+  at = new Date(),
+): string {
+  return [
+    `## ${at.toISOString()} | ${sourceIdentity}`,
+    "",
+    ...warnings.map((warning, index) => `${index + 1}. ${warning}`),
+    "",
+  ].join("\n")
+}
+
+async function appendIngestWarningLog(
+  projectPath: string,
+  sourceIdentity: string,
+  warnings: readonly string[],
+): Promise<void> {
+  if (warnings.length === 0) return
+  const logPath = `${projectPath}/.llm-wiki/ingest-warnings.log`
+  try {
+    await createDirectory(`${projectPath}/.llm-wiki`)
+    const existing = await tryReadFile(logPath)
+    const next = `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${formatIngestWarningLogEntry(sourceIdentity, warnings).trimEnd()}\n`
+    await writeFile(logPath, next)
+  } catch (err) {
+    console.warn(
+      `[ingest] Failed to write ingest warning log for "${sourceIdentity}":`,
+      err instanceof Error ? err.message : err,
+    )
+  }
+}
+
 async function autoIngestImpl(
   projectPath: string,
   sourcePath: string,
@@ -523,22 +651,30 @@ async function autoIngestImpl(
   const isPdf = lowerExt === "pdf"
   const mineruCfg = useWikiStore.getState().mineruConfig
   let mineruSucceeded = false
+  let mineruSavedImages: SavedImage[] = []
   if (isPdf && mineruCfg.enabled && mineruCfg.token) {
     try {
       const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
       const cachePath = `${cacheDir}/.cache/${fileName}.txt`
       activity.updateItem(activityId, { detail: "MinerU: parsing PDF..." })
       console.log(`[ingest:mineru] submitting "${fileName}" to MinerU API`)
-      const markdown = await parseWithMineru(mineruCfg, sp, undefined, (msg) => {
+      const mineruResult = await parseWithMineruResult(mineruCfg, sp, undefined, (msg) => {
         activity.updateItem(activityId, { detail: `MinerU: ${msg}` })
       }, signal, {
         projectPath: pp,
         sourceSummarySlug,
       })
       await createDirectory(`${cacheDir}/.cache`)
-      await writeFile(cachePath, markdown)
+      await writeFile(cachePath, mineruResult.markdown)
+      mineruSavedImages = mineruResult.savedImages
+      if (mineruSavedImages.length > 0) {
+        const extractionKey = await imageExtractionKey(pp, sp, sourceSummarySlug)
+        rememberImageExtractionByKey(extractionKey, Promise.resolve(mineruSavedImages))
+      }
       mineruSucceeded = true
-      console.log(`[ingest:mineru] cached MinerU output for "${fileName}" (${markdown.length} chars)`)
+      console.log(
+        `[ingest:mineru] cached MinerU output for "${fileName}" (${mineruResult.markdown.length} chars, images=${mineruSavedImages.length})`,
+      )
     } catch (err) {
       throwIfIngestAborted(signal, activityId)
       const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
@@ -559,6 +695,13 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+  if (isPdf && mineruSavedImages.length === 0 && hasMineruImageRefs(sourceContent, sourceSummarySlug)) {
+    mineruSavedImages = await savedImagesFromMineruMarkdown(pp, sourceSummarySlug, sourceContent)
+    if (mineruSavedImages.length > 0) {
+      const extractionKey = await imageExtractionKey(pp, sp, sourceSummarySlug)
+      rememberImageExtractionByKey(extractionKey, Promise.resolve(mineruSavedImages))
+    }
+  }
 
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
@@ -577,7 +720,7 @@ async function autoIngestImpl(
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
       const skipNativePdfImageExtraction = isPdf && hasMineruImageRefs(sourceContent, sourceSummarySlug)
       let savedImages = skipNativePdfImageExtraction
-        ? []
+        ? mineruSavedImages
         : await extractAndSaveSourceImages(pp, sp, sourceSummarySlug)
       const markdownImages = await extractAndSaveMarkdownImages(pp, sp, sourceContent, sourceSummarySlug)
       savedImages = [...savedImages, ...markdownImages]
@@ -675,7 +818,7 @@ async function autoIngestImpl(
     hasMineruImageRefs(sourceContent, sourceSummarySlug)
   )
   let savedImages = skipNativePdfImageExtraction
-    ? []
+    ? mineruSavedImages
     : await extractAndSaveSourceImages(pp, sp, sourceSummarySlug)
   const markdownImages = await extractAndSaveMarkdownImages(pp, sp, sourceContent, sourceSummarySlug)
   savedImages = [...savedImages, ...markdownImages]
@@ -1053,12 +1196,14 @@ async function autoIngestImpl(
   // Surface parser / writer warnings to the activity panel so users
   // don't have to open devtools to find out a block was dropped.
   // Keeping the base "Writing files..." detail on top and appending the
-  // first few warnings; full list stays in the console.
+  // first few warnings; full list is also persisted to .llm-wiki.
+  let warningSummary = ""
   if (writeWarnings.length > 0) {
-    const summary = writeWarnings.length === 1
+    await appendIngestWarningLog(pp, sourceIdentity, writeWarnings)
+    warningSummary = writeWarnings.length === 1
       ? writeWarnings[0]
-      : `${writeWarnings.length} ingest warnings: ${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` … (+${writeWarnings.length - 2} more in console)` : ""}`
-    activity.updateItem(activityId, { detail: summary })
+      : `${writeWarnings.length} ingest warnings: ${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` … (+${writeWarnings.length - 2} more in .llm-wiki/ingest-warnings.log)` : ""}`
+    activity.updateItem(activityId, { detail: `${warningSummary} — saved to .llm-wiki/ingest-warnings.log` })
   }
 
   // Ensure source summary page exists (LLM may not have generated it correctly)
@@ -1109,9 +1254,7 @@ async function autoIngestImpl(
 
   if (writtenPaths.length > 0) {
     try {
-      const tree = await listDirectory(pp)
-      useWikiStore.getState().setFileTree(tree)
-      useWikiStore.getState().bumpDataVersion()
+      await refreshProjectFileTree(pp, { bumpDataVersion: true })
     } catch {
       // ignore
     }
@@ -1169,9 +1312,12 @@ async function autoIngestImpl(
     }
   }
 
-  const detail = writtenPaths.length > 0
+  const baseDetail = writtenPaths.length > 0
     ? `${writtenPaths.length} files written${reviewItems.length > 0 ? `, ${reviewItems.length} review item(s)` : ""}`
     : "No files generated"
+  const detail = warningSummary
+    ? `${baseDetail} — ${warningSummary} (saved to .llm-wiki/ingest-warnings.log)`
+    : baseDetail
 
   activity.updateItem(activityId, {
     status: writtenPaths.length > 0 ? "done" : "error",

@@ -1076,8 +1076,10 @@ fn entry_is_visible(name: &str, include_hidden: bool) -> bool {
 pub async fn list_directory(
     path: String,
     include_hidden: Option<bool>,
+    max_depth: Option<usize>,
 ) -> Result<Vec<FileNode>, String> {
     let include_hidden = include_hidden.unwrap_or(false);
+    let max_depth = max_depth.unwrap_or(30).clamp(1, 30);
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
             let p = Path::new(&path);
@@ -1087,7 +1089,7 @@ pub async fn list_directory(
             if !p.is_dir() {
                 return Err(format!("Path is not a directory: '{}'", path));
             }
-            let nodes = build_tree(p, 0, 30, include_hidden)?;
+            let nodes = build_tree(p, 0, max_depth, include_hidden)?;
             Ok(nodes)
         })
     })
@@ -2072,6 +2074,30 @@ mod tests {
             .as_ref()
             .expect(".claude should have children");
         assert!(kids.iter().any(|n| n.name == "CLAUDE.md"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_tree_respects_max_depth_for_shallow_listing() {
+        let root = make_temp_dir("build-tree-depth");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/deep.md"), "x").unwrap();
+
+        let shallow = build_tree(&root, 0, 1, false).unwrap();
+        let a = shallow.iter().find(|n| n.name == "a").unwrap();
+        assert!(a.is_dir);
+        assert!(a.children.is_none(), "max_depth=1 must not load grandchildren");
+
+        let deeper = build_tree(&root, 0, 3, false).unwrap();
+        let a = deeper.iter().find(|n| n.name == "a").unwrap();
+        let b = a
+            .children
+            .as_ref()
+            .and_then(|children| children.iter().find(|n| n.name == "b"))
+            .expect("max_depth=3 should include nested directory");
+        let files = b.children.as_ref().expect("b should include deep file");
+        assert!(files.iter().any(|n| n.name == "deep.md"));
 
         let _ = fs::remove_dir_all(root);
     }

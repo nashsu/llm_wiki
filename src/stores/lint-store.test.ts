@@ -117,6 +117,29 @@ describe("lint-store removeItem", () => {
   })
 })
 
+describe("lint-store removeItems", () => {
+  it("removes all items with matching ids", () => {
+    useLintStore.getState().addItems([
+      makeLintResult({ page: "keep.md" }),
+      makeLintResult({ page: "remove-a.md" }),
+      makeLintResult({ page: "remove-b.md" }),
+    ])
+    const items = useLintStore.getState().items
+
+    useLintStore.getState().removeItems([items[1].id, items[2].id])
+
+    const remaining = useLintStore.getState().items
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0].page).toBe("keep.md")
+  })
+
+  it("is a no-op for an empty id list", () => {
+    useLintStore.getState().addItems([makeLintResult({ page: "keep.md" })])
+    useLintStore.getState().removeItems([])
+    expect(useLintStore.getState().items).toHaveLength(1)
+  })
+})
+
 describe("lint-store clearItems", () => {
   it("removes all items", () => {
     useLintStore.getState().addItems([makeLintResult(), makeLintResult(), makeLintResult()])

@@ -2,12 +2,13 @@ import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "./anytxt-search"
 import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
 import { autoIngest, currentWikiDate } from "./ingest"
-import { writeFile, readFile, listDirectory } from "@/commands/fs"
+import { writeFile, readFile } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
 import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { makeQueryFileName } from "@/lib/wiki-filename"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 
 const MAX_RESEARCH_SOURCES = 20
 
@@ -328,13 +329,8 @@ async function executeResearch(
       savedPath,
     })) return
 
-    // Refresh tree
     try {
-      const tree = await listDirectory(pp)
-      if (isActiveProjectPath(pp)) {
-        useWikiStore.getState().setFileTree(tree)
-        useWikiStore.getState().bumpDataVersion()
-      }
+      await refreshProjectFileTree(pp, { bumpDataVersion: true })
     } catch {
       // ignore
     }

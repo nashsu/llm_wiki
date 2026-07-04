@@ -4,6 +4,7 @@ mod commands;
 mod cors;
 mod panic_guard;
 mod proxy;
+mod server_bind;
 mod tray;
 mod types;
 
@@ -135,8 +136,6 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    clip_server::start_clip_server();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -185,6 +184,7 @@ pub fn run() {
             app.manage(TrayAvailabilityState(Mutex::new(false)));
             // Start the API before optional desktop integrations so the
             // backend is reachable if tray setup or another integration fails.
+            clip_server::start_clip_server(app.handle().clone());
             api_server::start_api_server(app.handle().clone());
             let tray_available = match tray::create_tray(app.handle()) {
                 Ok(()) => true,

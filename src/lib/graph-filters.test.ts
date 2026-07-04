@@ -75,6 +75,22 @@ describe("graph filters", () => {
     expect(out.edges).toEqual([])
   })
 
+  it("hides weakly connected nodes below the min link threshold", () => {
+    const out = applyGraphFilters(nodes, edges, makeFilters({
+      hideStructural: false,
+      minLinks: 2,
+    }))
+
+    expect(out.nodes.map((n) => n.id)).not.toContain("source-c")
+    expect(out.nodes.map((n) => n.id)).not.toContain("isolated")
+    expect(out.nodes.map((n) => n.id)).toEqual(["index", "concept-a", "entity-b"])
+    expect(out.edges).toEqual([
+      { source: "index", target: "concept-a", weight: 1 },
+      { source: "index", target: "entity-b", weight: 1 },
+      { source: "concept-a", target: "entity-b", weight: 2 },
+    ])
+  })
+
   it("hides isolated nodes when requested", () => {
     const out = applyGraphFilters(nodes, edges, makeFilters({
       hideStructural: false,
@@ -88,5 +104,6 @@ describe("graph filters", () => {
     expect(hasActiveGraphFilters(makeFilters({ hideStructural: false }))).toBe(false)
     expect(hasActiveGraphFilters(makeFilters())).toBe(true)
     expect(hasActiveGraphFilters(makeFilters({ hideStructural: false, hiddenNodeIds: new Set(["x"]) }))).toBe(true)
+    expect(hasActiveGraphFilters(makeFilters({ hideStructural: false, minLinks: 2 }))).toBe(true)
   })
 })

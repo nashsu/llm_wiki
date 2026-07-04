@@ -45,6 +45,7 @@ interface LintState {
   setItems: (items: LintItem[]) => void
   addItems: (results: LintResult[]) => void
   removeItem: (id: string) => void
+  removeItems: (ids: string[]) => void
   clearItems: () => void
 }
 
@@ -67,6 +68,14 @@ export const useLintStore = create<LintState>((set) => ({
     set((state) => ({
       items: state.items.filter((item) => item.id !== id),
     })),
+
+  removeItems: (ids) =>
+    set((state) => {
+      const remove = new Set(ids)
+      return {
+        items: state.items.filter((item) => !remove.has(item.id)),
+      }
+    }),
 
   clearItems: () => set({ items: [] }),
 }))

@@ -6,6 +6,7 @@ import {
   computeIngestGenerationMaxTokens,
   computeIngestReviewMaxTokens,
   computeIngestSourceBudget,
+  formatIngestWarningLogEntry,
   splitSourceIntoSemanticChunks,
 } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -71,6 +72,20 @@ describe("buildAnalysisPrompt language directive", () => {
   it("does not invent schema content not present in the source", () => {
     const prompt = buildAnalysisPrompt("", "", "", "| goal | wiki/goals/ | x |")
     expect(prompt).toContain("never invent")
+  })
+})
+
+describe("ingest warning log formatting", () => {
+  it("records all warnings with timestamp and source identity", () => {
+    const entry = formatIngestWarningLogEntry(
+      "book.pdf",
+      ["FILE block was truncated", "Aggregate repair failed"],
+      new Date("2026-06-30T01:02:03.000Z"),
+    )
+
+    expect(entry).toContain("## 2026-06-30T01:02:03.000Z | book.pdf")
+    expect(entry).toContain("1. FILE block was truncated")
+    expect(entry).toContain("2. Aggregate repair failed")
   })
 })
 
