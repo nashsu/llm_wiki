@@ -101,7 +101,8 @@ function parseCsvLine(line: string): string[] {
  * :returns: 个股记录列表；缺少必需表头时返回空列表
  */
 export function parseStockBasicCsv(csv: string): StockRecord[] {
-  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0)
+  // Excel「CSV UTF-8」会带 BOM，不剥除会让首列头变成 "\uFEFFts_code" 而整表失配
+  const lines = csv.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim().length > 0)
   if (lines.length < 2) return []
   const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase())
   const tsCodeIdx = headers.indexOf("ts_code")
@@ -366,11 +367,18 @@ export async function loadStockBasic(projectPath: string): Promise<StockRecord[]
   const readTable = async (fileName: string): Promise<StockRecord[]> => {
     for (const dir of [pp, globalDir]) {
       if (!dir) continue
+      let content: string
       try {
-        return parseStockBasicCsv(await readFile(`${dir}/${fileName}`))
+        content = await readFile(`${dir}/${fileName}`)
       } catch {
         // 该位置缺失/不可读，尝试下一个
+        continue
       }
+      const records = parseStockBasicCsv(content)
+      if (records.length > 0) return records
+      // 文件存在却解析不出记录（表头缺失/编码异常）：告警并继续试下一位置，
+      // 避免一张坏表静默压制另一处的好表、导入全部退化为 NA 却无迹可循
+      console.warn(`[FinanceNaming] ${dir}/${fileName} 可读但未解析出任何个股记录（表头或编码异常？）`)
     }
     return []
   }
@@ -386,11 +394,20 @@ export async function appendRenameMap(
   const pp = normalizePath(projectPath)
   const mapPath = `${pp}/${RENAME_MAP_FILE}`
   let existing: RenameRecord[] = []
+  let raw: string | null = null
   try {
-    const parsed = JSON.parse(await readFile(mapPath)) as unknown
-    if (Array.isArray(parsed)) existing = parsed as RenameRecord[]
+    raw = await readFile(mapPath)
   } catch {
-    // 首次写入
+    // 文件不存在：首次写入
+  }
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) existing = parsed as RenameRecord[]
+    } catch {
+      // 既有文件损坏：无法合并历史，告警后仅写入本次记录（该文件仅供排错）
+      console.warn(`[FinanceNaming] ${mapPath} 内容损坏，历史审计记录无法合并，将被本次记录覆盖`)
+    }
   }
   await createDirectory(`${pp}/.llm-wiki`)
   await writeFile(mapPath, JSON.stringify([...existing, ...records], null, 2))

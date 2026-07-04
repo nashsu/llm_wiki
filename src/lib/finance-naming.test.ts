@@ -85,6 +85,14 @@ describe("parseStockBasicCsv", () => {
     ])
   })
 
+  it("strips a UTF-8 BOM so the first header still matches (Excel 'CSV UTF-8')", () => {
+    const csv = "\uFEFFts_code,name,cnspell\n688786.SH,悦安新材,yaxc"
+
+    expect(parseStockBasicCsv(csv)).toEqual([
+      { tsCode: "688786.SH", name: "悦安新材", cnspell: "yaxc" },
+    ])
+  })
+
   it("accepts hk_basic's cn_spell header (with underscore) for the spell column", () => {
     const csv = [
       "ts_code,name,fullname,enname,cn_spell,market",
