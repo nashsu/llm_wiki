@@ -1,693 +1,189 @@
-import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  X,
+  Plus,
+  AlertCircle,
+  Wifi,
+} from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useWikiStore, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
-import { LLM_PRESETS, type LlmPreset } from "../llm-presets"
-import { ContextSizeSelector } from "../context-size-selector"
-import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
-import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
-import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
-import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
-export function LlmProviderSection() {
-  const { t } = useTranslation()
-  const providerConfigs = useWikiStore((s) => s.providerConfigs)
-  const setProviderConfigs = useWikiStore((s) => s.setProviderConfigs)
-  const activePresetId = useWikiStore((s) => s.activePresetId)
-  const setActivePresetId = useWikiStore((s) => s.setActivePresetId)
-  const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
-  const llmConfig = useWikiStore((s) => s.llmConfig)
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [savedId, setSavedId] = useState<string | null>(null)
-
-  function toggleExpand(id: string) {
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  async function persist(newConfigs: typeof providerConfigs, newActive: string | null) {
-    const { saveProviderConfigs, saveActivePresetId, saveLlmConfig } = await import(
-      "@/lib/project-store"
-    )
-    await saveProviderConfigs(newConfigs)
-    await saveActivePresetId(newActive)
-    if (newActive) {
-      const preset = LLM_PRESETS.find((p) => p.id === newActive)
-      if (preset) {
-        const resolved = resolveConfig(preset, newConfigs[newActive], llmConfig)
-        setLlmConfig(resolved)
-        await saveLlmConfig(resolved)
-      }
-    } else {
-      // All presets disabled: write llmConfig into a state where hasUsableLlm()
-      // returns false so ingest, dedup, and sweep queues pause immediately.
-      // Clearing provider to "openai" (a keyed provider) + empty apiKey covers
-      // the case where the previous provider was a keyless local CLI.
-      // resolveConfig() on re-enable reads from providerConfigs[], not llmConfig,
-      // so the cleared values here do not affect the user's saved settings.
-      const cleared = disabledLlmConfig(llmConfig)
-      setLlmConfig(cleared)
-      await saveLlmConfig(cleared)
-    }
-  }
-
-  function updateOverride(id: string, patch: ProviderOverride) {
-    const merged: ProviderOverride = { ...(providerConfigs[id] ?? {}), ...patch }
-    const next = { ...providerConfigs, [id]: merged }
-    setProviderConfigs(next)
-    persist(next, activePresetId).catch(() => {})
-    // If this preset is active, refresh the resolved LlmConfig live.
-    if (id === activePresetId) {
-      const preset = LLM_PRESETS.find((p) => p.id === id)
-      if (preset) setLlmConfig(resolveConfig(preset, merged, llmConfig))
-    }
-    setSavedId(id)
-    setTimeout(() => setSavedId((cur) => (cur === id ? null : cur)), 1500)
-  }
-
-  function toggleActive(id: string) {
-    const next = id === activePresetId ? null : id
-    setActivePresetId(next)
-    persist(providerConfigs, next).catch(() => {})
-  }
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">{t("settings.sections.llm.title")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t("settings.sections.llm.description")}
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        {LLM_PRESETS.map((preset) => (
-          <PresetRow
-            key={preset.id}
-            preset={preset}
-            override={providerConfigs[preset.id]}
-            isActive={activePresetId === preset.id}
-            isExpanded={!!expanded[preset.id]}
-            savedHere={savedId === preset.id}
-            onToggleActive={() => toggleActive(preset.id)}
-            onToggleExpand={() => toggleExpand(preset.id)}
-            onChange={(patch) => updateOverride(preset.id, patch)}
-          />
-        ))}
-      </div>
-    </div>
-  )
+interface ModelProvider {
+  id: string
+  name: string
+  protocol: "openai" | "anthropic" | "google"
+  api_base: string
+  api_key: string
+  models: string[]
+  default_model: string
+  custom_headers: Record<string, string>
+  max_context: number
+  created_at: string
 }
 
-interface PresetRowProps {
-  preset: LlmPreset
-  override: ProviderOverride | undefined
-  isActive: boolean
-  isExpanded: boolean
-  savedHere: boolean
-  onToggleActive: () => void
-  onToggleExpand: () => void
-  onChange: (patch: ProviderOverride) => void
+interface ProviderAssignment {
+  chat: { provider_id: string; model: string } | null
+  ingest: { provider_id: string; model: string } | null
+  maintenance: { provider_id: string; model: string } | null
 }
 
-type ProviderTestState =
+type AssignmentKey = keyof ProviderAssignment
+
+type TestStatus =
   | { kind: "idle" }
-  | { kind: "running"; label: string }
-  | { kind: "done"; result: ProviderTestResult }
+  | { kind: "running" }
+  | { kind: "ok"; message: string }
+  | { kind: "error"; message: string }
 
-function PresetRow({
-  preset,
-  override,
-  isActive,
-  isExpanded,
-  savedHere,
-  onToggleActive,
-  onToggleExpand,
-  onChange,
-}: PresetRowProps) {
-  const { t } = useTranslation()
-  const ov = override ?? {}
-  const model = ov.model ?? preset.defaultModel ?? ""
-  const apiKey = ov.apiKey ?? ""
-  const apiMode = ov.apiMode ?? preset.apiMode ?? "chat_completions"
-  const baseUrl = ov.baseUrl ?? preset.baseUrl ?? ""
-  const azureApiVersion = ov.azureApiVersion ?? preset.azureApiVersion ?? AZURE_OPENAI_API_VERSION
-  const azureModelFamily = ov.azureModelFamily ?? preset.azureModelFamily ?? "auto"
-  const context = ov.maxContextSize ?? preset.suggestedContextSize ?? 131072
-  const reasoning = ov.reasoning ?? { mode: "auto" as const }
-  const localCliIsolation = ov.localCliIsolation === true
-  const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
-  const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
-  const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
-  const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
-  // Local CLI providers authenticate via their own existing login state
-  // (inherited by the spawned subprocess), so no API key field is shown.
-  // Ollama ditto for its local-only model.
-  const needsApiKey =
-    preset.provider !== "ollama" &&
-    preset.provider !== "claude-code" &&
-    preset.provider !== "codex-cli"
+interface EditableProvider {
+  id: string
+  name: string
+  protocol: ModelProvider["protocol"]
+  api_base: string
+  api_key: string
+  default_model: string
+  custom_headers: Record<string, string>
+  max_context: number
+  temperature: number
+}
 
-  const resolvedConfig = useMemo(
-    () => resolveConfig(preset, ov, useWikiStore.getState().llmConfig),
-    [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
-  )
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
 
-  async function runProviderTest(kind: "connection" | "function") {
-    setTestState({
-      kind: "running",
-      label: kind === "connection"
-        ? t("settings.sections.llm.testingConnection")
-        : t("settings.sections.llm.testingFunction"),
-    })
-    const result = kind === "connection"
-      ? await testLlmConnection(resolvedConfig)
-      : await testLlmFunction(resolvedConfig)
-    setTestState({ kind: "done", result })
+const API_BASE = "http://127.0.0.1:19828"
+
+async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    throw new Error(`GET ${path} ${res.status}: ${body || res.statusText}`)
   }
-
-  return (
-    <div
-      className={`rounded-lg border transition-colors ${
-        isActive ? "border-primary/60 bg-primary/5" : "border-border"
-      }`}
-    >
-      {/* Outer row — always visible */}
-      <div className="flex items-center gap-3 px-3 py-2.5">
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent"
-          title={isExpanded ? t("settings.sections.llm.collapse") : t("settings.sections.llm.expand")}
-        >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="min-w-0 flex-1 text-left"
-        >
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{preset.label}</span>
-            {hasConfig && !isActive && (
-              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                {t("settings.sections.llm.configuredBadge")}
-              </span>
-            )}
-            {isActive && (
-              <span className="shrink-0 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                {t("settings.sections.llm.activeBadge")}
-              </span>
-            )}
-            {savedHere && (
-              <span className="shrink-0 text-[10px] text-emerald-600">{t("settings.sections.llm.savedBadge")}</span>
-            )}
-          </div>
-          {preset.hint && (
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">
-              {preset.hint}
-            </div>
-          )}
-        </button>
-
-        {/* Toggle switch */}
-        <button
-          type="button"
-          onClick={onToggleActive}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-            isActive
-              ? "border-primary bg-primary"
-              : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
-          }`}
-          title={isActive ? t("settings.sections.llm.toggleOff") : t("settings.sections.llm.toggleOn")}
-          aria-label={isActive ? t("settings.sections.llm.deactivate") : t("settings.sections.llm.activate")}
-        >
-          <span
-            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
-              isActive ? "translate-x-4" : "translate-x-0.5"
-            }`}
-          />
-        </button>
-      </div>
-
-      {/* Expanded config panel */}
-      {isExpanded && (
-        <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-          {preset.provider === "custom" && (
-            <div className="space-y-2">
-              <Label>{t("settings.sections.llm.apiMode")}</Label>
-              <div className="flex flex-wrap gap-2">
-                {(
-                  [
-                    { value: "chat_completions", labelKey: "settings.sections.llm.wireOpenAi" },
-                    { value: "anthropic_messages", labelKey: "settings.sections.llm.wireAnthropic" },
-                  ] as const
-                ).map((m) => {
-                  const active = apiMode === m.value
-                  return (
-                    <button
-                      key={m.value}
-                      type="button"
-                      onClick={() => {
-                        // When a preset declares different base URLs for
-                        // each wire (e.g. Bailian Coding Plan: /v1 for
-                        // OpenAI, /apps/anthropic for Anthropic), flip
-                        // the URL alongside the mode so users don't have
-                        // to know both URLs or edit manually.
-                        const patch: ProviderOverride = { apiMode: m.value }
-                        const nextBaseUrl = preset.baseUrlByMode?.[m.value]
-                        if (nextBaseUrl) patch.baseUrl = nextBaseUrl
-                        onChange(patch)
-                      }}
-                      className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
-                        active
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border hover:bg-accent"
-                      }`}
-                    >
-                      {t(m.labelKey)}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {(preset.provider === "custom" || preset.provider === "ollama" || preset.provider === "azure") && (
-            <EndpointField
-              value={baseUrl}
-              mode={preset.provider === "azure" ? "azure" : apiMode}
-              placeholder={preset.baseUrl ?? "https://your-api.example.com/v1"}
-              onChange={(v) => onChange({ baseUrl: v })}
-            />
-          )}
-
-          {preset.provider === "azure" && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>{t("settings.sections.llm.azureApiVersion")}</Label>
-                <Input
-                  value={azureApiVersion}
-                  onChange={(e) => onChange({ azureApiVersion: e.target.value })}
-                  placeholder="2024-10-21"
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t("settings.sections.llm.azureApiVersionHint")}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>{t("settings.sections.llm.azureModelFamily")}</Label>
-                <select
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={azureModelFamily}
-                  onChange={(e) => onChange({ azureModelFamily: e.target.value as typeof azureModelFamily })}
-                >
-                  <option value="auto">{t("settings.sections.llm.azureModelFamilyAuto")}</option>
-                  <option value="gpt5">{t("settings.sections.llm.azureModelFamilyGpt5")}</option>
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  {t("settings.sections.llm.azureModelFamilyHint")}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {preset.provider === "claude-code" && <ClaudeCliStatusPill />}
-          {preset.provider === "codex-cli" && <CodexCliStatusPill />}
-
-          {isLocalCliProvider && (
-            <div className="space-y-2 rounded-md border p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium">
-                    {t("settings.sections.llm.localCliIsolation")}
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t("settings.sections.llm.localCliIsolationHint")}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onChange({ localCliIsolation: !localCliIsolation })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                    localCliIsolation
-                      ? "border-primary bg-primary"
-                      : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
-                  }`}
-                  title={
-                    localCliIsolation
-                      ? t("settings.sections.llm.localCliIsolationOn")
-                      : t("settings.sections.llm.localCliIsolationOff")
-                  }
-                  aria-label={t("settings.sections.llm.localCliIsolation")}
-                >
-                  <span
-                    className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
-                      localCliIsolation ? "translate-x-4" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
-              </div>
-              <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
-                {localCliIsolation
-                  ? t("settings.sections.llm.localCliIsolationOn")
-                  : t("settings.sections.llm.localCliIsolationOff")}
-              </div>
-            </div>
-          )}
-
-          {preset.provider === "codex-cli" && (
-            <div className="space-y-2 rounded-md border p-3">
-              <Label>{t("settings.sections.llm.codexCliTimeout")}</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  min={1}
-                  max={240}
-                  className="w-28"
-                  value={codexCliTimeoutMinutes}
-                  onChange={(e) => {
-                    const n = Number(e.target.value)
-                    onChange({
-                      codexCliTimeoutMinutes: Number.isFinite(n)
-                        ? Math.max(1, Math.min(240, Math.floor(n)))
-                        : undefined,
-                    })
-                  }}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {t("settings.sections.llm.codexCliTimeoutUnit")}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t("settings.sections.llm.codexCliTimeoutHint")}
-              </p>
-            </div>
-          )}
-
-          {needsApiKey && (
-            <div className="space-y-2">
-              <Label>{t("settings.apiKey")}</Label>
-              <Input
-                type="password"
-                value={apiKey}
-                onChange={(e) => onChange({ apiKey: e.target.value })}
-                placeholder={
-                  preset.provider === "custom"
-                    ? t("settings.sections.llm.apiKeyPlaceholderCustom")
-                    : t("settings.sections.llm.apiKeyPlaceholder")
-                }
-              />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label>
-              {preset.provider === "azure"
-                ? t("settings.sections.llm.deploymentName", "Deployment name")
-                : t("settings.model")}
-            </Label>
-            <ModelPicker
-              value={model}
-              suggestions={preset.suggestedModels ?? []}
-              placeholder={preset.defaultModel ?? "e.g. gpt-4o"}
-              onChange={(v) => onChange({ model: v })}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>{t("settings.sections.llm.contextWindow")}</Label>
-            <ContextSizeSelector
-              value={context}
-              onChange={(v) => onChange({ maxContextSize: v })}
-            />
-          </div>
-
-          <ReasoningControls
-            value={reasoning}
-            onChange={(reasoning) => onChange({ reasoning })}
-          />
-
-          <div className="space-y-2 rounded-md border p-3">
-            <div>
-              <div className="text-sm font-medium">
-                {t("settings.sections.llm.providerTests")}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("settings.sections.llm.providerTestsHint")}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void runProviderTest("connection")}
-                disabled={testState.kind === "running"}
-                className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {t("settings.sections.llm.testConnection")}
-              </button>
-              <button
-                type="button"
-                onClick={() => void runProviderTest("function")}
-                disabled={testState.kind === "running"}
-                className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {t("settings.sections.llm.testFunction")}
-              </button>
-            </div>
-            {testState.kind === "running" && (
-              <p className="text-xs text-muted-foreground">{testState.label}</p>
-            )}
-            {testState.kind === "done" && (
-              <div
-                className={`rounded-md border px-3 py-2 text-xs ${
-                  testState.result.ok
-                    ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
-                    : "border-destructive/40 bg-destructive/5 text-destructive"
-                }`}
-              >
-                {testState.result.message}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
+  return res.json() as Promise<T>
 }
 
-function ReasoningControls({
-  value,
-  onChange,
-}: {
-  value: ReasoningConfig
-  onChange: (value: ReasoningConfig) => void
-}) {
-  const { t } = useTranslation()
-  const modes: { value: ReasoningMode; label: string }[] = [
-    { value: "auto", label: t("settings.sections.llm.reasoning.auto") },
-    { value: "off", label: t("settings.sections.llm.reasoning.off") },
-    { value: "low", label: t("settings.sections.llm.reasoning.low") },
-    { value: "medium", label: t("settings.sections.llm.reasoning.medium") },
-    { value: "high", label: t("settings.sections.llm.reasoning.high") },
-    { value: "max", label: t("settings.sections.llm.reasoning.max") },
-    { value: "custom", label: t("settings.sections.llm.reasoning.custom") },
-  ]
-
-  return (
-    <div className="space-y-2">
-      <Label>{t("settings.sections.llm.reasoning.title")}</Label>
-      <div className="flex flex-wrap gap-1.5">
-        {modes.map((m) => {
-          const active = value.mode === m.value
-          return (
-            <button
-              key={m.value}
-              type="button"
-              onClick={() => onChange({ ...value, mode: m.value })}
-              className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border hover:bg-accent"
-              }`}
-            >
-              {m.label}
-            </button>
-          )
-        })}
-      </div>
-      {value.mode === "custom" && (
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            className="w-28"
-            value={value.budgetTokens ?? ""}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const n = Number(raw)
-              onChange({
-                ...value,
-                budgetTokens: raw === "" || !Number.isFinite(n) ? undefined : Math.max(0, n),
-              })
-            }}
-            placeholder="1024"
-          />
-          <span className="text-xs text-muted-foreground">
-            {t("settings.sections.llm.reasoning.budgetTokens")}
-          </span>
-        </div>
-      )}
-      <p className="text-xs text-muted-foreground">
-        {t("settings.sections.llm.reasoning.hint")}
-      </p>
-    </div>
-  )
-}
-
-interface EndpointFieldProps {
-  value: string
-  mode: "chat_completions" | "anthropic_messages" | "azure"
-  placeholder: string
-  onChange: (value: string) => void
-}
-
-/**
- * Endpoint input with live feedback + auto-fix on blur. The hint line
- * below the field tells the user what we'd normalize to (and why) while
- * they're typing; the input doesn't nag — it just shows the preview. On
- * blur, if normalization would change the value, we apply it.
- */
-function EndpointField({ value, mode, placeholder, onChange }: EndpointFieldProps) {
-  const { t } = useTranslation()
-  const preview = useMemo(() => normalizeEndpoint(value, mode), [value, mode])
-
-  function handleBlur() {
-    if (preview.changed && preview.normalized !== value.trim()) {
-      onChange(preview.normalized)
-    }
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`POST ${path} ${res.status}: ${text || res.statusText}`)
   }
-
-  const showHint = value.trim().length > 0 && (preview.changed || preview.warning)
-
-  return (
-    <div className="space-y-1.5">
-      <Label>{t("settings.sections.llm.endpoint")}</Label>
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={handleBlur}
-        placeholder={placeholder}
-      />
-      {showHint && (
-        <div
-          className={`flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-xs ${
-            preview.changed
-              ? "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400"
-              : "border-blue-500/40 bg-blue-500/5 text-blue-700 dark:text-blue-400"
-          }`}
-        >
-          {preview.changed ? (
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          )}
-          <div className="min-w-0 flex-1 space-y-0.5">
-            {preview.changed && (
-              <div>
-                {t("settings.sections.llm.endpointPreviewWillUse")}{" "}
-                <code className="break-all rounded bg-background/60 px-1 py-0.5 font-mono">
-                  {preview.normalized || "(empty)"}
-                </code>
-                <span className="ml-1 text-muted-foreground">
-                  {t("settings.sections.llm.endpointPreviewAutoApply")}
-                </span>
-              </div>
-            )}
-            {preview.warning && <div>{preview.warning}</div>}
-          </div>
-        </div>
-      )}
-    </div>
-  )
+  return res.json() as Promise<T>
 }
 
-interface ModelPickerProps {
-  value: string
-  suggestions: string[]
-  placeholder: string
-  onChange: (value: string) => void
+async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`PUT ${path} ${res.status}: ${text || res.statusText}`)
+  }
+  return res.json() as Promise<T>
 }
 
-/**
- * Model input with a chip-based suggestion row above it. The input stays
- * free-text so users can always type unlisted models (fine-tunes, preview
- * IDs, local Ollama tags, etc.). Clicking a chip just fills the input.
- *
- * The currently-selected chip (if the value matches one of the suggestions)
- * gets the accent highlight so users can see at a glance which preset
- * model is active without reading the text field. Presets with no
- * `suggestedModels` render the input alone.
- */
-function ModelPicker({ value, suggestions, placeholder, onChange }: ModelPickerProps) {
-  const { t } = useTranslation()
-  const hasSuggestions = suggestions.length > 0
-  const isCustom = hasSuggestions && value.length > 0 && !suggestions.includes(value)
-
-  return (
-    <div className="space-y-2">
-      {hasSuggestions && (
-        <div className="flex flex-wrap gap-1.5">
-          {suggestions.map((m) => {
-            const active = m === value
-            return (
-              <button
-                key={m}
-                type="button"
-                onClick={() => onChange(m)}
-                className={`rounded-md border px-2 py-0.5 text-xs font-mono transition-colors ${
-                  active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-background hover:bg-accent hover:text-accent-foreground"
-                }`}
-                title={t("settings.sections.llm.useModel", { model: m })}
-              >
-                {m}
-              </button>
-            )
-          })}
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className={`rounded-md border px-2 py-0.5 text-xs transition-colors ${
-              isCustom
-                ? "border-primary/60 bg-primary/10 text-primary"
-                : "border-dashed border-muted-foreground/40 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            }`}
-            title={t("settings.sections.llm.typeCustomModel")}
-          >
-            {isCustom
-              ? t("settings.sections.llm.customModelBadge", { model: value })
-              : t("settings.sections.llm.customModel")}
-          </button>
-        </div>
-      )}
-      <Input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-    </div>
-  )
+async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`DELETE ${path} ${res.status}: ${text || res.statusText}`)
+  }
+  return res.json() as Promise<T>
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function headersToText(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .filter(([k]) => k !== "x-temperature")
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+}
+
+function parseHeadersText(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+    const idx = line.indexOf(":")
+    if (idx <= 0) continue
+    const name = line.slice(0, idx).trim()
+    const value = line.slice(idx + 1).trim()
+    if (!name || !value) continue
+    out[name] = value
+  }
+  return out
+}
+
+function parseTemperature(headers: Record<string, string>): number {
+  const raw = headers["x-temperature"]
+  if (raw === undefined || raw === "") return 0.7
+  const n = Number(raw)
+  return Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 0.7
+}
+
+function mergeEditable(provider: ModelProvider): EditableProvider {
+  return {
+    id: provider.id,
+    name: provider.name,
+    protocol: provider.protocol,
+    api_base: provider.api_base,
+    api_key: provider.api_key,
+    default_model: provider.default_model,
+    custom_headers: provider.custom_headers,
+    max_context: provider.max_context,
+    temperature: parseTemperature(provider.custom_headers),
+  }
+}
+
+function buildProviderPayload(
+  editable: EditableProvider,
+): Partial<ModelProvider> {
+  const { id: _id, ...rest } = editable
+  const headers = { ...rest.custom_headers }
+  headers["x-temperature"] = String(rest.temperature)
+  return {
+    name: rest.name,
+    protocol: rest.protocol,
+    api_base: rest.api_base,
+    api_key: rest.api_key,
+    default_model: rest.default_model,
+    custom_headers: headers,
+    max_context: rest.max_context,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DetectResult (unchanged from original)
+// ---------------------------------------------------------------------------
 
 interface DetectResult {
   installed: boolean
@@ -696,13 +192,10 @@ interface DetectResult {
   error: string | null
 }
 
-/**
- * Health-check pill for the Claude Code CLI provider. Auto-runs
- * `claude --version` on mount, with a refresh button for when the user
- * just installed the binary and wants to re-check without reopening the
- * panel. The error message comes straight from the Rust side — it
- * already tailors the hint (macOS quarantine, missing binary, etc).
- */
+// ---------------------------------------------------------------------------
+// Claude CLI StatusPill (unchanged from original)
+// ---------------------------------------------------------------------------
+
 function ClaudeCliStatusPill() {
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
@@ -738,7 +231,7 @@ function ClaudeCliStatusPill() {
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? "Checking\u2026" : "Re-check"}
         </button>
       </div>
       <div
@@ -754,7 +247,7 @@ function ClaudeCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local claude binary…</div>}
+          {state === "loading" && <div>Detecting local claude binary\u2026</div>}
           {state === "ok" && (
             <>
               <div>
@@ -766,11 +259,6 @@ function ClaudeCliStatusPill() {
                   {result.path}
                 </div>
               )}
-              {/* `claude --version` doesn't validate OAuth, so even a
-                  green pill can hide an expired login. Surface the
-                  remediation up front so users don't mis-diagnose
-                  the resulting "Unauthenticated" exit-1 as a LLM
-                  Wiki bug. */}
               <div className="text-muted-foreground">
                 If chat fails with an authentication error, run{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
@@ -797,6 +285,10 @@ function ClaudeCliStatusPill() {
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Codex CLI StatusPill (unchanged from original)
+// ---------------------------------------------------------------------------
 
 function CodexCliStatusPill() {
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
@@ -833,7 +325,7 @@ function CodexCliStatusPill() {
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? "Checking\u2026" : "Re-check"}
         </button>
       </div>
       <div
@@ -849,7 +341,7 @@ function CodexCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local codex binary…</div>}
+          {state === "loading" && <div>Detecting local codex binary\u2026</div>}
           {state === "ok" && (
             <>
               <div>
@@ -884,6 +376,710 @@ function CodexCliStatusPill() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Protocol selector
+// ---------------------------------------------------------------------------
+
+const PROTOCOL_OPTIONS: { value: ModelProvider["protocol"]; label: string }[] = [
+  { value: "openai", label: "OpenAI\u5355\u5bb9" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "google", label: "Google" },
+]
+
+function ProtocolSelect({
+  value,
+  onChange,
+}: {
+  value: ModelProvider["protocol"]
+  onChange: (v: ModelProvider["protocol"]) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {PROTOCOL_OPTIONS.map((opt) => {
+        const active = value === opt.value
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              active
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border hover:bg-accent"
+            }`}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Add / Edit Provider Dialog
+// ---------------------------------------------------------------------------
+
+interface ProviderFormProps {
+  initial?: EditableProvider
+  onSave: (data: EditableProvider) => void | Promise<void>
+  onCancel: () => void
+  /** Label for the confirm button */
+  confirmLabel: string
+  open: boolean
+}
+
+function ProviderFormDialog({
+  initial,
+  onSave,
+  onCancel,
+  confirmLabel,
+  open,
+}: ProviderFormProps) {
+  const [name, setName] = useState(initial?.name ?? "")
+  const [protocol, setProtocol] = useState<ModelProvider["protocol"]>(
+    initial?.protocol ?? "openai",
+  )
+  const [apiBase, setApiBase] = useState(initial?.api_base ?? "")
+  const [apiKey, setApiKey] = useState(initial?.api_key ?? "")
+  const [defaultModel, setDefaultModel] = useState(initial?.default_model ?? "")
+  const [maxContext, setMaxContext] = useState(String(initial?.max_context ?? 128000))
+  const [temperature, setTemperature] = useState(String(initial?.temperature ?? 0.7))
+  const [headersText, setHeadersText] = useState(
+    initial ? headersToText(initial.custom_headers) : "",
+  )
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Reset form when dialog opens
+  useEffect(() => {
+    if (open) {
+      setName(initial?.name ?? "")
+      setProtocol(initial?.protocol ?? "openai")
+      setApiBase(initial?.api_base ?? "")
+      setApiKey(initial?.api_key ?? "")
+      setDefaultModel(initial?.default_model ?? "")
+      setMaxContext(String(initial?.max_context ?? 128000))
+      setTemperature(String(initial?.temperature ?? 0.7))
+      setHeadersText(initial ? headersToText(initial.custom_headers) : "")
+      setShowAdvanced(false)
+      setSaving(false)
+      setError(null)
+    }
+  }, [open, initial])
+
+  async function handleSubmit() {
+    if (!name.trim()) {
+      setError("供应商名称不能为空")
+      return
+    }
+    if (!apiBase.trim()) {
+      setError("接口地址不能为空")
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    try {
+      const customHeaders = {
+        ...parseHeadersText(headersText),
+        "x-temperature": String(Math.max(0, Math.min(2, Number(temperature) || 0.7))),
+      }
+      await onSave({
+        id: initial?.id ?? "",
+        name: name.trim(),
+        protocol,
+        api_base: apiBase.trim(),
+        api_key: apiKey,
+        default_model: defaultModel.trim(),
+        custom_headers: customHeaders,
+        max_context: Math.max(1024, Number(maxContext) || 128000),
+        temperature: Math.max(0, Math.min(2, Number(temperature) || 0.7)),
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onCancel() }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{initial ? "\u7f16\u8f91\u4f9b\u5e94\u5546" : "\u6dfb\u52a0\u4f9b\u5e94\u5546"}</DialogTitle>
+          <DialogDescription>
+            {initial
+              ? "\u4fee\u6539\u4f9b\u5e94\u5546\u914d\u7f6e\u540e\u70b9\u51fb\u4fdd\u5b58"
+              : "\u586b\u5199\u4f9b\u5e94\u5546\u4fe1\u606f\u540e\u70b9\u51fb\u6dfb\u52a0"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Name */}
+          <div className="space-y-2">
+            <Label>供应商名称</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. My OpenAI Proxy"
+            />
+          </div>
+
+          {/* Protocol */}
+          <div className="space-y-2">
+            <Label>协议类型</Label>
+            <ProtocolSelect value={protocol} onChange={setProtocol} />
+          </div>
+
+          {/* API Base URL */}
+          <div className="space-y-2">
+            <Label>接口地址</Label>
+            <Input
+              value={apiBase}
+              onChange={(e) => setApiBase(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+            />
+          </div>
+
+          {/* API Key */}
+          <div className="space-y-2">
+            <Label>API密钥（非必填）</Label>
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+            />
+          </div>
+
+          {/* Default Model */}
+          <div className="space-y-2">
+            <Label>默认模型</Label>
+            <Input
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              placeholder="gpt-4o"
+            />
+          </div>
+
+          {/* Temperature */}
+          <div className="space-y-2">
+            <Label>温度值 (Temperature) — {temperature}</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.1}
+                value={temperature}
+                onChange={(e) => setTemperature(e.target.value)}
+                className="flex-1 h-2 rounded-full appearance-none bg-muted-foreground/20 cursor-pointer accent-primary"
+              />
+              <Input
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                className="w-20"
+                value={temperature}
+                onChange={(e) => setTemperature(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Max Context */}
+          <div className="space-y-2">
+            <Label>最大 Token 上限 (Max Tokens)</Label>
+            <Input
+              type="number"
+              min={1024}
+              step={1024}
+              value={maxContext}
+              onChange={(e) => setMaxContext(e.target.value)}
+              placeholder="128000"
+            />
+          </div>
+
+          {/* Advanced Settings */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showAdvanced ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              高级设置 (自定义请求头)
+            </button>
+            {showAdvanced && (
+              <div className="mt-2 space-y-2">
+                <textarea
+                  value={headersText}
+                  onChange={(e) => setHeadersText(e.target.value)}
+                  placeholder={"X-Custom-Header: value\nX-Another: value2"}
+                  rows={3}
+                  className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <p className="text-xs text-muted-foreground">
+                  每行一个请求头，格式为 key: value
+                </p>
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel} disabled={saving}>
+            取消
+          </Button>
+          <Button onClick={() => void handleSubmit()} disabled={saving}>
+            {saving ? "保存中..." : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Provider Card
+// ---------------------------------------------------------------------------
+
+interface ProviderCardProps {
+  provider: EditableProvider
+  assignment: ProviderAssignment
+  onAssignmentChange: (key: AssignmentKey, model: string) => void
+  onUpdate: (data: EditableProvider) => void
+  onDelete: () => void
+  onTest: () => void
+  testStatus: TestStatus
+}
+
+function ProviderCard({
+  provider,
+  assignment,
+  onAssignmentChange,
+  onUpdate,
+  onDelete,
+  onTest,
+  testStatus,
+}: ProviderCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+
+  const assignedTo: AssignmentKey[] = []
+  for (const key of ["chat", "ingest", "maintenance"] as AssignmentKey[]) {
+    const a = assignment[key]
+    if (a && a.provider_id === provider.id) assignedTo.push(key)
+  }
+
+  const protocolLabels: Record<string, string> = {
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    google: "Google",
+  }
+
+  return (
+    <>
+      <div className="rounded-lg border border-border transition-colors">
+        {/* Header row */}
+        <div className="flex items-center gap-3 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent"
+          >
+            {expanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="min-w-0 flex-1 text-left"
+          >
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-medium">{provider.name}</span>
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {protocolLabels[provider.protocol] ?? provider.protocol}
+              </span>
+              {assignedTo.length > 0 && (
+                <span className="shrink-0 rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  {"\u5df2\u5206\u914d"}
+                </span>
+              )}
+            </div>
+            {provider.api_base && (
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                {provider.api_base}
+              </div>
+            )}
+          </button>
+
+          {/* Delete button */}
+          <button
+            type="button"
+            onClick={onDelete}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            title="删除"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Expanded config */}
+        {expanded && (
+          <div className="space-y-4 border-t bg-background/50 px-4 py-3">
+            {/* Capability assignment */}
+            <div className="space-y-2">
+              <Label>功能分配</Label>
+              <div className="flex flex-wrap gap-3">
+                {(["chat", "ingest", "maintenance"] as AssignmentKey[]).map((key) => {
+                  const checked = assignment[key]?.provider_id === provider.id
+                  const labels: Record<AssignmentKey, string> = {
+                    chat: "\u5bf9\u8bdd (chat)",
+                    ingest: "\u6444\u5165 (ingest)",
+                    maintenance: "Agent\u8f85\u52a9\u7ef4\u62a4 (maintenance)",
+                  }
+                  return (
+                    <label
+                      key={key}
+                      className="flex items-center gap-2 text-sm cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          onAssignmentChange(key, checked ? "" : provider.default_model)
+                        }
+                        className="h-4 w-4 rounded border-border accent-primary"
+                      />
+                      {labels[key]}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Edit button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditDialogOpen(true)}
+            >
+              编辑配置
+            </Button>
+
+            {/* Test connection */}
+            <div className="space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onTest}
+                disabled={testStatus.kind === "running"}
+              >
+                {testStatus.kind === "running" ? (
+                  <>
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    测试中...
+                  </>
+                ) : (
+                  <>
+                    <Wifi className="mr-1 h-3.5 w-3.5" />
+                    测试连接
+                  </>
+                )}
+              </Button>
+              {testStatus.kind === "ok" && (
+                <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+                  <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
+                  {testStatus.message}
+                </div>
+              )}
+              {testStatus.kind === "error" && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  <AlertCircle className="mr-1 inline h-3.5 w-3.5" />
+                  {testStatus.message}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Edit dialog */}
+      <ProviderFormDialog
+        open={editDialogOpen}
+        initial={provider}
+        onSave={(data) => {
+          onUpdate(data)
+          setEditDialogOpen(false)
+        }}
+        onCancel={() => setEditDialogOpen(false)}
+        confirmLabel="保存"
+      />
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main section component
+// ---------------------------------------------------------------------------
+
+export function LlmProviderSection() {
+  const { t } = useTranslation()
+  const [providers, setProviders] = useState<EditableProvider[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [assignment, setAssignment] = useState<ProviderAssignment>({
+    chat: null,
+    ingest: null,
+    maintenance: null,
+  })
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [testStatuses, setTestStatuses] = useState<Record<string, TestStatus>>({})
+  const testRunRef = useRef<Record<string, number>>({})
+
+  // Load providers + assignments on mount
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [providerList, assignData] = await Promise.all([
+        apiGet<ModelProvider[]>("/api/providers"),
+        apiGet<ProviderAssignment>("/api/providers/assignment").catch(() => ({
+          chat: null,
+          ingest: null,
+          maintenance: null,
+        })),
+      ])
+      setProviders(providerList.map(mergeEditable))
+      setAssignment(assignData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
+
+  // Add provider
+  async function handleAdd(data: EditableProvider) {
+    const payload = buildProviderPayload(data)
+    await apiPost("/api/providers", payload)
+    setAddDialogOpen(false)
+    await loadData()
+  }
+
+  // Update provider
+  async function handleUpdate(data: EditableProvider) {
+    const payload = buildProviderPayload(data)
+    await apiPut(`/api/providers/${data.id}`, payload)
+    await loadData()
+  }
+
+  // Delete provider
+  async function handleDelete(id: string) {
+    // Remove from assignment first if assigned
+    const updatedAssignment = { ...assignment }
+    for (const key of ["chat", "ingest", "maintenance"] as AssignmentKey[]) {
+      if (updatedAssignment[key]?.provider_id === id) {
+        updatedAssignment[key] = null
+      }
+    }
+    await apiPut("/api/providers/assignment", updatedAssignment)
+    await apiDelete(`/api/providers/${id}`)
+    await loadData()
+  }
+
+  // Toggle assignment from card
+  async function handleToggleAssignment(providerId: string, key: AssignmentKey, model: string) {
+    const updated = { ...assignment }
+    if (updated[key]?.provider_id === providerId) {
+      updated[key] = null
+    } else {
+      updated[key] = { provider_id: providerId, model: model || providers.find(p => p.id === providerId)?.default_model || "" }
+    }
+    setAssignment(updated)
+    try {
+      await apiPut("/api/providers/assignment", updated)
+    } catch {
+      await loadData()
+    }
+  }
+
+  // Test connection
+  async function handleTest(providerId: string) {
+    const runId = (testRunRef.current[providerId] ?? 0) + 1
+    testRunRef.current[providerId] = runId
+    setTestStatuses((prev) => ({
+      ...prev,
+      [providerId]: { kind: "running" },
+    }))
+    try {
+      const result = await apiPost<{ ok: boolean; message: string }>(
+        `/api/providers/${providerId}/test`,
+      )
+      if (testRunRef.current[providerId] !== runId) return
+      setTestStatuses((prev) => ({
+        ...prev,
+        [providerId]: result.ok
+          ? { kind: "ok", message: result.message || "连接成功" }
+          : { kind: "error", message: result.message || "连接失败" },
+      }))
+    } catch (err) {
+      if (testRunRef.current[providerId] !== runId) return
+      setTestStatuses((prev) => ({
+        ...prev,
+        [providerId]: {
+          kind: "error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      }))
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold">{t("settings.sections.llm.title")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("settings.sections.llm.description")}
+          </p>
+        </div>
+        <Button
+          size="icon-sm"
+          variant="outline"
+          onClick={() => setAddDialogOpen(true)}
+          title="添加模型供应商"
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {/* Built-in CLI providers */}
+      <div className="space-y-2">
+        <ClaudeCliStatusPill />
+        <CodexCliStatusPill />
+      </div>
+
+      {/* Provider list */}
+      <div className="space-y-2">
+        {loading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <AlertCircle className="mr-1 inline h-3.5 w-3.5" />
+            {error}
+          </div>
+        )}
+
+        {!loading && !error && providers.length === 0 && (
+          <div className="rounded-lg border border-dashed border-muted-foreground/30 px-4 py-8 text-center">
+            <p className="text-sm text-muted-foreground">
+              还没有添加任何模型供应商，点击右上角的 <Plus className="inline h-3.5 w-3.5" /> 按钮添加
+            </p>
+          </div>
+        )}
+
+        {!loading &&
+          providers.map((provider) => (
+            <ProviderCard
+              key={provider.id}
+              provider={provider}
+              assignment={assignment}
+              onAssignmentChange={(key, model) =>
+                void handleToggleAssignment(provider.id, key, model)
+              }
+              onUpdate={(data) => void handleUpdate(data)}
+              onDelete={() => void handleDelete(provider.id)}
+              onTest={() => void handleTest(provider.id)}
+              testStatus={testStatuses[provider.id] ?? { kind: "idle" }}
+            />
+          ))}
+      </div>
+
+      {/* Assignment section summary */}
+      {!loading && !error && providers.length > 0 && (
+        <div className="rounded-lg border p-3">
+          <div className="text-sm font-medium mb-2">当前功能分配</div>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0">对话 (chat):</span>
+              {assignment.chat ? (
+                <span className="text-foreground">
+                  {providers.find((p) => p.id === assignment.chat?.provider_id)?.name ??
+                    assignment.chat.provider_id}
+                  {" / "}
+                  {assignment.chat.model}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/60">未分配</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0">摄入 (ingest):</span>
+              {assignment.ingest ? (
+                <span className="text-foreground">
+                  {providers.find((p) => p.id === assignment.ingest?.provider_id)?.name ??
+                    assignment.ingest.provider_id}
+                  {" / "}
+                  {assignment.ingest.model}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/60">未分配</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0">维护 (maintenance):</span>
+              {assignment.maintenance ? (
+                <span className="text-foreground">
+                  {providers.find((p) => p.id === assignment.maintenance?.provider_id)?.name ??
+                    assignment.maintenance.provider_id}
+                  {" / "}
+                  {assignment.maintenance.model}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/60">未分配</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add dialog */}
+      <ProviderFormDialog
+        open={addDialogOpen}
+        onSave={(data) => void handleAdd(data)}
+        onCancel={() => setAddDialogOpen(false)}
+        confirmLabel="添加"
+      />
     </div>
   )
 }

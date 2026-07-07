@@ -21,7 +21,6 @@
  */
 
 import { readFile, listDirectory } from "@/commands/fs"
-import { invoke } from "@tauri-apps/api/core"
 import type { EmbeddingConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
@@ -38,6 +37,34 @@ const RESERVED_EMBEDDING_HEADER_NAMES = new Set([
   "x-goog-api-key",
 ])
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+
+// ── Vector API HTTP helpers (replaces Tauri invoke) ──────────────────────
+
+const VECTOR_API = "http://127.0.0.1:19828/api/vector"
+
+async function apiPost<T>(endpoint: string, body?: any): Promise<T> {
+  const r = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!r.ok) throw new Error(`Vector API error: ${r.status} ${await r.text()}`)
+  const text = await r.text()
+  return text ? JSON.parse(text) : undefined as unknown as T
+}
+
+async function apiGet<T>(endpoint: string): Promise<T> {
+  const r = await fetch(endpoint)
+  if (!r.ok) throw new Error(`Vector API error: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+
+async function apiDelete<T>(endpoint: string): Promise<T> {
+  const r = await fetch(endpoint, { method: "DELETE" })
+  if (!r.ok) throw new Error(`Vector API error: ${r.status} ${await r.text()}`)
+  const text = await r.text()
+  return text ? JSON.parse(text) : undefined as unknown as T
+}
 
 function isSafeExtraHeader(name: string, value: string): boolean {
   const trimmedName = name.trim()
@@ -363,7 +390,7 @@ function doubaoMultimodalEmbeddingBody(model: string, text: string): Record<stri
   }
 }
 
-// ── LanceDB v2 operations (via Rust Tauri commands) ──────────────────────
+// ── LanceDB v2 operations (via Python HTTP API) ──────────────────────────
 
 interface ChunkUpsertInput {
   chunkIndex: number
@@ -377,16 +404,18 @@ async function vectorUpsertChunks(
   pageId: string,
   chunks: ChunkUpsertInput[],
 ): Promise<void> {
-  await invoke("vector_upsert_chunks", {
-    projectPath: normalizePath(projectPath),
-    pageId,
-    chunks: chunks.map((c) => ({
-      chunk_index: c.chunkIndex,
-      chunk_text: c.chunkText,
-      heading_path: c.headingPath,
-      embedding: c.embedding.map((v) => Math.fround(v)),
-    })),
-  })
+  await apiPost(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/upsert-chunks`,
+    {
+      page_id: pageId,
+      chunks: chunks.map((c) => ({
+        chunk_index: c.chunkIndex,
+        chunk_text: c.chunkText,
+        heading_path: c.headingPath,
+        embedding: c.embedding.map((v) => Math.fround(v)),
+      })),
+    },
+  )
 }
 
 interface ChunkSearchResult {
@@ -403,52 +432,68 @@ async function vectorSearchChunks(
   queryEmbedding: number[],
   topK: number,
 ): Promise<ChunkSearchResult[]> {
-  return await invoke("vector_search_chunks", {
-    projectPath: normalizePath(projectPath),
-    queryEmbedding: queryEmbedding.map((v) => Math.fround(v)),
-    topK,
-  })
+  const raw = await apiPost<Array<{
+    chunk_id: string
+    page_id: string
+    chunk_index: number
+    chunk_text: string
+    heading_path: string
+    _distance: number
+  }>>(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/search-chunks`,
+    {
+      query_embedding: queryEmbedding.map((v) => Math.fround(v)),
+      top_k: topK,
+    },
+  )
+  return raw.map((r) => ({
+    chunk_id: r.chunk_id,
+    page_id: r.page_id,
+    chunk_index: r.chunk_index,
+    chunk_text: r.chunk_text,
+    heading_path: r.heading_path,
+    score: 1 / (1 + r._distance),
+  }))
 }
 
 async function vectorDeletePage(projectPath: string, pageId: string): Promise<void> {
-  await invoke("vector_delete_page", {
-    projectPath: normalizePath(projectPath),
-    pageId,
-  })
+  await apiDelete(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/page/${encodeURIComponent(pageId)}`,
+  )
 }
 
 async function vectorCountChunks(projectPath: string): Promise<number> {
-  return await invoke("vector_count_chunks", {
-    projectPath: normalizePath(projectPath),
-  })
+  return await apiGet<number>(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/count`,
+  )
 }
 
 async function vectorClearChunks(projectPath: string): Promise<void> {
-  await invoke("vector_clear_chunks", {
-    projectPath: normalizePath(projectPath),
-  })
+  await apiDelete(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/clear`,
+  )
 }
 
 async function vectorOptimizeChunks(projectPath: string): Promise<void> {
-  await invoke("vector_optimize_chunks", {
-    projectPath: normalizePath(projectPath),
-  })
+  await apiPost(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/optimize`,
+  )
 }
 
 export async function legacyVectorRowCount(projectPath: string): Promise<number> {
   try {
-    return await invoke("vector_legacy_row_count", {
-      projectPath: normalizePath(projectPath),
-    })
+    return await apiGet<number>(
+      `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/legacy-count`,
+    )
   } catch {
     return 0
   }
 }
 
 export async function dropLegacyVectorTable(projectPath: string): Promise<void> {
-  await invoke("vector_drop_legacy", {
-    projectPath: normalizePath(projectPath),
-  })
+  await apiDelete(
+    `${VECTOR_API}/${encodeURIComponent(normalizePath(projectPath))}/legacy-drop`,
+  )
 }
 
 export async function clearChunkVectorTable(projectPath: string): Promise<void> {

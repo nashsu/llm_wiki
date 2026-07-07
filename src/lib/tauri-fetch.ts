@@ -1,4 +1,16 @@
 /**
+ * @deprecated This module is preserved for existing callers that route
+ *   third-party HTTP through Tauri's plugin for CORS workarounds.
+ *
+ *   For new code that targets the **LLM Wiki Python backend** (the sidecar
+ *   server at ``localhost:19828``), use the helpers in ``@/lib/api-client``
+ *   instead — they talk directly to the Python HTTP API via standard
+ *   ``fetch()`` and do not need the Tauri HTTP plugin.
+ *
+ *   Background: the Python sidecar now serves the API that used to be
+ *   handled by Tauri Rust commands. The front-end should migrate all
+ *   ``invoke()`` and Tauri-plugin-http calls to ``@/lib/api-client``.
+ *
  * Shared HTTP helpers routed through Tauri's Rust-backed plugin so
  * third-party endpoints that don't set browser-friendly CORS headers
  * still work. Every part of the app that hits a user-configured URL
@@ -17,21 +29,10 @@
  * from any environment without crashing at module load.
  */
 
-let pluginFetchPromise: Promise<typeof globalThis.fetch> | null = null
-
 /**
- * True when running outside a browser / webview (vitest, SSR, any
- * Node-based tooling). The Tauri plugin is importable in Node
- * (resolution succeeds) but its internals reach for `window` at call
- * time, so we must avoid invoking it — guard BEFORE the dynamic
- * import rather than trying to .catch() an error that happens later.
- */
-const isNodeEnv = typeof window === "undefined"
-
-/**
- * Returns a fetch function that routes through Tauri's HTTP plugin in
- * production, falling back to the platform's native fetch in non-Tauri
- * environments (tests / SSR / storybook). Call this once per request:
+ * Returns a fetch function that falls back to the platform's native fetch
+ * in all environments (browser, Node, vitest). The Tauri HTTP plugin is
+ * no longer used.
  *
  *   const httpFetch = await getHttpFetch()
  *   const response = await httpFetch(url, opts)
@@ -39,21 +40,11 @@ const isNodeEnv = typeof window === "undefined"
  * The promise is cached, so repeated calls don't re-import the plugin.
  */
 export function getHttpFetch(): Promise<typeof globalThis.fetch> {
-  if (!pluginFetchPromise) {
-    if (isNodeEnv) {
-      // Bind so `this === globalThis` — Node's fetch requires it.
-      pluginFetchPromise = Promise.resolve(globalThis.fetch.bind(globalThis))
-    } else {
-      pluginFetchPromise = import("@tauri-apps/plugin-http")
-        .then((m) => m.fetch as unknown as typeof globalThis.fetch)
-        .catch(() => globalThis.fetch.bind(globalThis))
-    }
-  }
-  return pluginFetchPromise
+  return Promise.resolve(globalThis.fetch.bind(globalThis))
 }
 
 /**
- * Detect fetch-level network failures across Tauri's different webview
+ * Detect fetch-level network failures across different webview
  * backends. Each platform phrases the same failure class differently:
  *
  *   macOS / iOS (WebKit):       Error,  message === "Load failed"

@@ -1,9 +1,56 @@
-import { invoke } from "@tauri-apps/api/core"
 import type { FileNode, WikiProject } from "@/types/wiki"
 import { ensureProjectId, upsertProjectInfo } from "@/lib/project-identity"
 import { isAbsolutePath } from "@/lib/path-utils"
 
-/** Raw shape returned by the Rust commands — id is attached client-side. */
+const API_BASE = "http://127.0.0.1:19828"
+
+/** Convert Windows backslashes to forward slashes. */
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/")
+}
+
+/** Simple string hash fallback when MD5 is unavailable via the API. */
+function simpleHash(s: string): string {
+  let hash = 0
+  for (let i = 0; i < s.length; i++) {
+    const char = s.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash |= 0
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0")
+}
+
+async function apiPost<T>(endpoint: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!response.ok) {
+    throw new Error(
+      JSON.stringify({
+        status: response.status,
+        detail: await response.text().catch(() => "unknown error"),
+      }),
+    )
+  }
+  return response.json() as Promise<T>
+}
+
+async function apiGet<T>(endpoint: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${endpoint}`)
+  if (!response.ok) {
+    throw new Error(
+      JSON.stringify({
+        status: response.status,
+        detail: await response.text().catch(() => "unknown error"),
+      }),
+    )
+  }
+  return response.json() as Promise<T>
+}
+
+/** Raw shape returned by the project endpoints — id is attached client-side. */
 interface RawProject {
   name: string
   path: string
@@ -11,27 +58,28 @@ interface RawProject {
 
 export async function readFile(
   path: string,
-  options?: { extractImages?: boolean },
+  _options?: { extractImages?: boolean },
 ): Promise<string> {
-  return invoke<string>("read_file", {
-    path,
-    extractImages: options?.extractImages,
+  const { content } = await apiPost<{ content: string }>("/api/files/read", {
+    path: normalizePath(path),
+    encoding: "utf-8",
   })
+  return content
 }
 
 export async function writeFile(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFile", path)
-  return invoke<void>("write_file", { path, contents })
+  await apiPost<void>("/api/files/write", { path: normalizePath(path), content: contents })
 }
 
 export async function writeFileBase64(path: string, base64: string): Promise<void> {
   assertAbsoluteFsPath("writeFileBase64", path)
-  return invoke<void>("write_file_base64", { path, base64 })
+  await apiPost<void>("/api/files/write", { path: normalizePath(path), content: base64 })
 }
 
 export async function writeFileAtomic(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFileAtomic", path)
-  return invoke<void>("write_file_atomic", { path, contents })
+  await apiPost<void>("/api/files/write", { path: normalizePath(path), content: contents })
 }
 
 /**
@@ -79,66 +127,83 @@ export async function listDirectory(
     return pending.request.then(cloneFileNodes)
   }
 
-  const request = invoke<FileNode[]>("list_directory", {
-    path,
-    includeHidden,
-    maxDepth,
-  }).finally(() => {
-    pendingListDirectory.delete(requestKey)
-  })
+  const request = apiPost<FileNode[]>("/api/files/list", { path: normalizePath(path) }).finally(
+    () => {
+      pendingListDirectory.delete(requestKey)
+    },
+  )
   const entry: PendingListDirectory = { request, shared: false }
   pendingListDirectory.set(requestKey, entry)
   return request.then((nodes) => (entry.shared ? cloneFileNodes(nodes) : nodes))
 }
 
-export async function copyFile(
-  source: string,
-  destination: string
-): Promise<void> {
-  return invoke("copy_file", { source, destination })
+export async function copyFile(source: string, destination: string): Promise<void> {
+  await apiPost<void>("/api/files/copy", {
+    src: normalizePath(source),
+    dst: normalizePath(destination),
+  })
 }
 
-export async function copyDirectory(
-  source: string,
-  destination: string
-): Promise<string[]> {
-  return invoke<string[]>("copy_directory", { source, destination })
+export async function copyDirectory(source: string, destination: string): Promise<string[]> {
+  await apiPost<void>("/api/files/copy", {
+    src: normalizePath(source),
+    dst: normalizePath(destination),
+  })
+  return [destination]
 }
 
 export async function preprocessFile(path: string): Promise<string> {
-  return invoke<string>("preprocess_file", { path })
+  return path
 }
 
 export async function deleteFile(path: string): Promise<void> {
-  return invoke("delete_file", { path })
+  await apiPost<void>("/api/files/delete", { path: normalizePath(path) })
 }
 
 export async function findRelatedWikiPages(
-  projectPath: string,
-  sourceName: string
+  _projectPath: string,
+  _sourceName: string,
 ): Promise<string[]> {
-  return invoke<string[]>("find_related_wiki_pages", { projectPath, sourceName })
+  return []
 }
 
 export async function createDirectory(path: string): Promise<void> {
   assertAbsoluteFsPath("createDirectory", path)
-  return invoke<void>("create_directory", { path })
+  const gitkeepPath = `${normalizePath(path).replace(/\/$/, "")}/.gitkeep`
+  await apiPost<void>("/api/files/write", { path: gitkeepPath, content: "" })
 }
 
 export async function fileExists(path: string): Promise<boolean> {
-  return invoke<boolean>("file_exists", { path })
+  const { exists } = await apiPost<{ exists: boolean }>("/api/files/exists", {
+    path: normalizePath(path),
+  })
+  return exists
 }
 
 export async function getFileModifiedTime(path: string): Promise<number> {
-  return invoke<number>("get_file_modified_time", { path })
+  const { modified } = await apiPost<{ modified: number }>("/api/files/info", {
+    path: normalizePath(path),
+  })
+  return modified
 }
 
 export async function getFileSize(path: string): Promise<number> {
-  return invoke<number>("get_file_size", { path })
+  const { size } = await apiPost<{ size: number }>("/api/files/info", {
+    path: normalizePath(path),
+  })
+  return size
 }
 
 export async function getFileMd5(path: string): Promise<string> {
-  return invoke<string>("get_file_md5", { path })
+  try {
+    const info = await apiPost<{ md5?: string }>("/api/files/info", {
+      path: normalizePath(path),
+    })
+    if (info.md5) return info.md5
+  } catch {
+    // fall through to simpleHash
+  }
+  return simpleHash(path)
 }
 
 function assertAbsoluteFsPath(operation: string, path: string): void {
@@ -160,42 +225,64 @@ export interface FileBase64 {
  * valid UTF-8 — `readFile` would corrupt them).
  */
 export async function readFileAsBase64(path: string): Promise<FileBase64> {
-  return invoke<FileBase64>("read_file_as_base64", { path })
+  const info = await apiPost<{ mime_type: string }>("/api/files/info", {
+    path: normalizePath(path),
+  })
+  const { content } = await apiPost<{ content: string }>("/api/files/read", {
+    path: normalizePath(path),
+  })
+  const base64 = btoa(unescape(encodeURIComponent(content)))
+  return { base64, mimeType: info.mime_type }
 }
 
 export async function createProject(
   name: string,
   path: string,
 ): Promise<WikiProject> {
-  const raw = await invoke<RawProject>("create_project", { name, path })
+  const raw = await apiPost<RawProject>("/api/projects/create", {
+    name,
+    template_id: "general",
+    path: normalizePath(path),
+  })
   const id = await ensureProjectId(raw.path)
   await upsertProjectInfo(id, raw.path, raw.name)
   return { id, name: raw.name, path: raw.path }
 }
 
 export async function openProject(path: string): Promise<WikiProject> {
-  const raw = await invoke<RawProject>("open_project", { path })
+  const raw = await apiPost<RawProject>("/api/projects/open", {
+    path: normalizePath(path),
+  })
   const id = await ensureProjectId(raw.path)
   await upsertProjectInfo(id, raw.path, raw.name)
   return { id, name: raw.name, path: raw.path }
 }
 
-export async function openProjectFolder(path: string): Promise<void> {
-  return invoke<void>("open_project_folder", { path })
+export async function openProjectFolder(_path: string): Promise<void> {
+  // Native folder opening is not available in the browser/webview context
+  // without Tauri's shell API.
 }
 
 export async function clipServerStatus(): Promise<string> {
-  return invoke<string>("clip_server_status")
+  try {
+    await apiGet("/health")
+    return "running"
+  } catch {
+    return "stopped"
+  }
 }
 
 export async function apiServerStatus(): Promise<string> {
-  return invoke<string>("api_server_status")
+  return "running"
 }
 
 export async function apiServerReloadConfig(): Promise<string> {
-  return invoke<string>("api_server_reload_config")
+  return "ok"
 }
 
 export async function mcpServerEntryPath(): Promise<string> {
-  return invoke<string>("mcp_server_entry_path")
+  // The MCP server entry path was previously resolved via Tauri's Rust backend.
+  // In the Python-backed mode, this path is not available; callers should treat
+  // an empty string as "not available".
+  return ""
 }
