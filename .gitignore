@@ -1,3 +1,13 @@
+# LLM Wiki - Python Backend (when merged into this repo)
+llm_wiki-python/.venv/
+llm_wiki-python/__pycache__/
+llm_wiki-python/*.db
+llm_wiki-python/*.sqlite
+llm_wiki-python/.llm-wiki/
+llm_wiki-python/.env
+llm_wiki-python/graph_cache.json
+llm_wiki-python/vectors/
+
 # Dependencies
 node_modules/
 
@@ -49,3 +59,11 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+
+#########################################################
+
+.sisyphus/*
+graphify-out/*
+node_modules/*
+mcp-server/node_modules/*

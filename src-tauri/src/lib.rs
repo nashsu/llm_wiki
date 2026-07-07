@@ -185,7 +185,9 @@ pub fn run() {
             // Start the API before optional desktop integrations so the
             // backend is reachable if tray setup or another integration fails.
             clip_server::start_clip_server(app.handle().clone());
-            api_server::start_api_server(app.handle().clone());
+            // Python 后端已替代 Rust API 服务器，占用 19828 端口。
+            // 如需单独启动 Rust HTTP 接口，改为其他端口。
+            // api_server::start_api_server(app.handle().clone());
             let tray_available = match tray::create_tray(app.handle()) {
                 Ok(()) => true,
                 Err(err) => {

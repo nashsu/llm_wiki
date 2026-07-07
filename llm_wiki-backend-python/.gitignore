@@ -1,0 +1,58 @@
+# --- Python generated ---
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+
+# --- Virtual environment ---
+.venv
+
+# --- Environment & secrets ---
+.env
+.env.local
+.env.*.local
+
+# --- Sensitive project config ---
+.llm-wiki/
+
+# --- Databases (may contain cached API keys) ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Large / generated data files ---
+*.csv.gz
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Test artifacts ---
+.pytest_cache/
+.cache/
+.pytest_cache/
+test-results/
+
+# --- LanceDB vector data ---
+vectors/
+*.lancedb
+
+# --- Graph cache ---
+graph_cache.json
+
+# --- Logs ---
+*.log
+uv.lock
