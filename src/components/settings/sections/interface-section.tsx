@@ -15,6 +15,7 @@ interface Props {
 const UI_LANGUAGES = [
   { value: "en", label: "English" },
   { value: "zh", label: "中文" },
+  { value: "ko", label: "한국어" },
 ]
 
 const THEMES = [
