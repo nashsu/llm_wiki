@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from "react"
-import { X } from "lucide-react"
+import { ArrowLeft, X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { getFileCategory, isBinary, isExtractedTextPreviewFile } from "@/lib/file-types"
@@ -12,6 +12,7 @@ export function PreviewPanel() {
   const fileContent = useWikiStore((s) => s.fileContent)
   const previewContentPath = useWikiStore((s) => s.previewContentPath)
   const externalPreview = useWikiStore((s) => s.externalPreview)
+  const previewHistory = useWikiStore((s) => s.previewHistory)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -107,9 +108,20 @@ export function PreviewPanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-3 py-1.5">
-        <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
-          {fileName}
-        </span>
+        <div className="flex min-w-0 items-center gap-1">
+          {previewHistory.length > 0 && (
+            <button
+              onClick={() => useWikiStore.getState().goBackInPreview()}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent"
+              aria-label="Back"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
+            {fileName}
+          </span>
+        </div>
         <button
           onClick={() => setSelectedFile(null)}
           className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent"

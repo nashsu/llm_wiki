@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { queueResearch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -16,11 +16,17 @@ import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, deleteFile } from "@/commands/fs"
-import { normalizePath } from "@/lib/path-utils"
+import { getFileName, normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
-import { createReviewPageDrafts } from "@/lib/review-create-page"
+import {
+  buildReviewPageContent,
+  collectReviewProvenance,
+  collectReviewSourceIdentities,
+  createReviewPageDrafts,
+  type ReviewProvenance,
+} from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
 
@@ -207,12 +213,12 @@ export function ReviewView() {
             date: string
           }> = []
 
+          // 溯源链：自身来源与受影响页面来源的并集，写入新页 sources
+          const sourceIdentities = await collectReviewSourceIdentities(pp, item, readFile)
           for (const draft of drafts) {
             const { date, fileName } = makeQueryFileName(draft.title)
             const filePath = `${pp}/wiki/${draft.dir}/${fileName}`
-            const frontmatter = `---\ntype: ${draft.pageType}\ntitle: "${draft.title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
-            const body = `# ${draft.title}\n\n${item.description}\n`
-            const pageContent = frontmatter + body
+            const pageContent = buildReviewPageContent(draft, item, date, sourceIdentities)
             await writeFile(filePath, pageContent)
             created.push({ title: draft.title, dir: draft.dir, fileName, filePath, pageContent, pageType: draft.pageType, date })
           }
@@ -306,6 +312,8 @@ export function ReviewView() {
     setSelectedReviewIds(new Set())
   }, [dismissItem, selectedPendingIds])
 
+  const projectPath = project ? normalizePath(project.path) : ""
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -385,6 +393,7 @@ export function ReviewView() {
               <ReviewCard
                 key={item.id}
                 item={item}
+                projectPath={projectPath}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
@@ -400,6 +409,7 @@ export function ReviewView() {
               <ReviewCard
                 key={item.id}
                 item={item}
+                projectPath={projectPath}
                 onResolve={handleResolve}
                 onDismiss={dismissItem}
                 selected={selectedReviewIds.has(item.id)}
@@ -415,12 +425,14 @@ export function ReviewView() {
 
 function ReviewCard({
   item,
+  projectPath,
   onResolve,
   onDismiss,
   selected,
   onSelectedChange,
 }: {
   item: ReviewItem
+  projectPath: string
   onResolve: (id: string, action: string) => void
   onDismiss: (id: string) => void
   selected: boolean
@@ -429,6 +441,18 @@ function ReviewCard({
   const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
+  // 溯源诊断（来源并集 + 断链原因），异步解析后展示
+  const [provenance, setProvenance] = useState<ReviewProvenance | null>(null)
+  useEffect(() => {
+    if (!projectPath) return
+    let cancelled = false
+    void collectReviewProvenance(projectPath, item, readFile).then((result) => {
+      if (!cancelled) setProvenance(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectPath, item])
 
   return (
     <div
@@ -462,9 +486,55 @@ function ReviewCard({
 
       {item.affectedPages && item.affectedPages.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
-          Pages: {item.affectedPages.join(", ")}
+          {t("review.pages")}: {item.affectedPages.join(", ")}
         </div>
       )}
+
+      {provenance && (provenance.sourceIdentities.length > 0 || provenance.wikiSourcePage) ? (
+        <div className="mb-3 text-xs text-muted-foreground">
+          {t("review.source")}:{" "}
+          {provenance.sourceIdentities.map((identity, index) => (
+            <span key={identity}>
+              {index > 0 && ", "}
+              <button
+                onClick={() =>
+                  useWikiStore.getState().openPathInPreview(`${projectPath}/raw/sources/${identity}`)
+                }
+                className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                title={identity}
+              >
+                {getFileName(identity)}
+              </button>
+            </span>
+          ))}
+          {provenance.wikiSourcePage && (
+            <span>
+              {provenance.sourceIdentities.length > 0 && ", "}
+              <button
+                onClick={() =>
+                  useWikiStore.getState().openPathInPreview(`${projectPath}/${provenance.wikiSourcePage}`)
+                }
+                className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                title={provenance.wikiSourcePage}
+              >
+                🌐 {getFileName(provenance.wikiSourcePage)} · {t("review.researchReport")}
+              </button>
+            </span>
+          )}
+        </div>
+      ) : provenance && (item.sourcePath || (item.affectedPages?.length ?? 0) > 0) ? (
+        <div className="mb-3 text-xs text-muted-foreground/70">
+          {t("review.untraceable")}:{" "}
+          {[
+            provenance.missingPages.length > 0
+              ? t("review.untraceableMissing", { count: provenance.missingPages.length })
+              : null,
+            provenance.pagesWithoutSources.length > 0
+              ? t("review.untraceableNoSources", { count: provenance.pagesWithoutSources.length })
+              : null,
+          ].filter(Boolean).join("; ") || t("review.untraceableNone")}
+        </div>
+      ) : null}
 
       {!item.resolved ? (
         <div className="flex flex-wrap gap-1.5">

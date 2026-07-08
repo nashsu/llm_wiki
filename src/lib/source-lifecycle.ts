@@ -16,6 +16,7 @@ import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
+  sourceIdentityKey,
   sourceReferenceIdentity,
 } from "@/lib/source-identity"
 import {
@@ -24,6 +25,14 @@ import {
   writeFrontmatterArray,
   writeSources,
 } from "@/lib/sources-merge"
+import {
+  appendRenameMap,
+  buildFinanceFileName,
+  fileDateFallback,
+  isFinanceNamingEnabled,
+  loadStockBasic,
+  type RenameRecord,
+} from "@/lib/finance-naming"
 import { removeFromIngestCache } from "@/lib/ingest-cache"
 import { removePageEmbedding } from "@/lib/embedding"
 import {
@@ -167,8 +176,13 @@ export async function importSourceFiles(
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
 
+  // 金融命名规范化：项目启用时导入前重命名（yyyymmdd-代码-简称-标题），
+  // 开关与个股表每批只读一次
+  const financeNaming = await isFinanceNamingEnabled(pp)
+  const stockTable = financeNaming ? await loadStockBasic(pp) : []
+  const renameRecords: RenameRecord[] = []
+
   for (const sourcePath of sourcePaths) {
-    const originalName = getFileName(sourcePath) || "unknown"
     if (isSensitiveConfigSourceFile(sourcePath)) {
       continue
     }
@@ -182,16 +196,34 @@ export async function importSourceFiles(
     }
     if (!allowed) continue
 
+    // 改名在全部过滤检查之后计算，审计记录只在复制成功后追加，
+    // 且以实际落盘文件名为准（getUniqueDestPath 碰撞时会加后缀）
+    let originalName = getFileName(sourcePath) || "unknown"
+    let financeRecord: RenameRecord | null = null
+    if (financeNaming) {
+      const { fileName, record } = buildFinanceFileName(
+        originalName,
+        stockTable,
+        await fileDateFallback(sourcePath),
+      )
+      if (fileName !== originalName) financeRecord = record
+      originalName = fileName
+    }
+
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
       await copyFile(sourcePath, destPath)
       importedPaths.push(destPath)
+      if (financeRecord) {
+        renameRecords.push({ ...financeRecord, renamed: getFileName(destPath) })
+      }
       preprocessFile(destPath).catch(() => {})
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
     }
   }
 
+  await appendRenameMap(pp, renameRecords)
   await enqueueSourceIngest(project, importedPaths, llmConfig)
 
   return importedPaths
@@ -219,9 +251,13 @@ export async function importSourceFolder(
   // keys / tool config do not enter ingest.
   const sourceFiles = flattenFiles(await listDirectory(selectedFolder, true))
 
+  // 金融命名规范化：启用时仅规范"叶子文件名"，目录结构原样保留
+  const financeNaming = await isFinanceNamingEnabled(pp)
+  const stockTable = financeNaming ? await loadStockBasic(pp) : []
+  const renameRecords: RenameRecord[] = []
+
   for (const file of sourceFiles) {
     const relativeSourcePath = getRelativePath(file.path, sourceRoot)
-    const destPath = `${destDir}/${relativeSourcePath}`
     const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
     if (isSensitiveConfigSourceFile(file.path)) {
       continue
@@ -235,12 +271,43 @@ export async function importSourceFolder(
       }
     }
     if (!allowed) continue
+
+    let destRelativePath = relativeSourcePath
+    let financeRecord: RenameRecord | null = null
+    if (financeNaming) {
+      const baseName = getFileName(relativeSourcePath) || relativeSourcePath
+      const { fileName, record } = buildFinanceFileName(
+        baseName,
+        stockTable,
+        await fileDateFallback(file.path),
+      )
+      if (fileName !== baseName) {
+        financeRecord = record
+        const dirPart = relativeSourcePath.slice(0, relativeSourcePath.length - baseName.length)
+        destRelativePath = `${dirPart}${fileName}`
+      }
+    }
+
+    let destPath = `${destDir}/${destRelativePath}`
     const parent = parentPath(destPath)
     if (parent) await createDirectory(parent)
-    await copyFile(file.path, destPath)
-    allowedFiles.push(destPath)
-    preprocessFile(destPath).catch(() => {})
+    // 仅在发生改名时做落盘去重：不同原名可能规范化成同名（同日同标的同标题）
+    if (financeRecord && parent) {
+      destPath = await getUniqueDestPath(parent, getFileName(destPath) || destRelativePath)
+    }
+    try {
+      await copyFile(file.path, destPath)
+      allowedFiles.push(destPath)
+      if (financeRecord) {
+        renameRecords.push({ ...financeRecord, renamed: getFileName(destPath) })
+      }
+      preprocessFile(destPath).catch(() => {})
+    } catch (err) {
+      console.error(`Failed to import ${relativeSourcePath}:`, err)
+    }
   }
+
+  await appendRenameMap(pp, renameRecords)
 
   const naturallyOrderedFiles = [...allowedFiles].sort((a, b) =>
     naturalCompare(getRelativePath(a, destDir), getRelativePath(b, destDir)),
@@ -289,9 +356,10 @@ export async function deleteSourceFiles(
     return { deletedWikiPaths: [], rewrittenSourcePages: 0, skippedPages: 0 }
   }
 
-  const deletingNames = new Set(sourceInfos.map((info) => info.fileName.toLowerCase()))
+  // NFC 身份键：macOS 磁盘名（NFD）与 frontmatter 记录（可能 NFC）跨平台失配防护
+  const deletingNames = new Set(sourceInfos.map((info) => sourceIdentityKey(info.fileName)))
   const deletingIdentities = new Set(
-    sourceInfos.map((info) => sourceReferenceIdentity(info.identity).toLowerCase()),
+    sourceInfos.map((info) => sourceIdentityKey(sourceReferenceIdentity(info.identity))),
   )
 
   if (!options.fileAlreadyDeleted) {
@@ -530,7 +598,7 @@ function sourceNameMatchesAny(
   deletingNames: Set<string>,
 ): boolean {
   const normalized = normalizePath(source)
-  const identity = sourceReferenceIdentity(normalized).toLowerCase()
+  const identity = sourceIdentityKey(sourceReferenceIdentity(normalized))
   if (deletingIdentities.has(identity)) return true
 
   // Legacy wiki pages stored only basenames in `sources`. Keep that fallback
@@ -538,8 +606,7 @@ function sourceNameMatchesAny(
   // `project-b/config.yaml` match a different deleted `config.yaml`.
   if (normalized.includes("/")) return false
 
-  const normalizedSource = normalized.toLowerCase()
-  return deletingNames.has(normalizedSource)
+  return deletingNames.has(sourceIdentityKey(normalized))
 }
 
 function withRootContext(context: string, rootContext?: string): string {

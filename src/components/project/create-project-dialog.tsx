@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { FolderOpen } from "lucide-react"
 import { createProject, writeFile, createDirectory } from "@/commands/fs"
+import { enableFinanceNaming } from "@/lib/finance-naming"
 import { getTemplate } from "@/lib/templates"
 import { TemplatePicker } from "@/components/project/template-picker"
 import type { WikiProject } from "@/types/wiki"
@@ -51,6 +52,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
   const [name, setName] = useState("")
   const [path, setPath] = useState("")
   const [selectedTemplate, setSelectedTemplate] = useState("general")
+  const [financeNaming, setFinanceNaming] = useState(true)
   // Empty string = "user hasn't picked yet"; we validate this on
   // submit so a fresh project never starts in implicit auto-detect
   // mode. Once chosen, the value is one of OUTPUT_LANGUAGE_OPTIONS
@@ -120,6 +122,10 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
       await writeFile(`${pp}/purpose.md`, template.purpose)
       for (const dir of template.extraDirs) {
         await createDirectory(`${pp}/${dir}`)
+      }
+      // 金融模板：按复选框启用导入文件名规范化（yyyymmdd-代码-简称-标题）
+      if (selectedTemplate === "finance" && financeNaming) {
+        await enableFinanceNaming(pp)
       }
 
       // Persist the user's language choice. The store / disk
@@ -220,6 +226,22 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
             <Label>{t("project.template")}</Label>
             <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
           </div>
+          {selectedTemplate === "finance" && (
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5"
+                  checked={financeNaming}
+                  onChange={(event) => setFinanceNaming(event.target.checked)}
+                />
+                {t("project.financeNaming")}
+              </label>
+              <p className="text-xs text-muted-foreground">
+                {t("project.financeNamingHint")}
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter className="mx-0 mb-0 flex-col border-t bg-background/95 px-6 py-4 sm:flex-row sm:items-center">
           <div className="min-h-5 flex-1 text-left text-sm text-destructive">

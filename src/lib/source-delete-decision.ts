@@ -8,6 +8,8 @@
  * substring match).
  */
 
+import { sourceIdentityKey as identityKey } from "@/lib/source-identity"
+
 export type DeleteDecision =
   /** Keep the page on disk; rewrite its sources to the returned list. */
   | { action: "keep"; updatedSources: string[] }
@@ -30,14 +32,15 @@ export type DeleteDecision =
  *     filtered list so caller can rewrite the frontmatter.
  *   - If it IS and it's the ONLY source → delete.
  */
+
 export function decidePageFate(
   frontmatterSources: readonly string[],
   deletingSource: string,
 ): DeleteDecision {
-  const targetLower = deletingSource.toLowerCase()
+  const targetKey = identityKey(deletingSource)
 
   const inList = frontmatterSources.some(
-    (s) => s.toLowerCase() === targetLower,
+    (s) => identityKey(s) === targetKey,
   )
   if (!inList) {
     return {
@@ -47,7 +50,7 @@ export function decidePageFate(
   }
 
   const survivors = frontmatterSources.filter(
-    (s) => s.toLowerCase() !== targetLower,
+    (s) => identityKey(s) !== targetKey,
   )
 
   if (survivors.length > 0) {

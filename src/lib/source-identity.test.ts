@@ -1,13 +1,37 @@
 import { describe, expect, it } from "vitest"
 import {
   legacySourceSummarySlugFromIdentity,
+  rawSourceIdentityOrNull,
   sourceIdentityForPath,
+  sourceIdentityKey,
   sourceReferenceIdentity,
   sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
 } from "./source-identity"
 
 describe("source identity helpers", () => {
+  it("rawSourceIdentityOrNull returns the identity for paths under raw/sources", () => {
+    expect(
+      rawSourceIdentityOrNull("/tmp/project", "/tmp/project/raw/sources/a-纪要.docx"),
+    ).toBe("a-纪要.docx")
+  })
+
+  it("rawSourceIdentityOrNull returns null for paths outside raw/sources", () => {
+    expect(
+      rawSourceIdentityOrNull("/tmp/project", "/tmp/project/wiki/queries/research-x.md"),
+    ).toBeNull()
+  })
+
+  it("sourceIdentityKey equates NFC/NFD forms case-insensitively", () => {
+    expect(sourceIdentityKey("café-Report.docx".normalize("NFD")))
+      .toBe(sourceIdentityKey("café-report.docx".normalize("NFC")))
+  })
+
+  it("sourceIdentityKey keeps fullwidth and halfwidth punctuation distinct", () => {
+    // 全角/半角括号在磁盘上是不同文件，身份键不得折叠（NFKC 会误删）
+    expect(sourceIdentityKey("报告（附录）.docx")).not.toBe(sourceIdentityKey("报告(附录).docx"))
+  })
+
   it("keeps raw/sources relative folder context as the source identity", () => {
     expect(
       sourceIdentityForPath("/tmp/project", "/tmp/project/raw/sources/project-a/config.yaml"),

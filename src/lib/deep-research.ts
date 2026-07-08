@@ -232,10 +232,17 @@ async function executeResearch(
       // no index yet
     }
 
+    const today = currentWikiDate()
     const systemPrompt = [
       "You are a research assistant. Synthesize the collected research sources into a comprehensive wiki page.",
       "",
       buildLanguageDirective(topic),
+      "",
+      "## Time Sensitivity (CRITICAL)",
+      `- Today's date is **${today}**. This knowledge base tracks time-sensitive information (e.g. market research); treat recency as a first-class quality signal.`,
+      "- When a source snippet reveals its publication date, carry it inline next to the claim, e.g. (2026-06).",
+      "- When sources conflict, prefer the most recent one and say so.",
+      "- Explicitly flag data points that are older than ~6 months or undated as potentially stale (数据时效存疑) instead of presenting them as current facts.",
       "",
       "## Cross-referencing (IMPORTANT)",
       "- The wiki already has existing pages listed in the Wiki Index below.",
@@ -315,7 +322,7 @@ async function executeResearch(
       "",
       cleanedSynthesis,
       "",
-      "## References",
+      `## References (retrieved ${date})`,
       "",
       references,
       "",

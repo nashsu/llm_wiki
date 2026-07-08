@@ -120,4 +120,19 @@ describe("decidePageFate — the full lifecycle of a shared page", () => {
     d = decidePageFate(sources, "b.md")
     expect(d.action).toBe("delete")
   })
+
+  it("matches sources across NFC/NFD unicode normal forms", () => {
+    // macOS 文件系统常以 NFD 存储文件名，frontmatter 可能写入 NFC 形式
+    const nfd = "café-report.docx".normalize("NFD")
+    const nfc = "café-report.docx".normalize("NFC")
+
+    const d = decidePageFate([nfd], nfc)
+    expect(d.action).toBe("delete")
+  })
+
+  it("does not equate fullwidth and halfwidth punctuation (distinct files on disk)", () => {
+    // NFKC 会把全角括号折叠成半角——那会误删；身份比较必须用 NFC
+    const d = decidePageFate(["报告（附录）.docx"], "报告(附录).docx")
+    expect(d.action).toBe("skip")
+  })
 })

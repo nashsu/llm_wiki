@@ -70,7 +70,9 @@
     "browse": "Select Parent Directory",
     "aiOutputLanguage": "AI Output Language",
     "aiOutputLanguageHint": "All AI-generated content (wiki pages, chat replies, research output) will use this language. You can change it later in Settings → Output.",
-    "pickLanguage": "Pick a language…"
+    "pickLanguage": "Pick a language…",
+    "financeNaming": "Normalize imported source filenames (yyyymmdd-code-name-title)",
+    "financeNamingHint": "Reads stock_basic.csv / hk_basic.csv from the project root or the app data directory. Listings change over time — refresh the tables yourself periodically."
   },
   "templates": {
     "research": {
@@ -92,6 +94,10 @@
     "general": {
       "name": "General",
       "description": "Minimal setup — a blank slate for any purpose"
+    },
+    "finance": {
+      "name": "Finance Research",
+      "description": "Market research on meeting notes — time-stamped sources, ticker-anchored entities"
     }
   },
   "sources": {
@@ -259,7 +265,14 @@
     "markSelectedResolved": "Mark selected resolved",
     "dismissSelected": "Dismiss selected",
     "allClear": "All clear — nothing to review",
-    "resolvedDivider": "— Resolved —"
+    "resolvedDivider": "— Resolved —",
+    "pages": "Pages",
+    "source": "Source",
+    "researchReport": "web research",
+    "untraceable": "Source untraceable",
+    "untraceableMissing": "{{count}} referenced page(s) missing on disk (likely stale/invented references)",
+    "untraceableNoSources": "{{count}} referenced page(s) carry no source record",
+    "untraceableNone": "this item carries no source info"
   },
   "settings": {
     "title": "Settings",

@@ -37,6 +37,7 @@ export async function optimizeResearchTopic(
     "Generate a research topic and search queries that are specific to this wiki's domain and purpose.",
     "The topic should precisely describe what information would fill this knowledge gap.",
     "The search queries should be optimized for web search engines — keyword-rich, specific, not generic.",
+    `Today's date is ${new Date().toISOString().slice(0, 10)}. For time-sensitive topics (markets, prices, capacity, guidance, supply/demand), include the current year or a recent-period qualifier in the queries so search engines surface fresh results instead of stale ones.`,
     "",
     "## Output Format (STRICT — follow exactly, no other text)",
     "Respond with EXACTLY 4 lines, no more:",

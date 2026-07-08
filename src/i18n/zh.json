@@ -70,7 +70,9 @@
     "browse": "选择父目录",
     "aiOutputLanguage": "AI 输出语言",
     "aiOutputLanguageHint": "所有 AI 生成的内容（Wiki 页面、聊天回复、Research 结果）都将使用此语言。您可以在设置 → 输出 中稍后更改。",
-    "pickLanguage": "选择语言..."
+    "pickLanguage": "选择语言...",
+    "financeNaming": "导入来源时规范化文件名（yyyymmdd-代码-简称-标题）",
+    "financeNamingHint": "读取项目根或应用数据目录中的 stock_basic.csv / hk_basic.csv。成分股随上市/退市持续变化，表中数据可能已过旧，建议定期自行更新。"
   },
   "templates": {
     "research": {
@@ -92,6 +94,10 @@
     "general": {
       "name": "通用",
       "description": "最小化初始结构，适合从空白开始"
+    },
+    "finance": {
+      "name": "金融研究",
+      "description": "基于调研纪要的市场研究——来源带时间戳，实体锚定股票代码"
     }
   },
   "sources": {
@@ -259,7 +265,14 @@
     "markSelectedResolved": "标记为已解决",
     "dismissSelected": "忽略选中项",
     "allClear": "一切正常，无需审阅",
-    "resolvedDivider": "— 已解决 —"
+    "resolvedDivider": "— 已解决 —",
+    "pages": "页面",
+    "source": "来源",
+    "researchReport": "网络研究报告",
+    "untraceable": "来源不可追溯",
+    "untraceableMissing": "引用的 {{count}} 个页面不存在（可能为旧审阅项的臆造引用）",
+    "untraceableNoSources": "{{count}} 个引用页面未记录来源",
+    "untraceableNone": "该审阅项未携带来源信息"
   },
   "settings": {
     "title": "设置",

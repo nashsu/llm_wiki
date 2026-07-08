@@ -5,7 +5,27 @@ const RAW_SOURCES_MARKER = "/raw/sources/"
 const MAX_SOURCE_SUMMARY_SLUG_LENGTH = 120
 const FALLBACK_SOURCE_PART = "source"
 
-export function sourceIdentityForPath(projectPath: string, sourcePath: string): string {
+/**
+ * 来源身份比较键：NFC 统一 Unicode 组合形式后小写。
+ *
+ * macOS 文件系统以 NFD 存储文件名而 frontmatter 可能记录 NFC 形式，
+ * 跨平台同步后裸 toLowerCase 比较会失配。刻意不用 NFKC——全角/半角
+ * 括号等兼容字符在磁盘上是不同文件，折叠会导致删除级联误删。
+ *
+ * :param value: 任意来源身份/文件名
+ * :returns: 可安全用于相等比较的规范化键
+ */
+export function sourceIdentityKey(value: string): string {
+  return value.normalize("NFC").toLowerCase()
+}
+
+/**
+ * 仅当路径确实位于 raw/sources 下时返回来源身份，否则返回 null。
+ *
+ * 与 sourceIdentityForPath 的区别：不做裸文件名回退——wiki 页等
+ * 非原始来源路径不应被当作来源身份写入 frontmatter sources。
+ */
+export function rawSourceIdentityOrNull(projectPath: string, sourcePath: string): string | null {
   const pp = normalizePath(projectPath).replace(/\/+$/, "")
   const sp = normalizePath(sourcePath)
   const projectRawSourcesPrefix = `${pp}/${RAW_SOURCES_PREFIX}`
@@ -20,7 +40,13 @@ export function sourceIdentityForPath(projectPath: string, sourcePath: string): 
   if (markerIndex >= 0) {
     return sp.slice(markerIndex + RAW_SOURCES_MARKER.length)
   }
-  return getFileName(sp)
+  return null
+}
+
+export function sourceIdentityForPath(projectPath: string, sourcePath: string): string {
+  return (
+    rawSourceIdentityOrNull(projectPath, sourcePath) ?? getFileName(normalizePath(sourcePath))
+  )
 }
 
 export function sourceReferenceIdentity(sourceReference: string): string {

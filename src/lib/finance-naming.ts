@@ -1,0 +1,424 @@
+/**
+ * 金融来源文件名规范化引擎。
+ *
+ * 目标格式：`yyyymmdd-<ts_code|NA>-<简称|主体>-<标题>.<ext>`——
+ * 让时间与标的锚点进入来源身份，全链路（摘要页/检索/LLM 上下文）可见。
+ * 纯逻辑与 IO 分离：解析/匹配/构名为纯函数，磁盘读写在文件末尾的包装函数。
+ */
+import { appDataDir } from "@tauri-apps/api/path"
+import { readFile, writeFile, createDirectory, getFileModifiedTime } from "@/commands/fs"
+import { normalizePath } from "@/lib/path-utils"
+
+export interface StockRecord {
+  tsCode: string
+  name: string
+  cnspell: string
+}
+
+export interface RenameRecord {
+  original: string
+  renamed: string
+  date: string
+  dateSource: "filename" | "fallback"
+  tsCode: string | null
+  stockName: string | null
+  matchedBy: "name" | "name-prefix" | null
+  importedAt: number
+}
+
+/** 校验 mm/dd 是否为合法月日。 */
+function isValidMonthDay(mm: number, dd: number): boolean {
+  return mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31
+}
+
+/** yymmdd 补世纪时可信的两位年份窗口（2020-2039），窗口外视为非日期（如裸代码 600519）。 */
+const YY_MIN = 20
+const YY_MAX = 39
+
+/**
+ * 从文件名中提取日期，统一为 yyyymmdd。
+ *
+ * 提取优先级：yyyymmdd → yymmdd（补世纪，年份限 20-39 窗口）→
+ * mmdd（补参考年份，仅认主干结尾位置，避免把型号/规格误判）。
+ * 每级都做月/日合法性校验；全部落空时回退参考日期（通常为文件
+ * 修改时间）。matchedText 返回被采用的原文片段，供构名时精确剥除，
+ * 不误伤标题中的其他数字。
+ *
+ * :param fileName: 原始文件名（不含扩展名为佳）
+ * :param fallback: 回退参考日期
+ * :returns: { date: yyyymmdd, source: 来源, matchedText?: 采用的原文片段 }
+ */
+export function extractSourceDate(
+  fileName: string,
+  fallback: Date,
+): { date: string; source: "filename" | "fallback"; matchedText?: string } {
+  for (const match of fileName.matchAll(/(20\d{2})(\d{2})(\d{2})/g)) {
+    if (isValidMonthDay(Number(match[2]), Number(match[3]))) {
+      return { date: match[0], source: "filename", matchedText: match[0] }
+    }
+  }
+  for (const match of fileName.matchAll(/(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)/g)) {
+    const yy = Number(match[1])
+    if (yy >= YY_MIN && yy <= YY_MAX && isValidMonthDay(Number(match[2]), Number(match[3]))) {
+      return { date: `20${match[0]}`, source: "filename", matchedText: match[0] }
+    }
+  }
+  const referenceYear = fallback.toISOString().slice(0, 4)
+  const trailing = fileName.match(/(?<!\d)(\d{2})(\d{2})$/)
+  if (trailing && isValidMonthDay(Number(trailing[1]), Number(trailing[2]))) {
+    return {
+      date: `${referenceYear}${trailing[0]}`,
+      source: "filename",
+      matchedText: trailing[0],
+    }
+  }
+  return { date: fallback.toISOString().slice(0, 10).replace(/-/g, ""), source: "fallback" }
+}
+
+/** 解析一行 CSV（支持双引号包裹与内嵌逗号）。 */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let current = ""
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { current += '"'; i++ }
+      else if (ch === '"') inQuotes = false
+      else current += ch
+    } else if (ch === '"') inQuotes = true
+    else if (ch === ",") { fields.push(current); current = "" }
+    else current += ch
+  }
+  fields.push(current)
+  return fields.map((f) => f.trim())
+}
+
+/**
+ * 解析 tushare stock_basic 导出的 CSV，按表头定位 ts_code/name/cnspell 列。
+ *
+ * :param csv: CSV 全文
+ * :returns: 个股记录列表；缺少必需表头时返回空列表
+ */
+export function parseStockBasicCsv(csv: string): StockRecord[] {
+  // Excel「CSV UTF-8」会带 BOM，不剥除会让首列头变成 "\uFEFFts_code" 而整表失配
+  const lines = csv.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim().length > 0)
+  if (lines.length < 2) return []
+  const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase())
+  const tsCodeIdx = headers.indexOf("ts_code")
+  const nameIdx = headers.indexOf("name")
+  // A 股表列名为 cnspell，港股表（hk_basic）为 cn_spell，两者都认
+  const cnspellIdx = headers.indexOf("cnspell") >= 0
+    ? headers.indexOf("cnspell")
+    : headers.indexOf("cn_spell")
+  if (tsCodeIdx < 0 || nameIdx < 0) return []
+
+  const records: StockRecord[] = []
+  for (const line of lines.slice(1)) {
+    const fields = parseCsvLine(line)
+    const tsCode = fields[tsCodeIdx] ?? ""
+    const name = fields[nameIdx] ?? ""
+    if (!tsCode || !name) continue
+    records.push({ tsCode, name, cnspell: cnspellIdx >= 0 ? (fields[cnspellIdx] ?? "") : "" })
+  }
+  return records
+}
+
+export interface StockMatch {
+  stock: StockRecord
+  /** 文件名中实际命中的文本（全称或其前缀），供构名时剔除 */
+  matchedText: string
+  matchedBy: "name" | "name-prefix"
+}
+
+/**
+ * 匹配用归一化：全角 ASCII 区（！-～）折半角、小写字母折大写。
+ *
+ * 逐 UTF-16 单元 1:1 变换，长度与索引严格保持——归一化文本上的命中
+ * 区间可直接切回原文（matchedText 需要原文切片供构名精确剥除）。
+ */
+function normalizeForMatch(text: string): string {
+  let out = ""
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    let ch = text[i]
+    if (code >= 0xff01 && code <= 0xff5e) ch = String.fromCharCode(code - 0xfee0)
+    if (ch >= "a" && ch <= "z") ch = ch.toUpperCase()
+    out += ch
+  }
+  return out
+}
+
+/**
+ * 连字符市场标记的枚举集（tushare A股/港股命名）：
+ * -U 未盈利、-W 同股不同权、-B 生科、-S 第二上市、-UW/-WD/-SW 组合。
+ * 仅认枚举集，-AI/-ESG 类纯大写缩写属于股名本体，不作标记剥除；
+ * 长标记在前保证正确择优。
+ */
+const HYPHEN_MARKET_TAG = "(?:UW|WD|SW|U|W|B|S)"
+
+/**
+ * 剥除股票名中的市场标记，得到主体基名（输入须已归一化）。
+ *
+ * 前缀：ST/*ST/SST/S*ST（风险警示）、S（未股改，后随非拉丁字母，
+ * 避免误伤 SOHO 中国类英文名）；后缀：连字符标记（HYPHEN_MARKET_TAG
+ * 枚举集）、裸 A/B（深市老 A/B 股类别）。
+ */
+function stripStockMarkers(name: string): string {
+  return name
+    .replace(/^S?\*?ST/, "")
+    .replace(/^S(?![A-Z])/, "")
+    .replace(new RegExp(`-${HYPHEN_MARKET_TAG}$`), "")
+    .replace(/[AB]$/, "")
+}
+
+/**
+ * 在文本中匹配个股：全名（含标记）包含优先，其次基名前缀递减匹配（最短 2 字）。
+ *
+ * 归一化（全角折半角、大小写不敏感）后比较；基名 = 全称剥除市场标记
+ * （ST/*ST/S 前缀、-U/-W 类连字符后缀、裸 A/B 后缀）——文件名里
+ * "京东方"即指京东方A、"春兴"即指*ST春兴。纪要文件名常用简称缩写
+ * （如"悦安"指悦安新材），故按命中长度分级取最长；基名整名命中视为
+ * 完整名命中，同长度平局时完整名命中优先（解决 A+H 前缀撞车，如
+ * 京东方A vs 京东方精电）；仍多解视为歧义，返回 null
+ * （宁可落行业格式也不猜）。
+ *
+ * :param subject: 待匹配文本（通常为去掉日期与扩展名的文件名）
+ * :param stocks: 个股基础表
+ * :returns: 唯一最长命中，歧义或零命中为 null
+ */
+export function matchStock(subject: string, stocks: StockRecord[]): StockMatch | null {
+  const normSubject = normalizeForMatch(subject)
+  let bestLength = 0
+  let winners: StockMatch[] = []
+
+  // 在归一化文本上找 needle，命中则按原文切片登记；同长度并列保留待平局裁决
+  function consider(stock: StockRecord, needle: string, matchedBy: "name" | "name-prefix"): boolean {
+    const idx = normSubject.indexOf(needle)
+    if (idx < 0) return false
+    const match: StockMatch = {
+      stock,
+      matchedText: subject.slice(idx, idx + needle.length),
+      matchedBy,
+    }
+    if (needle.length > bestLength) {
+      bestLength = needle.length
+      winners = [match]
+    } else if (needle.length === bestLength) {
+      winners.push(match)
+    }
+    return true
+  }
+
+  for (const stock of stocks) {
+    const normName = normalizeForMatch(stock.name)
+    if (normName.length < 2) continue
+    // 1) 全名（含标记）直接包含——最强命中，如文件名里写明 "ST海王"
+    if (consider(stock, normName, "name")) continue
+    // 2) 基名前缀阶梯，从整基名往短试
+    const base = stripStockMarkers(normName)
+    if (base.length < 2) continue
+    for (let length = base.length; length >= 2; length--) {
+      if (consider(stock, base.slice(0, length), length === base.length ? "name" : "name-prefix")) break
+    }
+  }
+
+  if (winners.length === 1) return winners[0]
+  // 同长度平局：完整名命中（全名或基名整名）唯一时胜出，否则维持歧义
+  const fullNameWinners = winners.filter((w) => w.matchedBy === "name")
+  return fullNameWinners.length === 1 ? fullNameWinners[0] : null
+}
+
+/** 清理分段分隔符残渣（连续/首尾的 -、_、空白、全半角括号内空壳）。 */
+function cleanSegment(value: string): string {
+  return value
+    .replace(/[（(]\s*[)）]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-]+|[-]+$/g, "")
+}
+
+/**
+ * 构造规范化文件名并产出审计记录。
+ *
+ * 匹配成功：`yyyymmdd-<ts_code>-<简称>-<标题>.<ext>`（标题为原名去日期
+ * 去简称后的残余，空则用"纪要"占位）；未匹配：`yyyymmdd-NA-<主干>.<ext>`。
+ * 对已符合格式的文件名幂等（重复处理不再变化）。
+ *
+ * :param originalName: 原始文件名（含扩展名）
+ * :param stocks: 个股基础表（可为空列表）
+ * :param fallbackDate: 日期回退参考（通常为文件修改时间）
+ * :returns: { fileName: 新文件名, record: 审计记录 }
+ */
+export function buildFinanceFileName(
+  originalName: string,
+  stocks: StockRecord[],
+  fallbackDate: Date,
+): { fileName: string; record: RenameRecord } {
+  const extMatch = originalName.match(/\.[^./\\]+$/)
+  const ext = extMatch ? extMatch[0] : ""
+  const stem = ext ? originalName.slice(0, -ext.length) : originalName
+
+  // 幂等：重复处理已规范化的文件名时，先剥掉 ts_code 形状的段
+  // （避免其中 6 位数字被日期提取误判），再仅剥"实际采用"的日期片段——
+  // 标题中的其他数字（年份/规格/型号）原样保留
+  const codeStripped = stem.replace(/\d{6}\.[A-Z]{2}/g, "")
+  const { date, source: dateSource, matchedText } = extractSourceDate(codeStripped, fallbackDate)
+  const dateStripped = matchedText ? codeStripped.replace(matchedText, "") : codeStripped
+
+  const match = matchStock(dateStripped, stocks)
+  let fileName: string
+  if (match) {
+    // matchedText 即文本中实际命中的片段（全称或其前缀），删它即可
+    const title = cleanSegment(
+      dateStripped.replace(match.matchedText, "").replace(/^-?NA-?/, ""),
+    ) || "纪要"
+    fileName = `${date}-${match.stock.tsCode}-${match.stock.name}-${title}${ext}`
+  } else {
+    const cleaned = cleanSegment(dateStripped.replace(/^-?NA-?/, "")) || "纪要"
+    fileName = `${date}-NA-${cleaned}${ext}`
+  }
+
+  return {
+    fileName,
+    record: {
+      original: originalName,
+      renamed: fileName,
+      date,
+      dateSource,
+      tsCode: match?.stock.tsCode ?? null,
+      stockName: match?.stock.name ?? null,
+      matchedBy: match?.matchedBy ?? null,
+      importedAt: Date.now(),
+    },
+  }
+}
+
+// ── IO 包装 ────────────────────────────────────────────────────────
+
+const NAMING_CONFIG_FILE = ".llm-wiki/source-naming.json"
+const RENAME_MAP_FILE = ".llm-wiki/rename-map.json"
+/** 项目根下 A 股基础表的约定位置。 */
+export const STOCK_BASIC_FILE = "stock_basic.csv"
+/** 项目根下港股基础表的约定位置（可选，tushare hk_basic 导出）。 */
+export const HK_BASIC_FILE = "hk_basic.csv"
+
+/**
+ * 合并多张个股表并按简称去重，靠前的表优先。
+ *
+ * A+H 两地上市公司在两张表中同名，若不去重会造成匹配歧义
+ * （永远落 NA）；按加载顺序保留首个记录即"A 股代码优先"。
+ *
+ * :param tables: 个股表列表（按优先级排列）
+ * :returns: 去重后的合并表
+ */
+export function mergeStockRecords(...tables: StockRecord[][]): StockRecord[] {
+  const merged: StockRecord[] = []
+  const seenNames = new Set<string>()
+  for (const table of tables) {
+    for (const record of table) {
+      if (seenNames.has(record.name)) continue
+      seenNames.add(record.name)
+      merged.push(record)
+    }
+  }
+  return merged
+}
+
+/** 项目是否启用了金融来源命名规范化。 */
+export async function isFinanceNamingEnabled(projectPath: string): Promise<boolean> {
+  try {
+    const raw = await readFile(`${normalizePath(projectPath)}/${NAMING_CONFIG_FILE}`)
+    return (JSON.parse(raw) as { mode?: string }).mode === "finance"
+  } catch {
+    return false
+  }
+}
+
+/** 为项目启用金融来源命名规范化（建项目复选框调用）。 */
+export async function enableFinanceNaming(projectPath: string): Promise<void> {
+  const pp = normalizePath(projectPath)
+  await createDirectory(`${pp}/.llm-wiki`)
+  await writeFile(`${pp}/${NAMING_CONFIG_FILE}`, JSON.stringify({ mode: "finance" }, null, 2))
+}
+
+/** 全局个股表目录（应用数据目录）；非 Tauri 环境（如单测）返回 null。 */
+async function globalStockTableDir(): Promise<string | null> {
+  try {
+    return normalizePath(await appDataDir())
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 读取个股基础表：stock_basic.csv（A 股）+ 可选 hk_basic.csv（港股）。
+ *
+ * 每个文件按"项目根 → 应用数据目录"顺序取首个可读的——全局放一份
+ * 即可供所有金融项目共享（更新一处全部生效），项目根同名文件可覆盖。
+ * 合并按简称去重、A 股优先，使 A+H 两地上市公司稳定解析到 A 股代码。
+ *
+ * :param projectPath: 项目根路径
+ * :returns: 合并去重后的个股表；两处均缺失时为空（仅做日期规范化）
+ */
+export async function loadStockBasic(projectPath: string): Promise<StockRecord[]> {
+  const pp = normalizePath(projectPath)
+  const globalDir = await globalStockTableDir()
+  const readTable = async (fileName: string): Promise<StockRecord[]> => {
+    for (const dir of [pp, globalDir]) {
+      if (!dir) continue
+      let content: string
+      try {
+        content = await readFile(`${dir}/${fileName}`)
+      } catch {
+        // 该位置缺失/不可读，尝试下一个
+        continue
+      }
+      const records = parseStockBasicCsv(content)
+      if (records.length > 0) return records
+      // 文件存在却解析不出记录（表头缺失/编码异常）：告警并继续试下一位置，
+      // 避免一张坏表静默压制另一处的好表、导入全部退化为 NA 却无迹可循
+      console.warn(`[FinanceNaming] ${dir}/${fileName} 可读但未解析出任何个股记录（表头或编码异常？）`)
+    }
+    return []
+  }
+  return mergeStockRecords(await readTable(STOCK_BASIC_FILE), await readTable(HK_BASIC_FILE))
+}
+
+/** 追加改名审计记录到 .llm-wiki/rename-map.json（仅供排错，无运行时消费方）。 */
+export async function appendRenameMap(
+  projectPath: string,
+  records: RenameRecord[],
+): Promise<void> {
+  if (records.length === 0) return
+  const pp = normalizePath(projectPath)
+  const mapPath = `${pp}/${RENAME_MAP_FILE}`
+  let existing: RenameRecord[] = []
+  let raw: string | null = null
+  try {
+    raw = await readFile(mapPath)
+  } catch {
+    // 文件不存在：首次写入
+  }
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) existing = parsed as RenameRecord[]
+    } catch {
+      // 既有文件损坏：无法合并历史，告警后仅写入本次记录（该文件仅供排错）
+      console.warn(`[FinanceNaming] ${mapPath} 内容损坏，历史审计记录无法合并，将被本次记录覆盖`)
+    }
+  }
+  await createDirectory(`${pp}/.llm-wiki`)
+  await writeFile(mapPath, JSON.stringify([...existing, ...records], null, 2))
+}
+
+/** 取文件修改时间作为日期回退参考；读取失败回退当前时间。 */
+export async function fileDateFallback(sourcePath: string): Promise<Date> {
+  try {
+    const mtime = await getFileModifiedTime(sourcePath)
+    return new Date(mtime)
+  } catch {
+    return new Date()
+  }
+}

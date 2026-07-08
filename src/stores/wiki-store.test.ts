@@ -10,7 +10,57 @@ describe("wiki preview store actions", () => {
       fileContent: "",
       previewContentPath: null,
       externalPreview: null,
+      previewHistory: [],
     })
+  })
+
+  it("pushes the previous file onto previewHistory when opening another file", () => {
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+    useWikiStore.getState().openFileInPreview("/p/wiki/c.md", "content")
+
+    expect(useWikiStore.getState().previewHistory).toEqual(["/p/wiki/a.md", "/p/wiki/b.md"])
+    expect(useWikiStore.getState().selectedFile).toBe("/p/wiki/c.md")
+  })
+
+  it("goBackInPreview returns to the previous file and pops the history", () => {
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+
+    useWikiStore.getState().goBackInPreview()
+
+    expect(useWikiStore.getState().selectedFile).toBe("/p/wiki/a.md")
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+    // 历史为空时再后退是安全的空操作
+    useWikiStore.getState().goBackInPreview()
+    expect(useWikiStore.getState().selectedFile).toBe("/p/wiki/a.md")
+  })
+
+  it("does not push duplicate history entries when re-opening the same file", () => {
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+  })
+
+  it("closing the preview (select null) does not push history", () => {
+    useWikiStore.getState().openPathInPreview("/p/wiki/a.md")
+    useWikiStore.getState().setSelectedFile(null)
+
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+    // 关闭后再打开别的文件，不应出现指向已关闭文件的 Back
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+    expect(useWikiStore.getState().previewHistory).toEqual([])
+  })
+
+  it("does not push an external-preview path (back cannot restore its state)", () => {
+    useWikiStore.getState().openFileInPreview("/p/external-ref", "snippet")
+    useWikiStore.setState({
+      externalPreview: { path: "/p/external-ref", url: "https://x", title: "t", source: "web", snippet: "s" },
+    })
+    useWikiStore.getState().openPathInPreview("/p/wiki/b.md")
+
+    expect(useWikiStore.getState().previewHistory).toEqual([])
   })
 
   it("keeps the project path index in sync when setting the file tree", () => {

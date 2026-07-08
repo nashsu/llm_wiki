@@ -15,9 +15,9 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { streamChat } from "@/lib/llm-client"
-import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { normalizeReviewTitle } from "@/lib/review-utils"
+import { flattenMdFiles } from "@/lib/affected-pages-resolver"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -35,17 +35,6 @@ interface WikiIndex {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function flattenMdFiles(nodes: FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenMdFiles(node.children))
-    } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
 
 /** Build an index of wiki pages: id (filename without .md) + title → normalized */
 async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {

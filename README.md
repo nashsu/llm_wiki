@@ -39,6 +39,7 @@
 - **Vector Semantic Search** — optional embedding-based retrieval via LanceDB, supports any OpenAI-compatible endpoint
 - **Persistent Ingest Queue** — serial processing with crash recovery, cancel, retry, and progress visualization
 - **Folder Import** — recursive folder import preserving directory structure, folder context as LLM classification hint
+- **Finance Source Naming** — Finance template normalizes imported meeting notes to `yyyymmdd-ticker-name-title` using a `stock_basic.csv` lookup ([docs](docs/finance-source-naming.md))
 - **Source Folder Auto-Watch** — detects external changes in `raw/sources/` and keeps ingest/delete cleanup in sync
 - **Deep Research** — LLM-optimized search topics, multi-query web search via Tavily, SerpApi, or SearXNG, auto-ingest results into wiki
 - **Rust Backend Chat Agent** — tool-using chat runtime with wiki/source/graph/web retrieval, workspace file generation, shell approval, cancellation, and streaming tool events
@@ -399,10 +400,12 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.70+
+# Prerequisites: Node.js 20+, Rust 1.70+, protobuf (macOS: brew install protobuf / Windows: choco install protoc)
+# If Rust was just installed via rustup, open a new terminal (or run `source ~/.cargo/env`) first
 git clone https://github.com/nashsu/llm_wiki.git
 cd llm_wiki
 npm install
+npm --prefix mcp-server ci && npm run mcp:build   # Build the bundled MCP server (required by the Tauri bundle)
 npm run tauri dev      # Development
 npm run tauri build    # Production build
 ```
