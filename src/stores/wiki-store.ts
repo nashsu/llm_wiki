@@ -303,6 +303,7 @@ type OutputLanguage =
   | "Turkish"
   | "Dutch"
   | "Polish"
+  | "Czech"
   | "Swedish"
   | "Indonesian"
   | "Thai"

@@ -56,6 +56,12 @@ const LANGUAGE_METADATA: Record<string, LanguageMetadata> = {
     direction: "ltr",
     scriptFamily: "cjk",
   },
+  Czech: {
+    promptName: "Czech / čeština",
+    htmlLang: "cs",
+    direction: "ltr",
+    scriptFamily: "latin",
+  },
 }
 
 const DEFAULT_METADATA: LanguageMetadata = {

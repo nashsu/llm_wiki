@@ -34,6 +34,7 @@ export const OUTPUT_LANGUAGE_OPTIONS = [
   { value: "Turkish", label: "Türkçe (Turkish)" },
   { value: "Dutch", label: "Nederlands (Dutch)" },
   { value: "Polish", label: "Polski (Polish)" },
+  { value: "Czech", label: "Čeština (Czech)" },
   { value: "Swedish", label: "Svenska (Swedish)" },
   { value: "Indonesian", label: "Bahasa Indonesia (Indonesian)" },
   { value: "Thai", label: "ไทย (Thai)" },
