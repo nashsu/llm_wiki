@@ -16,6 +16,10 @@ import {
   Code2,
   ExternalLink,
   RefreshCw,
+  Maximize2,
+  Minus,
+  Plus,
+  X,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import {
@@ -61,7 +65,7 @@ function FilePreviewContent({ filePath, textContent }: FilePreviewProps) {
     case "audio":
       return <AudioPreview filePath={filePath} fileName={fileName} />
     case "pdf":
-      return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
+      return <PdfPreview filePath={filePath} content={textContent} />
     case "code":
       if (extension === "mmd" || extension === "mermaid") {
         return <StandaloneMermaidPreview filePath={filePath} content={textContent} />
@@ -74,6 +78,9 @@ function FilePreviewContent({ filePath, textContent }: FilePreviewProps) {
       }
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
+      if (extension === "csv" || extension === "tsv") {
+        return <DelimitedTablePreview filePath={filePath} content={textContent} delimiter={extension === "tsv" ? "\t" : ","} />
+      }
       return <CodePreview filePath={filePath} content={textContent} />
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
@@ -85,6 +92,48 @@ function FilePreviewContent({ filePath, textContent }: FilePreviewProps) {
     default:
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
   }
+}
+
+function PdfPreview({ filePath, content }: { filePath: string; content: string }) {
+  const [showText, setShowText] = useState(false)
+  const [page, setPage] = useState(1)
+  const [zoom, setZoom] = useState(100)
+  const src = `${convertFileSrc(filePath)}#page=${page}&zoom=${zoom}`
+  return <div className="flex h-full min-h-0 flex-col p-4">
+    <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate" title={filePath}>{filePath}</span>
+      <button type="button" className="rounded border px-2 py-1 hover:bg-muted" onClick={() => setShowText((value) => !value)}>{showText ? "PDF" : "Text"}</button>
+      {!showText && <><button type="button" className="rounded p-1 hover:bg-muted" onClick={() => setZoom((value) => Math.max(50, value - 25))}><Minus className="h-3.5 w-3.5" /></button><span className="w-10 text-center">{zoom}%</span><button type="button" className="rounded p-1 hover:bg-muted" onClick={() => setZoom((value) => Math.min(300, value + 25))}><Plus className="h-3.5 w-3.5" /></button><label className="ml-1 flex items-center gap-1">Page<input value={page} min={1} type="number" onChange={(event) => setPage(Math.max(1, Number(event.target.value) || 1))} className="w-14 rounded border bg-background px-1 py-0.5" /></label></>}
+    </div>
+    <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-white">
+      {showText ? <TextPreview filePath={filePath} content={content} label="PDF text" /> : <object key={src} data={src} type="application/pdf" className="h-full w-full"><iframe title={filePath} src={src} className="h-full w-full" /></object>}
+    </div>
+  </div>
+}
+
+export function parseDelimitedContent(content: string, delimiter: string, maxRows = 500): string[][] {
+  const rows: string[][] = []
+  let cells: string[] = []
+  let current = ""
+  let quoted = false
+  const normalized = content.replace(/\r\n/g, "\n")
+  for (let index = 0; index < normalized.length && rows.length < maxRows; index += 1) {
+    const char = normalized[index]
+    if (char === '"') {
+      if (quoted && normalized[index + 1] === '"') { current += '"'; index += 1 } else quoted = !quoted
+    } else if (char === delimiter && !quoted) { cells.push(current); current = "" } else current += char
+    if (char === "\n" && !quoted) {
+      current = current.slice(0, -1)
+      cells.push(current); rows.push(cells); cells = []; current = ""
+    }
+  }
+  if ((current || cells.length > 0) && rows.length < maxRows) { cells.push(current); rows.push(cells) }
+  return rows
+}
+
+function DelimitedTablePreview({ filePath, content, delimiter }: { filePath: string; content: string; delimiter: string }) {
+  const rows = useMemo(() => parseDelimitedContent(content, delimiter), [content, delimiter])
+  return <div className="h-full overflow-auto p-4"><div className="mb-2 text-xs text-muted-foreground">{filePath}</div><table className="min-w-full border-collapse text-xs"><thead className="sticky top-0 bg-muted">{rows[0] && <tr>{rows[0].map((cell, index) => <th key={index} className="border px-2 py-1 text-left">{cell}</th>)}</tr>}</thead><tbody>{rows.slice(1).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex} className="max-w-80 border px-2 py-1 align-top">{cell}</td>)}</tr>)}</tbody></table></div>
 }
 
 function HtmlPreview({
@@ -196,9 +245,11 @@ function extractedTextLabel(filePath: string): string {
 
 function ImagePreview({ filePath, fileName }: { filePath: string; fileName: string }) {
   const src = convertFileSrc(filePath)
+  const [expanded, setExpanded] = useState(false)
+  const [zoom, setZoom] = useState(1)
   return (
     <div className="flex h-full flex-col p-6">
-      <div className="mb-4 text-xs text-muted-foreground">{filePath}</div>
+      <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">{filePath}</span><button type="button" onClick={() => setExpanded(true)} className="rounded p-1 hover:bg-muted"><Maximize2 className="h-4 w-4" /></button></div>
       <div className="flex flex-1 items-center justify-center overflow-auto rounded-lg bg-muted/30">
         <img
           src={src}
@@ -206,6 +257,7 @@ function ImagePreview({ filePath, fileName }: { filePath: string; fileName: stri
           className="max-h-full max-w-full object-contain"
         />
       </div>
+      {expanded && <div className="fixed inset-0 z-[100] flex flex-col bg-background/95 p-4 backdrop-blur-sm"><div className="flex justify-end gap-1"><button type="button" className="rounded p-2 hover:bg-muted" onClick={() => setZoom((value) => Math.max(.25, value - .25))}><Minus className="h-4 w-4" /></button><button type="button" className="rounded p-2 hover:bg-muted" onClick={() => setZoom((value) => Math.min(5, value + .25))}><Plus className="h-4 w-4" /></button><button type="button" className="rounded p-2 hover:bg-muted" onClick={() => setExpanded(false)}><X className="h-4 w-4" /></button></div><div className="min-h-0 flex-1 overflow-auto text-center"><img src={src} alt={fileName} className="mx-auto max-w-none object-contain" style={{ width: `${zoom * 100}%` }} /></div></div>}
     </div>
   )
 }
