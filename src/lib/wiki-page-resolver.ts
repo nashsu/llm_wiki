@@ -69,7 +69,7 @@ export function resolveSourceReference(
   if (isHttpUrl(trimmedRef)) return { kind: "external", url: trimmedRef }
   if (!sourcesRoot) return { kind: "missing" }
 
-  const path = resolveSourceName(index, ref, sourcesRoot)
+  const path = resolveSourceName(index, trimmedRef, sourcesRoot)
   return path ? { kind: "local", path } : { kind: "missing" }
 }
 
