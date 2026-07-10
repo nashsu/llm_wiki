@@ -13,6 +13,7 @@ const REQUEST_TIMEOUT_SECS: u64 = 180;
 const DEFAULT_MAX_TOKENS: u32 = 2048;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const AZURE_OPENAI_API_VERSION: &str = "2024-10-21";
+const MISTRAL_CHAT_COMPLETIONS_URL: &str = "https://api.mistral.ai/v1/chat/completions";
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +56,7 @@ impl LlmConfig {
         let provider = self.provider.as_str();
         let has_model = !self.model.trim().is_empty();
         match provider {
-            "openai" | "anthropic" | "google" | "azure" | "minimax" => {
+            "openai" | "anthropic" | "google" | "azure" | "minimax" | "mistral" => {
                 has_model && !self.api_key.trim().is_empty()
             }
             "ollama" => has_model && !self.ollama_url.trim().is_empty(),
@@ -152,6 +153,16 @@ impl LlmClient {
                 )
                 .await
             }
+            "mistral" => {
+                self.generate_openai_like(
+                    MISTRAL_CHAT_COMPLETIONS_URL,
+                    system,
+                    user,
+                    images,
+                    true,
+                )
+                .await
+            }
             "azure" => {
                 let url = build_azure_url(&self.config)?;
                 self.generate_openai_like(&url, system, user, images, false)
@@ -215,6 +226,17 @@ impl LlmClient {
             "openai" => {
                 self.stream_openai_like(
                     "https://api.openai.com/v1/chat/completions",
+                    system,
+                    user,
+                    images,
+                    true,
+                    on_delta,
+                )
+                .await
+            }
+            "mistral" => {
+                self.stream_openai_like(
+                    MISTRAL_CHAT_COMPLETIONS_URL,
                     system,
                     user,
                     images,
@@ -1012,11 +1034,14 @@ mod tests {
     fn usability_matches_existing_provider_requirements() {
         assert!(config("openai").is_usable_for_backend_http());
         assert!(config("anthropic").is_usable_for_backend_http());
+        assert!(config("mistral").is_usable_for_backend_http());
         assert!(config("custom").is_usable_for_backend_http());
         assert!(config("ollama").is_usable_for_backend_http());
         assert!(!config("claude-code").is_usable_for_backend_http());
         let mut missing_key = config("openai");
         missing_key.api_key.clear();
+        assert!(!missing_key.is_usable_for_backend_http());
+        missing_key.provider = "mistral".to_string();
         assert!(!missing_key.is_usable_for_backend_http());
     }
 
