@@ -136,7 +136,7 @@ async function fetchEmbeddingViaMockHttp(
         ? data?.embedding?.values
         : isDoubaoVision
           ? data?.data?.embedding
-          : data?.data?.[0]?.embedding
+          : parseOpenAiCompatibleEmbedding(data)
       if (Array.isArray(embedding) && embedding.length > 0 && embedding.every((v) => typeof v === "number" && Number.isFinite(v))) {
         return embedding
       }
