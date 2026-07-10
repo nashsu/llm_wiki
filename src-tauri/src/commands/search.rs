@@ -728,6 +728,21 @@ async fn fetch_embedding(text: &str, cfg: &SearchEmbeddingConfig) -> Result<Vec<
     parse_embedding_values(&data, is_google, is_doubao_multimodal)
 }
 
+fn parse_openai_compatible_embedding(data: &Value) -> Option<&Vec<Value>> {
+    data.get("data")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.get("embedding"))
+        .and_then(Value::as_array)
+        .or_else(|| {
+            data.get("embeddings")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first())
+                .and_then(Value::as_array)
+        })
+        .or_else(|| data.get("embedding").and_then(Value::as_array))
+}
+
 fn parse_embedding_values(
     data: &Value,
     is_google: bool,
@@ -742,11 +757,7 @@ fn parse_embedding_values(
             .and_then(|v| v.get("embedding"))
             .and_then(Value::as_array)
     } else {
-        data.get("data")
-            .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.get("embedding"))
-            .and_then(Value::as_array)
+        parse_openai_compatible_embedding(data)
     }
     .ok_or_else(|| "Embedding response missing vector".to_string())?;
     let mut out = Vec::with_capacity(values.len());
@@ -1232,6 +1243,17 @@ mod tests {
             parse_embedding_values(&json!({ "data": [{ "embedding": [0.1] }] }), false, true,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn ollama_native_embedding_response_shape_is_supported() {
+        let values = parse_embedding_values(
+            &json!({ "model": "embeddinggemma:latest", "embeddings": [[0.1, 0.2, 0.3]] }),
+            false,
+            false,
+        )
+        .expect("ollama native response should parse");
+        assert_eq!(values, vec![0.1, 0.2, 0.3]);
     }
 
     #[test]

@@ -161,7 +161,7 @@ export async function fetchEmbedding(
           ? data?.embedding?.values ?? null
           : isDoubaoMultimodal
             ? data?.data?.embedding ?? null
-            : data?.data?.[0]?.embedding ?? null
+            : parseOpenAiCompatibleEmbedding(data)
         if (isNonEmptyNumberArray(embedding)) {
           lastEmbeddingError = null
           return embedding
@@ -170,7 +170,7 @@ export async function fetchEmbedding(
           ? "embedding.values"
           : isDoubaoMultimodal
             ? "data.embedding"
-            : "data[0].embedding"
+            : "data[0].embedding or embeddings[0] (Ollama native)"
         lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
         console.warn(`[Embedding] ${lastEmbeddingError}`)
         return null
@@ -229,6 +229,29 @@ function isNonEmptyNumberArray(value: unknown): value is number[] {
   return Array.isArray(value)
     && value.length > 0
     && value.every((item) => typeof item === "number" && Number.isFinite(item))
+}
+
+/**
+ * Parse embedding vectors from OpenAI-compatible or Ollama-native
+ * responses. Ollama's `/api/embed` and `/api/embeddings` return
+ * `{ embeddings: [[...]] }`; OpenAI-compatible `/v1/embeddings`
+ * returns `{ data: [{ embedding: [...] }] }`.
+ */
+export function parseOpenAiCompatibleEmbedding(data: unknown): number[] | null {
+  if (!data || typeof data !== "object") return null
+
+  const record = data as Record<string, unknown>
+  const openAi = (record.data as { embedding?: unknown }[] | undefined)?.[0]?.embedding
+  if (isNonEmptyNumberArray(openAi)) return openAi
+
+  const ollama = record.embeddings
+  if (Array.isArray(ollama) && ollama.length > 0 && isNonEmptyNumberArray(ollama[0])) {
+    return ollama[0]
+  }
+
+  if (isNonEmptyNumberArray(record.embedding)) return record.embedding
+
+  return null
 }
 
 function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
