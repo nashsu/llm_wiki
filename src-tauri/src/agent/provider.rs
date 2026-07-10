@@ -150,6 +150,7 @@ impl LlmClient {
                     user,
                     images,
                     true,
+                    true,
                 )
                 .await
             }
@@ -160,17 +161,18 @@ impl LlmClient {
                     user,
                     images,
                     true,
+                    false,
                 )
                 .await
             }
             "azure" => {
                 let url = build_azure_url(&self.config)?;
-                self.generate_openai_like(&url, system, user, images, false)
+                self.generate_openai_like(&url, system, user, images, false, true)
                     .await
             }
             "ollama" => {
                 let url = build_ollama_url(&self.config.ollama_url);
-                self.generate_openai_like(&url, system, user, images, true)
+                self.generate_openai_like(&url, system, user, images, true, true)
                     .await
             }
             "custom" if self.config.api_mode.as_deref() == Some("anthropic_messages") => {
@@ -180,8 +182,15 @@ impl LlmClient {
             }
             "custom" => {
                 let url = build_custom_openai_url(&self.config);
-                self.generate_openai_like(&url, system, user, images, !is_azure_endpoint(&url))
-                    .await
+                self.generate_openai_like(
+                    &url,
+                    system,
+                    user,
+                    images,
+                    !is_azure_endpoint(&url),
+                    true,
+                )
+                .await
             }
             "anthropic" => {
                 self.generate_anthropic_like(
@@ -230,6 +239,7 @@ impl LlmClient {
                     user,
                     images,
                     true,
+                    true,
                     on_delta,
                 )
                 .await
@@ -241,18 +251,19 @@ impl LlmClient {
                     user,
                     images,
                     true,
+                    false,
                     on_delta,
                 )
                 .await
             }
             "azure" => {
                 let url = build_azure_url(&self.config)?;
-                self.stream_openai_like(&url, system, user, images, false, on_delta)
+                self.stream_openai_like(&url, system, user, images, false, true, on_delta)
                     .await
             }
             "ollama" => {
                 let url = build_ollama_url(&self.config.ollama_url);
-                self.stream_openai_like(&url, system, user, images, true, on_delta)
+                self.stream_openai_like(&url, system, user, images, true, true, on_delta)
                     .await
             }
             "custom" if self.config.api_mode.as_deref() == Some("anthropic_messages") => {
@@ -268,6 +279,7 @@ impl LlmClient {
                     user,
                     images,
                     !is_azure_endpoint(&url),
+                    true,
                     on_delta,
                 )
                 .await
@@ -306,6 +318,7 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
         include_model: bool,
+        include_reasoning: bool,
         stream: bool,
     ) -> Value {
         let user_content = openai_user_content(user, images);
@@ -320,7 +333,9 @@ impl LlmClient {
         if include_model {
             body["model"] = Value::String(self.config.model.clone());
         }
-        apply_openai_reasoning(&mut body, self.config.reasoning.as_ref());
+        if include_reasoning {
+            apply_openai_reasoning(&mut body, self.config.reasoning.as_ref());
+        }
         body
     }
 
@@ -331,8 +346,16 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
         include_model: bool,
+        include_reasoning: bool,
     ) -> Result<String, String> {
-        let body = self.openai_like_body(system, user, images, include_model, false);
+        let body = self.openai_like_body(
+            system,
+            user,
+            images,
+            include_model,
+            include_reasoning,
+            false,
+        );
 
         let response = self
             .client
@@ -375,12 +398,14 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
         include_model: bool,
+        include_reasoning: bool,
         on_delta: F,
     ) -> Result<String, String>
     where
         F: FnMut(&str) + Send,
     {
-        let body = self.openai_like_body(system, user, images, include_model, true);
+        let body =
+            self.openai_like_body(system, user, images, include_model, include_reasoning, true);
         let response = self
             .client
             .post(url)
@@ -1099,10 +1124,29 @@ mod tests {
             budget_tokens: None,
         });
         let client = LlmClient::new(cfg).unwrap().structured_task_config(16_384);
-        let body = client.openai_like_body("system", "user", &[], true, false);
+        let body = client.openai_like_body("system", "user", &[], true, true, false);
 
         assert_eq!(body.get("max_tokens").and_then(Value::as_u64), Some(16_384));
         assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn mistral_body_omits_openai_only_reasoning_fields() {
+        let mut cfg = config("mistral");
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("high".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+
+        let openai_body = client.openai_like_body("system", "user", &[], true, true, false);
+        let mistral_body = client.openai_like_body("system", "user", &[], true, false, false);
+
+        assert_eq!(
+            openai_body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+        assert!(mistral_body.get("reasoning_effort").is_none());
     }
 
     #[test]
