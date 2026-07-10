@@ -16,8 +16,9 @@
  *      `{id, score}[]` shape; matched chunks available on the
  *      optional `matchedChunks` field for future UI surfacing.
  *
- * HTTP goes through the Tauri plugin (`src/lib/tauri-fetch.ts`) so
- * CORS-unfriendly endpoints work the same as the LLM path.
+ * Provider HTTP is executed by the Rust `embedding_fetch` command so
+ * CORS-unfriendly endpoints keep working while the core embedding
+ * transport is shared by UI and backend callers.
  */
 
 import { readFile, listDirectory } from "@/commands/fs"
@@ -25,30 +26,7 @@ import { invoke } from "@tauri-apps/api/core"
 import type { EmbeddingConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
-import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
-import { isLocalOrPrivateHttpEndpoint, localLlmOriginHeader } from "@/lib/llm-providers"
-
-const RESERVED_EMBEDDING_HEADER_NAMES = new Set([
-  "authorization",
-  "content-type",
-  "host",
-  "content-length",
-  "origin",
-  "x-goog-api-key",
-])
-const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
-
-function isSafeExtraHeader(name: string, value: string): boolean {
-  const trimmedName = name.trim()
-  const trimmedValue = value.trim()
-  return (
-    trimmedName.length > 0 &&
-    trimmedValue.length > 0 &&
-    HTTP_HEADER_NAME_RE.test(trimmedName) &&
-    !RESERVED_EMBEDDING_HEADER_NAMES.has(trimmedName.toLowerCase())
-  )
-}
 
 // ── Error surfacing ──────────────────────────────────────────────────────
 
@@ -111,278 +89,18 @@ export async function fetchEmbedding(
   maxRetries = 3,
 ): Promise<number[] | null> {
   if (!cfg.endpoint) return null
-
-  const isGoogleNative = isGoogleEmbeddingConfig(cfg)
-  const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg)
-  const endpoint = isGoogleNative
-    ? googleEmbeddingEndpoint(cfg)
-    : volcengineEmbeddingEndpoint(cfg)
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(isLocalOrPrivateHttpEndpoint(endpoint) ? localLlmOriginHeader() : {}),
-  }
-  if (cfg.apiKey) {
-    if (isGoogleNative) {
-      headers["x-goog-api-key"] = cfg.apiKey
-    } else {
-      headers.Authorization = `Bearer ${cfg.apiKey}`
-    }
-  }
-  if (cfg.extraHeaders) {
-    for (const [k, v] of Object.entries(cfg.extraHeaders)) {
-      const name = k.trim()
-      const value = v.trim()
-      if (!isSafeExtraHeader(name, value)) continue
-      headers[name] = value
-    }
-  }
-
-  let current = text
-  let attempts = 0
-  while (attempts <= maxRetries) {
-    attempts++
-    try {
-      const httpFetch = await getHttpFetch()
-      const resp = await httpFetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(
-          isGoogleNative
-            ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
-            : isDoubaoMultimodal
-              ? doubaoMultimodalEmbeddingBody(cfg.model, current)
-              : { model: cfg.model, input: current },
-        ),
-      })
-
-      if (resp.ok) {
-        const data = await resp.json()
-        const embedding = isGoogleNative
-          ? data?.embedding?.values ?? null
-          : isDoubaoMultimodal
-            ? data?.data?.embedding ?? null
-            : parseOpenAiCompatibleEmbedding(data)
-        if (isNonEmptyNumberArray(embedding)) {
-          lastEmbeddingError = null
-          return embedding
-        }
-        const expectedShape = isGoogleNative
-          ? "embedding.values"
-          : isDoubaoMultimodal
-            ? "data.embedding"
-            : "data[0].embedding or embeddings[0] (Ollama native)"
-        lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
-        console.warn(`[Embedding] ${lastEmbeddingError}`)
-        return null
-      }
-
-      // Non-OK: try to read the body for an oversize hint.
-      let bodyText = ""
-      try {
-        bodyText = await resp.text()
-      } catch {
-        // ignore — some servers return empty bodies on error
-      }
-
-      if (looksLikeOversizeError(resp.status, bodyText)) {
-        // Can we still halve-and-retry? Need room on both axes:
-        // text not yet at the 64-char floor, and retry budget left.
-        if (current.length > 64 && attempts <= maxRetries) {
-          const prev = current.length
-          current = current.slice(0, Math.floor(current.length / 2))
-          console.warn(
-            `[Embedding] auto-halving after HTTP ${resp.status} at ${prev} chars → retrying at ${current.length} chars (attempt ${attempts}/${maxRetries + 1})`,
-          )
-          continue
-        }
-        // Out of retries on a SERVER-oversize error — give the user a
-        // message that names the smallest size that still failed so
-        // they can tune Settings → Embedding accordingly.
-        lastEmbeddingError = `Endpoint rejected input even at ${current.length} chars — server context smaller than expected. Lower Settings → Embedding → Max Chunk Chars (${bodyText.slice(0, 160)}).`
-        console.warn(`[Embedding] ${lastEmbeddingError}`)
-        return null
-      }
-
-      // Non-oversize definitive failure (auth, rate limit, server down, …).
-      lastEmbeddingError = `API ${resp.status} ${resp.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""} at ${endpoint}`
-      console.warn(`[Embedding] ${lastEmbeddingError}`)
-      return null
-    } catch (err) {
-      if (isFetchNetworkError(err)) {
-        lastEmbeddingError = `Network error reaching ${endpoint}. Check endpoint URL, API key, and connectivity.`
-      } else {
-        lastEmbeddingError = err instanceof Error ? err.message : String(err)
-      }
-      console.warn(`[Embedding] ${lastEmbeddingError}`)
-      return null
-    }
-  }
-
-  // Exhausted retries (only reachable if every halving round triggered
-  // the retry branch and then the loop condition ended).
-  lastEmbeddingError = `Embedding endpoint rejected every size down to ${current.length} chars — the server's context is smaller than ${current.length * 2}. Lower Settings → Embedding → Max Chunk Chars.`
-  console.warn(`[Embedding] ${lastEmbeddingError}`)
-  return null
-}
-
-function isNonEmptyNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value)
-    && value.length > 0
-    && value.every((item) => typeof item === "number" && Number.isFinite(item))
-}
-
-/**
- * Parse embedding vectors from OpenAI-compatible or Ollama-native
- * responses. Ollama's `/api/embed` and `/api/embeddings` return
- * `{ embeddings: [[...]] }`; OpenAI-compatible `/v1/embeddings`
- * returns `{ data: [{ embedding: [...] }] }`.
- */
-export function parseOpenAiCompatibleEmbedding(data: unknown): number[] | null {
-  if (!data || typeof data !== "object") return null
-
-  const record = data as Record<string, unknown>
-  const openAi = (record.data as { embedding?: unknown }[] | undefined)?.[0]?.embedding
-  if (isNonEmptyNumberArray(openAi)) return openAi
-
-  const ollama = record.embeddings
-  if (Array.isArray(ollama) && ollama.length > 0 && isNonEmptyNumberArray(ollama[0])) {
-    return ollama[0]
-  }
-
-  if (isNonEmptyNumberArray(record.embedding)) return record.embedding
-
-  return null
-}
-
-function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
-  const endpoint = cfg.endpoint.toLowerCase()
-  return endpoint.includes("generativelanguage.googleapis.com")
-    || /:embedcontent(\?|$)/i.test(endpoint)
-}
-
-function isVolcengineEmbeddingEndpoint(endpoint: string): boolean {
   try {
-    const host = new URL(endpoint).hostname.toLowerCase()
-    return host === "volces.com"
-      || host.endsWith(".volces.com")
-      || host.includes("volcengine")
-  } catch {
-    const authority = endpoint
-      .trim()
-      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
-      .split(/[/?#]/, 1)[0]
-      .toLowerCase()
-    return authority === "volces.com"
-      || authority.endsWith(".volces.com")
-      || authority.includes("volcengine")
-  }
-}
-
-function isDoubaoMultimodalEmbeddingConfig(cfg: EmbeddingConfig): boolean {
-  return cfg.model.trim().toLowerCase().includes("doubao-embedding-vision")
-}
-
-function volcengineEmbeddingEndpoint(cfg: EmbeddingConfig): string {
-  const raw = cfg.endpoint.trim()
-  if (!isVolcengineEmbeddingEndpoint(raw)) return raw
-  const targetSuffix = isDoubaoMultimodalEmbeddingConfig(cfg)
-    ? "/embeddings/multimodal"
-    : "/embeddings"
-  return appendEndpointPath(raw, targetSuffix)
-}
-
-function appendEndpointPath(endpoint: string, targetSuffix: string): string {
-  const suffix = targetSuffix.replace(/^\/+/, "")
-  try {
-    const url = new URL(endpoint)
-    const path = url.pathname.replace(/\/+$/, "")
-    const lowerPath = path.toLowerCase()
-    const lowerSuffix = `/${suffix.toLowerCase()}`
-    if (lowerPath.endsWith(lowerSuffix)) {
-      url.pathname = path || "/"
-      return url.toString()
-    }
-    if (lowerPath.endsWith("/embeddings/multimodal") && lowerSuffix === "/embeddings") {
-      url.pathname = path.slice(0, -"/multimodal".length) || "/"
-      return url.toString()
-    }
-    if (lowerPath.endsWith("/embeddings") && lowerSuffix === "/embeddings/multimodal") {
-      url.pathname = `${path}/multimodal`
-      return url.toString()
-    }
-    url.pathname = `${path}/${suffix}`.replace(/\/{2,}/g, "/")
-    return url.toString()
-  } catch {
-    const [base, query = ""] = endpoint.split("?", 2)
-    const trimmed = base.replace(/\/+$/, "")
-    const lower = trimmed.toLowerCase()
-    const lowerSuffix = `/${suffix.toLowerCase()}`
-    const next = lower.endsWith(lowerSuffix)
-      ? trimmed
-      : lower.endsWith("/embeddings/multimodal") && lowerSuffix === "/embeddings"
-        ? trimmed.slice(0, -"/multimodal".length)
-      : lower.endsWith("/embeddings") && lowerSuffix === "/embeddings/multimodal"
-        ? `${trimmed}/multimodal`
-        : `${trimmed}/${suffix}`
-    return query ? `${next}?${query}` : next
-  }
-}
-
-function googleEmbeddingEndpoint(cfg: EmbeddingConfig): string {
-  const raw = stripGoogleApiKeyQuery(cfg.endpoint.trim()).replace(/\/+$/, "")
-  if (/:batchEmbedContents(\?|$)/i.test(raw)) {
-    return raw.replace(/:batchEmbedContents/i, ":embedContent")
-  }
-  if (/:embedContent(\?|$)/i.test(raw)) return raw
-
-  const modelPath = googleModelPath(cfg.model)
-  if (/\/models\/[^/?]+$/i.test(raw)) {
-    return `${raw}:embedContent`
-  }
-  return `${raw}/models/${encodeURIComponent(modelPath.replace(/^models\//, ""))}:embedContent`
-}
-
-function stripGoogleApiKeyQuery(endpoint: string): string {
-  if (!endpoint.includes("?")) return endpoint
-  try {
-    const url = new URL(endpoint)
-    url.searchParams.delete("key")
-    return url.toString()
-  } catch {
-    return endpoint.replace(/([?&])key=[^&]*&?/i, (_, prefix: string) => prefix === "?" ? "?" : "&")
-      .replace(/[?&]$/, "")
-      .replace("?&", "?")
-  }
-}
-
-function googleModelPath(model: string): string {
-  const trimmed = model.trim()
-  if (trimmed.startsWith("models/")) return trimmed
-  return `models/${trimmed}`
-}
-
-function googleEmbeddingBody(
-  model: string,
-  text: string,
-  outputDimensionality?: number,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    model: googleModelPath(model),
-    content: {
-      parts: [{ text }],
-    },
-  }
-  if (typeof outputDimensionality === "number" && Number.isFinite(outputDimensionality) && outputDimensionality > 0) {
-    body.output_dimensionality = Math.floor(outputDimensionality)
-  }
-  return body
-}
-
-function doubaoMultimodalEmbeddingBody(model: string, text: string): Record<string, unknown> {
-  return {
-    model,
-    encoding_format: "float",
-    input: [{ type: "text", text }],
+    const embedding = await invoke<number[]>("embedding_fetch", {
+      text,
+      cfg,
+      maxRetries,
+    })
+    lastEmbeddingError = null
+    return embedding
+  } catch (err) {
+    lastEmbeddingError = err instanceof Error ? err.message : String(err)
+    console.warn(`[Embedding] ${lastEmbeddingError}`)
+    return null
   }
 }
 

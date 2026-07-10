@@ -2087,7 +2087,10 @@ mod tests {
         let shallow = build_tree(&root, 0, 1, false).unwrap();
         let a = shallow.iter().find(|n| n.name == "a").unwrap();
         assert!(a.is_dir);
-        assert!(a.children.is_none(), "max_depth=1 must not load grandchildren");
+        assert!(
+            a.children.is_none(),
+            "max_depth=1 must not load grandchildren"
+        );
 
         let deeper = build_tree(&root, 0, 3, false).unwrap();
         let a = deeper.iter().find(|n| n.name == "a").unwrap();

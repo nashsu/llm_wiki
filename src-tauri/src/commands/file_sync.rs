@@ -1529,7 +1529,11 @@ mod tests {
         fs::create_dir_all(root.join("wiki/entities")).unwrap();
         fs::create_dir_all(root.join("unwatched/deep")).unwrap();
         fs::write(root.join("raw/sources/source.md"), "source").unwrap();
-        fs::write(root.join("wiki/entities/topic.md"), "---\ntitle: Topic\n---\n").unwrap();
+        fs::write(
+            root.join("wiki/entities/topic.md"),
+            "---\ntitle: Topic\n---\n",
+        )
+        .unwrap();
         fs::write(root.join("purpose.md"), "purpose").unwrap();
         fs::write(root.join("schema.md"), "schema").unwrap();
         fs::write(root.join("unwatched/deep/note.md"), "ignore").unwrap();

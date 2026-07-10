@@ -38,6 +38,7 @@ interface FilePreviewProps {
 export function FilePreview({ filePath, textContent }: FilePreviewProps) {
   const category = getFileCategory(filePath)
   const fileName = getFileName(filePath)
+  const extension = getFileExtension(filePath)
 
   switch (category) {
     case "image":
@@ -49,6 +50,12 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
     case "pdf":
       return <TextPreview filePath={filePath} content={textContent} label="PDF (extracted text)" />
     case "code":
+      if (extension === "svg" && isAgentWorkspacePath(filePath)) {
+        return <ImagePreview filePath={filePath} fileName={fileName} />
+      }
+      if (extension === "html" || extension === "htm") {
+        return <HtmlPreview filePath={filePath} fileName={fileName} />
+      }
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
       return <CodePreview filePath={filePath} content={textContent} />
@@ -62,6 +69,30 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
     default:
       return <BinaryPlaceholder filePath={filePath} fileName={fileName} category={category} />
   }
+}
+
+function HtmlPreview({ filePath, fileName }: { filePath: string; fileName: string }) {
+  const src = convertFileSrc(filePath)
+  return (
+    <div className="flex h-full flex-col p-4">
+      <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate" title={filePath}>{filePath}</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase">HTML</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background">
+        <iframe
+          title={fileName}
+          src={src}
+          className="h-full w-full bg-white"
+          sandbox="allow-scripts"
+        />
+      </div>
+    </div>
+  )
+}
+
+function isAgentWorkspacePath(filePath: string): boolean {
+  return normalizePath(filePath).split("/").includes("agent-workspace")
 }
 
 function extractedTextLabel(filePath: string): string {

@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import type { ChatMessage, ContentBlock } from "@/lib/llm-client"
 import i18n from "@/i18n"
-import type { ChatAgentMode, ChatAgentStep } from "@/lib/chat-agent"
+import type { ChatAgentMode, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
 
 /**
  * An image attached to a user message. Field names mirror the
@@ -20,12 +20,13 @@ export interface Conversation {
   title: string
   createdAt: number
   updatedAt: number
+  selectedSkills?: string[]
 }
 
 export interface MessageReference {
   title: string
   path: string
-  kind?: "wiki" | "external"
+  kind?: "wiki" | "external" | "workspace"
   source?: string
   url?: string
   snippet?: string
@@ -39,6 +40,7 @@ export interface DisplayMessage {
   conversationId: string
   references?: MessageReference[]  // pages cited in this response, saved at creation time
   agentSteps?: ChatAgentStep[]  // agent tool calls and routing decisions saved with assistant replies
+  userInputRequest?: ChatUserInputRequest  // dynamic schema-driven form requested by backend Agent
   images?: MessageImage[]  // images attached to a user message (vision input)
 }
 
@@ -54,6 +56,8 @@ interface ChatState {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  selectedSkills: string[]
+  disabledSkills: string[]
 
   // Conversation management
   createConversation: () => string
@@ -63,11 +67,13 @@ interface ChatState {
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
+  addMessageToConversation: (conversationId: string, role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
   setMessages: (messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
-  finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[]) => void
+  finalizeStream: (content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest) => void
+  finalizeStreamForConversation: (conversationId: string, content: string, references?: MessageReference[], agentSteps?: ChatAgentStep[], userInputRequest?: ChatUserInputRequest) => void
   setMode: (mode: ChatState["mode"]) => void
   setIngestSource: (path: string | null) => void
   clearMessages: () => void
@@ -75,6 +81,8 @@ interface ChatState {
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
   setAgentMode: (mode: ChatAgentMode) => void
+  setSelectedSkills: (skills: string[]) => void
+  setDisabledSkills: (skills: string[]) => void
   removeLastAssistantMessage: () => void  // for regenerate: remove last assistant reply
 
   // Helpers
@@ -85,7 +93,7 @@ let messageCounter = 0
 
 function nextId(): string {
   messageCounter += 1
-  return String(messageCounter)
+  return `msg_${Date.now()}_${messageCounter}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 function generateConversationId(): string {
@@ -104,6 +112,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   useWebSearch: false,
   useAnyTxtSearch: false,
   agentMode: "standard",
+  selectedSkills: [],
+  disabledSkills: [],
 
   createConversation: () => {
     const id = generateConversationId()
@@ -113,10 +123,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       title: i18n.t("chat.newConversation"),
       createdAt: now,
       updatedAt: now,
+      selectedSkills: [],
     }
     set((state) => ({
       conversations: [newConversation, ...state.conversations],
       activeConversationId: id,
+      isStreaming: false,
+      streamingContent: "",
+      selectedSkills: [],
     }))
     return id
   },
@@ -132,10 +146,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: remaining,
         messages: state.messages.filter((m) => m.conversationId !== id),
         activeConversationId: newActiveId,
+        selectedSkills: remaining.find((conversation) => conversation.id === newActiveId)?.selectedSkills ?? [],
       }
     }),
 
-  setActiveConversation: (id) => set({ activeConversationId: id }),
+  setActiveConversation: (id) =>
+    set((state) => ({
+      activeConversationId: id,
+      streamingContent: "",
+      selectedSkills: state.conversations.find((conversation) => conversation.id === id)?.selectedSkills ?? [],
+    })),
 
   renameConversation: (id, title) =>
     set((state) => ({
@@ -144,28 +164,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
-  addMessage: (role, content, images) =>
+  addMessage: (role, content, images) => {
+    const activeConversationId = get().activeConversationId
+    if (!activeConversationId) return
+    get().addMessageToConversation(activeConversationId, role, content, images)
+  },
+
+  addMessageToConversation: (conversationId, role, content, images) =>
     set((state) => {
-      const { activeConversationId, conversations } = state
-      if (!activeConversationId) return state
+      const { conversations } = state
+      if (!conversations.some((conversation) => conversation.id === conversationId)) return state
 
       const newMessage: DisplayMessage = {
         id: nextId(),
         role,
         content,
         timestamp: Date.now(),
-        conversationId: activeConversationId,
+        conversationId,
         ...(images && images.length > 0 ? { images } : {}),
       }
 
       // Auto-set title from first user message (first 50 chars)
       const convMessages = state.messages.filter(
-        (m) => m.conversationId === activeConversationId && m.role === "user"
+        (m) => m.conversationId === conversationId && m.role === "user"
       )
       const updatedConversations =
         role === "user" && convMessages.length === 0
           ? conversations.map((c) =>
-              c.id === activeConversationId
+              c.id === conversationId
                 ? {
                     ...c,
                     // Image-only first message has empty text; fall
@@ -177,7 +203,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 : c
             )
           : conversations.map((c) =>
-              c.id === activeConversationId
+              c.id === conversationId
                 ? { ...c, updatedAt: Date.now() }
                 : c
             )
@@ -190,19 +216,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMessages: (messages) => set({ messages }),
 
-  setConversations: (conversations) => set({ conversations }),
+  setConversations: (conversations) =>
+    set((state) => ({
+      conversations,
+      selectedSkills: conversations.find((conversation) => conversation.id === state.activeConversationId)?.selectedSkills ?? [],
+    })),
 
-  setStreaming: (isStreaming) => set({ isStreaming }),
+  setStreaming: (isStreaming) => set((state) => ({
+    isStreaming,
+    // Each new run owns its own stream buffer. Without this reset, a newly
+    // created conversation can briefly render tokens left by another
+    // conversation until the next token arrives.
+    ...(isStreaming ? { streamingContent: "" } : state.streamingContent ? {} : {}),
+  })),
 
   appendStreamToken: (token) =>
     set((state) => ({
       streamingContent: state.streamingContent + token,
     })),
 
-  finalizeStream: (content, references, agentSteps) =>
+  finalizeStream: (content, references, agentSteps, userInputRequest) => {
+    const activeConversationId = get().activeConversationId
+    if (!activeConversationId) {
+      set({
+        isStreaming: false,
+        streamingContent: "",
+      })
+      return
+    }
+    get().finalizeStreamForConversation(
+      activeConversationId,
+      content,
+      references,
+      agentSteps,
+      userInputRequest,
+    )
+  },
+
+  finalizeStreamForConversation: (conversationId, content, references, agentSteps, userInputRequest) =>
     set((state) => {
-      const { activeConversationId, conversations } = state
-      if (!activeConversationId) {
+      const { conversations } = state
+      if (!conversations.some((conversation) => conversation.id === conversationId)) {
         return {
           isStreaming: false,
           streamingContent: "",
@@ -214,9 +268,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         role: "assistant" as const,
         content,
         timestamp: Date.now(),
-        conversationId: activeConversationId,
+        conversationId,
         references,
         agentSteps,
+        ...(userInputRequest ? { userInputRequest } : {}),
       }
 
       return {
@@ -224,7 +279,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingContent: "",
         messages: [...state.messages, newMessage],
         conversations: conversations.map((c) =>
-          c.id === activeConversationId
+          c.id === conversationId
             ? { ...c, updatedAt: Date.now() }
             : c
         ),
@@ -250,6 +305,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setAgentMode: (agentMode) => set({ agentMode }),
 
+  setSelectedSkills: (selectedSkills) =>
+    set((state) => ({
+      selectedSkills,
+      conversations: state.activeConversationId
+        ? state.conversations.map((conversation) =>
+            conversation.id === state.activeConversationId
+              ? { ...conversation, selectedSkills }
+              : conversation
+          )
+        : state.conversations,
+    })),
+
+  setDisabledSkills: (disabledSkills) => set({ disabledSkills }),
+
   removeLastAssistantMessage: () =>
     set((state) => {
       const activeId = state.activeConversationId
@@ -260,7 +329,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (lastAssistantIdx === -1) return state
       const msgToRemove = activeMessages[activeMessages.length - 1 - lastAssistantIdx]
       return {
-        messages: state.messages.filter((m) => m.id !== msgToRemove.id),
+        messages: state.messages.filter((m) => m.conversationId !== activeId || m.id !== msgToRemove.id),
       }
     }),
 

@@ -3,30 +3,23 @@
  * pieces: auto-halve retry heuristics and the chunk→page aggregation
  * contract inside `searchByEmbedding`.
  *
- * The actual HTTP layer and Tauri LanceDB commands are mocked — we're
- * NOT testing Rust vectorstore here (that has its own 15 Rust tests)
- * nor the webview fetch (that's tauri-fetch.ts). The boundary we pin
- * down here is "given these chunk-level results, do we aggregate to
- * page-level scores the way the design says?".
+ * The actual Rust HTTP/vectorstore commands are mocked here. Rust owns
+ * the provider transport; this file pins the TypeScript orchestration
+ * contract around chunking, invoke payloads, and page-level aggregation.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
 // Module-level mock for the Tauri invoke boundary so we can script the
 // chunk-search response without touching real LanceDB.
 const mockInvoke = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>()
+const mockEmbeddingFetchInvoke = vi.fn<(args?: unknown) => Promise<unknown>>()
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args?: unknown) => mockInvoke(cmd, args),
+  invoke: (cmd: string, args?: unknown) =>
+    cmd === "embedding_fetch" ? mockEmbeddingFetchInvoke(args) : mockInvoke(cmd, args),
 }))
 
-// Stub getHttpFetch so fetchEmbedding calls hit our in-test responder.
+// In-test responder used by the `embedding_fetch` invoke shim below.
 const mockHttpFetch = vi.fn<(url: string, opts?: RequestInit) => Promise<Response>>()
-vi.mock("@/lib/tauri-fetch", () => ({
-  getHttpFetch: () => Promise.resolve(mockHttpFetch),
-  isFetchNetworkError: (err: unknown) =>
-    err instanceof TypeError ||
-    (err instanceof Error &&
-      (err.message === "Load failed" || err.message === "Failed to fetch")),
-}))
 
 // readFile / listDirectory aren't exercised in this file's cases; stub.
 vi.mock("@/commands/fs", () => ({
@@ -78,9 +71,181 @@ function genericErrorResponse(status: number, body: string): Response {
 
 beforeEach(() => {
   mockInvoke.mockReset()
+  mockEmbeddingFetchInvoke.mockReset()
   mockHttpFetch.mockReset()
+  mockEmbeddingFetchInvoke.mockImplementation((args) => {
+    const input = args as { text: string; cfg: typeof cfg; maxRetries?: number }
+    return fetchEmbeddingViaMockHttp(input.text, input.cfg, input.maxRetries ?? 3)
+  })
   resetEmbeddingOptimizeAccountingForTests()
 })
+
+async function fetchEmbeddingViaMockHttp(
+  text: string,
+  config: typeof cfg & {
+    outputDimensionality?: number
+    extraHeaders?: Record<string, string>
+  },
+  maxRetries: number,
+): Promise<number[]> {
+  const isGoogle = isGoogleEmbeddingConfigForTest(config)
+  const isDoubaoVision = config.model.toLowerCase().includes("doubao-embedding-vision")
+  const endpoint = isGoogle ? googleEndpointForTest(config) : volcengineEndpointForTest(config)
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(isLocalEndpointForTest(endpoint) ? { Origin: "http://localhost" } : {}),
+  }
+  if (config.apiKey) {
+    if (isGoogle) headers["x-goog-api-key"] = config.apiKey
+    else headers.Authorization = `Bearer ${config.apiKey}`
+  }
+  for (const [name, value] of Object.entries(config.extraHeaders ?? {})) {
+    const trimmed = name.trim()
+    const lower = trimmed.toLowerCase()
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(trimmed)) continue
+    if (["authorization", "content-type", "host", "content-length", "origin", "x-goog-api-key"].includes(lower)) continue
+    if (!String(value).trim()) continue
+    headers[trimmed] = String(value).trim()
+  }
+
+  let current = text
+  let attempts = 0
+  while (attempts <= maxRetries) {
+    attempts += 1
+    const body = isGoogle
+      ? googleBodyForTest(config.model, current, config.outputDimensionality)
+      : isDoubaoVision
+        ? { model: config.model, encoding_format: "float", input: [{ type: "text", text: current }] }
+        : { model: config.model, input: current }
+    let response: Response
+    try {
+      const maybeResponse = await mockHttpFetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      })
+      if (!maybeResponse) throw new TypeError("Failed to fetch")
+      response = maybeResponse
+    } catch {
+      throw new Error(`Network error reaching ${endpoint}. Check endpoint URL, API key, and connectivity.`)
+    }
+    const textBody = await response.text()
+    if (response.ok) {
+      const data = JSON.parse(textBody)
+      const embedding = isGoogle
+        ? data?.embedding?.values
+        : isDoubaoVision
+          ? data?.data?.embedding
+          : data?.data?.[0]?.embedding
+      if (Array.isArray(embedding) && embedding.length > 0 && embedding.every((v) => typeof v === "number" && Number.isFinite(v))) {
+        return embedding
+      }
+      const expected = isGoogle ? "embedding.values" : isDoubaoVision ? "data.embedding" : "data[0].embedding"
+      throw new Error(`Embedding response missing ${expected}`)
+    }
+    if (looksLikeOversizeForTest(response.status, textBody) && current.length > 64 && attempts <= maxRetries) {
+      current = current.slice(0, Math.floor(current.length / 2))
+      continue
+    }
+    if (looksLikeOversizeForTest(response.status, textBody)) {
+      throw new Error(`Endpoint rejected input even at ${current.length} chars — server context smaller than expected. Lower Settings → Embedding → Max Chunk Chars.`)
+    }
+    throw new Error(`API ${response.status} ${response.statusText}${textBody ? ` — ${textBody.slice(0, 200)}` : ""} at ${endpoint}`)
+  }
+  throw new Error(`Embedding endpoint rejected every size down to ${current.length} chars`)
+}
+
+function looksLikeOversizeForTest(status: number, body: string): boolean {
+  const lower = body.toLowerCase()
+  return status === 413
+    || lower.includes("too long")
+    || lower.includes("maximum context")
+    || lower.includes("max_tokens")
+    || lower.includes("max tokens")
+    || lower.includes("context length")
+    || lower.includes("token limit")
+    || lower.includes("exceeds")
+    || lower.includes("input length")
+}
+
+function isGoogleEmbeddingConfigForTest(config: { endpoint: string }): boolean {
+  const endpoint = config.endpoint.toLowerCase()
+  return endpoint.includes("generativelanguage.googleapis.com") || endpoint.includes(":embedcontent")
+}
+
+function isLocalEndpointForTest(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname
+    return host === "localhost"
+      || host === "127.0.0.1"
+      || host === "::1"
+      || /^10\./.test(host)
+      || /^192\.168\./.test(host)
+      || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  } catch {
+    return false
+  }
+}
+
+function isVolcengineEndpointForTest(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase()
+    return host === "volces.com" || host.endsWith(".volces.com") || host.includes("volcengine")
+  } catch {
+    return false
+  }
+}
+
+function volcengineEndpointForTest(config: { endpoint: string; model: string }): string {
+  if (!isVolcengineEndpointForTest(config.endpoint)) return config.endpoint
+  const suffix = config.model.toLowerCase().includes("doubao-embedding-vision") ? "/embeddings/multimodal" : "/embeddings"
+  return appendEndpointPathForTest(config.endpoint, suffix)
+}
+
+function appendEndpointPathForTest(endpoint: string, suffix: string): string {
+  const cleanSuffix = suffix.replace(/^\/+/, "")
+  const url = new URL(endpoint)
+  const path = url.pathname.replace(/\/+$/, "")
+  const lower = path.toLowerCase()
+  const lowerSuffix = `/${cleanSuffix.toLowerCase()}`
+  if (lower.endsWith(lowerSuffix)) {
+    url.pathname = path || "/"
+  } else if (lower.endsWith("/embeddings/multimodal") && lowerSuffix === "/embeddings") {
+    url.pathname = path.slice(0, -"/multimodal".length) || "/"
+  } else if (lower.endsWith("/embeddings") && lowerSuffix === "/embeddings/multimodal") {
+    url.pathname = `${path}/multimodal`
+  } else {
+    url.pathname = `${path}/${cleanSuffix}`.replace(/\/{2,}/g, "/")
+  }
+  return url.toString()
+}
+
+function googleEndpointForTest(config: { endpoint: string; model: string }): string {
+  const raw = stripGoogleKeyForTest(config.endpoint.trim()).replace(/\/+$/, "")
+  if (/:batchEmbedContents(\?|$)/i.test(raw)) return raw.replace(/:batchEmbedContents/i, ":embedContent")
+  if (/:embedContent(\?|$)/i.test(raw)) return raw
+  const model = config.model.startsWith("models/") ? config.model.slice("models/".length) : config.model
+  if (/\/models\/[^/?]+$/i.test(raw)) return `${raw}:embedContent`
+  return `${raw}/models/${encodeURIComponent(model)}:embedContent`
+}
+
+function stripGoogleKeyForTest(endpoint: string): string {
+  if (!endpoint.includes("?")) return endpoint
+  const url = new URL(endpoint)
+  url.searchParams.delete("key")
+  return url.toString()
+}
+
+function googleBodyForTest(model: string, text: string, outputDimensionality?: number): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: model.startsWith("models/") ? model : `models/${model}`,
+    content: { parts: [{ text }] },
+  }
+  if (typeof outputDimensionality === "number" && Number.isFinite(outputDimensionality) && outputDimensionality > 0) {
+    body.output_dimensionality = Math.floor(outputDimensionality)
+  }
+  return body
+}
 
 // ── searchByEmbedding — chunk→page aggregation ─────────────────────
 

@@ -37,6 +37,40 @@ function App() {
     return current?.id === proj.id && current.path === proj.path
   }
 
+  async function hydrateProjectChatStore(proj: WikiProject): Promise<void> {
+    try {
+      const activeBeforeLoad = useChatStore.getState().activeConversationId
+      const savedChat = await loadChatHistory(proj.path)
+      if (!isCurrentProject(proj)) return
+      const stateAfterLoad = useChatStore.getState()
+      const activeChangedDuringLoad = stateAfterLoad.activeConversationId !== activeBeforeLoad
+      if (savedChat.conversations.length > 0) {
+        const existingConversations = activeChangedDuringLoad ? stateAfterLoad.conversations : []
+        const existingMessages = activeChangedDuringLoad ? stateAfterLoad.messages : []
+        const mergedConversations = [
+          ...existingConversations,
+          ...savedChat.conversations.filter(
+            (conversation) => !existingConversations.some((existing) => existing.id === conversation.id)
+          ),
+        ]
+        const mergedMessages = [
+          ...existingMessages,
+          ...savedChat.messages.filter(
+            (message) => !existingMessages.some((existing) => existing.id === message.id)
+          ),
+        ]
+        useChatStore.getState().setConversations(mergedConversations)
+        useChatStore.getState().setMessages(mergedMessages)
+        const sorted = [...savedChat.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+        if (!activeChangedDuringLoad && sorted[0]) {
+          useChatStore.getState().setActiveConversation(sorted[0].id)
+        }
+      }
+    } catch (err) {
+      console.warn("[startup] failed to load chat history:", err)
+    }
+  }
+
   async function hydrateProjectSideStores(proj: WikiProject): Promise<void> {
     try {
       const savedReview = await loadReviewItems(proj.path)
@@ -54,21 +88,6 @@ function App() {
       }
     } catch (err) {
       console.warn("[startup] failed to load lint items:", err)
-    }
-
-    try {
-      const savedChat = await loadChatHistory(proj.path)
-      if (!isCurrentProject(proj)) return
-      if (savedChat.conversations.length > 0) {
-        useChatStore.getState().setConversations(savedChat.conversations)
-        useChatStore.getState().setMessages(savedChat.messages)
-        const sorted = [...savedChat.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
-        if (sorted[0]) {
-          useChatStore.getState().setActiveConversation(sorted[0].id)
-        }
-      }
-    } catch (err) {
-      console.warn("[startup] failed to load chat history:", err)
     }
   }
 
@@ -460,9 +479,14 @@ function App() {
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
         useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)
+        useChatStore.getState().setDisabledSkills(savedChatPreferences.disabledSkills)
       } catch {
         // ignore, start fresh
       }
+      // Chat history must be hydrated before auto-save resumes. Otherwise the
+      // empty store created by resetProjectState() can be persisted over
+      // conversations.json before the deferred loader restores old chats.
+      await hydrateProjectChatStore(proj)
     }, () => {
       // If project loading fails after resetProjectState() and before persisted
       // review/lint/chat state has been restored, do not leave auto-save armed

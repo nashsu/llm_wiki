@@ -14,6 +14,10 @@ describe("research panel nav state", () => {
       activeView: "wiki",
       researchPanelOpen: true,
     })
+    expect(nextResearchPanelNavState("skills", false)).toEqual({
+      activeView: "wiki",
+      researchPanelOpen: true,
+    })
   })
 
   it("toggles the panel inside workspace views", () => {
@@ -29,6 +33,7 @@ describe("research panel nav state", () => {
 
   it("only marks the panel visible outside standalone views", () => {
     expect(isResearchPanelVisible("chat", true)).toBe(false)
+    expect(isResearchPanelVisible("skills", true)).toBe(false)
     expect(isResearchPanelVisible("settings", true)).toBe(false)
     expect(isResearchPanelVisible("wiki", true)).toBe(true)
   })

@@ -289,6 +289,56 @@ pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
     })
 }
 
+#[tauri::command]
+pub fn open_path_in_project(
+    app: AppHandle,
+    project_path: String,
+    target_path: String,
+) -> Result<(), String> {
+    run_guarded("open_path_in_project", || {
+        let root = Path::new(&project_path);
+        validate_wiki_project_root(root)?;
+
+        let root_canonical = root
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve project path '{}': {}", project_path, e))?;
+        let target = Path::new(&target_path);
+        let target = if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            root_canonical.join(target)
+        };
+        let target_canonical = target.canonicalize().map_err(|e| {
+            format!(
+                "Failed to resolve target path '{}': {}",
+                target.display(),
+                e
+            )
+        })?;
+
+        if !target_canonical.starts_with(&root_canonical) {
+            return Err(format!(
+                "Refusing to open a path outside the project: '{}'",
+                target_canonical.display()
+            ));
+        }
+
+        let target = target_canonical.to_string_lossy().to_string();
+        match app.opener().open_path(target.clone(), None::<&str>) {
+            Ok(()) => Ok(()),
+            Err(open_err) => app
+                .opener()
+                .reveal_item_in_dir(target)
+                .map_err(|reveal_err| {
+                    format!(
+                        "Failed to open project path: {}; reveal fallback also failed: {}",
+                        open_err, reveal_err
+                    )
+                }),
+        }
+    })
+}
+
 fn validate_wiki_project_root(root: &Path) -> Result<(), String> {
     if !root.exists() {
         return Err(format!("Path does not exist: '{}'", root.display()));

@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, useCallback } from "react"
-import { FileSearch, Globe2, ImagePlus, Send, Square, X } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
+import { FileSearch, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import type { MessageImage } from "@/stores/chat-store"
-import type { ChatAgentMode } from "@/lib/chat-agent"
+import type { ChatAgentMode } from "@/lib/chat-agent-types"
 import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_MB,
@@ -19,9 +19,97 @@ export interface ChatSendOptions {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  skills: string[]
+  skillMode?: "auto" | "explicit"
+  approvedShellCommands?: string[]
+  shellCommand?: string
 }
 
 const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
+
+export interface ChatSkillOption {
+  id: string
+  name: string
+  description?: string
+  source: string
+}
+
+interface SlashSkillTrigger {
+  start: number
+  end: number
+  query: string
+}
+
+interface SlashSkillTokenEdit {
+  value: string
+  cursor: number
+}
+
+export type SkillChipDeleteTarget = "first" | "last" | null
+
+export function findSlashSkillTrigger(value: string, cursor: number): SlashSkillTrigger | null {
+  if (cursor < 0 || cursor > value.length) return null
+  const prefix = value.slice(0, cursor)
+  const match = /(^|\s)\/([^\s/]*)$/.exec(prefix)
+  if (!match) return null
+  const query = match[2] ?? ""
+  const suffix = value.slice(cursor)
+  const suffixEnd = suffix.search(/\s/)
+  return {
+    start: cursor - query.length - 1,
+    end: suffixEnd === -1 ? value.length : cursor + suffixEnd,
+    query,
+  }
+}
+
+export function filterSlashSkillOptions(
+  skills: ChatSkillOption[],
+  query: string,
+  sourceLabel: (source: string) => string,
+  limit = Number.POSITIVE_INFINITY,
+): ChatSkillOption[] {
+  const normalized = query.trim().toLowerCase()
+  return skills
+    .filter((skill) => {
+      if (!normalized) return true
+      return [
+        skill.name,
+        skill.id,
+        skill.description ?? "",
+        sourceLabel(skill.source),
+      ].some((part) => part.toLowerCase().includes(normalized))
+    })
+    .slice(0, limit)
+}
+
+export function removeSlashSkillToken(value: string, trigger: SlashSkillTrigger): SlashSkillTokenEdit {
+  const before = value.slice(0, trigger.start)
+  const after = value.slice(trigger.end)
+  const needsSpacer = before.length > 0 && after.length > 0 && !/\s$/.test(before) && !/^\s/.test(after)
+  return {
+    value: `${before}${needsSpacer ? " " : ""}${after}`,
+    cursor: before.length + (needsSpacer ? 1 : 0),
+  }
+}
+
+function slashSkillTokenKey(value: string, trigger: SlashSkillTrigger | null): string | null {
+  if (!trigger) return null
+  const token = value.slice(trigger.start, trigger.end)
+  return `${trigger.start}:${token}`
+}
+
+export function skillChipDeleteTarget(
+  key: string,
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  selectedSkillCount: number,
+): SkillChipDeleteTarget {
+  if (selectedSkillCount === 0 || selectionStart !== 0 || selectionEnd !== 0) return null
+  if (key === "Backspace") return "last"
+  if (key === "Delete" && value.length === 0) return "first"
+  return null
+}
 
 interface ChatInputProps {
   onSend: (text: string, images: MessageImage[], options: ChatSendOptions) => void
@@ -30,9 +118,12 @@ interface ChatInputProps {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  availableSkills: ChatSkillOption[]
+  selectedSkills: string[]
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
   onAgentModeChange: (mode: ChatAgentMode) => void
+  onSelectedSkillsChange: (skills: string[]) => void
   anyTxtAvailable?: boolean
   imageInputAvailable?: boolean
   placeholder?: string
@@ -45,9 +136,12 @@ export function ChatInput({
   useWebSearch,
   useAnyTxtSearch,
   agentMode,
+  availableSkills,
+  selectedSkills,
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
   onAgentModeChange,
+  onSelectedSkillsChange,
   anyTxtAvailable = true,
   imageInputAvailable = true,
   placeholder,
@@ -56,12 +150,61 @@ export function ChatInput({
   const [value, setValue] = useState("")
   const [images, setImages] = useState<MessageImage[]>([])
   const [imageError, setImageError] = useState<string | null>(null)
+  const [showSkills, setShowSkills] = useState(false)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const [slashSkillIndex, setSlashSkillIndex] = useState(0)
+  const [dismissedSlashKey, setDismissedSlashKey] = useState<string | null>(null)
+  const inputFrameRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const skillSourceLabel = useCallback(
+    (source: string) => t(`chat.skillSources.${source}`, { defaultValue: source }),
+    [t],
+  )
+
+  const slashSkillTrigger = useMemo(
+    () => findSlashSkillTrigger(value, cursorPosition),
+    [cursorPosition, value],
+  )
+  const slashSkillOptions = useMemo(() => {
+    if (!slashSkillTrigger) return []
+    return filterSlashSkillOptions(availableSkills, slashSkillTrigger.query, skillSourceLabel)
+  }, [availableSkills, skillSourceLabel, slashSkillTrigger])
+  const selectedSkillOptions = useMemo(() => {
+    const byId = new Map(availableSkills.map((skill) => [skill.id, skill]))
+    return selectedSkills.map((id) => byId.get(id) ?? {
+      id,
+      name: id,
+      source: "custom",
+    })
+  }, [availableSkills, selectedSkills])
+  const slashSkillKey = slashSkillTokenKey(value, slashSkillTrigger)
+  const showSlashSkills =
+    !!slashSkillTrigger
+    && slashSkillKey !== dismissedSlashKey
+    && slashSkillOptions.length > 0
+    && !isStreaming
 
   useEffect(() => {
     if (!anyTxtAvailable && useAnyTxtSearch) onUseAnyTxtSearchChange(false)
   }, [anyTxtAvailable, onUseAnyTxtSearchChange, useAnyTxtSearch])
+
+  useEffect(() => {
+    setSlashSkillIndex(0)
+    setDismissedSlashKey(null)
+  }, [slashSkillKey])
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const frame = inputFrameRef.current
+      if (!frame || frame.contains(event.target as Node)) return
+      setShowSkills(false)
+      if (slashSkillKey) setDismissedSlashKey(slashSkillKey)
+    }
+    document.addEventListener("pointerdown", onPointerDown)
+    return () => document.removeEventListener("pointerdown", onPointerDown)
+  }, [slashSkillKey])
 
   // Validate + decode a batch of files (from paste, drop, or the file
   // picker) and append the accepted ones to `images`. Rejections set a
@@ -144,11 +287,25 @@ export function ChatInput({
     setImageError(null)
   }, [])
 
+  const removeSelectedSkill = useCallback(
+    (id: string) => {
+      onSelectedSkillsChange(selectedSkills.filter((item) => item !== id))
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    },
+    [onSelectedSkillsChange, selectedSkills],
+  )
+
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value)
+    setCursorPosition(e.target.selectionStart ?? e.target.value.length)
     const ta = e.target
     ta.style.height = "auto"
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+  }, [])
+
+  const handleSelect = useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget
+    setCursorPosition(target.selectionStart ?? target.value.length)
   }, [])
 
   const handleSend = useCallback(() => {
@@ -159,14 +316,45 @@ export function ChatInput({
       setImageError(t("chat.imageInputUnavailable"))
       return
     }
-    onSend(trimmed, images, { useWebSearch, useAnyTxtSearch, agentMode })
+    onSend(trimmed, images, {
+      useWebSearch,
+      useAnyTxtSearch,
+      agentMode,
+      skills: selectedSkills,
+      skillMode: selectedSkills.length > 0 ? "explicit" : "auto",
+    })
     setValue("")
     setImages([])
     setImageError(null)
+    setShowSkills(false)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, t, useAnyTxtSearch, useWebSearch, value])
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
+
+  const applySlashSkill = useCallback(
+    (skill: ChatSkillOption) => {
+      const trigger = slashSkillTrigger
+      if (!trigger) return
+      const edit = removeSlashSkillToken(value, trigger)
+      const nextValue = edit.value
+      const nextCursor = edit.cursor
+      setValue(nextValue)
+      setCursorPosition(nextCursor)
+      setDismissedSlashKey(null)
+      onSelectedSkillsChange(selectedSkills.includes(skill.id) ? selectedSkills : [...selectedSkills, skill.id])
+      setShowSkills(false)
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.setSelectionRange(nextCursor, nextCursor)
+        ta.style.height = "auto"
+        ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+      })
+    },
+    [onSelectedSkillsChange, selectedSkills, slashSkillTrigger, value],
+  )
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -175,12 +363,54 @@ export function ChatInput({
       // input method picking an English word or phrase) and would
       // see the message fire before they finished typing.
       if (isImeComposing(e)) return
+      const target = e.currentTarget
+      const selectionStart = target.selectionStart ?? 0
+      const selectionEnd = target.selectionEnd ?? selectionStart
+      const chipDeleteTarget = !showSlashSkills
+        ? skillChipDeleteTarget(e.key, value, selectionStart, selectionEnd, selectedSkills.length)
+        : null
+      if (chipDeleteTarget) {
+        e.preventDefault()
+        e.stopPropagation()
+        removeSelectedSkill(chipDeleteTarget === "last" ? selectedSkills[selectedSkills.length - 1] : selectedSkills[0])
+        return
+      }
+      if (showSlashSkills) {
+        if (e.key === "Enter" && e.shiftKey) {
+          return
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault()
+          e.stopPropagation()
+          setSlashSkillIndex((idx) => Math.min(idx + 1, slashSkillOptions.length - 1))
+          return
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault()
+          e.stopPropagation()
+          setSlashSkillIndex((idx) => Math.max(idx - 1, 0))
+          return
+        }
+        if (e.key === "Tab" || e.key === "Enter") {
+          e.preventDefault()
+          e.stopPropagation()
+          const skill = slashSkillOptions[slashSkillIndex] ?? slashSkillOptions[0]
+          if (skill) applySlashSkill(skill)
+          return
+        }
+        if (e.key === "Escape") {
+          e.preventDefault()
+          e.stopPropagation()
+          if (slashSkillKey) setDismissedSlashKey(slashSkillKey)
+          return
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault()
         handleSend()
       }
     },
-    [handleSend],
+    [applySlashSkill, handleSend, removeSelectedSkill, selectedSkills, showSlashSkills, slashSkillIndex, slashSkillKey, slashSkillOptions, value],
   )
 
   const searchToggleClass = (active: boolean) =>
@@ -204,9 +434,17 @@ export function ChatInput({
     }
   }
 
+  const toggleSkill = (id: string) => {
+    if (selectedSkills.includes(id)) {
+      onSelectedSkillsChange(selectedSkills.filter((item) => item !== id))
+    } else {
+      onSelectedSkillsChange([...selectedSkills, id])
+    }
+  }
+
   return (
     <div className="border-t bg-background/95 p-3">
-      <div className="rounded-lg border border-border/80 bg-card/80 p-2 shadow-sm ring-1 ring-black/5 focus-within:border-ring/60 focus-within:ring-ring/20 dark:ring-white/5">
+      <div ref={inputFrameRef} className="relative rounded-lg border border-border/80 bg-card/80 p-2 shadow-sm ring-1 ring-black/5 focus-within:border-ring/60 focus-within:ring-ring/20 dark:ring-white/5">
         {images.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2 px-1">
             {images.map((img, i) => (
@@ -236,19 +474,77 @@ export function ChatInput({
             {t("chat.imageVisionHint")}
           </p>
         )}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          dir="auto"
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline)"}
-          disabled={isStreaming}
-          rows={1}
-          className="block w-full resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ maxHeight: "120px", overflowY: "auto" }}
-        />
+        <div className="flex flex-wrap items-start gap-1 px-1">
+          {selectedSkillOptions.map((skill) => (
+            <span
+              key={skill.id}
+              className="group mt-1 inline-flex h-7 max-w-[16rem] items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 text-xs font-medium text-emerald-700 shadow-sm dark:text-emerald-300"
+              title={`${skill.name} · ${skillSourceLabel(skill.source)}`}
+            >
+              <Sparkles className="h-3 w-3 shrink-0 text-emerald-500" />
+              <span className="truncate">/{skill.name}</span>
+              <button
+                type="button"
+                onClick={() => removeSelectedSkill(skill.id)}
+                className="rounded p-0.5 text-emerald-700/60 opacity-70 transition hover:bg-emerald-500/15 hover:text-emerald-700 group-hover:opacity-100 dark:text-emerald-300/70 dark:hover:text-emerald-300"
+                title={t("chat.removeSkill", { name: skill.name })}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            dir="auto"
+            onChange={handleInput}
+            onSelect={handleSelect}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline)"}
+            disabled={isStreaming}
+            rows={1}
+            className="min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm leading-6 placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ maxHeight: "120px", overflowY: "auto" }}
+          />
+        </div>
+        {showSlashSkills && (
+          <div className="absolute bottom-[4.75rem] left-4 right-4 z-30 max-w-xl rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-lg">
+            <div className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+              {t("chat.slashSkillHint")}
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {slashSkillOptions.map((skill, index) => {
+                const active = index === slashSkillIndex
+                const selected = selectedSkills.includes(skill.id)
+                return (
+                  <button
+                    key={`${skill.source}:${skill.id}`}
+                    type="button"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      applySlashSkill(skill)
+                    }}
+                    className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                      active ? "bg-accent text-foreground" : "hover:bg-accent/60"
+                    }`}
+                  >
+                    <Sparkles className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${selected ? "text-emerald-500" : "text-muted-foreground"}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{skill.name}</span>
+                      <span className="block truncate text-muted-foreground">
+                        {skill.description || skillSourceLabel(skill.source)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[10px] uppercase text-muted-foreground">
+                      {skillSourceLabel(skill.source)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -318,6 +614,66 @@ export function ChatInput({
                 )}
               </Tooltip>
             </TooltipProvider>
+            <div className="relative">
+              <button
+                type="button"
+                aria-expanded={showSkills}
+                onClick={() => setShowSkills((open) => !open)}
+                disabled={isStreaming || availableSkills.length === 0}
+                className={searchToggleClass(selectedSkills.length > 0)}
+                title={availableSkills.length === 0 ? t("chat.noSkillsAvailable") : t("chat.skills")}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {t("chat.skills")}
+                {selectedSkills.length > 0 && (
+                  <span className="ml-0.5 rounded bg-emerald-500/15 px-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    {selectedSkills.length}
+                  </span>
+                )}
+              </button>
+              {showSkills && availableSkills.length > 0 && (
+                <div className="absolute bottom-full left-0 z-20 mb-2 w-72 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+                  <div className="mb-1 px-1 text-xs font-medium text-muted-foreground">
+                    {t("chat.enabledSkills")}
+                    {selectedSkills.length === 0 && (
+                      <span className="ml-1 font-normal text-muted-foreground">
+                        {t("chat.skillsAutoMode", { defaultValue: "Auto" })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    {availableSkills.map((skill) => {
+                      const active = selectedSkills.includes(skill.id)
+                      return (
+                        <button
+                          key={`${skill.source}:${skill.id}`}
+                          type="button"
+                          onClick={() => toggleSkill(skill.id)}
+                          className={`mb-1 flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                            active ? "bg-accent text-foreground" : "hover:bg-accent/60"
+                          }`}
+                        >
+                          <span
+                            className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
+                              active ? "bg-emerald-500" : "bg-muted-foreground/30"
+                            }`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{skill.name}</span>
+                            <span className="block truncate text-muted-foreground">
+                              {skill.description || skillSourceLabel(skill.source)}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-[10px] uppercase text-muted-foreground">
+                            {skillSourceLabel(skill.source)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
             <div
               className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
               role="radiogroup"

@@ -11,14 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 use crate::cors::{local_cors_headers, request_origin};
-use crate::{clip_server, commands, server_bind};
+use crate::{agent, clip_server, commands, server_bind};
 
 const PORT: u16 = 19828;
 const API_PREFIX: &str = "/api/v1";
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+const MAX_CHAT_BODY_BYTES: usize = 40 * 1024 * 1024;
 const MAX_FILE_CONTENT_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_MAX_FILES: usize = 2_000;
 const HARD_MAX_FILES: usize = 10_000;
@@ -171,7 +173,7 @@ fn process_request(app: AppHandle, mut request: tiny_http::Request) {
         })
         .collect();
 
-    let body = match read_body(&mut request) {
+    let body = match read_body(&mut request, body_limit_for_request(&method, &url)) {
         Ok(body) => body,
         Err(err) => {
             respond_error(request, 400, &err, origin.as_deref());
@@ -230,6 +232,10 @@ fn handle_request(
             "mcpEnabled": api_mcp_enabled(app),
             "allowUnauthenticated": api_allow_unauthenticated(app),
             "allowLanAccess": api_allow_lan_access(app),
+            "agent": {
+                "chat": true,
+                "streaming": false,
+            },
         }));
     }
     if !path.starts_with(API_PREFIX) {
@@ -242,6 +248,9 @@ fn handle_request(
         // and tells well-behaved clients to back off rather than
         // retry instantly the way 401 would.
         return err(503, "API server is disabled in Settings → API Server");
+    }
+    if is_agent_chat_request(&method, &path) && !is_token_authorized(app, query, headers) {
+        return err(401, "Unauthorized");
     }
     if !is_authorized(app, query, headers) {
         return err(401, "Unauthorized");
@@ -277,9 +286,9 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
         }
-        (&Method::Post, ["projects", project_id, "chat"]) => {
-            let _ = project_id;
-            err(501, "Chat API is not implemented in the local Rust API server yet. The existing chat/RAG pipeline currently lives in the WebView; expose it after moving the shared chat pipeline behind a backend command.")
+        (&Method::Post, ["projects", project_id, "chat"]) => handle_chat(app, project_id, body),
+        (&Method::Post, ["projects", project_id, "chat", session_id, "cancel"]) => {
+            handle_cancel_chat(app, project_id, session_id)
         }
         _ => err(404, "Not found"),
     }
@@ -310,13 +319,42 @@ fn allow_request() -> bool {
     true
 }
 
-fn read_body(request: &mut tiny_http::Request) -> Result<String, String> {
-    let mut limited = request.as_reader().take(MAX_BODY_BYTES as u64 + 1);
+fn is_agent_chat_request(method: &Method, path: &str) -> bool {
+    let parts = path
+        .trim_start_matches(API_PREFIX)
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    method == &Method::Post
+        && matches!(
+            parts.as_slice(),
+            ["projects", _, "chat"] | ["projects", _, "chat", _, "cancel"]
+        )
+}
+
+fn body_limit_for_request(method: &Method, url: &str) -> usize {
+    let (path, _) = split_url(url);
+    let parts = path
+        .trim_start_matches(API_PREFIX)
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if method == &Method::Post && matches!(parts.as_slice(), ["projects", _, "chat"]) {
+        MAX_CHAT_BODY_BYTES
+    } else {
+        MAX_BODY_BYTES
+    }
+}
+
+fn read_body(request: &mut tiny_http::Request, max_body_bytes: usize) -> Result<String, String> {
+    let mut limited = request.as_reader().take(max_body_bytes as u64 + 1);
     let mut bytes = Vec::new();
     limited
         .read_to_end(&mut bytes)
         .map_err(|e| format!("Failed to read body: {e}"))?;
-    if bytes.len() > MAX_BODY_BYTES {
+    if bytes.len() > max_body_bytes {
         return Err("Request body too large".to_string());
     }
     String::from_utf8(bytes).map_err(|_| "Request body must be UTF-8".to_string())
@@ -390,6 +428,10 @@ fn is_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> 
     if !api_auth_required(app) {
         return true;
     }
+    is_token_authorized(app, query, headers)
+}
+
+fn is_token_authorized(app: &AppHandle, query: &str, headers: &[(String, String)]) -> bool {
     let Some(token) = api_token(app) else {
         return false;
     };
@@ -1632,10 +1674,151 @@ fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
     }
 }
 
+fn handle_chat(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let mut req: agent::AgentChatRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    if req
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        req.session_id = Some(format!("api_{}", Uuid::new_v4()));
+    }
+    if req
+        .run_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        req.run_id = Some(format!("run_{}", Uuid::new_v4()));
+    }
+    let requested_session_id = req.session_id.clone();
+    if let Some(session_id) = requested_session_id.as_deref() {
+        if req.history.is_empty() && !req.history_explicit {
+            req.history = app
+                .state::<agent::session::AgentSessionStore>()
+                .recent_messages(&project.path, session_id, 12)
+                .into_iter()
+                .map(|message| agent::types::AgentConversationMessage {
+                    role: message.role,
+                    content: message.content,
+                })
+                .collect();
+        }
+    }
+    let runtime_config = load_agent_runtime_config(app);
+    let runtime = agent::AgentRuntime::new(
+        project.id.clone(),
+        project.path.clone(),
+        runtime_config.embedding,
+        runtime_config.llm,
+        runtime_config.web_search,
+        runtime_config.anytxt,
+    );
+    let user_message_for_session = req.message.clone();
+    let persist_session = req.persist_session;
+    let session_id = req.session_id.clone().unwrap_or_default();
+    let run_id = req.run_id.clone().unwrap_or_default();
+    let cancellation = app
+        .state::<agent::cancel::AgentCancellationRegistry>()
+        .start(&project.id, &session_id, &run_id);
+    let result =
+        tauri::async_runtime::block_on(runtime.run_once_with_cancel(req, Some(cancellation)));
+    app.state::<agent::cancel::AgentCancellationRegistry>()
+        .finish(&project.id, &session_id, &run_id);
+    match result {
+        Ok(response) => {
+            if persist_session {
+                app.state::<agent::session::AgentSessionStore>()
+                    .append_turn(
+                        &project.path,
+                        &project.id,
+                        &response.session_id,
+                        &user_message_for_session,
+                        &response.message,
+                    );
+            }
+            ok(json!({
+                "ok": true,
+                "projectId": response.project_id,
+                "sessionId": response.session_id,
+                "mode": response.mode,
+                "message": {
+                    "role": "assistant",
+                    "content": response.message,
+                },
+                "references": response.references,
+                "toolEvents": response.tool_events,
+                "events": response.events,
+                "usage": response.usage,
+            }))
+        }
+        Err(e) if e == "message is required" => err(400, e),
+        Err(e) if e == "Agent turn cancelled" => err(499, e),
+        Err(e) => err(502, e),
+    }
+}
+
+fn handle_cancel_chat(app: &AppHandle, project_id: &str, session_id: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    ok(json!({
+        "ok": true,
+        "cancelled": app
+            .state::<agent::cancel::AgentCancellationRegistry>()
+            .cancel(&project.id, session_id, None),
+        "sessionId": session_id,
+    }))
+}
+
 fn load_embedding_config(app: &AppHandle) -> Option<commands::search::SearchEmbeddingConfig> {
     let parsed = load_app_state(app)?;
     let value = parsed.get("embeddingConfig")?.clone();
     serde_json::from_value::<commands::search::SearchEmbeddingConfig>(value).ok()
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgentRuntimeConfig {
+    embedding: Option<commands::search::SearchEmbeddingConfig>,
+    llm: Option<agent::provider::LlmConfig>,
+    web_search: Option<agent::tools::WebSearchConfig>,
+    anytxt: Option<agent::tools::AnyTxtConfig>,
+}
+
+fn load_agent_runtime_config(app: &AppHandle) -> AgentRuntimeConfig {
+    let Some(parsed) = load_app_state(app) else {
+        return AgentRuntimeConfig::default();
+    };
+    AgentRuntimeConfig {
+        embedding: parsed
+            .get("embeddingConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        llm: parsed
+            .get("llmConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        web_search: parsed
+            .get("searchApiConfig")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+        anytxt: parsed
+            .get("searchApiConfig")
+            .and_then(|value| value.get("anyTxt"))
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2426,6 +2609,38 @@ mod tests {
         assert!(should_rate_limit(
             &Method::Post,
             "/api/v1/projects/current/search"
+        ));
+    }
+
+    #[test]
+    fn chat_endpoint_allows_larger_multimodal_bodies() {
+        assert_eq!(
+            body_limit_for_request(&Method::Post, "/api/v1/projects/current/chat"),
+            MAX_CHAT_BODY_BYTES
+        );
+        assert_eq!(
+            body_limit_for_request(&Method::Post, "/api/v1/projects/current/search"),
+            MAX_BODY_BYTES
+        );
+    }
+
+    #[test]
+    fn chat_routes_are_recognized_as_agent_requests() {
+        assert!(is_agent_chat_request(
+            &Method::Post,
+            "/api/v1/projects/current/chat"
+        ));
+        assert!(is_agent_chat_request(
+            &Method::Post,
+            "/api/v1/projects/current/chat/session-1/cancel"
+        ));
+        assert!(!is_agent_chat_request(
+            &Method::Post,
+            "/api/v1/projects/current/search"
+        ));
+        assert!(!is_agent_chat_request(
+            &Method::Get,
+            "/api/v1/projects/current/chat"
         ));
     }
 

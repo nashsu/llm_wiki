@@ -27,6 +27,8 @@ export async function resetProjectState(): Promise<void> {
     useWebSearch: false,
     useAnyTxtSearch: false,
     agentMode: "standard",
+    selectedSkills: [],
+    disabledSkills: [],
   })
 
   useReviewStore.setState({

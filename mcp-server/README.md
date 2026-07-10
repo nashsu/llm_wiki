@@ -58,6 +58,7 @@ When API unauthenticated mode is enabled, omit `LLM_WIKI_API_TOKEN`. If MCP acce
 - `llm_wiki_read_file`: read an allowed text file such as `wiki/index.md`.
 - `llm_wiki_reviews`: list Review tab items. Defaults to unresolved items and supports `status`, `type`, and `limit` filters.
 - `llm_wiki_search`: search with the app's shared keyword/vector backend.
+- `llm_wiki_chat`: ask the backend Agent chat endpoint and receive answer text, references, usage, and tool events. `mode: deep` broadens backend evidence collection; full Deep Research workflows still live in the desktop app.
 - `llm_wiki_graph`: query the app's knowledge graph endpoint.
 - `llm_wiki_rescan_sources`: trigger a Source Watch rescan using the user's configured rules.
 

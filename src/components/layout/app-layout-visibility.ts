@@ -7,7 +7,7 @@ export function getAppLayoutVisibility(
 ): { showLeftPanel: boolean; hasRightPanel: boolean } {
   const isStandalone = isStandaloneView(activeView)
   return {
-    showLeftPanel: activeView !== "settings",
+    showLeftPanel: !isStandalone,
     hasRightPanel: !isStandalone && researchPanelOpen,
   }
 }
