@@ -1072,6 +1072,74 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     .map_err(|e| format!("write_file_atomic blocking task join error: {e}"))?
 }
 
+fn apply_text_selection_edit_inner(
+    project_path: &str,
+    file_path: &str,
+    prefix: &str,
+    selected_text: &str,
+    suffix: &str,
+    replacement: &str,
+) -> Result<String, String> {
+    let project = fs::canonicalize(project_path)
+        .map_err(|err| format!("Failed to resolve project path: {err}"))?;
+    let file = fs::canonicalize(file_path)
+        .map_err(|err| format!("Failed to resolve selected file: {err}"))?;
+    if !file.starts_with(&project) || !file.is_file() {
+        return Err(
+            "Selection edit target must be an existing file inside the project".to_string(),
+        );
+    }
+    let current = fs::read_to_string(&file)
+        .map_err(|err| format!("Failed to read selection edit target: {err}"))?;
+    let expected = format!("{prefix}{selected_text}{suffix}");
+    if current != expected {
+        return Err(
+            "The file changed after the selection was captured. Re-select the text before applying the Agent suggestion."
+                .to_string(),
+        );
+    }
+    let updated = format!("{prefix}{replacement}{suffix}");
+    file_sync::mark_app_write_path(&file);
+    crate::commands::file_history::record_file_version(
+        &file,
+        "baseline",
+        "before.agent.selection_edit",
+    );
+    fs::write(&file, &updated)
+        .map_err(|err| format!("Failed to apply Agent selection edit: {err}"))?;
+    crate::commands::file_history::record_file_version(&file, "agent", "agent.selection_edit");
+    file_sync::mark_app_write_path(&file);
+    Ok(updated)
+}
+
+/// Apply one Agent-proposed replacement without overwriting intervening user
+/// edits. The full prefix/selection/suffix snapshot is intentionally checked at
+/// the Rust write boundary; a frontend-only check would leave a TOCTOU window.
+#[tauri::command]
+pub async fn apply_text_selection_edit(
+    project_path: String,
+    file_path: String,
+    prefix: String,
+    selected_text: String,
+    suffix: String,
+    replacement: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("apply_text_selection_edit", || {
+            apply_text_selection_edit_inner(
+                &project_path,
+                &file_path,
+                &prefix,
+                &selected_text,
+                &suffix,
+                &replacement,
+            )
+        })
+    })
+    .await
+    .map_err(|err| format!("apply_text_selection_edit blocking task join error: {err}"))?
+}
+
 /// Whether a directory entry should appear in a listing.
 ///
 /// Hidden (dot-prefixed) entries are shown only when `include_hidden`
@@ -2270,5 +2338,41 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn selection_edit_rejects_stale_content_and_preserves_user_changes() {
+        let root = make_temp_dir("selection-edit");
+        let file = root.join("wiki/page.md");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "before selected after").unwrap();
+
+        let updated = apply_text_selection_edit_inner(
+            root.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "before ",
+            "selected",
+            " after",
+            "replacement",
+        )
+        .unwrap();
+        assert_eq!(updated, "before replacement after");
+
+        std::fs::write(&file, "user changed the file").unwrap();
+        let error = apply_text_selection_edit_inner(
+            root.to_str().unwrap(),
+            file.to_str().unwrap(),
+            "before ",
+            "selected",
+            " after",
+            "second replacement",
+        )
+        .unwrap_err();
+        assert!(error.contains("changed after the selection"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "user changed the file"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

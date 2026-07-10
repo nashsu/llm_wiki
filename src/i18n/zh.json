@@ -31,6 +31,33 @@
     "knowledge": "知识库",
     "files": "文件"
   },
+  "editor": {
+    "edit": "编辑",
+    "done": "完成",
+    "editRaw": "编辑原始 Markdown",
+    "doneEditing": "完成编辑",
+    "selection": {
+      "askAgent": "让 Agent 处理选中内容",
+      "placeholder": "解释、改写、缩短……",
+      "send": "发送",
+      "ask": "询问",
+      "edit": "修改",
+      "generating": "正在生成……",
+      "stop": "停止",
+      "askAgain": "继续询问",
+      "askOnlyHint": "该渲染选区无法唯一映射到 Markdown 源码位置。你仍可询问，但为防止误改，当前不能直接写回修改。"
+    },
+    "pageLinks": {
+      "button": "链接",
+      "title": "页面链接",
+      "outgoing": "出站链接",
+      "backlinks": "反向链接",
+      "missing": "缺失链接",
+      "noOutgoing": "当前页面没有出站 Wiki 链接。",
+      "noBacklinks": "暂无其他页面链接到这里。",
+      "noMissing": "所有 Wiki 链接都能解析到现有页面。"
+    }
+  },
   "research": {
     "title": "深度研究",
     "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
@@ -123,6 +150,15 @@
     "sourceCount_plural": "{{count}} 个资料"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "选中内容修改建议",
+      "reviewHint": "写入前请确认",
+      "original": "原文",
+      "replacement": "替换内容",
+      "accept": "接受",
+      "reject": "拒绝",
+      "applying": "正在应用……"
+    },
     "agentChanges": {
       "title": "Agent 文件修改",
       "taskTitle": "Agent 活动",

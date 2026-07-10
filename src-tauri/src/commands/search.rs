@@ -67,6 +67,22 @@ struct GraphPage {
     links: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinkEntry {
+    pub title: String,
+    pub path: Option<String>,
+    pub snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinksResponse {
+    pub outgoing: Vec<PageLinkEntry>,
+    pub backlinks: Vec<PageLinkEntry>,
+    pub missing: Vec<PageLinkEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchEmbeddingConfig {
@@ -118,6 +134,131 @@ pub async fn embedding_fetch(
         fetch_embedding_with_retry(&text, &cfg, max_retries.unwrap_or(3)).await
     })
     .await
+}
+
+#[tauri::command]
+pub async fn get_page_links(
+    project_path: String,
+    file_path: String,
+) -> Result<PageLinksResponse, String> {
+    tokio::task::spawn_blocking(move || get_page_links_inner(&project_path, &file_path))
+        .await
+        .map_err(|err| format!("page links worker failed: {err}"))?
+}
+
+/// Build link relationships from Markdown source rather than the UI's lazy
+/// file tree. Canonical paths enforce the project/wiki boundary, while the
+/// returned paths stay project-relative so all desktop platforms share one
+/// wire format and Windows separators never leak into frontend routing.
+fn get_page_links_inner(project_path: &str, file_path: &str) -> Result<PageLinksResponse, String> {
+    let project = fs::canonicalize(project_path)
+        .map_err(|err| format!("Failed to resolve project path: {err}"))?;
+    let file =
+        fs::canonicalize(file_path).map_err(|err| format!("Failed to resolve page path: {err}"))?;
+    let wiki_root = project.join("wiki");
+    if !file.starts_with(&wiki_root) || !file.is_file() {
+        return Err("Page links target must be an existing Markdown file under wiki/".to_string());
+    }
+
+    let mut pages = BTreeMap::<String, GraphPage>::new();
+    let canonical_project = project.to_string_lossy();
+    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
+        if pages.len() >= MAX_SEARCH_FILES
+            || !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let path = relative_to_project(&canonical_project, entry.path());
+        let title = extract_title(
+            &content,
+            entry
+                .path()
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default(),
+        );
+        pages.insert(
+            normalize_path(&path),
+            GraphPage {
+                path,
+                title,
+                links: extract_wikilinks(&content),
+                content,
+            },
+        );
+    }
+
+    let current_path = normalize_path(&relative_to_project(&canonical_project, &file));
+    let current = pages
+        .get(&current_path)
+        .ok_or_else(|| "Page is not available in the current wiki index".to_string())?;
+    let mut aliases = BTreeMap::<String, String>::new();
+    for (path, page) in &pages {
+        let wiki_relative = page.path.strip_prefix("wiki/").unwrap_or(&page.path);
+        let stem = file_stem(&page.path);
+        for alias in [
+            page.path.as_str(),
+            wiki_relative,
+            stem.as_str(),
+            page.title.as_str(),
+        ] {
+            aliases.insert(normalize_graph_alias(alias), path.clone());
+        }
+    }
+
+    let mut outgoing = Vec::new();
+    let mut missing = Vec::new();
+    for link in &current.links {
+        if let Some(target_path) = aliases.get(&normalize_graph_alias(link)) {
+            if let Some(target) = pages.get(target_path) {
+                outgoing.push(PageLinkEntry {
+                    title: target.title.clone(),
+                    path: Some(target.path.clone()),
+                    snippet: None,
+                });
+            }
+        } else {
+            missing.push(PageLinkEntry {
+                title: link.clone(),
+                path: None,
+                snippet: None,
+            });
+        }
+    }
+
+    let mut backlinks = Vec::new();
+    for (path, page) in &pages {
+        if path == &current_path {
+            continue;
+        }
+        let links_here = page.links.iter().any(|link| {
+            aliases
+                .get(&normalize_graph_alias(link))
+                .is_some_and(|target| target == &current_path)
+        });
+        if links_here {
+            backlinks.push(PageLinkEntry {
+                title: page.title.clone(),
+                path: Some(page.path.clone()),
+                snippet: Some(build_snippet(&page.content, &current.title)),
+            });
+        }
+    }
+
+    outgoing.sort_by(|a, b| a.title.cmp(&b.title));
+    outgoing.dedup_by(|a, b| a.path == b.path);
+    backlinks.sort_by(|a, b| a.title.cmp(&b.title));
+    missing.sort_by(|a, b| a.title.cmp(&b.title));
+    missing.dedup_by(|a, b| a.title == b.title);
+    Ok(PageLinksResponse {
+        outgoing,
+        backlinks,
+        missing,
+    })
 }
 
 pub async fn resolve_query_embedding(
@@ -1795,6 +1936,44 @@ mod tests {
                 && result.graph_related_to == vec!["Agent Runtime"]
         }));
         assert!(!out.results.iter().any(|result| result.title == "Unrelated"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn page_links_resolve_outgoing_backlinks_and_missing_targets() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/concepts/alpha.md",
+            "---\ntitle: Alpha\n---\n# Alpha\n\n[[Beta]] and [[Missing Page]].",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/beta.md",
+            "---\ntitle: Beta\n---\n# Beta\n\nBeta details.",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/gamma.md",
+            "---\ntitle: Gamma\n---\n# Gamma\n\nGamma references [[Alpha]] here.",
+        );
+
+        let links = get_page_links_inner(
+            root.to_str().unwrap(),
+            root.join("wiki/concepts/alpha.md").to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(links.outgoing.len(), 1);
+        assert_eq!(links.outgoing[0].title, "Beta");
+        assert_eq!(links.backlinks.len(), 1);
+        assert_eq!(links.backlinks[0].title, "Gamma");
+        assert!(links.backlinks[0]
+            .snippet
+            .as_deref()
+            .unwrap()
+            .contains("Alpha"));
+        assert_eq!(links.missing.len(), 1);
+        assert_eq!(links.missing[0].title, "Missing Page");
         let _ = fs::remove_dir_all(root);
     }
 

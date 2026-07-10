@@ -31,6 +31,33 @@
     "knowledge": "Knowledge",
     "files": "Files"
   },
+  "editor": {
+    "edit": "Edit",
+    "done": "Done",
+    "editRaw": "Edit raw Markdown",
+    "doneEditing": "Done editing",
+    "selection": {
+      "askAgent": "Ask Agent about selection",
+      "placeholder": "Explain, rewrite, shorten...",
+      "send": "Send",
+      "ask": "Ask",
+      "edit": "Edit",
+      "generating": "Generating...",
+      "stop": "Stop",
+      "askAgain": "Ask again",
+      "askOnlyHint": "This rendered selection cannot be mapped to one exact Markdown source range. You can ask about it, but editing is disabled to prevent changing the wrong text."
+    },
+    "pageLinks": {
+      "button": "Links",
+      "title": "Page links",
+      "outgoing": "Outgoing links",
+      "backlinks": "Backlinks",
+      "missing": "Missing links",
+      "noOutgoing": "This page has no outgoing wiki links.",
+      "noBacklinks": "No other page links here yet.",
+      "noMissing": "All wiki links resolve to existing pages."
+    }
+  },
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
@@ -123,6 +150,15 @@
     "sourceCount_plural": "{{count}} sources"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "Proposed selection edit",
+      "reviewHint": "Review before writing",
+      "original": "Original",
+      "replacement": "Replacement",
+      "accept": "Accept",
+      "reject": "Reject",
+      "applying": "Applying..."
+    },
     "agentChanges": {
       "title": "Agent file changes",
       "taskTitle": "Agent activity",
