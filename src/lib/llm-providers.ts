@@ -869,6 +869,20 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       }
     }
 
+    case "mistral":
+      return {
+        url: "https://api.mistral.ai/v1/chat/completions",
+        headers: {
+          "Content-Type": JSON_CONTENT_TYPE,
+          Authorization: `Bearer ${apiKey}`,
+        },
+        buildBody: (messages, overrides) => ({
+          ...buildOpenAiCompatibleBody(config, messages, overrides),
+          model,
+        }),
+        parseStream: parseOpenAiLine,
+      }
+
     case "ollama": {
       // Defense-in-depth for the same reason as the custom branch: if a
       // user pasted the full path as their Ollama URL, don't tack on

@@ -20,6 +20,7 @@ export type Provider =
   | "minimax"
   | "claude-code"
   | "codex-cli"
+  | "mistral"
 
 export interface LlmPreset {
   /** Stable id used as the dropdown value. */
@@ -162,6 +163,22 @@ export const LLM_PRESETS: LlmPreset[] = [
     baseUrl: "https://your-resource.openai.azure.com",
     defaultModel: "your-deployment-name",
     azureApiVersion: "2024-10-21",
+    suggestedContextSize: 128000,
+  },
+  {
+    id: "mistral",
+    label: "Mistral",
+    hint: "Official Mistral API",
+    provider: "mistral",
+    defaultModel: "mistral-large-latest",
+    suggestedModels: [
+      "mistral-large-latest",
+      "mistral-small-latest",
+      "mistral-medium-latest",
+      "mixtral-8x7b-instruct",
+      "mixtral-8x22b-instruct",
+      "mistral-tiny-latest",
+    ],
     suggestedContextSize: 128000,
   },
   {

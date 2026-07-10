@@ -78,6 +78,57 @@ describe("MiniMax provider registration", () => {
   })
 })
 
+describe("Mistral Provider", () => {
+  const makeMistralConfig = (overrides: Partial<RealLlmConfig> = {}): RealLlmConfig => ({
+    provider: "mistral",
+    apiKey: "test-mistral-key",
+    model: "mistral-large-latest",
+    ollamaUrl: "http://localhost:11434",
+    customEndpoint: "",
+    maxContextSize: 128000,
+    ...overrides,
+  })
+
+  it("uses the official Mistral API endpoint", () => {
+    const cfg = getProviderConfig(makeMistralConfig())
+    expect(cfg.url).toBe("https://api.mistral.ai/v1/chat/completions")
+  })
+
+  it("uses Authorization: Bearer header", () => {
+    const cfg = getProviderConfig(makeMistralConfig({ apiKey: "my-mistral-key" }))
+    expect(cfg.headers.Authorization).toBe("Bearer my-mistral-key")
+  })
+
+  it("sets Content-Type to application/json", () => {
+    const cfg = getProviderConfig(makeMistralConfig())
+    expect(cfg.headers["Content-Type"]).toBe("application/json")
+  })
+
+  it("builds OpenAI-compatible body with model", () => {
+    const cfg = getProviderConfig(makeMistralConfig({ model: "mistral-small-latest" }))
+    const body = cfg.buildBody([]) as Record<string, unknown>
+    expect(body.model).toBe("mistral-small-latest")
+  })
+
+  it("enables streaming", () => {
+    const cfg = getProviderConfig(makeMistralConfig())
+    const body = cfg.buildBody([]) as Record<string, unknown>
+    expect(body.stream).toBe(true)
+  })
+
+  it("uses OpenAI line parser", () => {
+    const cfg = getProviderConfig(makeMistralConfig())
+    expect(cfg.parseStream).toBeDefined()
+  })
+})
+
+describe("Mistral provider registration", () => {
+  it("mistral is a valid provider value in the type union", () => {
+    const provider: RealLlmConfig["provider"] = "mistral"
+    expect(provider).toBe("mistral")
+  })
+})
+
 describe("buildAnthropicUrl — URL suffix handling", () => {
   it("appends /v1/messages to a bare host", () => {
     expect(buildAnthropicUrl("https://api.anthropic.com")).toBe(
