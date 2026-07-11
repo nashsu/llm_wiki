@@ -5,8 +5,21 @@ import { buildLanguageDirective } from "./output-language"
 import { normalizePath } from "@/lib/path-utils"
 import { parseFrontmatter } from "./frontmatter"
 import type { LinkEntry } from "@/lib/auto-link-types"
+import { insertWikilinksInMarkdown } from "./markdown-wikilink-insertion"
+import {
+  hashAutoLinkContent,
+  StaleAutoLinkReviewError,
+} from "./auto-link-content-version"
 
 export type { LinkEntry } from "@/lib/auto-link-types"
+
+export interface SuggestWikilinksOptions {
+  content?: string
+}
+
+export interface ApplyWikilinksOptions {
+  expectedContentHash?: string
+}
 
 /**
  * Lightweight post-save enrichment: ask LLM to add [[wikilinks]] to a saved wiki page.
@@ -30,11 +43,12 @@ export async function suggestWikilinks(
   projectPath: string,
   filePath: string,
   llmConfig: LlmConfig,
+  options: SuggestWikilinksOptions = {},
 ): Promise<LinkEntry[]> {
   const pp = normalizePath(projectPath).replace(/\/+$/, "")
   const fp = normalizePath(filePath)
   const [content, index] = await Promise.all([
-    readFile(fp),
+    options.content === undefined ? readFile(fp) : Promise.resolve(options.content),
     readFile(`${pp}/wiki/index.md`).catch(() => ""),
   ])
 
@@ -114,9 +128,17 @@ export async function applyWikilinks(
   _projectPath: string,
   filePath: string,
   selectedLinks: LinkEntry[],
+  options: ApplyWikilinksOptions = {},
 ): Promise<void> {
   const fp = normalizePath(filePath)
   const content = await readFile(fp)
+
+  if (
+    options.expectedContentHash &&
+    await hashAutoLinkContent(content) !== options.expectedContentHash
+  ) {
+    throw new StaleAutoLinkReviewError()
+  }
 
   // Apply substitutions to the ORIGINAL content. This guarantees the only
   // change is inserted [[...]] brackets.
@@ -196,63 +218,11 @@ export function parseLinkResponse(raw: string): LinkEntry[] {
  * literal substring. Skip terms already inside an existing wikilink.
  */
 export function applyLinks(content: string, links: LinkEntry[]): string {
-  const { rawBlock } = parseFrontmatter(content)
-  const rawBlockStart = rawBlock ? content.indexOf(rawBlock) : -1
-  const bodyStart = rawBlockStart >= 0 ? rawBlockStart + rawBlock.length : 0
+  const { body: parsedBody, rawBlock } = parseFrontmatter(content)
+  const bodyStart = rawBlock && content.endsWith(parsedBody)
+    ? content.length - parsedBody.length
+    : 0
   const protectedPrefix = content.slice(0, bodyStart)
-  let body = content.slice(bodyStart)
-
-  // Track what we've already linked so we don't double-link
-  const linkedTargets = new Set<string>()
-
-  const longestTermsFirst = [...links].sort(
-    (left, right) => right.term.length - left.term.length,
-  )
-
-  for (const { term, target } of longestTermsFirst) {
-    if (linkedTargets.has(target.toLowerCase())) continue
-    if (!term || !target) continue
-
-    // Find first literal occurrence NOT already inside a [[...]] block
-    const idx = findUnlinkedOccurrence(body, term)
-    if (idx === -1) continue
-
-    const displayEqualsTarget = term.toLowerCase() === target.toLowerCase()
-    const replacement = displayEqualsTarget
-      ? `[[${term}]]`
-      : `[[${target}|${term}]]`
-    body = body.slice(0, idx) + replacement + body.slice(idx + term.length)
-    linkedTargets.add(target.toLowerCase())
-  }
-
-  return protectedPrefix + body
-}
-
-/** Find the first occurrence of `term` in text that isn't already wrapped in [[...]]. */
-function findUnlinkedOccurrence(text: string, term: string): number {
-  const wikilinkRanges = findWikilinkRanges(text)
-  let searchFrom = 0
-  while (searchFrom < text.length) {
-    const idx = text.indexOf(term, searchFrom)
-    if (idx === -1) return -1
-    const termEnd = idx + term.length
-    const overlapsWikilink = wikilinkRanges.some(
-      ([start, end]) => idx < end && termEnd > start,
-    )
-    if (overlapsWikilink) {
-      searchFrom = idx + 1
-      continue
-    }
-    return idx
-  }
-  return -1
-}
-
-function findWikilinkRanges(text: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = []
-  const wikilinkPattern = /\[\[[\s\S]*?\]\]/g
-  for (const match of text.matchAll(wikilinkPattern)) {
-    ranges.push([match.index, match.index + match[0].length])
-  }
-  return ranges
+  const body = content.slice(bodyStart)
+  return protectedPrefix + insertWikilinksInMarkdown(body, links)
 }

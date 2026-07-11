@@ -175,6 +175,46 @@ describe("findCatalogMatches", () => {
     ])
   })
 
+  it("requires a complete token when matching short uppercase symbols", () => {
+    expect(
+      findCatalogMatches("AR", [
+        page("carbon-metabolism", { title: "Carbon metabolism" }),
+      ]),
+    ).toEqual([])
+
+    expect(
+      findCatalogMatches("AR", [
+        page("ar-v7", { title: "AR-V7 signaling" }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        target: "ar-v7",
+        band: "high",
+        matchKind: "symbol-unique",
+      }),
+    ])
+  })
+
+  it("keeps multiple token-boundary symbol matches out of High", () => {
+    expect(
+      findCatalogMatches("AR", [
+        page("ar-v7", { title: "AR-V7 signaling" }),
+        page("androgen-receptor", { tags: ["AR"] }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        target: "androgen-receptor",
+        band: "medium",
+        matchKind: "ambiguous-strong",
+      }),
+      expect.objectContaining({
+        target: "ar-v7",
+        band: "medium",
+        matchKind: "ambiguous-strong",
+      }),
+    ])
+  })
+
   it("emits one candidate when slug, title, and tag match the same page", () => {
     expect(
       findCatalogMatches("GDF3", [

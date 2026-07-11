@@ -30,6 +30,16 @@ const mockSuggest = vi.mocked(suggestWikilinks)
 const mockLoadIgnores = vi.mocked(loadAutoLinkIgnoreRules)
 const mockBuildSuggestions = vi.mocked(buildAutoLinkSuggestions)
 
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  )
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
 const llmConfig: LlmConfig = {
   provider: "openai",
   apiKey: "test-key",
@@ -167,11 +177,19 @@ describe("prepareAutoLinkReview", () => {
     mockSuggest.mockResolvedValue([{ term: "GDF3", target: "gdf3" }])
     mockBuildSuggestions.mockReturnValue([suggestion])
 
-    await expect(prepareAutoLinkReview(params())).resolves.toEqual({
+    const reviewParams = params()
+    await expect(prepareAutoLinkReview(reviewParams)).resolves.toEqual({
       status: "ready",
       suggestions: [suggestion],
+      contentHash: await sha256(reviewParams.fileContent),
     })
     expect(mockBuildCatalog).toHaveBeenCalledWith(fileTree, "/project")
     expect(mockLoadIgnores).toHaveBeenCalledWith("/project")
+    expect(mockSuggest).toHaveBeenCalledWith(
+      "/project",
+      "/project/wiki/current.md",
+      llmConfig,
+      { content: reviewParams.fileContent },
+    )
   })
 })

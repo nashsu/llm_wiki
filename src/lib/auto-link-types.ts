@@ -1,6 +1,7 @@
 export interface LinkEntry {
   term: string
   target: string
+  alternativeTerms?: string[]
 }
 
 export interface PageCatalogEntry {

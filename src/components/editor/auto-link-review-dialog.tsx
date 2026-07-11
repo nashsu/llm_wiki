@@ -25,13 +25,14 @@ import {
 } from "@/components/ui/tooltip"
 import type { AutoLinkReviewResult } from "@/lib/auto-link-review"
 import {
-  countSuggestionsByBand,
   createInitialAutoLinkSelection,
+  groupAutoLinkSuggestionsByTarget,
   isAutoLinkReviewInteractionBusy,
   selectedLinksFromState,
   setSuggestionSelected,
   setSuggestionTarget,
   shouldAllowAutoLinkOpenChange,
+  type AutoLinkSuggestionGroup,
   type AutoLinkSelectionState,
 } from "@/lib/auto-link-review-state"
 import type {
@@ -131,9 +132,19 @@ export function AutoLinkReviewDialog({
   }, [open, result])
 
   const suggestions = result?.status === "ready" ? result.suggestions : []
+  const groups = useMemo(
+    () => groupAutoLinkSuggestionsByTarget(suggestions, selection),
+    [selection, suggestions],
+  )
   const counts = useMemo(
-    () => countSuggestionsByBand(suggestions),
-    [suggestions],
+    () => groups.reduce<Record<ConfidenceBand, number>>(
+      (current, group) => {
+        current[group.band]++
+        return current
+      },
+      { high: 0, medium: 0, low: 0 },
+    ),
+    [groups],
   )
   const selectedLinks = useMemo(
     () => selectedLinksFromState(suggestions, selection),
@@ -183,7 +194,7 @@ export function AutoLinkReviewDialog({
           <DialogTitle>Auto Link Review</DialogTitle>
           <DialogDescription>
             {result?.status === "ready"
-              ? `${suggestions.length} suggestions: ${counts.high} High, ${counts.medium} Medium, ${counts.low} Low.`
+              ? `${groups.length} target suggestions: ${counts.high} High, ${counts.medium} Medium, ${counts.low} Low.`
               : "Review link suggestions for the current wiki page."}
           </DialogDescription>
         </DialogHeader>
@@ -203,7 +214,7 @@ export function AutoLinkReviewDialog({
                   <SuggestionSection
                     title="High confidence"
                     band="high"
-                    suggestions={suggestions}
+                    groups={groups}
                     selection={selection}
                     pendingIgnore={pendingIgnore}
                     interactionsDisabled={interactionBusy}
@@ -214,7 +225,7 @@ export function AutoLinkReviewDialog({
                   <SuggestionSection
                     title="Medium confidence"
                     band="medium"
-                    suggestions={suggestions}
+                    groups={groups}
                     selection={selection}
                     pendingIgnore={pendingIgnore}
                     interactionsDisabled={interactionBusy}
@@ -241,7 +252,7 @@ export function AutoLinkReviewDialog({
                       <div className="mt-3">
                         <SuggestionRows
                           band="low"
-                          suggestions={suggestions}
+                          groups={groups}
                           selection={selection}
                           pendingIgnore={pendingIgnore}
                           interactionsDisabled={interactionBusy}
@@ -318,7 +329,7 @@ function EmptyState({
 
 interface SuggestionRowsProps {
   band: ConfidenceBand
-  suggestions: AutoLinkSuggestion[]
+  groups: AutoLinkSuggestionGroup[]
   selection: AutoLinkSelectionState
   pendingIgnore: string | null
   interactionsDisabled: boolean
@@ -331,7 +342,7 @@ function SuggestionSection({
   title,
   ...props
 }: SuggestionRowsProps & { title: string }) {
-  if (!props.suggestions.some((suggestion) => suggestion.band === props.band)) {
+  if (!props.groups.some((group) => group.band === props.band)) {
     return null
   }
   return (
@@ -346,7 +357,7 @@ function SuggestionSection({
 
 function SuggestionRows({
   band,
-  suggestions,
+  groups,
   selection,
   pendingIgnore,
   interactionsDisabled,
@@ -356,32 +367,43 @@ function SuggestionRows({
 }: SuggestionRowsProps) {
   return (
     <div className="divide-y rounded-md border">
-      {suggestions
-        .filter((suggestion) => suggestion.band === band)
-        .map((suggestion, index) => {
-          const selected = selection.selectedIds.has(suggestion.id)
-          const selectedTarget = selection.selectedTargets[suggestion.id]
-            ?? suggestion.selectedTarget
+      {groups
+        .filter((group) => group.band === band)
+        .map((group, index) => {
+          const suggestion = group.primary
+          const selected = group.suggestions.some((item) =>
+            selection.selectedIds.has(item.id),
+          )
+          const selectedTarget = group.target
           const selectedAlternative = suggestion.alternatives.find(
             (alternative) => alternative.target === selectedTarget,
           ) ?? suggestion.alternatives[0]
           const checkboxId = `auto-link-${band}-${index}`
+          const otherTerms = group.suggestions
+            .slice(1)
+            .map((item) => item.term)
           const termPending = pendingIgnore === `term:${suggestion.id}`
           const pairPending = pendingIgnore
             === `pair:${suggestion.id}:${selectedTarget}`
 
           return (
-            <div key={suggestion.id} className="flex gap-3 px-3 py-3">
+            <div
+              key={`${group.target}\u0000${suggestion.id}`}
+              className="flex gap-3 px-3 py-3"
+            >
               <input
                 id={checkboxId}
                 type="checkbox"
                 checked={selected}
                 onChange={(event) => {
                   onSelectionChange((current) =>
-                    setSuggestionSelected(
+                    group.suggestions.reduce(
+                      (next, item) => setSuggestionSelected(
+                        next,
+                        item.id,
+                        event.target.checked,
+                      ),
                       current,
-                      suggestion.id,
-                      event.target.checked,
                     ),
                   )
                 }}
@@ -444,6 +466,13 @@ function SuggestionRows({
                 <p className="text-xs text-muted-foreground">
                   {selectedAlternative?.reason ?? suggestion.reason}
                 </p>
+                {otherTerms.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Also found at {otherTerms.length} other candidate
+                    {otherTerms.length === 1 ? " occurrence" : " occurrences"}:
+                    {` ${otherTerms.join(", ")}`}
+                  </p>
+                )}
               </div>
 
               <div className="flex shrink-0 items-start gap-1">

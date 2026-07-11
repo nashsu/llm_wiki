@@ -10,6 +10,13 @@ export interface AutoLinkSelectionState {
   lowExpanded: boolean
 }
 
+export interface AutoLinkSuggestionGroup {
+  target: string
+  primary: AutoLinkSuggestion
+  suggestions: AutoLinkSuggestion[]
+  band: ConfidenceBand
+}
+
 export function shouldAllowAutoLinkOpenChange(
   nextOpen: boolean,
   applying: boolean,
@@ -72,16 +79,42 @@ export function selectedLinksFromState(
   suggestions: AutoLinkSuggestion[],
   state: AutoLinkSelectionState,
 ): LinkEntry[] {
-  return suggestions.flatMap((suggestion): LinkEntry[] => {
-    if (!state.selectedIds.has(suggestion.id)) return []
-    const requestedTarget = state.selectedTargets[suggestion.id]
-    const selectedTarget = suggestion.alternatives.some(
-      (alternative) => alternative.target === requestedTarget,
-    )
-      ? requestedTarget
-      : suggestion.selectedTarget
-    return [{ term: suggestion.term, target: selectedTarget }]
-  })
+  return groupAutoLinkSuggestionsByTarget(suggestions, state).flatMap(
+    (group): LinkEntry[] => {
+      if (!group.suggestions.some((item) => state.selectedIds.has(item.id))) {
+        return []
+      }
+      const terms = [...new Set(group.suggestions.map((item) => item.term))]
+      return [{
+        term: terms[0],
+        target: group.target,
+        ...(terms.length > 1 ? { alternativeTerms: terms.slice(1) } : {}),
+      }]
+    },
+  )
+}
+
+export function groupAutoLinkSuggestionsByTarget(
+  suggestions: AutoLinkSuggestion[],
+  state: AutoLinkSelectionState,
+): AutoLinkSuggestionGroup[] {
+  const groups = new Map<string, AutoLinkSuggestionGroup>()
+  for (const suggestion of suggestions) {
+    const target = resolvedSuggestionTarget(suggestion, state)
+    const key = target.toLowerCase()
+    const group = groups.get(key)
+    if (group) {
+      group.suggestions.push(suggestion)
+    } else {
+      groups.set(key, {
+        target,
+        primary: suggestion,
+        suggestions: [suggestion],
+        band: suggestion.band,
+      })
+    }
+  }
+  return [...groups.values()]
 }
 
 export function countSuggestionsByBand(
@@ -94,4 +127,16 @@ export function countSuggestionsByBand(
   }
   for (const suggestion of suggestions) counts[suggestion.band]++
   return counts
+}
+
+function resolvedSuggestionTarget(
+  suggestion: AutoLinkSuggestion,
+  state: AutoLinkSelectionState,
+): string {
+  const requestedTarget = state.selectedTargets[suggestion.id]
+  return suggestion.alternatives.some(
+    (alternative) => alternative.target === requestedTarget,
+  )
+    ? requestedTarget
+    : suggestion.selectedTarget
 }

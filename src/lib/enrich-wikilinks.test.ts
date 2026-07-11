@@ -25,6 +25,16 @@ const mockStreamChat = vi.mocked(streamChat)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
 
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  )
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
 function fakeLlmConfig(): LlmConfig {
   return {
     provider: "openai",
@@ -246,6 +256,41 @@ describe("applyWikilinks", () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
     expect(useWikiStore.getState().dataVersion).toBe(0)
   })
+
+  it("rejects a stale review before writing or bumping dataVersion", async () => {
+    const scannedContent = "Transformer was scanned."
+    mockReadFile.mockResolvedValue("The page changed. Transformer remains.")
+
+    await expect(
+      applyWikilinks(
+        "/project",
+        "/project/wiki/note.md",
+        [{ term: "Transformer", target: "transformer" }],
+        { expectedContentHash: await sha256(scannedContent) },
+      ),
+    ).rejects.toThrow("changed after Auto Link scanned it")
+
+    expect(mockWriteFile).not.toHaveBeenCalled()
+    expect(useWikiStore.getState().dataVersion).toBe(0)
+  })
+
+  it("applies links when the review hash still matches", async () => {
+    const content = "Transformer was scanned."
+    mockReadFile.mockResolvedValue(content)
+
+    await applyWikilinks(
+      "/project",
+      "/project/wiki/note.md",
+      [{ term: "Transformer", target: "transformer" }],
+      { expectedContentHash: await sha256(content) },
+    )
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/project/wiki/note.md",
+      "[[Transformer]] was scanned.",
+    )
+    expect(useWikiStore.getState().dataVersion).toBe(1)
+  })
 })
 
 describe("enrichWithWikilinks", () => {
@@ -302,6 +347,81 @@ describe("parseLinkResponse", () => {
 })
 
 describe("applyLinks", () => {
+  it.each([
+    [
+      "fenced code",
+      "```text\nTransformer\n```\n\nTransformer prose.",
+      "```text\nTransformer\n```\n\n[[Transformer]] prose.",
+    ],
+    [
+      "indented code",
+      "    Transformer\n\nTransformer prose.",
+      "    Transformer\n\n[[Transformer]] prose.",
+    ],
+    [
+      "inline code",
+      "`Transformer` and Transformer prose.",
+      "`Transformer` and [[Transformer]] prose.",
+    ],
+    [
+      "Markdown links",
+      "[Transformer](https://example.com/Transformer) and Transformer prose.",
+      "[Transformer](https://example.com/Transformer) and [[Transformer]] prose.",
+    ],
+    [
+      "reference links",
+      "[Transformer][transformer-ref]\n\n[transformer-ref]: https://example.com/Transformer\n\nTransformer prose.",
+      "[Transformer][transformer-ref]\n\n[transformer-ref]: https://example.com/Transformer\n\n[[Transformer]] prose.",
+    ],
+    [
+      "images",
+      "![Transformer](https://example.com/Transformer.png)\n\nTransformer prose.",
+      "![Transformer](https://example.com/Transformer.png)\n\n[[Transformer]] prose.",
+    ],
+    [
+      "HTML",
+      "<span>Transformer</span>\n\nTransformer prose.",
+      "<span>Transformer</span>\n\n[[Transformer]] prose.",
+    ],
+    [
+      "bare URLs",
+      "https://example.com/Transformer\n\nTransformer prose.",
+      "https://example.com/Transformer\n\n[[Transformer]] prose.",
+    ],
+  ])("links prose after protected %s", (_name, content, expected) => {
+    expect(applyLinks(content, [
+      { term: "Transformer", target: "transformer" },
+    ])).toBe(expected)
+  })
+
+  it("applies planned insertions from the original offsets", () => {
+    expect(applyLinks("Alpha then Beta then Gamma.", [
+      { term: "Alpha", target: "alpha" },
+      { term: "Beta", target: "beta" },
+      { term: "Gamma", target: "gamma" },
+    ])).toBe("[[Alpha]] then [[Beta]] then [[Gamma]].")
+  })
+
+  it("links the earliest safe occurrence among terms grouped by target", () => {
+    expect(applyLinks("Alias appears before Canonical.", [
+      {
+        term: "Canonical",
+        target: "shared-page",
+        alternativeTerms: ["Alias"],
+      },
+    ])).toBe("[[shared-page|Alias]] appears before Canonical.")
+  })
+
+  it("prefers the longer grouped term when occurrences start together", () => {
+    expect(applyLinks("kidney axis connects organs.", [
+      {
+        term: "kidney",
+        target: "gut-kidney-axis",
+        alternativeTerms: ["kidney axis"],
+      },
+    ])).toBe("[[gut-kidney-axis|kidney axis]] connects organs.")
+  })
+
   it("skips a term anywhere inside an existing wikilink and links a later occurrence", () => {
     const content = "[[transformer|The Transformer architecture]] made Transformer popular."
 

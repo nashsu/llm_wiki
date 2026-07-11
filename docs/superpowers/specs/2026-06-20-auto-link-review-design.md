@@ -181,6 +181,30 @@ The existing `applyLinks` design should stay: it edits only the original content
 
 While implementing the review feature, fix the existing occurrence check so a term is skipped if it falls anywhere inside an existing `[[...]]` range. The current narrow check only inspects nearby characters and can miss some existing wikilinks.
 
+## First-Round Reliability Hardening
+
+Before adding batch scans or background processing, strengthen the single-page flow in five areas.
+
+### Symbol Boundaries
+
+Uppercase abbreviations and gene-like symbols must match complete titles, tags, or normalized slug/title tokens. A symbol must never become High merely because its lowercase spelling is a substring of an ordinary word. Symbol matches become High only when exactly one real catalog target has a strong boundary-aware match; multiple strong targets become Medium.
+
+### Markdown-Aware Writes
+
+Link insertion must be planned from a Markdown AST and may edit only ordinary text nodes. It must skip frontmatter, fenced and indented code, inline code, existing wikilinks, Markdown links and link references, images, HTML, and URLs. The implementation must collect all edits against the original content and apply them from the end of the document toward the beginning so earlier offsets remain stable.
+
+### Stale Review Detection
+
+The exact content sent for suggestion discovery receives a SHA-256 hash. A ready review carries that hash. Before applying links, the app rereads the page and compares its current hash with the review hash. A mismatch aborts without writing and asks the user to scan again.
+
+### One Write Per Target
+
+Selected suggestions are grouped by final target. V1 inserts at most one link to each target page, choosing the earliest eligible occurrence among the selected terms for that target and preferring the longer term when occurrences start at the same offset. The review UI exposes that a target has additional candidate occurrences, and the Apply count is the number of unique targets that will actually be written.
+
+### Regression Coverage
+
+Focused tests must cover symbol boundaries, all protected Markdown node types, reverse-order multi-edit application, stale content rejection, duplicate-target grouping, additional-occurrence display data, and equality between the Apply count and the number of planned target writes.
+
 ## Review Panel
 
 The panel needs these actions:
@@ -232,3 +256,9 @@ Add tests for:
 - embedding-based alternatives
 - model-supplied confidence scores
 - automatic writes before user confirmation
+- batch scans and background processing
+- candidate sentence context preview
+- one-click Auto Link undo
+- ignore-rule management UI
+- Auto Link internationalization
+- reference-frequency ranking beyond a future weak tie-break

@@ -7,9 +7,10 @@ import { suggestWikilinks } from "./enrich-wikilinks"
 import { parseFrontmatter } from "./frontmatter"
 import { normalizePath } from "./path-utils"
 import { buildPageCatalog } from "./page-catalog"
+import { hashAutoLinkContent } from "./auto-link-content-version"
 
 export type AutoLinkReviewResult =
-  | { status: "ready"; suggestions: AutoLinkSuggestion[] }
+  | { status: "ready"; suggestions: AutoLinkSuggestion[]; contentHash: string }
   | { status: "empty"; message: string }
   | { status: "no-targets"; message: string }
   | { status: "none"; message: string }
@@ -40,7 +41,10 @@ export async function prepareAutoLinkReview(params: {
       }
     }
 
-    const rawLinks = await suggestWikilinks(projectPath, filePath, llmConfig)
+    const [rawLinks, contentHash] = await Promise.all([
+      suggestWikilinks(projectPath, filePath, llmConfig, { content: fileContent }),
+      hashAutoLinkContent(fileContent),
+    ])
     const ignoreRules = await loadAutoLinkIgnoreRules(projectPath)
     const suggestions = buildAutoLinkSuggestions(
       rawLinks,
@@ -50,7 +54,7 @@ export async function prepareAutoLinkReview(params: {
     if (suggestions.length === 0) {
       return { status: "none", message: "No link suggestions found." }
     }
-    return { status: "ready", suggestions }
+    return { status: "ready", suggestions, contentHash }
   } catch (error) {
     return {
       status: "error",

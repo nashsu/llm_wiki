@@ -6,6 +6,7 @@ import type {
 import {
   countSuggestionsByBand,
   createInitialAutoLinkSelection,
+  groupAutoLinkSuggestionsByTarget,
   isAutoLinkReviewInteractionBusy,
   selectedLinksFromState,
   setSuggestionSelected,
@@ -83,6 +84,46 @@ describe("selection updates", () => {
 
     expect(selectedLinksFromState(suggestions, state)).toEqual([
       { term: "high-term", target: "real" },
+    ])
+  })
+
+  it("groups selected occurrences into one apply item per target", () => {
+    const suggestions = [
+      suggestion("first", "high", true, ["shared-target"]),
+      suggestion("second", "high", true, ["shared-target"]),
+    ]
+    const state = createInitialAutoLinkSelection(suggestions)
+
+    expect(groupAutoLinkSuggestionsByTarget(suggestions, state)).toEqual([
+      expect.objectContaining({
+        target: "shared-target",
+        primary: suggestions[0],
+        suggestions,
+      }),
+    ])
+    expect(selectedLinksFromState(suggestions, state)).toEqual([
+      {
+        term: "first-term",
+        target: "shared-target",
+        alternativeTerms: ["second-term"],
+      },
+    ])
+  })
+
+  it("includes every occurrence when any member of a target group is selected", () => {
+    const suggestions = [
+      suggestion("high", "high", true, ["shared-target"]),
+      suggestion("medium", "medium", false, ["shared-target"]),
+    ]
+    const state = createInitialAutoLinkSelection(suggestions)
+
+    expect([...state.selectedIds]).toEqual(["high"])
+    expect(selectedLinksFromState(suggestions, state)).toEqual([
+      {
+        term: "high-term",
+        target: "shared-target",
+        alternativeTerms: ["medium-term"],
+      },
     ])
   })
 })

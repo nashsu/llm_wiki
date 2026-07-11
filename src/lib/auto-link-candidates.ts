@@ -71,6 +71,13 @@ export function isLikelySymbol(term: string): boolean {
   return /^[A-Z][A-Z0-9]{1,}$/.test(term.trim())
 }
 
+function containsNormalizedToken(field: string, token: string): boolean {
+  return field
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .includes(token)
+}
+
 export function findCatalogMatches(
   term: string,
   catalog: PageCatalogEntry[],
@@ -101,7 +108,10 @@ export function findCatalogMatches(
       ...normalizedTags,
     ]
     const symbolMatch =
-      symbol && normalizedFields.some((field) => field.includes(normalizedTerm))
+      symbol &&
+      normalizedFields.some((field) =>
+        containsNormalizedToken(field, normalizedTerm),
+      )
     const crossLanguageMatch =
       nonAscii &&
       [entry.title, ...entry.tags].some((field) =>
@@ -113,12 +123,14 @@ export function findCatalogMatches(
     const meaningfulTitleTokens = normalizedTitle
       .split(" ")
       .filter((token) => token.length >= 4 && !GENERIC_TERMS.has(token))
-    const titleRelated =
-      normalizedTitle.includes(normalizedTerm) ||
-      meaningfulTitleTokens.some((token) => normalizedTerm.includes(token))
-    const slugPartial =
-      normalizedSlug.includes(normalizedTerm) ||
-      normalizedTerm.includes(normalizedSlug)
+    const titleRelated = symbol
+      ? containsNormalizedToken(normalizedTitle, normalizedTerm)
+      : normalizedTitle.includes(normalizedTerm) ||
+        meaningfulTitleTokens.some((token) => normalizedTerm.includes(token))
+    const slugPartial = symbol
+      ? containsNormalizedToken(normalizedSlug, normalizedTerm)
+      : normalizedSlug.includes(normalizedTerm) ||
+        normalizedTerm.includes(normalizedSlug)
 
     if (
       !exactSlug &&

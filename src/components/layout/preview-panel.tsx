@@ -33,6 +33,7 @@ interface AutoLinkContext {
   projectId: string
   projectPath: string
   filePath: string
+  contentHash?: string
 }
 
 export function PreviewPanel() {
@@ -239,6 +240,7 @@ export function PreviewPanel() {
         llmConfig,
       })
       if (!isCurrentAutoLinkContext(context)) return
+      if (result.status === "ready") context.contentHash = result.contentHash
       setAutoLinkResult(result)
     } catch (error) {
       if (!isCurrentAutoLinkContext(context)) return
@@ -272,6 +274,7 @@ export function PreviewPanel() {
           context.projectPath,
           context.filePath,
           links,
+          { expectedContentHash: context.contentHash },
         )
         if (!isCurrentAutoLinkContext(context)) return
         const updatedContent = await readFile(context.filePath)
@@ -306,12 +309,13 @@ export function PreviewPanel() {
       setAutoLinkResult((current) => {
         if (current?.status !== "ready") return current
         const normalizedTerm = term.trim().toLowerCase()
-        return reviewResultAfterFiltering(
-          current.suggestions.filter(
+          return reviewResultAfterFiltering(
+            current.suggestions.filter(
             (suggestion) =>
               suggestion.term.trim().toLowerCase() !== normalizedTerm,
-          ),
-        )
+            ),
+            current.contentHash,
+          )
       })
     } catch (error) {
       if (isCurrentAutoLinkContext(context)) {
@@ -360,7 +364,7 @@ export function PreviewPanel() {
               }]
             },
           )
-          return reviewResultAfterFiltering(suggestions)
+          return reviewResultAfterFiltering(suggestions, current.contentHash)
         })
       } catch (error) {
         if (isCurrentAutoLinkContext(context)) {
@@ -544,9 +548,10 @@ function isWikiMarkdownFile(filePath: string, projectPath: string): boolean {
 
 function reviewResultAfterFiltering(
   suggestions: AutoLinkSuggestion[],
+  contentHash: string,
 ): AutoLinkReviewResult {
   return suggestions.length > 0
-    ? { status: "ready", suggestions }
+    ? { status: "ready", suggestions, contentHash }
     : { status: "none", message: "No link suggestions found." }
 }
 
