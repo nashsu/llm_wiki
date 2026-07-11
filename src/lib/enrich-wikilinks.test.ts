@@ -84,6 +84,29 @@ describe("suggestWikilinks", () => {
     expect(useWikiStore.getState().dataVersion).toBe(0)
   })
 
+  it("disables reasoning for deterministic JSON suggestions", async () => {
+    mockSuggestionFiles("Transformer uses Attention.")
+    mockStreamChatReturns(JSON.stringify({ links: [] }))
+
+    await suggestWikilinks(
+      "/project",
+      "/project/wiki/note.md",
+      fakeLlmConfig(),
+    )
+
+    expect(mockStreamChat).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      {
+        temperature: 0.1,
+        max_tokens: 2048,
+        reasoning: { mode: "off" },
+      },
+    )
+  })
+
   it("waits for an asynchronous terminal callback before parsing", async () => {
     mockSuggestionFiles("Transformer uses Attention.")
     mockStreamChat.mockImplementation(async (_config, _messages, callbacks) => {

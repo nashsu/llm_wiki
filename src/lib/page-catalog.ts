@@ -1,4 +1,4 @@
-import { readFile } from "@/commands/fs"
+import { listDirectory, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import type { PageCatalogEntry } from "./auto-link-types"
 import { parseFrontmatter, type FrontmatterValue } from "./frontmatter"
@@ -57,6 +57,14 @@ export async function buildPageCatalog(
   )
 
   return entries.sort((a, b) => a.slug.localeCompare(b.slug))
+}
+
+export async function buildProjectPageCatalog(
+  projectPath: string,
+): Promise<PageCatalogEntry[]> {
+  const normalizedProjectPath = normalizePath(projectPath).replace(/\/+$/, "")
+  const wikiTree = await listDirectory(`${normalizedProjectPath}/wiki`)
+  return buildPageCatalog(wikiTree, normalizedProjectPath)
 }
 
 export function pagePathToSlug(path: string): string {

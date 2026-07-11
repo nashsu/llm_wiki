@@ -1,12 +1,11 @@
 import type { LlmConfig } from "@/stores/wiki-store"
-import type { FileNode } from "@/types/wiki"
 import type { AutoLinkSuggestion } from "./auto-link-types"
 import { buildAutoLinkSuggestions } from "./auto-link-candidates"
 import { loadAutoLinkIgnoreRules } from "./auto-link-ignore"
 import { suggestWikilinks } from "./enrich-wikilinks"
 import { parseFrontmatter } from "./frontmatter"
 import { normalizePath } from "./path-utils"
-import { buildPageCatalog } from "./page-catalog"
+import { buildProjectPageCatalog } from "./page-catalog"
 import { hashAutoLinkContent } from "./auto-link-content-version"
 
 export type AutoLinkReviewResult =
@@ -20,16 +19,15 @@ export async function prepareAutoLinkReview(params: {
   projectPath: string
   filePath: string
   fileContent: string
-  fileTree: FileNode[]
   llmConfig: LlmConfig
 }): Promise<AutoLinkReviewResult> {
-  const { projectPath, filePath, fileContent, fileTree, llmConfig } = params
+  const { projectPath, filePath, fileContent, llmConfig } = params
   if (!parseFrontmatter(fileContent).body.trim()) {
     return { status: "empty", message: "This page has no content to link." }
   }
 
   try {
-    const catalog = await buildPageCatalog(fileTree, projectPath)
+    const catalog = await buildProjectPageCatalog(projectPath)
     const currentPath = canonicalPath(filePath)
     const targetCatalog = catalog.filter(
       (entry) => canonicalPath(entry.path) !== currentPath,

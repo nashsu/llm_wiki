@@ -38,7 +38,6 @@ interface AutoLinkContext {
 
 export function PreviewPanel() {
   const project = useWikiStore((s) => s.project)
-  const fileTree = useWikiStore((s) => s.fileTree)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
   const previewContentPath = useWikiStore((s) => s.previewContentPath)
@@ -236,7 +235,6 @@ export function PreviewPanel() {
         projectPath: context.projectPath,
         filePath: context.filePath,
         fileContent: liveDraftRef.current,
-        fileTree,
         llmConfig,
       })
       if (!isCurrentAutoLinkContext(context)) return
@@ -253,7 +251,6 @@ export function PreviewPanel() {
     }
   }, [
     fileLoadFailed,
-    fileTree,
     flushPendingSave,
     isCurrentAutoLinkContext,
     llmConfig,

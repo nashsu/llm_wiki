@@ -117,6 +117,12 @@ export async function suggestWikilinks(
         settleTerminal()
       },
     },
+    undefined,
+    {
+      temperature: 0.1,
+      max_tokens: 2048,
+      reasoning: { mode: "off" },
+    },
   )
 
   if (!terminalSettled) await terminal

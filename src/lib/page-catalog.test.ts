@@ -2,16 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { FileNode } from "@/types/wiki"
 
 vi.mock("@/commands/fs", () => ({
+  listDirectory: vi.fn(),
   readFile: vi.fn(),
 }))
 
-import { readFile } from "@/commands/fs"
+import { listDirectory, readFile } from "@/commands/fs"
 import {
   buildPageCatalog,
+  buildProjectPageCatalog,
   flattenWikiMarkdownFiles,
   pagePathToSlug,
 } from "./page-catalog"
 
+const mockListDirectory = vi.mocked(listDirectory)
 const mockReadFile = vi.mocked(readFile)
 
 function file(path: string): FileNode {
@@ -32,6 +35,7 @@ function dir(path: string, children: FileNode[]): FileNode {
 }
 
 beforeEach(() => {
+  mockListDirectory.mockReset()
   mockReadFile.mockReset()
 })
 
@@ -180,5 +184,27 @@ describe("buildPageCatalog", () => {
         path,
       },
     ])
+  })
+})
+
+describe("buildProjectPageCatalog", () => {
+  it("loads nested wiki pages independently of the lazy store tree", async () => {
+    const targetPath = "/project/wiki/entities/abca1.md"
+    mockListDirectory.mockResolvedValue([
+      file("/project/wiki/index.md"),
+      dir("/project/wiki/entities", [file(targetPath)]),
+    ])
+    mockReadFile.mockResolvedValue([
+      "---",
+      "title: ABCA1",
+      "type: entity",
+      "tags: [ABCA1]",
+      "---",
+      "Body",
+    ].join("\n"))
+
+    await expect(buildProjectPageCatalog("/project/"))
+      .resolves.toMatchObject([{ slug: "abca1", path: targetPath }])
+    expect(mockListDirectory).toHaveBeenCalledWith("/project/wiki")
   })
 })

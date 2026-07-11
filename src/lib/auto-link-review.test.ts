@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { LlmConfig } from "@/stores/wiki-store"
-import type { FileNode } from "@/types/wiki"
 import type {
   AutoLinkSuggestion,
   PageCatalogEntry,
 } from "./auto-link-types"
 
 vi.mock("./page-catalog", () => ({
-  buildPageCatalog: vi.fn(),
+  buildProjectPageCatalog: vi.fn(),
 }))
 vi.mock("./enrich-wikilinks", () => ({
   suggestWikilinks: vi.fn(),
@@ -19,13 +18,13 @@ vi.mock("./auto-link-candidates", () => ({
   buildAutoLinkSuggestions: vi.fn(),
 }))
 
-import { buildPageCatalog } from "./page-catalog"
+import { buildProjectPageCatalog } from "./page-catalog"
 import { suggestWikilinks } from "./enrich-wikilinks"
 import { loadAutoLinkIgnoreRules } from "./auto-link-ignore"
 import { buildAutoLinkSuggestions } from "./auto-link-candidates"
 import { prepareAutoLinkReview } from "./auto-link-review"
 
-const mockBuildCatalog = vi.mocked(buildPageCatalog)
+const mockBuildCatalog = vi.mocked(buildProjectPageCatalog)
 const mockSuggest = vi.mocked(suggestWikilinks)
 const mockLoadIgnores = vi.mocked(loadAutoLinkIgnoreRules)
 const mockBuildSuggestions = vi.mocked(buildAutoLinkSuggestions)
@@ -48,8 +47,6 @@ const llmConfig: LlmConfig = {
   customEndpoint: "",
   maxContextSize: 128000,
 }
-
-const fileTree: FileNode[] = []
 
 function catalogPage(slug: string, path: string): PageCatalogEntry {
   return { slug, title: slug, type: "concept", tags: [], path }
@@ -80,7 +77,6 @@ function params(overrides: Partial<Parameters<typeof prepareAutoLinkReview>[0]> 
     projectPath: "/project",
     filePath: "/project/wiki/current.md",
     fileContent: "---\ntitle: Current\n---\nGDF3 is discussed here.",
-    fileTree,
     llmConfig,
     ...overrides,
   }
@@ -183,7 +179,7 @@ describe("prepareAutoLinkReview", () => {
       suggestions: [suggestion],
       contentHash: await sha256(reviewParams.fileContent),
     })
-    expect(mockBuildCatalog).toHaveBeenCalledWith(fileTree, "/project")
+    expect(mockBuildCatalog).toHaveBeenCalledWith("/project")
     expect(mockLoadIgnores).toHaveBeenCalledWith("/project")
     expect(mockSuggest).toHaveBeenCalledWith(
       "/project",
