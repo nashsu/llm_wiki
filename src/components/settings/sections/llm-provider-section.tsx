@@ -20,6 +20,7 @@ export function LlmProviderSection() {
   const setActivePresetId = useWikiStore((s) => s.setActivePresetId)
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
   const llmConfig = useWikiStore((s) => s.llmConfig)
+  const projectId = useWikiStore((s) => s.project?.id)
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [savedId, setSavedId] = useState<string | null>(null)
@@ -32,14 +33,14 @@ export function LlmProviderSection() {
     const { saveProviderConfigs, saveActivePresetId, saveLlmConfig } = await import(
       "@/lib/project-store"
     )
-    await saveProviderConfigs(newConfigs)
-    await saveActivePresetId(newActive)
+    await saveProviderConfigs(newConfigs, projectId)
+    await saveActivePresetId(newActive, projectId)
     if (newActive) {
       const preset = LLM_PRESETS.find((p) => p.id === newActive)
       if (preset) {
         const resolved = resolveConfig(preset, newConfigs[newActive], llmConfig)
         setLlmConfig(resolved)
-        await saveLlmConfig(resolved)
+        await saveLlmConfig(resolved, projectId)
       }
     } else {
       // All presets disabled: write llmConfig into a state where hasUsableLlm()
@@ -50,7 +51,7 @@ export function LlmProviderSection() {
       // so the cleared values here do not affect the user's saved settings.
       const cleared = disabledLlmConfig(llmConfig)
       setLlmConfig(cleared)
-      await saveLlmConfig(cleared)
+      await saveLlmConfig(cleared, projectId)
     }
   }
 

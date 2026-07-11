@@ -44,6 +44,18 @@ interface LlmConfig {
   codexCliTimeoutMinutes?: number
 }
 
+export const DEFAULT_LLM_CONFIG: LlmConfig = {
+  provider: "openai",
+  apiKey: "",
+  maxContextSize: 204800,
+  model: "",
+  ollamaUrl: "http://localhost:11434",
+  customEndpoint: "",
+  azureApiVersion: "2024-10-21",
+  reasoning: { mode: "auto" },
+  localCliIsolation: false,
+}
+
 export type SearchProvider =
   | "tavily"
   | "serpapi"
@@ -430,17 +442,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   previewReturnView: null,
   pendingScrollImageSrc: null,
   activeView: "wiki",
-  llmConfig: {
-    provider: "openai",
-    apiKey: "",
-    maxContextSize: 204800,
-    model: "",
-    ollamaUrl: "http://localhost:11434",
-    customEndpoint: "",
-    azureApiVersion: "2024-10-21",
-    reasoning: { mode: "auto" },
-    localCliIsolation: false,
-  },
+  llmConfig: { ...DEFAULT_LLM_CONFIG },
   providerConfigs: {},
   activePresetId: null,
 

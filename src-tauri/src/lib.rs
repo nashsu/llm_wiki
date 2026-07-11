@@ -3,6 +3,7 @@ mod api_server;
 mod clip_server;
 mod commands;
 mod cors;
+mod llm_settings;
 mod panic_guard;
 mod proxy;
 mod server_bind;
@@ -101,7 +102,7 @@ async fn agent_start_turn(
                 .collect();
         }
     }
-    let runtime_config = load_agent_runtime_config(&app);
+    let runtime_config = load_agent_runtime_config(&app, Some(&project.id));
     let runtime = agent::AgentRuntime::new(
         project.id.clone(),
         project.path.clone(),
@@ -185,7 +186,7 @@ async fn agent_start_turn_stream(
             })
             .collect();
     }
-    let runtime_config = load_agent_runtime_config(&app);
+    let runtime_config = load_agent_runtime_config(&app, Some(&project.id));
     let runtime = agent::AgentRuntime::new(
         project.id.clone(),
         project.path.clone(),
@@ -404,7 +405,10 @@ fn load_agent_app_state(app: &tauri::AppHandle) -> Option<Value> {
     serde_json::from_str(&raw).ok()
 }
 
-fn load_agent_runtime_config(app: &tauri::AppHandle) -> AgentRuntimeConfig {
+fn load_agent_runtime_config(
+    app: &tauri::AppHandle,
+    project_id: Option<&str>,
+) -> AgentRuntimeConfig {
     let Some(parsed) = load_agent_app_state(app) else {
         return AgentRuntimeConfig::default();
     };
@@ -413,10 +417,7 @@ fn load_agent_runtime_config(app: &tauri::AppHandle) -> AgentRuntimeConfig {
             .get("embeddingConfig")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok()),
-        llm: parsed
-            .get("llmConfig")
-            .cloned()
-            .and_then(|value| serde_json::from_value(value).ok()),
+        llm: llm_settings::resolve_project_llm_config(&parsed, project_id),
         web_search: parsed
             .get("searchApiConfig")
             .cloned()
