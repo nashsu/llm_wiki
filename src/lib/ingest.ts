@@ -1463,12 +1463,18 @@ function isAggregateRepairSafe(
   return true
 }
 
-function canonicalizeSourcesField(content: string, sourceIdentity: string): string {
+export function canonicalizeSourcesField(content: string, sourceIdentity: string): string {
   if (!/^---\n/.test(content)) return content
 
   const identityKey = normalizePath(sourceIdentity).toLowerCase()
   const identityBaseName = getFileName(sourceIdentity).toLowerCase()
-  const sourceValues = parseSources(content)
+  // Drop system-generated wiki files the LLM sometimes lists as sources
+  // (e.g. wiki/log.md, wiki/index.md, wiki/overview.md). They are never user
+  // materials, break source traceability, and can feed ingest loops (#538).
+  const sourceValues = parseSources(content).filter((source) => {
+    const normalized = normalizePath(source)
+    return !isLogPath(normalized) && !isListingPath(normalized)
+  })
   const canonicalValues = sourceValues.map((source) => {
     const normalized = normalizePath(source)
     const key = normalized.toLowerCase()

@@ -28,7 +28,9 @@ import {
   aggregatePathsNeedingRepair,
   filterAggregateRepairOutput,
   rewriteIngestPathFromTitleForTargetLanguage,
+  canonicalizeSourcesField,
 } from "./ingest"
+import { parseSources } from "./sources-merge"
 
 // ── Happy paths ─────────────────────────────────────────────────────
 
@@ -623,5 +625,42 @@ describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
     expect(
       rewriteIngestPathFromTitleForTargetLanguage("wiki/index.md", content, "Chinese"),
     ).toBe("wiki/index.md")
+  })
+})
+
+describe("canonicalizeSourcesField — system files are not valid sources (#538)", () => {
+  it("drops wiki system files (log / index / overview) from the sources field", () => {
+    const content = [
+      "---",
+      "type: entity",
+      "title: Foo",
+      'sources: ["raw/sources/report.pdf", "wiki/log.md", "wiki/index.md", "wiki/overview.md"]',
+      "---",
+      "",
+      "# Foo",
+      "",
+    ].join("\n")
+
+    const sources = parseSources(canonicalizeSourcesField(content, "raw/sources/report.pdf"))
+
+    expect(sources).toContain("raw/sources/report.pdf")
+    expect(sources).not.toContain("wiki/log.md")
+    expect(sources).not.toContain("wiki/index.md")
+    expect(sources).not.toContain("wiki/overview.md")
+  })
+
+  it("drops nested log.md and keeps the real source identity", () => {
+    const content = [
+      "---",
+      "type: entity",
+      "title: Bar",
+      'sources: ["wiki/log.md", "notes/log.md"]',
+      "---",
+      "",
+    ].join("\n")
+
+    const sources = parseSources(canonicalizeSourcesField(content, "raw/sources/notes.md"))
+
+    expect(sources).toEqual(["raw/sources/notes.md"])
   })
 })
