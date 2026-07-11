@@ -38,6 +38,7 @@ import {
   getEmbeddingCount,
   removePageEmbedding,
   resetEmbeddingOptimizeAccountingForTests,
+  parseOpenAiCompatibleEmbedding,
   type PageSearchResult,
 } from "./embedding"
 
@@ -135,7 +136,7 @@ async function fetchEmbeddingViaMockHttp(
         ? data?.embedding?.values
         : isDoubaoVision
           ? data?.data?.embedding
-          : data?.data?.[0]?.embedding
+          : parseOpenAiCompatibleEmbedding(data)
       if (Array.isArray(embedding) && embedding.length > 0 && embedding.every((v) => typeof v === "number" && Number.isFinite(v))) {
         return embedding
       }
@@ -440,6 +441,34 @@ describe("fetchEmbedding — provider wire formats", () => {
       model: "text-embedding-qwen3-embedding-0.6b",
       input: "hi",
     })
+  })
+
+  it("parses Ollama native /api/embeddings responses (embeddings[0])", async () => {
+    mockHttpFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          model: "embeddinggemma:latest",
+          embeddings: [[0.3, 0.4, 0.5]],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+
+    const out = await fetchEmbedding("hi", {
+      enabled: true,
+      endpoint: "http://127.0.0.1:11434/api/embeddings",
+      apiKey: "",
+      model: "embeddinggemma:latest",
+    })
+
+    expect(out).toEqual([0.3, 0.4, 0.5])
+  })
+
+  it("parseOpenAiCompatibleEmbedding accepts OpenAI and Ollama shapes", () => {
+    expect(parseOpenAiCompatibleEmbedding({ data: [{ embedding: [0.1, 0.2] }] })).toEqual([0.1, 0.2])
+    expect(parseOpenAiCompatibleEmbedding({ model: "nomic-embed-text", embeddings: [[0.3, 0.4]] })).toEqual([0.3, 0.4])
+    expect(parseOpenAiCompatibleEmbedding({ embedding: [0.5] })).toEqual([0.5])
+    expect(parseOpenAiCompatibleEmbedding({ data: [{ wrong_field: [1] }] })).toBeNull()
   })
 
   it("sends Origin override for LAN embedding endpoints", async () => {

@@ -73,6 +73,39 @@ export function looksLikeOversizeError(httpStatus: number, body: string): boolea
   )
 }
 
+function isFiniteNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "number" && Number.isFinite(item))
+}
+
+export function parseOpenAiCompatibleEmbedding(body: unknown): number[] | null {
+  if (!body || typeof body !== "object") return null
+  const obj = body as Record<string, unknown>
+
+  const data = obj.data
+  if (Array.isArray(data)) {
+    const first = data[0]
+    if (first && typeof first === "object") {
+      const embedding = (first as Record<string, unknown>).embedding
+      if (isFiniteNumberArray(embedding)) return embedding
+    }
+  }
+
+  if (data && typeof data === "object") {
+    const embedding = (data as Record<string, unknown>).embedding
+    if (isFiniteNumberArray(embedding)) return embedding
+  }
+
+  const embeddings = obj.embeddings
+  if (Array.isArray(embeddings) && isFiniteNumberArray(embeddings[0])) {
+    return embeddings[0]
+  }
+
+  if (isFiniteNumberArray(obj.embedding)) return obj.embedding
+  return null
+}
+
 /**
  * POST one embedding request; on an oversize rejection, halve the text
  * and retry up to `maxRetries` times. Returns null on definitive

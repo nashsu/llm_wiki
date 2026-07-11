@@ -4,7 +4,7 @@
   "version": "0.6.2",
   "identifier": "com.llmwiki.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:desktop",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build:desktop",
     "frontendDist": "../dist"
