@@ -13,12 +13,21 @@ vi.mock("@/commands/fs", () => ({
 
 import { enrichWithWikilinks } from "./enrich-wikilinks"
 import { streamChat } from "./llm-client"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
+import type { FileNode } from "@/types/wiki"
 
 const mockStreamChat = vi.mocked(streamChat)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
+const mockListDirectory = vi.mocked(listDirectory)
+
+// Materialize a flat list of wiki page nodes for the target-existence check.
+function wikiPages(...names: string[]): FileNode[] {
+  return names.map(
+    (name) => ({ name, path: `/p/wiki/${name}`, is_dir: false, children: [] }) as FileNode,
+  )
+}
 
 function fakeLlmConfig(): LlmConfig {
   return {
@@ -43,6 +52,8 @@ beforeEach(() => {
   mockStreamChat.mockReset()
   mockReadFile.mockReset()
   mockWriteFile.mockReset()
+  mockListDirectory.mockReset()
+  mockListDirectory.mockResolvedValue([])
   useWikiStore.getState().setOutputLanguage("auto")
 })
 
@@ -131,6 +142,29 @@ describe("enrichWithWikilinks — JSON-based substitution", () => {
     const written = vi.mocked(mockWriteFile).mock.calls[0][1] as string
     expect(written).toContain("[[Transformer]]")
     expect(written).toContain("[[Attention]]")
+  })
+
+  it("drops substitutions whose target is not an existing page (#535)", async () => {
+    // The page is named in Chinese; the LLM (wrongly) targets an English name
+    // with no page — that link would be broken and must not be written. A
+    // target that resolves to a real page is still linked.
+    mockListDirectory.mockResolvedValue(wikiPages("注意力机制.md"))
+    mockReadFile.mockResolvedValue("注意力 是 Transformer 的核心思想。")
+    mockStreamChatReturns(
+      JSON.stringify({
+        links: [
+          { term: "注意力", target: "attention" }, // no such page — broken, drop
+          { term: "Transformer", target: "注意力机制" }, // resolves to a page — keep
+        ],
+      }),
+    )
+
+    await enrichWithWikilinks("/p", "/p/f.md", fakeLlmConfig())
+
+    expect(mockWriteFile).toHaveBeenCalledOnce()
+    const written = vi.mocked(mockWriteFile).mock.calls[0][1] as string
+    expect(written).not.toContain("[[attention") // broken English target dropped
+    expect(written).toContain("[[注意力机制|Transformer]]") // valid target kept
   })
 
   it("does NOT overwrite when LLM returns an empty links list", async () => {

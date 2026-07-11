@@ -1,8 +1,24 @@
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "./llm-client"
 import { useWikiStore, type LlmConfig } from "@/stores/wiki-store"
 import { buildLanguageDirective } from "./output-language"
 import { normalizePath } from "@/lib/path-utils"
+import type { FileNode } from "@/types/wiki"
+
+/** Normalize a wikilink target to its basename slug (matches how links resolve). */
+function targetSlug(target: string): string {
+  return (target.split("/").pop() ?? target).replace(/\.md$/i, "").trim().toLowerCase()
+}
+
+/** Collect the basename slug of every wiki page, for target-existence checks. */
+function collectPageSlugs(nodes: FileNode[], set: Set<string>): void {
+  for (const n of nodes) {
+    if (n.is_dir && n.children) collectPageSlugs(n.children, set)
+    else if (!n.is_dir && n.name.endsWith(".md")) {
+      set.add(n.name.replace(/\.md$/i, "").toLowerCase())
+    }
+  }
+}
 
 /**
  * Lightweight post-save enrichment: ask LLM to add [[wikilinks]] to a saved wiki page.
@@ -29,12 +45,19 @@ export async function enrichWithWikilinks(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   const fp = normalizePath(filePath)
-  const [content, index] = await Promise.all([
+  const [content, index, tree] = await Promise.all([
     readFile(fp),
     readFile(`${pp}/wiki/index.md`).catch(() => ""),
+    listDirectory(`${pp}/wiki`).catch(() => [] as FileNode[]),
   ])
 
   if (!content || !index) return
+
+  // The set of real page slugs, used to drop `target`s the LLM invented that
+  // don't resolve to any page (e.g. an English name for a Chinese-named page),
+  // which would otherwise be written as broken wikilinks (#535).
+  const validTargets = new Set<string>()
+  collectPageSlugs(tree, validTargets)
 
   // Ask the LLM to return a JSON list of {term, target} substitutions.
   // Much easier task than rewriting the whole page, and the model can't
@@ -93,7 +116,7 @@ export async function enrichWithWikilinks(
 
   // Apply substitutions to the ORIGINAL content. This guarantees the only
   // change is inserted [[...]] brackets.
-  const enriched = applyLinks(content, links)
+  const enriched = applyLinks(content, links, validTargets)
   if (enriched === content) return
 
   await writeFile(fp, enriched)
@@ -163,7 +186,7 @@ function parseLinkResponse(raw: string): LinkEntry[] {
  * already match case-insensitively. Skip terms that don't appear as a
  * literal substring. Skip terms already inside an existing wikilink.
  */
-function applyLinks(content: string, links: LinkEntry[]): string {
+function applyLinks(content: string, links: LinkEntry[], validTargets: Set<string>): string {
   // Split off YAML frontmatter so we don't touch it
   const fmEnd = content.startsWith("---\n") ? content.indexOf("\n---\n", 3) : -1
   const frontmatter = fmEnd > 0 ? content.slice(0, fmEnd + 5) : ""
@@ -175,6 +198,9 @@ function applyLinks(content: string, links: LinkEntry[]): string {
   for (const { term, target } of links) {
     if (linkedTargets.has(target.toLowerCase())) continue
     if (!term || !target) continue
+    // Drop invented targets that don't resolve to a real page (#535). When the
+    // page set is unknown (empty), keep prior behavior rather than drop all.
+    if (validTargets.size > 0 && !validTargets.has(targetSlug(target))) continue
 
     // Find first literal occurrence NOT already inside a [[...]] block
     const idx = findUnlinkedOccurrence(body, term)
