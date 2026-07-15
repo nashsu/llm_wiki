@@ -30,6 +30,11 @@ describe("sanitizeIngestedFileContent", () => {
     expect(sanitizeIngestedFileContent(input)).toBe("---\ntype: x\n---\nbody")
   })
 
+  it("strips a ```yaml fence wrapping only the frontmatter", () => {
+    const input = "```yaml\n---\ntype: x\n---\n```\n\n# Body"
+    expect(sanitizeIngestedFileContent(input)).toBe("---\ntype: x\n---\n\n# Body")
+  })
+
   it("does NOT strip a non-fence-wrapped document containing a fenced code block in the body", () => {
     const input =
       "---\ntype: x\n---\n\n# Heading\n\n```js\nconsole.log('hi')\n```\n\nmore body"

@@ -58,12 +58,14 @@
 export function sanitizeIngestedFileContent(content: string): string {
   let cleaned = content
 
-  // (1) Strip an outer code fence wrapping the whole document.
+  // (1) Strip a code fence wrapping the whole document or just its
+  // frontmatter block.
   // We only act when the FIRST non-empty line is an opening fence
   // (`\`\`\`yaml`, `\`\`\`md`, `\`\`\`markdown`, or just `\`\`\``)
-  // AND the LAST non-empty line is a matching closing fence. This
-  // avoids touching pages that legitimately end with an unclosed
-  // fence (we don't try to "fix" mid-stream truncation here).
+  // with a matching close either at the end of the document or directly
+  // after a complete frontmatter block. This avoids touching pages that
+  // legitimately start with an unclosed fence (we don't try to "fix"
+  // mid-stream truncation here).
   cleaned = stripOuterCodeFence(cleaned)
 
   // (2) Strip a stray `frontmatter:` line that prefixes the real
@@ -86,7 +88,7 @@ export function sanitizeIngestedFileContent(content: string): string {
   return cleaned
 }
 
-/** Top-level fence wrapper. Removes the open + close fence lines. */
+/** Top-level fence wrapper. Removes the open + matching close fence lines. */
 function stripOuterCodeFence(content: string): string {
   const open = content.match(/^[ \t]*```(?:yaml|md|markdown)?[ \t]*\r?\n/)
   if (!open) return content
@@ -95,8 +97,16 @@ function stripOuterCodeFence(content: string): string {
   // Closing fence: a final ``` on its own line, ignoring trailing
   // whitespace/newlines after it.
   const close = afterOpen.match(/\r?\n[ \t]*```[ \t]*\r?\n?\s*$/)
-  if (!close) return content
-  return afterOpen.slice(0, close.index)
+  if (close) return afterOpen.slice(0, close.index)
+
+  // Some models close the fence immediately after the frontmatter and
+  // continue with an unfenced Markdown body. Only strip this shape when
+  // the fenced section is exactly a complete `---` frontmatter block.
+  const frontmatterOnly = afterOpen.match(
+    /^(---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n)[ \t]*```[ \t]*(?:\r?\n|$)/,
+  )
+  if (!frontmatterOnly) return content
+  return frontmatterOnly[1] + afterOpen.slice(frontmatterOnly[0].length)
 }
 
 /**
