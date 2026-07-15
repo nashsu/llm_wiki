@@ -116,6 +116,27 @@ describe("scheduled import path handling", () => {
     ).toBe(false)
   })
 
+  it("detects Windows project paths case-insensitively", () => {
+    expect(
+      isProjectManagedScheduledImportPath(
+        "C:/Users/Me/Wiki",
+        "c:\\users\\me\\wiki\\raw\\sources",
+      ),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(
+        "//Server/Share/Wiki",
+        "//server/share/wiki/raw/sources",
+      ),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(
+        "/Users/Me/Wiki",
+        "/users/me/wiki/raw/sources",
+      ),
+    ).toBe(false)
+  })
+
   it("sanitizes Windows-unsafe destination path segments with a stable suffix", () => {
     const dest = scheduledImportDestinationForFile(
       projectPath,
