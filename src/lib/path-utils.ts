@@ -33,13 +33,23 @@ export function getFileStem(p: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
+// Windows drive-letter and UNC paths are case-insensitive; fold them for
+// comparison purposes only (never for the paths actually returned/written).
+function caseFoldPath(normalized: string): string {
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized
+}
+
 /**
  * Get relative path from base.
  */
 export function getRelativePath(fullPath: string, basePath: string): string {
   const normalFull = normalizePath(fullPath)
   const normalBase = normalizePath(basePath).replace(/\/$/, "")
-  if (normalFull.startsWith(normalBase + "/")) {
+  const fullKey = caseFoldPath(normalFull)
+  const baseKey = caseFoldPath(normalBase)
+  if (fullKey.startsWith(baseKey + "/")) {
     return normalFull.slice(normalBase.length + 1)
   }
   return normalFull

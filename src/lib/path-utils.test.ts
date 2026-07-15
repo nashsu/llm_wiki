@@ -116,6 +116,20 @@ describe("getRelativePath", () => {
     // The impl adds '/' to base for matching, so this is handled.
     expect(getRelativePath("/projector/a", "/project")).toBe("/projector/a")
   })
+
+  it("matches Windows drive-letter paths case-insensitively", () => {
+    expect(getRelativePath("c:/users/me/inbox/sub/report.pdf", "C:/Users/Me/Inbox")).toBe(
+      "sub/report.pdf",
+    )
+  })
+
+  it("matches Windows UNC paths case-insensitively", () => {
+    expect(getRelativePath("//server/SHARE/sub/file.md", "//SERVER/share")).toBe("sub/file.md")
+  })
+
+  it("keeps Unix paths case-sensitive", () => {
+    expect(getRelativePath("/Project/wiki/note.md", "/project")).toBe("/Project/wiki/note.md")
+  })
 })
 
 describe("isAbsolutePath", () => {
