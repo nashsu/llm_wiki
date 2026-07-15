@@ -91,7 +91,12 @@ function dbFilePath(projectPath: string): string {
 }
 
 function dbDirectoryKey(importPath: string): string {
-  const normalized = normalizePath(importPath)
+  return caseFoldPath(normalizePath(importPath))
+}
+
+// Windows drive-letter and UNC paths are case-insensitive; fold them for
+// comparison purposes only (never for the paths actually written to disk).
+function caseFoldPath(normalized: string): string {
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
     ? normalized.toLowerCase()
     : normalized
@@ -256,8 +261,10 @@ export function scheduledImportDestinationForFile(
   }
 
   const importRoot = normalizePath(importPath).replace(/\/+$/, "")
+  const sourceKey = caseFoldPath(source)
+  const importRootKey = caseFoldPath(importRoot)
   const relative =
-    source === importRoot || !source.startsWith(`${importRoot}/`)
+    sourceKey === importRootKey || !sourceKey.startsWith(`${importRootKey}/`)
       ? file.name
       : source.slice(importRoot.length + 1)
 
