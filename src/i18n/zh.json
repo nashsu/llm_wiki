@@ -447,6 +447,11 @@
         "azureModelFamilyAuto": "根据部署名称自动判断",
         "azureModelFamilyGpt5": "GPT-5 / o-series 严格参数",
         "azureModelFamilyHint": "Azure 的 deployment 名称可以任意命名。如果该部署拒绝 max_tokens 或非默认 temperature，请选择 GPT-5 / o-series。",
+        "maxTokensParam": "Max-tokens 字段名",
+        "maxTokensParamAuto": "自动（推荐）",
+        "maxTokensParamMaxTokens": "强制使用 max_tokens",
+        "maxTokensParamMaxCompletionTokens": "强制使用 max_completion_tokens",
+        "maxTokensParamHint": "决定在 OpenAI 兼容线路上用哪个字段携带 token 预算。自动模式会按 endpoint 自行选择；强制指定可能被严格的 endpoint 拒绝（例如自定义 Azure GPT-5 部署会拒绝 max_tokens），除非你的 endpoint 明确要求某个字段，否则请保持自动。",
         "reasoning": {
           "title": "Reasoning / thinking",
           "auto": "自动",

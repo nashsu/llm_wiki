@@ -1,5 +1,5 @@
 import type { CustomApiMode } from "./llm-presets"
-import type { AzureModelFamily, CloseBehavior, MineruModelVersion, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { AzureModelFamily, CloseBehavior, MaxTokensParam, MineruModelVersion, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
 
 /**
  * Shape of the draft state each section reads from and writes into.
@@ -18,6 +18,7 @@ export interface SettingsDraft {
   azureModelFamily: AzureModelFamily
   maxContextSize: number
   apiMode: CustomApiMode | undefined
+  maxTokensParam: MaxTokensParam
   reasoning: ReasoningConfig | undefined
   localCliIsolation: boolean
 

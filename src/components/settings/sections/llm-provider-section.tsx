@@ -133,6 +133,7 @@ function PresetRow({
   const model = ov.model ?? preset.defaultModel ?? ""
   const apiKey = ov.apiKey ?? ""
   const apiMode = ov.apiMode ?? preset.apiMode ?? "chat_completions"
+  const maxTokensParam = ov.maxTokensParam ?? preset.maxTokensParam ?? "auto"
   const baseUrl = ov.baseUrl ?? preset.baseUrl ?? ""
   const azureApiVersion = ov.azureApiVersion ?? preset.azureApiVersion ?? AZURE_OPENAI_API_VERSION
   const azureModelFamily = ov.azureModelFamily ?? preset.azureModelFamily ?? "auto"
@@ -153,7 +154,7 @@ function PresetRow({
 
   const resolvedConfig = useMemo(
     () => resolveConfig(preset, ov, useWikiStore.getState().llmConfig),
-    [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
+    [apiKey, apiMode, maxTokensParam, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
   )
 
   async function runProviderTest(kind: "connection" | "function") {
@@ -288,6 +289,26 @@ function PresetRow({
               placeholder={preset.baseUrl ?? "https://your-api.example.com/v1"}
               onChange={(v) => onChange({ baseUrl: v })}
             />
+          )}
+
+          {preset.provider === "custom" && apiMode === "chat_completions" && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.maxTokensParam")}</Label>
+              <select
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                value={maxTokensParam}
+                onChange={(e) => onChange({ maxTokensParam: e.target.value as typeof maxTokensParam })}
+              >
+                <option value="auto">{t("settings.sections.llm.maxTokensParamAuto")}</option>
+                <option value="max_tokens">{t("settings.sections.llm.maxTokensParamMaxTokens")}</option>
+                <option value="max_completion_tokens">
+                  {t("settings.sections.llm.maxTokensParamMaxCompletionTokens")}
+                </option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.maxTokensParamHint")}
+              </p>
+            </div>
           )}
 
           {preset.provider === "azure" && (
