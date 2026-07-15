@@ -3,13 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { invoke } from "@tauri-apps/api/core"
 import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart"
 import i18n from "@/i18n"
-import { useWikiStore } from "@/stores/wiki-store"
+import { DEFAULT_LLM_CONFIG, useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadActivePresetId, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmSettings, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -117,6 +117,33 @@ function App() {
     } catch (err) {
       console.warn("[startup] failed to hydrate scheduled import:", err)
     }
+  }
+
+  async function hydrateLlmSettings(projectId?: string): Promise<void> {
+    const savedSettings = await loadLlmSettings(projectId)
+    const providerConfigs = savedSettings.providerConfigs ?? {}
+    const activePresetId = savedSettings.activePresetId
+    const fallbackConfig = savedSettings.llmConfig ?? DEFAULT_LLM_CONFIG
+
+    useWikiStore.getState().setProviderConfigs(providerConfigs)
+    useWikiStore.getState().setActivePresetId(activePresetId)
+
+    if (activePresetId) {
+      const { LLM_PRESETS } = await import("@/components/settings/llm-presets")
+      const { resolveConfig } = await import("@/components/settings/preset-resolver")
+      const preset = LLM_PRESETS.find((p) => p.id === activePresetId)
+      if (preset) {
+        const resolved = resolveConfig(preset, providerConfigs[activePresetId], fallbackConfig)
+        useWikiStore.getState().setLlmConfig(resolved)
+        if (!projectId || savedSettings.hasProjectSettings) {
+          const { saveLlmConfig } = await import("@/lib/project-store")
+          await saveLlmConfig(resolved, projectId)
+        }
+        return
+      }
+    }
+
+    useWikiStore.getState().setLlmConfig(fallbackConfig)
   }
 
   // Set up auto-save and clip watcher once on mount
@@ -283,36 +310,7 @@ function App() {
         applyDocumentZoom(savedZoom)
         useZoomStore.getState().setLevel(savedZoom)
 
-        const savedConfig = await loadLlmConfig()
-        if (savedConfig) {
-          useWikiStore.getState().setLlmConfig(savedConfig)
-        }
-        const savedProviderConfigs = await loadProviderConfigs()
-        if (savedProviderConfigs) {
-          useWikiStore.getState().setProviderConfigs(savedProviderConfigs)
-        }
-        const savedActivePreset = await loadActivePresetId()
-        if (savedActivePreset) {
-          useWikiStore.getState().setActivePresetId(savedActivePreset)
-          // Re-resolve the active preset's LlmConfig from (preset defaults
-          // + saved overrides). Without this, preset default updates
-          // (e.g. a corrected Anthropic model ID shipped in a release)
-          // never reach users who are relying on defaults — their stored
-          // `llmConfig` snapshot from a previous launch would keep the
-          // old value. Overrides still win, so an explicit user choice
-          // is preserved.
-          const { LLM_PRESETS } = await import("@/components/settings/llm-presets")
-          const { resolveConfig } = await import("@/components/settings/preset-resolver")
-          const preset = LLM_PRESETS.find((p) => p.id === savedActivePreset)
-          if (preset) {
-            const currentFallback = useWikiStore.getState().llmConfig
-            const override = (savedProviderConfigs ?? {})[savedActivePreset]
-            const resolved = resolveConfig(preset, override, currentFallback)
-            useWikiStore.getState().setLlmConfig(resolved)
-            const { saveLlmConfig } = await import("@/lib/project-store")
-            await saveLlmConfig(resolved)
-          }
-        }
+        await hydrateLlmSettings()
         const savedSearchConfig = await loadSearchApiConfig()
         if (savedSearchConfig) {
           useWikiStore.getState().setSearchApiConfig(savedSearchConfig)
@@ -410,6 +408,7 @@ function App() {
       await resetProjectState()
 
       setProject(proj)
+      await hydrateLlmSettings(proj.id)
       const projectOutputLang = await loadOutputLanguage(proj.id)
       useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
       setSelectedFile(null)

@@ -317,6 +317,7 @@ export function SettingsView() {
     const {
       saveLlmConfig,
       loadLlmConfig,
+      loadLlmSettings,
       saveEmbeddingConfig,
       loadEmbeddingConfig,
       saveMultimodalConfig,
@@ -427,7 +428,12 @@ export function SettingsView() {
     setGeneralConfig(newGeneralConfig)
 
     try {
-      await saveLlmConfig(newLlm)
+      const llmSettingsScope = project ? await loadLlmSettings(project.id) : null
+      if (project && llmSettingsScope?.hasProjectSettings) {
+        await saveLlmConfig(newLlm, project.id)
+      } else {
+        await saveLlmConfig(newLlm)
+      }
       await saveEmbeddingConfig(newEmbed)
       await saveMultimodalConfig(newMultimodal)
       await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
@@ -534,7 +540,7 @@ export function SettingsView() {
           persistedGeneral,
           persistedZoom,
         ] = await Promise.allSettled([
-          loadLlmConfig(),
+          loadLlmConfig(project?.id),
           loadEmbeddingConfig(),
           loadMultimodalConfig(),
           loadOutputLanguage(project?.id),

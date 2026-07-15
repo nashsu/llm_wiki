@@ -44,35 +44,149 @@ export async function addToRecentProjects(
 const LLM_CONFIG_KEY = "llmConfig"
 const PROVIDER_CONFIGS_KEY = "providerConfigs"
 const ACTIVE_PRESET_KEY = "activePresetId"
+const PROJECT_LLM_SETTINGS_KEY = "projectLlmSettings"
 
-export async function saveLlmConfig(config: LlmConfig): Promise<void> {
+interface StoredLlmSettings {
+  llmConfig?: LlmConfig
+  providerConfigs?: ProviderConfigs
+  activePresetId?: string | null
+}
+
+type ProjectLlmSettings = Record<string, StoredLlmSettings>
+
+export interface LoadedLlmSettings {
+  llmConfig: LlmConfig | null
+  providerConfigs: ProviderConfigs | null
+  activePresetId: string | null
+  hasProjectSettings: boolean
+}
+
+function hasOwn<T extends object>(obj: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key)
+}
+
+function mergeProjectLlmSettings(
+  existing: ProjectLlmSettings,
+  projectId: string,
+  patch: StoredLlmSettings,
+): ProjectLlmSettings {
+  return {
+    ...existing,
+    [projectId]: {
+      ...(existing[projectId] ?? {}),
+      ...patch,
+    },
+  }
+}
+
+function resolveStoredLlmSettings(
+  projectSettingsById: ProjectLlmSettings,
+  projectId: string | undefined,
+  globalSettings: Omit<LoadedLlmSettings, "hasProjectSettings">,
+): LoadedLlmSettings {
+  const projectSettings = projectId ? projectSettingsById[projectId] : undefined
+  const hasProjectLlmConfig = !!projectSettings && hasOwn(projectSettings, "llmConfig")
+  const hasProjectProviderConfigs = !!projectSettings && hasOwn(projectSettings, "providerConfigs")
+  const hasProjectActivePreset = !!projectSettings && hasOwn(projectSettings, "activePresetId")
+  const hasProjectSettings = !!projectSettings && (
+    hasProjectLlmConfig ||
+    hasProjectProviderConfigs ||
+    hasProjectActivePreset
+  )
+
+  return {
+    llmConfig:
+      hasProjectLlmConfig
+        ? projectSettings.llmConfig ?? null
+        : hasProjectActivePreset && projectSettings.activePresetId === null
+          ? null
+        : globalSettings.llmConfig,
+    providerConfigs:
+      hasProjectProviderConfigs
+        ? projectSettings.providerConfigs ?? null
+        : globalSettings.providerConfigs,
+    activePresetId:
+      hasProjectActivePreset
+        ? projectSettings.activePresetId ?? null
+        : globalSettings.activePresetId,
+    hasProjectSettings,
+  }
+}
+
+async function updateProjectLlmSettings(
+  projectId: string,
+  patch: StoredLlmSettings,
+): Promise<void> {
+  const store = await getStore()
+  const existing = (await store.get<ProjectLlmSettings>(PROJECT_LLM_SETTINGS_KEY)) ?? {}
+  await store.set(PROJECT_LLM_SETTINGS_KEY, mergeProjectLlmSettings(existing, projectId, patch))
+}
+
+export async function saveLlmConfig(config: LlmConfig, projectId?: string): Promise<void> {
+  if (projectId) {
+    await updateProjectLlmSettings(projectId, { llmConfig: config })
+    return
+  }
   const store = await getStore()
   await store.set(LLM_CONFIG_KEY, config)
 }
 
-export async function loadLlmConfig(): Promise<LlmConfig | null> {
+export async function loadLlmConfig(projectId?: string): Promise<LlmConfig | null> {
+  if (projectId) {
+    const settings = await loadLlmSettings(projectId)
+    return settings.llmConfig
+  }
   const store = await getStore()
   return (await store.get<LlmConfig>(LLM_CONFIG_KEY)) ?? null
 }
 
-export async function saveProviderConfigs(configs: ProviderConfigs): Promise<void> {
+export async function saveProviderConfigs(configs: ProviderConfigs, projectId?: string): Promise<void> {
+  if (projectId) {
+    await updateProjectLlmSettings(projectId, { providerConfigs: configs })
+    return
+  }
   const store = await getStore()
   await store.set(PROVIDER_CONFIGS_KEY, configs)
 }
 
-export async function loadProviderConfigs(): Promise<ProviderConfigs | null> {
+export async function loadProviderConfigs(projectId?: string): Promise<ProviderConfigs | null> {
+  if (projectId) {
+    const settings = await loadLlmSettings(projectId)
+    return settings.providerConfigs
+  }
   const store = await getStore()
   return (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? null
 }
 
-export async function saveActivePresetId(id: string | null): Promise<void> {
+export async function saveActivePresetId(id: string | null, projectId?: string): Promise<void> {
+  if (projectId) {
+    await updateProjectLlmSettings(projectId, { activePresetId: id })
+    return
+  }
   const store = await getStore()
   await store.set(ACTIVE_PRESET_KEY, id)
 }
 
-export async function loadActivePresetId(): Promise<string | null> {
+export async function loadActivePresetId(projectId?: string): Promise<string | null> {
+  if (projectId) {
+    const settings = await loadLlmSettings(projectId)
+    return settings.activePresetId
+  }
   const store = await getStore()
   return (await store.get<string | null>(ACTIVE_PRESET_KEY)) ?? null
+}
+
+export async function loadLlmSettings(projectId?: string): Promise<LoadedLlmSettings> {
+  const store = await getStore()
+  const globalSettings = {
+    llmConfig: (await store.get<LlmConfig>(LLM_CONFIG_KEY)) ?? null,
+    providerConfigs: (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? null,
+    activePresetId: (await store.get<string | null>(ACTIVE_PRESET_KEY)) ?? null,
+  }
+  const projectSettingsById = projectId
+    ? (await store.get<ProjectLlmSettings>(PROJECT_LLM_SETTINGS_KEY)) ?? {}
+    : {}
+  return resolveStoredLlmSettings(projectSettingsById, projectId, globalSettings)
 }
 
 const SEARCH_API_KEY = "searchApiConfig"
@@ -130,6 +244,8 @@ function normalizeZoomLevel(level: unknown): number {
 export const __projectStoreTest = {
   normalizeMineruConfig,
   normalizeZoomLevel,
+  mergeProjectLlmSettings,
+  resolveStoredLlmSettings,
 }
 
 export async function saveMineruConfig(config: MineruConfig): Promise<void> {

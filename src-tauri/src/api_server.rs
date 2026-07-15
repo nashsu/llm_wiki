@@ -1716,7 +1716,7 @@ fn handle_chat(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
                 .collect();
         }
     }
-    let runtime_config = load_agent_runtime_config(app);
+    let runtime_config = load_agent_runtime_config(app, Some(&project.id));
     let runtime = agent::AgentRuntime::new(
         project.id.clone(),
         project.path.clone(),
@@ -1800,7 +1800,7 @@ struct AgentRuntimeConfig {
     anytxt: Option<agent::tools::AnyTxtConfig>,
 }
 
-fn load_agent_runtime_config(app: &AppHandle) -> AgentRuntimeConfig {
+fn load_agent_runtime_config(app: &AppHandle, project_id: Option<&str>) -> AgentRuntimeConfig {
     let Some(parsed) = load_app_state(app) else {
         return AgentRuntimeConfig::default();
     };
@@ -1809,10 +1809,7 @@ fn load_agent_runtime_config(app: &AppHandle) -> AgentRuntimeConfig {
             .get("embeddingConfig")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok()),
-        llm: parsed
-            .get("llmConfig")
-            .cloned()
-            .and_then(|value| serde_json::from_value(value).ok()),
+        llm: crate::llm_settings::resolve_project_llm_config(&parsed, project_id),
         web_search: parsed
             .get("searchApiConfig")
             .cloned()
