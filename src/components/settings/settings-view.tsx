@@ -158,6 +158,7 @@ function initialDraft(
     scheduledImportInterval: scheduledImport.interval,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatch),
     mineruEnabled: mineru.enabled,
+    mineruBackend: mineru.backend || "cloud",
     mineruToken: mineru.token,
     mineruModelVersion: mineru.modelVersion,
     apiEnabled: apiConfig.enabled,
@@ -395,6 +396,7 @@ export function SettingsView() {
     }
     const newMineruConfig = {
       enabled: draft.mineruEnabled,
+      backend: draft.mineruBackend,
       token: draft.mineruToken.trim(),
       modelVersion: draft.mineruModelVersion,
     }

@@ -78,6 +78,7 @@ export interface SettingsDraft {
 
   // MinerU PDF parsing
   mineruEnabled: boolean
+  mineruBackend: "cloud" | "local"
   mineruToken: string
   mineruModelVersion: MineruModelVersion
 

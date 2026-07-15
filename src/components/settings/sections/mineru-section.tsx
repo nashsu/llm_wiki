@@ -20,11 +20,13 @@ export function MineruSection({ draft, setDraft }: Props) {
   const [testError, setTestError] = useState("")
 
   const handleTest = async () => {
-    if (!draft.mineruToken.trim()) return
+    if (draft.mineruBackend === "cloud" && !draft.mineruToken.trim()) return
     setTestState("running")
     setTestError("")
     try {
-      await testMineruConnection(draft.mineruToken.trim())
+      await testMineruConnection(draft.mineruToken.trim(), {
+        backend: draft.mineruBackend,
+      })
       setTestState("success")
     } catch (err) {
       setTestState("failed")
@@ -67,22 +69,73 @@ export function MineruSection({ draft, setDraft }: Props) {
       {draft.mineruEnabled && (
         <div className="space-y-4 pl-1">
           <div className="space-y-2">
-            <Label htmlFor="mineru-token">
-              {t("settings.sections.mineru.token", { defaultValue: "API Token" })}
-            </Label>
-            <Input
-              id="mineru-token"
-              type="password"
-              value={draft.mineruToken}
-              onChange={(e) => {
-                setDraft("mineruToken", e.target.value)
-                setTestState("idle")
-              }}
-              placeholder={t("settings.sections.mineru.tokenHint", {
-                defaultValue: "Get your token from mineru.net",
-              })}
-            />
+            <Label>{t("settings.sections.mineru.backend", { defaultValue: "Backend" })}</Label>
+            <div className="space-y-1 pl-1">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={draft.mineruBackend === "cloud"}
+                  onChange={() => {
+                    setDraft("mineruBackend", "cloud")
+                    setTestState("idle")
+                  }}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm">
+                  {t("settings.sections.mineru.cloudBackend", {
+                    defaultValue: "Cloud (mineru.net) - requires token, higher quality",
+                  })}
+                </span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={draft.mineruBackend === "local"}
+                  onChange={() => {
+                    setDraft("mineruBackend", "local")
+                    setTestState("idle")
+                  }}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm">
+                  {t("settings.sections.mineru.localBackend", {
+                    defaultValue: "Local (127.0.0.1:8790) - private, offline",
+                  })}
+                </span>
+              </label>
+            </div>
           </div>
+
+          {draft.mineruBackend === "cloud" && (
+            <div className="space-y-2">
+              <Label htmlFor="mineru-token">
+                {t("settings.sections.mineru.token", { defaultValue: "API Token" })}
+              </Label>
+              <Input
+                id="mineru-token"
+                type="password"
+                value={draft.mineruToken}
+                onChange={(e) => {
+                  setDraft("mineruToken", e.target.value)
+                  setTestState("idle")
+                }}
+                placeholder={t("settings.sections.mineru.tokenHint", {
+                  defaultValue: "Get your token from mineru.net",
+                })}
+              />
+            </div>
+          )}
+
+          {draft.mineruBackend === "local" && (
+            <div className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+              <p className="text-xs text-blue-800 dark:text-blue-200">
+                {t("settings.sections.mineru.localInfo", {
+                  defaultValue:
+                    "Using local MinerU service on http://127.0.0.1:8790. Make sure the service is running!",
+                })}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="mineru-model">
@@ -126,7 +179,8 @@ export function MineruSection({ draft, setDraft }: Props) {
               size="sm"
               onClick={handleTest}
               disabled={
-                !draft.mineruToken.trim() || testState === "running"
+                (draft.mineruBackend === "cloud" && !draft.mineruToken.trim()) ||
+                testState === "running"
               }
             >
               {testState === "running"

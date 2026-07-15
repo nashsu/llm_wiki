@@ -258,6 +258,8 @@ export type MineruModelVersion = "pipeline" | "vlm"
 
 export interface MineruConfig {
   enabled: boolean
+  /** Parsing backend: MinerU cloud API (default) or a self-hosted local service. */
+  backend?: "cloud" | "local"
   token: string
   modelVersion: MineruModelVersion
 }

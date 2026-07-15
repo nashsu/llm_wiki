@@ -6,6 +6,7 @@ import { getFileName, normalizePath } from "@/lib/path-utils"
 import type { SavedImage } from "@/lib/extract-source-images"
 
 const API_BASE = "https://mineru.net/api/v4"
+const LOCAL_API_BASE = "http://127.0.0.1:8790/api/mineru-local"
 const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 300_000 // 5 minutes
 const MAX_ACCURATE_PARSE_BYTES = 200 * 1024 * 1024
@@ -621,6 +622,68 @@ async function downloadAndExtractMarkdown(
   }
 }
 
+// ── Local backend ──
+
+/**
+ * Parse a document using a self-hosted MinerU service (no token required).
+ * The service accepts a JSON body with base64 file content and exposes
+ * task polling + result endpoints. Selected via `config.backend === "local"`.
+ */
+async function parseWithLocalMineru(
+  sourcePath: string,
+  fileName: string,
+  onProgress?: (msg: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  const httpFetch = await getHttpFetch()
+  const { base64 } = await readFileAsBase64(sourcePath)
+
+  onProgress?.("Uploading to local MinerU...")
+  const submitRes = await httpFetch(`${LOCAL_API_BASE}/parse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal,
+    body: JSON.stringify({ file: base64, filename: fileName }),
+  })
+  if (!submitRes.ok) {
+    const text = await submitRes.text().catch(() => "")
+    throw new Error(`Local MinerU submit failed: HTTP ${submitRes.status}: ${text}`)
+  }
+
+  const submitData = await submitRes.json()
+  const taskId = submitData.task_id
+  if (!taskId) throw new Error("Local MinerU returned no task ID")
+
+  onProgress?.("Waiting for local MinerU to finish...")
+  const start = Date.now()
+  while (Date.now() - start < POLL_TIMEOUT_MS) {
+    throwIfAborted(signal)
+
+    const statusRes = await httpFetch(`${LOCAL_API_BASE}/tasks/${taskId}`, { signal })
+    if (!statusRes.ok) {
+      throw new Error(`Local MinerU status check failed: HTTP ${statusRes.status}`)
+    }
+    const status = await statusRes.json()
+
+    if (status.status === "done") {
+      onProgress?.("Downloading parsed result...")
+      const resultRes = await httpFetch(`${LOCAL_API_BASE}/results/${taskId}`, { signal })
+      if (!resultRes.ok) {
+        throw new Error(`Local MinerU download failed: HTTP ${resultRes.status}`)
+      }
+      const result = await resultRes.json()
+      return result.content || ""
+    }
+    if (status.status === "failed") {
+      throw new Error(`Local MinerU parsing failed: ${status.error || "unknown error"}`)
+    }
+
+    await waitForPollInterval(signal)
+  }
+
+  throw new Error("Local MinerU parsing timed out")
+}
+
 // ── Public API ──
 
 /**
@@ -652,6 +715,14 @@ export async function parseWithMineruResult(
   assetOptions?: MineruAssetOptions,
 ): Promise<MineruExtractedMarkdown> {
   throwIfAborted(signal)
+
+  if (config.backend === "local") {
+    const fileName = sourcePath.split("/").pop() ?? "document.pdf"
+    const markdown = await parseWithLocalMineru(sourcePath, fileName, onProgress, signal)
+    onProgress?.("Done")
+    return { markdown, savedImages: [] }
+  }
+
   if (!config.token) throw new Error("MinerU API token not configured")
   if (config.modelVersion !== "pipeline" && config.modelVersion !== "vlm") {
     throw new Error("MinerU PDF parsing supports only pipeline or vlm model versions")
@@ -696,11 +767,26 @@ export async function parseWithMineruResult(
 }
 
 /**
- * Test MinerU API connectivity by submitting a minimal task.
- * Returns true if the token is valid.
+ * Test MinerU connectivity.
+ *
+ * Cloud backend: submits a minimal task to validate the token.
+ * Local backend: checks the local service health endpoint (no token needed).
  */
-export async function testMineruConnection(token: string): Promise<void> {
+export async function testMineruConnection(
+  token: string,
+  config?: Pick<MineruConfig, "backend">,
+): Promise<void> {
   const httpFetch = await getHttpFetch()
+
+  if (config?.backend === "local") {
+    const res = await httpFetch(`${LOCAL_API_BASE}/health`)
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      throw new Error(`Local MinerU service unavailable: HTTP ${res.status}: ${text}`)
+    }
+    return
+  }
+
   const res = await httpFetch(`${API_BASE}/extract/task`, {
     method: "POST",
     headers: await mineruHeaders(token),
