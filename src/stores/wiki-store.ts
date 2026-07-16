@@ -43,6 +43,8 @@ interface LlmConfig {
   localCliIsolation?: boolean
   /** Codex CLI provider only. Overall subprocess timeout in minutes. */
   codexCliTimeoutMinutes?: number
+  /** HTTP LLM request backstop. Defaults to 30 minutes for legacy configs. */
+  requestTimeoutMinutes?: number
 }
 
 export type SearchProvider =
@@ -80,6 +82,7 @@ export type SearXngCategory =
 
 export interface SearchProviderOverride {
   apiKey?: string
+  baseUrl?: string
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
@@ -315,6 +318,7 @@ export interface ProviderOverride {
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
+  requestTimeoutMinutes?: number
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>

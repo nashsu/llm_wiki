@@ -140,6 +140,7 @@ function PresetRow({
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
   const localCliIsolation = ov.localCliIsolation === true
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
+  const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
@@ -430,6 +431,24 @@ function PresetRow({
               onChange={(v) => onChange({ maxContextSize: v })}
             />
           </div>
+
+          {!isLocalCliProvider && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.requestTimeout", "Request timeout (minutes)")}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                value={requestTimeoutMinutes}
+                onChange={(e) => onChange({
+                  requestTimeoutMinutes: Math.max(1, Math.min(1440, Number(e.target.value) || 30)),
+                })}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.requestTimeoutHint", "Increase this for slow local CPU models. The default is 30 minutes.")}
+              </p>
+            </div>
+          )}
 
           <ReasoningControls
             value={reasoning}

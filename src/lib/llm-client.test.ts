@@ -154,6 +154,22 @@ describe("streamChat — mid-stream abort mapping", () => {
     expect(onDone).not.toHaveBeenCalled()
   })
 
+  it("uses the provider's configured request timeout", async () => {
+    const { response, getReject, readCalled } = pendingStreamResponse()
+    mockHttpFetch.mockResolvedValue(response)
+    const onError = vi.fn()
+    const promise = streamChat(
+      { ...cfg, requestTimeoutMinutes: 90 },
+      [{ role: "user", content: "hi" }],
+      { onToken: vi.fn(), onDone: vi.fn(), onError },
+    )
+    await readCalled
+    await vi.advanceTimersByTimeAsync(90 * 60 * 1000)
+    getReject()("Request cancelled")
+    await promise
+    expect(onError.mock.calls[0][0].message).toMatch(/timed out after 90 min/)
+  })
+
   it("treats a bare-string abort as a silent cancel when the backstop did NOT fire", async () => {
     const { response, getReject, readCalled } = pendingStreamResponse()
     mockHttpFetch.mockResolvedValue(response)

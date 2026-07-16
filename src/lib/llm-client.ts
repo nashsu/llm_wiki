@@ -93,7 +93,8 @@ export async function streamChat(
   // almost always a fast network failure (DNS, TLS, 404, refused) that
   // WebKit surfaces as a generic "Load failed". We track whether the
   // backstop actually fired so we can tell the two apart in the error.
-  const timeoutMs = 30 * 60 * 1000 // 30 min — generous backstop for huge-context reasoning models
+  const timeoutMinutes = Math.max(1, Math.min(1440, config.requestTimeoutMinutes ?? 30))
+  const timeoutMs = timeoutMinutes * 60 * 1000
   let combinedSignal = signal
   let timeoutController: AbortController | undefined
   let timeoutFired = false

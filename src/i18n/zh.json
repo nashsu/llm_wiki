@@ -560,7 +560,7 @@
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
-        "firecrawlHint": "使用 Firecrawl 的匿名搜索 API（`https://api.firecrawl.dev/v2/search`），这里不需要 API Key；但 Firecrawl 可能会拦截可疑 IP。",
+        "firecrawlHint": "API Key 留空时使用匿名搜索；填写 Firecrawl API Key 后使用认证额度。Base URL 也可指向兼容的自托管端点。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
         "searchCategories": "搜索分类",
         "searxngCategoriesHint": "分类会作为 SearXNG 的 `categories` 参数发送。",
@@ -721,6 +721,16 @@
         "description": "清理 wiki 的工具 —— 检测并合并 LLM 在多次再导入时用不同名字创建的重复实体 / 概念。",
         "noProject": "请先打开一个项目。",
         "noLlm": "请先配置 LLM 服务。",
+        "projectData": {
+          "title": "项目数据",
+          "description": "根据现有页面重建导航，或完整迁移项目及其隐藏的处理状态。",
+          "rebuild": "重建索引",
+          "export": "导出项目",
+          "import": "导入项目",
+          "rebuilt": "已使用 {{pages}} 个页面、{{groups}} 个分组重建索引。",
+          "exported": "项目已导出到 {{path}}",
+          "imported": "已导入 {{name}}，请切换项目后打开。"
+        },
         "dedup": {
           "title": "检测重复实体 / 概念",
           "description": "让 LLM 扫描全部 entity / concept 页面，把可能指向同一主题但用了不同名字的页面分组（中英对照、单复数、缩写与全称等）。每一组都需要你确认后才会合并。合并任务会进入串行队列依次执行，避免交叉引用被并发改写覆盖。",

@@ -560,7 +560,7 @@
         "savedBadge": "Saved",
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
-        "firecrawlHint": "Uses Firecrawl's anonymous Search API (`https://api.firecrawl.dev/v2/search`). No API key is required here, but Firecrawl may block suspicious IP addresses.",
+        "firecrawlHint": "Leave API key blank for anonymous search, or add a Firecrawl API key for authenticated quota. Base URL supports compatible self-hosted endpoints.",
         "searxngJsonHint": "The instance must allow JSON search responses (`format=json`).",
         "searchCategories": "Search categories",
         "searxngCategoriesHint": "Categories are sent as the SearXNG `categories` parameter.",
@@ -721,6 +721,16 @@
         "description": "Tools for cleaning up the wiki — detect and merge duplicate entities/concepts that the LLM created under different names across re-ingests.",
         "noProject": "Open a project first.",
         "noLlm": "Configure an LLM provider first.",
+        "projectData": {
+          "title": "Project data",
+          "description": "Rebuild navigation from existing pages, or move a complete project including its hidden processing state.",
+          "rebuild": "Rebuild index",
+          "export": "Export project",
+          "import": "Import project",
+          "rebuilt": "Rebuilt index with {{pages}} pages in {{groups}} groups.",
+          "exported": "Project exported to {{path}}",
+          "imported": "Imported {{name}}. Switch projects to open it."
+        },
         "dedup": {
           "title": "Detect duplicate entities / concepts",
           "description": "Asks the LLM to scan all entity / concept pages and group ones that likely refer to the same topic under different names (English vs Chinese, plural vs singular, abbreviation vs full form). You confirm each group before merging. Merges are queued and run one at a time so cross-references stay consistent.",

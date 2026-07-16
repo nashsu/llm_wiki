@@ -1413,7 +1413,7 @@ function MarkdownContent({ content }: { content: string }) {
     <div>
       {thinking && <ThinkingBlock content={thinking} />}
       <div
-        className="chat-markdown prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-pre:my-2 prose-code:text-xs prose-code:before:content-none prose-code:after:content-none"
+        className="chat-markdown prose max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none"
         dir={direction}
         lang={htmlLang}
         style={{ textAlign: "start" }}

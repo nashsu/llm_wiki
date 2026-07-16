@@ -1,9 +1,14 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { PanelLeftClose } from "lucide-react"
 import { KnowledgeTree } from "./knowledge-tree"
 import { FileTree } from "./file-tree"
 
-export function SidebarPanel() {
+interface SidebarPanelProps {
+  onCollapse?: () => void
+}
+
+export function SidebarPanel({ onCollapse }: SidebarPanelProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<"knowledge" | "files">("knowledge")
 
@@ -30,6 +35,17 @@ export function SidebarPanel() {
         >
           {t("sidebar.files")}
         </button>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="flex w-9 shrink-0 items-center justify-center border-l text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={t("layout.hideSidebar", "Hide sidebar")}
+            aria-label={t("layout.hideSidebar", "Hide sidebar")}
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-hidden">
         {mode === "knowledge" ? <KnowledgeTree /> : <FileTree />}
