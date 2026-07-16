@@ -30,7 +30,6 @@ import {
   rewriteIngestPathFromTitleForTargetLanguage,
   canonicalizeSourcesField,
   isAppManagedAggregatePath,
-  updateBoundedRecentIndexSection,
 } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
@@ -92,6 +91,22 @@ describe("parseFileBlocks — canonical shapes", () => {
     ].join("\n")
     expect(parseFileBlocks(text).blocks).toHaveLength(1)
   })
+
+  it("silently skips FILE block for wiki/overview.md", () => {
+    const text = [
+      "---FILE: wiki/overview.md---",
+      "# Overview",
+      "This should be skipped.",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/entities/foo.md---",
+      "This should be kept.",
+      "---END FILE---",
+    ].join("\n")
+    const { blocks } = parseFileBlocks(text)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].path).toBe("wiki/entities/foo.md")
+  })
 })
 
 describe("source summary media refs", () => {
@@ -113,24 +128,31 @@ describe("source summary media refs", () => {
 })
 
 describe("aggregate repair targeting", () => {
-  it("repairs only the append-only log and leaves deterministic aggregates to the app", () => {
+  it("requests missing aggregate pages and aggregate pages dropped by truncation warnings", () => {
+    // wiki/log.md is the only aggregate repair target — overview.md is
+    // now maintained incrementally via OVERVIEW blocks, so a truncation
+    // warning for it must NOT trigger a full-overwrite repair.
     expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/log.md"],
-      ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
+      ["wiki/entities/foo.md"],
+      ['FILE block "wiki/log.md" was not closed before end of stream — likely truncation.'],
+    )).toEqual(["wiki/log.md"])
+
+    expect(aggregatePathsNeedingRepair(
+      ["wiki/log.md"],
+      [],
     )).toEqual([])
 
-    expect(aggregatePathsNeedingRepair(["wiki/index.md"], [])).toEqual(["wiki/log.md"])
-
+    // overview.md truncation is no longer an aggregate-repair trigger.
     expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/overview.md", "wiki/log.md"],
-      [],
+      ["wiki/log.md"],
+      ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
     )).toEqual([])
   })
 
   it("filters aggregate repair output to the requested aggregate paths only", () => {
     const raw = [
-      "---FILE: wiki/overview.md---",
-      "# Overview",
+      "---FILE: wiki/log.md---",
+      "# Log",
       "---END FILE---",
       "",
       "---FILE: wiki/sources/should-not-touch.md---",
@@ -142,9 +164,9 @@ describe("aggregate repair targeting", () => {
       "---END FILE---",
     ].join("\n")
 
-    const filtered = filterAggregateRepairOutput(raw, ["wiki/overview.md"])
+    const filtered = filterAggregateRepairOutput(raw, ["wiki/log.md"])
 
-    expect(filtered.text).toContain("---FILE: wiki/overview.md---")
+    expect(filtered.text).toContain("---FILE: wiki/log.md---")
     expect(filtered.text).not.toContain("should-not-touch")
     expect(filtered.text).not.toContain("wiki/entities/stray.md")
     expect(filtered.warnings.join("\n")).toContain("Dropped 2 non-aggregate")
@@ -663,22 +685,5 @@ describe("application-managed aggregate boundaries", () => {
     expect(isAppManagedAggregatePath("wiki/INDEX.md")).toBe(true)
     expect(isAppManagedAggregatePath("wiki\\overview.MD")).toBe(true)
     expect(isAppManagedAggregatePath("wiki/entities/index.md")).toBe(false)
-  })
-
-  it("bounds recent entries and preserves following sections", () => {
-    const existing = [
-      "# Wiki Index",
-      "",
-      "## Recently Updated",
-      ...Array.from({ length: 205 }, (_, index) => `- [[old-${index}]] — Old ${index}`),
-      "",
-      "## Other",
-      "Keep me",
-    ].join("\n")
-    const result = updateBoundedRecentIndexSection(existing, ["- [[new]] — New"])
-    const recent = result.split("## Recently Updated")[1].split("## Other")[0]
-    expect(recent.match(/^- \[\[/gm)).toHaveLength(200)
-    expect(recent).toContain("[[new]]")
-    expect(result).toContain("## Other\nKeep me")
   })
 })

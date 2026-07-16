@@ -1,0 +1,2 @@
+# 统一行尾符为 LF，避免 Windows/WSL 跨平台换行符问题
+* text=auto eol=lf
