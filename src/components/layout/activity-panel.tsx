@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
-  RotateCcw, X, Clock, TrendingUp, Target, Pause, Play,
+  RotateCcw, X, Clock, TrendingUp, Target, GitBranch, Pause, Play,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
@@ -38,6 +38,7 @@ const FILE_TYPE_ICONS: Record<string, typeof FileText> = {
   findings: TrendingUp,
   thesis: Target,
   methodology: BookOpen,
+  repositories: GitBranch,
   overview: Layout,
 }
 
@@ -51,6 +52,7 @@ const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
   finding: "findings",
   thesis: "thesis",
   methodology: "methodology",
+  repository: "repositories",
   overview: "overview",
 }
 

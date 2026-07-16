@@ -1,6 +1,6 @@
 import type { ReviewItem } from "@/stores/review-store"
 
-export type ReviewPageType = "entity" | "concept" | "comparison" | "synthesis" | "query"
+export type ReviewPageType = "entity" | "concept" | "comparison" | "synthesis" | "query" | "repository"
 
 export interface ReviewPageDraft {
   title: string
@@ -11,13 +11,14 @@ export interface ReviewPageDraft {
 const ACTION_PREFIX_RE = /^(Create|Save|Add|Missing page|Missing pages|缺失页面|缺少页面|创建|保存|新增)[:：\s-]*/i
 const ENTITY_RE = /\b(entity|entities)\b|实体/i
 const CONCEPT_RE = /\b(concept|concepts)\b|概念/i
+const REPOSITORY_RE = /\b(repository|repositories|repo|repos)\b|代码仓库|仓库/i
 
 function cleanCandidateTitle(value: string): string {
   return value
     .replace(ACTION_PREFIX_RE, "")
     .replace(/^(missing|缺失|缺少)\s*/i, "")
     .replace(/\s*(page|pages|页面|页)\s*$/i, "")
-    .replace(/\s*(entity|entities|concept|concepts|实体|概念)\s*(page|pages|页面|页)?\s*$/i, "")
+    .replace(/\s*(entity|entities|concept|concepts|repository|repositories|repo|repos|实体|概念|代码仓库|仓库)\s*(page|pages|页面|页)?\s*$/i, "")
     .replace(/^[\s"'“”‘’`[\]【】()（）]+|[\s"'“”‘’`[\]【】()（）:：.。]+$/g, "")
     .trim()
 }
@@ -57,6 +58,7 @@ function extractMissingPageCandidates(text: string): string[] {
 function detectPageType(action: string, reviewType: ReviewItem["type"], text: string): ReviewPageType {
   const combined = `${action}\n${text}`
   if (ENTITY_RE.test(combined)) return "entity"
+  if (REPOSITORY_RE.test(combined)) return "repository"
   if (CONCEPT_RE.test(combined)) return "concept"
   if (/comparison|compare|比较/i.test(combined)) return "comparison"
   if (/synthesis|综合/i.test(combined)) return "synthesis"
@@ -76,6 +78,8 @@ function dirForPageType(pageType: ReviewPageType): string {
       return "comparisons"
     case "synthesis":
       return "synthesis"
+    case "repository":
+      return "repositories"
     case "query":
     default:
       return "queries"

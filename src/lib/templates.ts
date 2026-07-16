@@ -71,7 +71,7 @@ const researchTemplate: WikiTemplate = {
   name: "Research",
   description: "Deep-dive research with hypothesis tracking and methodology notes",
   icon: "🔬",
-  extraDirs: ["wiki/methodology", "wiki/findings", "wiki/thesis"],
+  extraDirs: ["wiki/methodology", "wiki/findings", "wiki/thesis", "wiki/repositories"],
   schema: `# Wiki Schema — Research Deep-Dive
 
 ## Page Types
@@ -82,6 +82,7 @@ ${BASE_SCHEMA_TYPES}
 | thesis | wiki/thesis/ | Working hypothesis and its evolution over time |
 | methodology | wiki/methodology/ | Research methods, protocols, and study designs |
 | finding | wiki/findings/ | Individual empirical results or observations |
+| repository | wiki/repositories/ | Associated software repositories and verified implementation knowledge |
 
 ## Naming Conventions
 
@@ -89,10 +90,45 @@ ${BASE_NAMING}
 - Theses: hypothesis as slug (e.g., \`scaling-improves-reasoning.md\`)
 - Methodologies: method name (e.g., \`systematic-review.md\`, \`ablation-study.md\`)
 - Findings: descriptive slug (e.g., \`larger-models-better-few-shot.md\`)
+- Repositories: \`owner-repository.md\` (e.g., \`nashsu-llm-wiki.md\`)
 
 ## Frontmatter
 
 ${BASE_FRONTMATTER}
+
+Source pages representing papers may also include optional flat fields:
+\`\`\`yaml
+source_kind: paper
+authors: [Author A, Author B]
+year: "2026"
+venue: ""
+url: ""
+doi: ""
+arxiv_id: ""
+repository_url: ""
+screening_relevance: core
+abstraction_level: workflow
+contribution_type: [system, method, evaluation]
+\`\`\`
+
+Paper source page body:
+\`\`\`markdown
+## Problem and context
+
+## Main contribution
+
+## Method
+
+## Evidence and results
+
+## Limitations
+
+## Relevance to this project
+
+## Related concepts and methodologies
+
+## Associated repositories
+\`\`\`
 
 Thesis pages also include:
 \`\`\`yaml
@@ -100,11 +136,113 @@ confidence: low | medium | high
 status: speculative | supported | refuted | settled
 \`\`\`
 
-Finding pages also include:
+Methodology pages may also include optional flat fields:
+\`\`\`yaml
+source_papers: ["[[paper-a]]", "[[paper-b]]"]
+implementation_repositories: ["[[owner-repo]]"]
+maturity: emerging
+\`\`\`
+
+Methodology page body:
+\`\`\`markdown
+## Definition
+
+## Problem addressed
+
+## Mechanism
+
+## Variants
+
+## Evidence
+
+## Constraints and failure modes
+
+## Implementations
+
+## Project implications
+\`\`\`
+
+Finding pages use flat evidence fields:
 \`\`\`yaml
 source: "[[source-slug]]"
+source_pages: "12-14"
+source_figure: "Figure 3"
+source_table: ""
+evidence_kind: direct
 confidence: low | medium | high
 replicated: true | false | null
+repository: "[[owner-repo]]"
+repo_commit: "<sha>"
+repo_path: "src/module/file.ts"
+repo_symbol: "FunctionOrClass"
+repo_lines: "120-178"
+\`\`\`
+
+Allowed \`evidence_kind\` values:
+\`\`\`text
+direct | inferred | contextual
+\`\`\`
+
+Finding page body:
+\`\`\`markdown
+## Finding
+
+## Conditions
+
+## Evidence
+
+## Interpretation
+
+## Limitations
+
+## Project implication
+\`\`\`
+
+Repository pages use flat frontmatter:
+\`\`\`yaml
+---
+type: repository
+title: Owner / Repository
+tags: [implementation]
+related: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+repo_url: ""
+repo_owner: ""
+repo_name: ""
+branch: ""
+pinned_commit: ""
+analysis_provider: opendeepwiki
+analysis_status: unregistered
+external_repository_id: ""
+last_analyzed_at: ""
+---
+\`\`\`
+
+Allowed \`analysis_status\` values:
+\`\`\`text
+unregistered | registered | processing | ready | failed | stale
+\`\`\`
+
+Repository page body:
+\`\`\`markdown
+## Purpose
+
+## Relevance to this project
+
+## Associated papers and methodologies
+
+## Architecture
+
+## Building blocks
+
+## Entry points
+
+## Verified source evidence
+
+## Paper-to-code alignment
+
+## Open questions
 \`\`\`
 
 ## Index Format
@@ -121,6 +259,7 @@ ${BASE_CROSSREF}
 - Findings link back to their source via the \`source:\` frontmatter field
 - Thesis pages reference supporting and refuting findings via \`related:\`
 - Methodology pages are cited by the findings that used them
+- Repository pages link to associated sources, findings, methodologies, and concepts via \`related:\`
 
 ## Contradiction Handling
 
@@ -128,10 +267,16 @@ ${BASE_CONTRADICTION}
 
 ## Research-Specific Conventions
 
+- Treat papers as source pages; missing optional bibliographic fields do not block a useful local source
 - Keep the thesis pages updated as evidence accumulates — they are living documents
 - Every finding should assess replication status when known
+- Use methodology pages for reusable methods, processes, architectures, evaluation protocols, and design patterns
 - Methodology pages explain the *why* (rationale) not just the *how*
+- Use finding pages for evidence-bearing results, constraints, negative results, or independently useful observations
 - Distinguish between direct evidence and inference in finding pages
+- Pin a commit before repository evidence is treated as durable
+- Create a repository page only when a source explicitly associates the repository and no matching page exists
+- Never claim a repository implements a method without repository verification
 `,
   purpose: `# Project Purpose — Research Deep-Dive
 

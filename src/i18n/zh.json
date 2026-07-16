@@ -48,7 +48,7 @@
     "typeLabels": {
       "overview": "概览", "entity": "实体", "concept": "概念",
       "source": "来源", "synthesis": "综合", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论",
+      "thesis": "论点", "methodology": "方法论", "repository": "代码仓库",
       "comparison": "比较", "query": "查询"
     }
   },
@@ -964,7 +964,7 @@
     "fileTypes": {
       "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
       "synthesis": "综合", "comparison": "比较", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论", "overview": "概览",
+      "thesis": "论点", "methodology": "方法论", "repository": "代码仓库", "overview": "概览",
       "index": "索引", "log": "日志", "file": "文件"
     }
   },
@@ -1041,6 +1041,7 @@
       "finding": "发现",
       "thesis": "论点",
       "methodology": "方法论",
+      "repository": "代码仓库",
       "other": "其他"
     }
   },

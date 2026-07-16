@@ -42,6 +42,17 @@ const UNION_FIELDS = ["sources", "tags", "related"] as const
  *     separately.
  */
 const LOCKED_FIELDS = ["type", "title", "created"] as const
+const REPOSITORY_PRESERVED_FIELDS = [
+  "repo_url",
+  "repo_owner",
+  "repo_name",
+  "branch",
+  "pinned_commit",
+  "analysis_provider",
+  "analysis_status",
+  "external_repository_id",
+  "last_analyzed_at",
+] as const
 
 /**
  * Body length safety threshold. If the LLM's merged body is shorter
@@ -105,7 +116,7 @@ export async function mergePageContent(
   if (newContent === existingContent) return existingContent
 
   // Step 1 — always-on: union the array frontmatter fields.
-  const arrayMerged = mergeArrayFieldsIntoContent(
+  let arrayMerged = mergeArrayFieldsIntoContent(
     newContent,
     existingContent,
     [...UNION_FIELDS],
@@ -115,6 +126,11 @@ export async function mergePageContent(
   // differed). The array merge has already produced the right output;
   // skip the LLM.
   const oldParsed = parseFrontmatter(existingContent)
+  arrayMerged = preserveRepositoryFields(
+    arrayMerged,
+    existingContent,
+    oldParsed.frontmatter?.type,
+  )
   const arrayMergedParsed = parseFrontmatter(arrayMerged)
   if (opts.replaceExistingBody) {
     await tryBackup(opts, existingContent)
@@ -187,6 +203,7 @@ export async function mergePageContent(
       final = setFrontmatterScalar(final, field, existingValue)
     }
   }
+  final = preserveRepositoryFields(final, existingContent, oldParsed.frontmatter?.type)
   // Re-apply union merges on top of the LLM's frontmatter using
   // arrayMerged (which is already existing+incoming union) as the
   // reference. The LLM may have output a subset of array values —
@@ -216,6 +233,34 @@ async function tryBackup(
 
 function defaultToday(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+function preserveRepositoryFields(
+  content: string,
+  existingContent: string,
+  existingType: unknown,
+): string {
+  if (existingType !== "repository") return content
+
+  let preserved = content
+  for (const field of REPOSITORY_PRESERVED_FIELDS) {
+    const rawValue = getFrontmatterScalarRaw(existingContent, field)
+    if (rawValue !== null) {
+      preserved = setFrontmatterScalar(preserved, field, rawValue)
+    }
+  }
+  return preserved
+}
+
+function getFrontmatterScalarRaw(
+  content: string,
+  fieldName: string,
+): string | null {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/)
+  if (!fmMatch) return null
+  const escapedName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const lineMatch = fmMatch[1].match(new RegExp(`^${escapedName}:\\s*([^\\n]*)$`, "m"))
+  return lineMatch?.[1] ?? null
 }
 
 /**

@@ -8,6 +8,7 @@ export const GENERATION_WIKI_TYPES = [
   "thesis",
   "methodology",
   "finding",
+  "repository",
 ] as const
 
 const WIKI_TYPE_DIRS: Array<{ dir: string; type: string }> = [
@@ -20,6 +21,7 @@ const WIKI_TYPE_DIRS: Array<{ dir: string; type: string }> = [
   { dir: "findings", type: "finding" },
   { dir: "thesis", type: "thesis" },
   { dir: "methodology", type: "methodology" },
+  { dir: "repositories", type: "repository" },
 ]
 
 export function inferWikiTypeFromPath(path: string, fileName?: string): string | null {
@@ -40,6 +42,7 @@ export function wikiTypeLabel(type: string): string {
   if (type === "thesis") return "Thesis"
   if (type === "methodology") return "Methodology"
   if (type === "finding") return "Finding"
+  if (type === "repository") return "Repository"
   return type
     .split(/[-_\s]+/)
     .filter(Boolean)

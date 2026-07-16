@@ -48,7 +48,7 @@
     "typeLabels": {
       "overview": "Overview", "entity": "Entities", "concept": "Concepts",
       "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
-      "thesis": "Theses", "methodology": "Methodologies",
+      "thesis": "Theses", "methodology": "Methodologies", "repository": "Repositories",
       "comparison": "Comparisons", "query": "Queries"
     }
   },
@@ -964,7 +964,7 @@
     "fileTypes": {
       "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
       "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
-      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
+      "thesis": "Thesis", "methodology": "Methodology", "repository": "Repository", "overview": "Overview",
       "index": "Index", "log": "Log", "file": "File"
     }
   },
@@ -1041,6 +1041,7 @@
       "finding": "Finding",
       "thesis": "Thesis",
       "methodology": "Methodology",
+      "repository": "Repository",
       "other": "Other"
     }
   },

@@ -2039,6 +2039,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keyword_search_includes_repository_pages_in_custom_wiki_directories() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/repositories/nashsu-llm-wiki.md",
+            "---\ntype: repository\ntitle: Nashsu / llm_wiki\n---\n\nCanonical research knowledge core implementation.",
+        );
+
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "canonical research knowledge core".into(),
+            20,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.results.len(), 1);
+        assert_eq!(
+            out.results[0].path,
+            "wiki/repositories/nashsu-llm-wiki.md"
+        );
+        assert_eq!(out.results[0].title, "Nashsu / llm_wiki");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn keyword_search_always_blends_available_graph_neighbors() {
         let root = tmp_project();
         write_page(

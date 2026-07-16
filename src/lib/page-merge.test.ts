@@ -182,6 +182,51 @@ describe("mergePageContent — LLM merge", () => {
     expect(out).toContain("type: entity")
     expect(out).not.toContain("type: concept")
   })
+
+  it("preserves flat repository identity and analysis metadata", async () => {
+    const existing = PAGE(
+      [
+        "type: repository",
+        "title: Nashsu / llm_wiki",
+        "created: 2026-07-16",
+        'repo_url: "https://github.com/nashsu/llm_wiki"',
+        'repo_owner: "nashsu"',
+        'repo_name: "llm_wiki"',
+        'branch: "main"',
+        'pinned_commit: "969e7e8"',
+        "analysis_provider: opendeepwiki",
+        "analysis_status: unregistered",
+        'external_repository_id: ""',
+        'last_analyzed_at: ""',
+        "tags: [implementation]",
+      ].join("\n"),
+      "Existing verified repository notes with enough detail to retain.",
+    )
+    const incoming = PAGE(
+      "type: repository\ntitle: Nashsu / llm_wiki\ntags: [typescript]",
+      "Incoming repository notes with additional implementation details.",
+    )
+    const merger = vi.fn().mockResolvedValue(PAGE(
+      "type: repository\ntitle: Nashsu / llm_wiki\ntags: [typescript]",
+      "Existing verified repository notes with enough detail to retain. Incoming repository notes with additional implementation details.",
+    ))
+
+    const out = await mergePageContent(incoming, existing, merger, {
+      ...baseOpts,
+      pagePath: "wiki/repositories/nashsu-llm-wiki.md",
+    })
+
+    expect(out).toContain('repo_url: "https://github.com/nashsu/llm_wiki"')
+    expect(out).toContain('repo_owner: "nashsu"')
+    expect(out).toContain('repo_name: "llm_wiki"')
+    expect(out).toContain('branch: "main"')
+    expect(out).toContain('pinned_commit: "969e7e8"')
+    expect(out).toContain("analysis_provider: opendeepwiki")
+    expect(out).toContain("analysis_status: unregistered")
+    expect(out).toContain('external_repository_id: ""')
+    expect(out).toContain('last_analyzed_at: ""')
+    expect(out).toMatch(/tags:\s*\[\s*"implementation",\s*"typescript"\s*\]/)
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────
@@ -207,6 +252,35 @@ describe("mergePageContent — LLM failure fallback", () => {
     // Body is the new (incoming) one — old body is lost; this is the
     // pre-LLM-merge behavior, the documented fallback contract.
     expect(out).toContain("new body content")
+  })
+
+  it("preserves repository metadata when the LLM merge falls back", async () => {
+    const existing = PAGE(
+      [
+        "type: repository",
+        "title: Nashsu / llm_wiki",
+        'repo_url: "https://github.com/nashsu/llm_wiki"',
+        'pinned_commit: "969e7e8"',
+        "analysis_status: ready",
+        "tags: [implementation]",
+      ].join("\n"),
+      "Existing repository evidence.",
+    )
+    const incoming = PAGE(
+      "type: repository\ntitle: Nashsu / llm_wiki\ntags: [typescript]",
+      "Incoming repository evidence.",
+    )
+    const merger = vi.fn().mockRejectedValue(new Error("offline"))
+
+    const out = await mergePageContent(incoming, existing, merger, {
+      ...baseOpts,
+      pagePath: "wiki/repositories/nashsu-llm-wiki.md",
+    })
+
+    expect(out).toContain('repo_url: "https://github.com/nashsu/llm_wiki"')
+    expect(out).toContain('pinned_commit: "969e7e8"')
+    expect(out).toContain("analysis_status: ready")
+    expect(out).toMatch(/tags:\s*\[\s*"implementation",\s*"typescript"\s*\]/)
   })
 
   it("rejects LLM output that shrinks body below 70% of max(old, new)", async () => {

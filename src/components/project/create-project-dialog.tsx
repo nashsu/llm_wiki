@@ -8,14 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { FolderOpen } from "lucide-react"
-import { createProject, writeFile, createDirectory } from "@/commands/fs"
-import { getTemplate } from "@/lib/templates"
+import { createProject } from "@/commands/fs"
 import { TemplatePicker } from "@/components/project/template-picker"
 import type { WikiProject } from "@/types/wiki"
-import { normalizePath } from "@/lib/path-utils"
 import { OUTPUT_LANGUAGE_OPTIONS } from "@/lib/output-language-options"
 import { useWikiStore, type OutputLanguage } from "@/stores/wiki-store"
 import { saveOutputLanguage } from "@/lib/project-store"
+import { materializeProjectTemplate } from "@/lib/project-template"
 
 interface CreateProjectDialogProps {
   open: boolean
@@ -113,14 +112,7 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
     setError("")
     try {
       const project = await createProject(name.trim(), path.trim())
-      const pp = normalizePath(project.path)
-
-      const template = getTemplate(selectedTemplate)
-      await writeFile(`${pp}/schema.md`, template.schema)
-      await writeFile(`${pp}/purpose.md`, template.purpose)
-      for (const dir of template.extraDirs) {
-        await createDirectory(`${pp}/${dir}`)
-      }
+      await materializeProjectTemplate(project.path, selectedTemplate)
 
       // Persist the user's language choice. The store / disk
       // mirror is what the rest of the app reads via

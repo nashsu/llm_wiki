@@ -35,6 +35,7 @@ const NODE_TYPE_COLORS: Record<string, string> = {
   finding: "#a855f7",    // purple-500
   thesis: "#f43f5e",     // rose-500
   methodology: "#14b8a6", // teal-500
+  repository: "#38bdf8", // sky-400
   other: "#94a3b8",     // slate-400
 }
 
@@ -728,6 +729,7 @@ export function GraphView() {
       finding: t("graph.nodeTypeLabels.finding"),
       thesis: t("graph.nodeTypeLabels.thesis"),
       methodology: t("graph.nodeTypeLabels.methodology"),
+      repository: t("graph.nodeTypeLabels.repository"),
       other: t("graph.nodeTypeLabels.other"),
     })
   }, [t])

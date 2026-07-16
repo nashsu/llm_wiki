@@ -2185,6 +2185,39 @@ mod tests {
     }
 
     #[test]
+    fn api_graph_includes_repository_pages_with_their_declared_type() {
+        let root = test_project_dir();
+        let repository_dir = root.join("wiki/repositories");
+        let concept_dir = root.join("wiki/concepts");
+        fs::create_dir_all(&repository_dir).unwrap();
+        fs::create_dir_all(&concept_dir).unwrap();
+        fs::write(
+            repository_dir.join("nashsu-llm-wiki.md"),
+            "---\ntype: repository\ntitle: Nashsu / llm_wiki\n---\n\n[[knowledge-core]]",
+        )
+        .unwrap();
+        fs::write(
+            concept_dir.join("knowledge-core.md"),
+            "---\ntype: concept\ntitle: Knowledge Core\n---\n\n[[nashsu-llm-wiki]]",
+        )
+        .unwrap();
+
+        let (nodes, edges) = build_graph(root.to_str().unwrap()).unwrap();
+        let repository = nodes
+            .iter()
+            .find(|node| node.id == "nashsu-llm-wiki")
+            .unwrap();
+
+        assert_eq!(repository.node_type, "repository");
+        assert_eq!(
+            repository.path,
+            "wiki/repositories/nashsu-llm-wiki.md"
+        );
+        assert_eq!(edges.len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn review_query_defaults_to_unresolved_items() {
         let root = test_project_dir();
         let state_dir = root.join(".llm-wiki");
