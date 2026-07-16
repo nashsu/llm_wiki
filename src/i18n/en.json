@@ -3,6 +3,19 @@
     "title": "LLM Wiki",
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
+  "common": {
+    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close",
+    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+  },
+  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
+  "errors": { "generic": "Something went wrong" },
+  "mermaid": {
+    "renderFailed": "Mermaid diagram could not be rendered",
+    "showDetails": "Show parser details",
+    "enlarge": "Enlarge diagram",
+    "rendering": "Rendering diagram...",
+    "diagram": "Diagram"
+  },
   "nav": {
     "chat": "Chat",
     "wiki": "Wiki",
@@ -29,7 +42,15 @@
   },
   "sidebar": {
     "knowledge": "Knowledge",
-    "files": "Files"
+    "files": "Files",
+    "rawSources": "Raw Sources",
+    "noWikiPages": "No wiki pages yet. Import sources to get started.",
+    "typeLabels": {
+      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
+      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
+      "thesis": "Theses", "methodology": "Methodologies",
+      "comparison": "Comparisons", "query": "Queries"
+    }
   },
   "editor": {
     "edit": "Edit",
@@ -70,6 +91,7 @@
       "createFailed": "The missing page could not be created.",
       "emptyDraftError": "The model returned an empty draft."
     },
+    "frontmatter": { "origin": "Origin", "more": "More" },
     "rawMarkdownEditor": "Raw Markdown editor"
   },
   "research": {
@@ -82,6 +104,8 @@
     "sourcesCount": "Sources ({{count}})",
     "anyTxtSource": "AnyTXT source",
     "webSource": "Web source",
+    "synthesis": "Synthesis",
+    "thinking": "Thinking",
     "open": "Open",
     "remove": "Remove",
     "status": {
@@ -196,6 +220,16 @@
     "saveToWiki": "Save to Wiki",
     "saving": "Saving...",
     "saved": "Saved!",
+    "regenerate": "Regenerate",
+    "regenerateResponse": "Regenerate this response",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyToClipboard": "Copy to clipboard",
+    "thinking": "Thinking...",
+    "lineCount": "{{count}} line",
+    "lineCount_other": "{{count}} lines",
+    "thoughtLineCount": "Thought for {{count}} line",
+    "thoughtLineCount_other": "Thought for {{count}} lines",
     "writeToWiki": "Write to Wiki",
     "emptyHint": "Ask a question or start an ingest to begin.",
     "sources": "Sources",
@@ -249,6 +283,7 @@
     "references": "References",
     "generatedOutputs": "Generated outputs",
     "generatedOutput": "Output",
+    "openGeneratedOutputFolder": "Open output folder",
     "generatedOutputCount": "{{count}} file",
     "generatedOutputCount_plural": "{{count}} files",
     "closeGeneratedOutputs": "Close generated outputs",
@@ -278,6 +313,21 @@
   "search": {
     "title": "Search",
     "placeholder": "Search wiki pages...",
+    "placeholderWithShortcut": "Search wiki pages... (Enter to search)",
+    "searching": "Searching...",
+    "pressEnter": "Press Enter to search",
+    "pageCount": "{{count}} page",
+    "pageCount_other": "{{count}} pages",
+    "imageMatchCount": "{{count}} image match",
+    "imageMatchCount_other": "{{count}} image matches",
+    "supportingImageCount": "+{{count}} from matched pages",
+    "images": "Images",
+    "pages": "Pages",
+    "hideSupporting": "Hide supporting",
+    "showAllSupporting": "Show all (+{{count}})",
+    "noCaption": "No caption",
+    "fromSource": "From: {{source}}",
+    "jumpToSource": "Jump to source document",
     "noResults": "No results found",
     "startSearching": "Type to search wiki pages"
   },
@@ -332,6 +382,7 @@
     "selectedCount": "{{count}} selected",
     "markSelectedResolved": "Mark selected resolved",
     "dismissSelected": "Dismiss selected",
+    "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —"
   },
@@ -436,6 +487,20 @@
         "codexCliTimeout": "Codex CLI timeout",
         "codexCliTimeoutUnit": "minutes",
         "codexCliTimeoutHint": "Overall timeout for one Codex CLI request. Raise this for long PDF ingest or slower local/network sessions.",
+        "requestTimeout": "Request timeout (minutes)",
+        "requestTimeoutHint": "Increase this for slow local CPU models. The default is 30 minutes.",
+        "cliStatus": "CLI status",
+        "checkingCli": "Checking…",
+        "recheckCli": "Re-check",
+        "detectingCli": "Detecting local {{name}} binary…",
+        "cliDetected": "Detected{{version}}. Ready to use your local {{login}} — no API key needed.",
+        "claudeSubscription": "subscription",
+        "codexLogin": "Codex login",
+        "cliAuthBefore": "If chat fails with an authentication error, run",
+        "cliAuthAfter": "in a terminal to refresh the login.",
+        "cliUnavailable": "{{name}} CLI not available.",
+        "cliInstallBefore": "Install with",
+        "cliInstallAfter": "then re-check.",
         "testConnection": "Test connection",
         "testFunction": "Test function",
         "testingConnection": "Testing connection…",
@@ -749,6 +814,8 @@
           "delete": "Delete",
           "queueTitle": "In-progress merges",
           "queueDescription": "Tasks queued from a previous scan that haven't finished yet. Merges run one at a time.",
+          "restoredBacklog": "These merge tasks were restored from the previous session and are paused to avoid unexpected LLM usage.",
+          "resumeRestored": "Resume merges",
           "notDuplicates": "Not duplicates",
           "merged": "Merged",
           "skipped": "Marked not duplicates"
@@ -856,10 +923,22 @@
     "cancelAllTitle": "Cancel all queued and in-progress tasks",
     "cancelAllConfirm": "Cancel all {{count}} queued/processing ingest tasks? Partial files from the in-progress task will be removed. Failed tasks will be kept so you can retry them.",
     "retryFailed": "Retry failed",
-    "retryFailedTitle": "Retry all failed ingest tasks"
+    "retryFailedTitle": "Retry all failed ingest tasks",
+    "fileSync": "File Sync",
+    "rescan": "Rescan",
+    "rescanTitle": "Scan project files for external changes",
+    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "fileTypes": {
+      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
+      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
+      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
+      "index": "Index", "log": "Log", "file": "File"
+    }
   },
   "fileTree": {
-    "noProject": "No project open"
+    "noProject": "No project open",
+    "openProjectFolder": "Open project folder",
+    "openProjectFolderFailed": "Failed to open the project folder."
   },
   "graph": {
     "openProject": "Open a project to view the graph",
@@ -879,6 +958,12 @@
     "noVisibleNodes": "No visible nodes",
     "filter": "Filter",
     "reset": "Reset",
+    "resetFilters": "Reset graph filters",
+    "any": "Any",
+    "showAllTypes": "Show all types",
+    "doubleClickToggle": "Double-click to toggle visibility",
+    "expandLegend": "Expand legend",
+    "collapseLegend": "Collapse legend",
     "type": "Type",
     "community": "Community",
     "insights": "Insights",

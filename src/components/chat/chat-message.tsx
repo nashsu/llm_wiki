@@ -98,6 +98,7 @@ function ChatMessageImpl({
   onApproveShellCommand,
   onSubmitUserInput,
 }: ChatMessageProps) {
+  const { t } = useTranslation()
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
@@ -196,9 +197,9 @@ function ChatMessageImpl({
                 type="button"
                 onClick={onRegenerate}
                 className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                title="Regenerate this response"
+                title={t("chat.regenerateResponse")}
               >
-                <RefreshCw className="h-3 w-3" /> Regenerate
+                <RefreshCw className="h-3 w-3" /> {t("chat.regenerate")}
               </button>
             )}
           </div>
@@ -509,6 +510,7 @@ function initialUserInputAnswers(request: ChatUserInputRequest): Record<string, 
 }
 
 function CopyButton({ content }: { content: string }) {
+  const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
@@ -529,15 +531,16 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={handleCopy}
       className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-      title="Copy to clipboard"
+      title={t("chat.copyToClipboard")}
     >
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Copied!" : "Copy"}
+      {copied ? t("chat.copied") : t("chat.copy")}
     </button>
   )
 }
 
 function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -631,10 +634,10 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       onClick={handleSave}
       disabled={saving}
       className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-      title="Save to wiki"
+      title={t("chat.saveToWiki")}
     >
       <BookmarkPlus className="h-3 w-3" />
-      {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
+      {saved ? t("chat.saved") : saving ? t("chat.saving") : t("chat.saveToWiki")}
     </button>
   )
 }
@@ -1516,6 +1519,7 @@ function separateThinking(text: string): { thinking: string | null; answer: stri
 
 /** Streaming thinking: shows latest ~5 lines rolling upward with animation */
 function StreamingThinkingBlock({ content }: { content: string }) {
+  const { t } = useTranslation()
   const lines = content.split("\n").filter((l) => l.trim())
   const visibleLines = lines.slice(-5)
 
@@ -1523,8 +1527,8 @@ function StreamingThinkingBlock({ content }: { content: string }) {
     <div className="rounded-md border border-dashed border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-2">
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-sm animate-pulse">💭</span>
-        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Thinking...</span>
-        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{lines.length} lines</span>
+        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">{t("chat.thinking")}</span>
+        <span className="text-[10px] text-amber-600/50 dark:text-amber-500/40">{t("chat.lineCount", { count: lines.length })}</span>
       </div>
       <div className="h-[5lh] overflow-hidden text-xs text-amber-800/70 dark:text-amber-300/60 font-mono leading-relaxed">
         {visibleLines.map((line, i) => (
@@ -1544,6 +1548,7 @@ function StreamingThinkingBlock({ content }: { content: string }) {
 
 /** Completed thinking: collapsed by default, click to expand */
 function ThinkingBlock({ content }: { content: string }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const lines = content.split("\n").filter((l) => l.trim())
 
@@ -1555,7 +1560,7 @@ function ThinkingBlock({ content }: { content: string }) {
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100/50 dark:hover:bg-amber-900/20 transition-colors"
       >
         <span className="text-sm">💭</span>
-        <span className="font-medium">Thought for {lines.length} lines</span>
+        <span className="font-medium">{t("chat.thoughtLineCount", { count: lines.length })}</span>
         <span className="text-amber-600/60 dark:text-amber-500/60">
           {expanded ? "▼" : "▶"}
         </span>

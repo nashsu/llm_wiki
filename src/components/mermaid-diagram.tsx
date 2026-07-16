@@ -1,5 +1,6 @@
 import { Children, isValidElement, useEffect, useRef, useState, type ReactNode } from "react"
 import { AlertTriangle, X, ZoomIn } from "lucide-react"
+import { useTranslation } from "react-i18next"
 
 interface MermaidDiagramProps {
   code: string
@@ -8,6 +9,7 @@ interface MermaidDiagramProps {
 const svgCache = new Map<string, string>()
 
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [svg, setSvg] = useState<string | null>(() => svgCache.get(code) ?? null)
@@ -119,11 +121,11 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Mermaid diagram could not be rendered</p>
+            <p className="font-medium">{t("mermaid.renderFailed")}</p>
             <p className="mt-0.5 line-clamp-2 text-destructive/80">{summary}</p>
             <details className="mt-1">
               <summary className="cursor-pointer select-none text-[11px] text-destructive/70 hover:text-destructive">
-                Show parser details
+                {t("mermaid.showDetails")}
               </summary>
               <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-2 text-[11px] text-muted-foreground">
                 {error}
@@ -148,7 +150,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
               type="button"
               onClick={() => setExpanded(true)}
               className="absolute top-2 right-2 z-10 rounded-md bg-background/80 px-1.5 py-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/diagram:opacity-100"
-              title="Enlarge diagram"
+              title={t("mermaid.enlarge")}
             >
               <ZoomIn className="h-4 w-4" />
             </button>
@@ -160,11 +162,11 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
           </>
         ) : visible ? (
           <div className="flex items-center justify-center h-full p-4">
-            <span className="text-xs text-muted-foreground animate-pulse">Rendering diagram...</span>
+            <span className="text-xs text-muted-foreground animate-pulse">{t("mermaid.rendering")}</span>
           </div>
         ) : (
           <div className="flex items-center justify-center h-full p-4">
-            <span className="text-xs text-muted-foreground/50">Diagram</span>
+            <span className="text-xs text-muted-foreground/50">{t("mermaid.diagram")}</span>
           </div>
         )}
       </div>

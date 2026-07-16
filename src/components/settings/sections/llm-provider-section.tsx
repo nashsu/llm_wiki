@@ -723,6 +723,7 @@ interface DetectResult {
  * already tailors the hint (macOS quarantine, missing binary, etc).
  */
 function ClaudeCliStatusPill() {
+  const { t } = useTranslation()
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
 
@@ -750,14 +751,14 @@ function ClaudeCliStatusPill() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Label className="m-0">CLI status</Label>
+        <Label className="m-0">{t("settings.sections.llm.cliStatus")}</Label>
         <button
           type="button"
           onClick={() => void detect()}
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? t("settings.sections.llm.checkingCli") : t("settings.sections.llm.recheckCli")}
         </button>
       </div>
       <div
@@ -773,12 +774,11 @@ function ClaudeCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local claude binary…</div>}
+          {state === "loading" && <div>{t("settings.sections.llm.detectingCli", { name: "Claude" })}</div>}
           {state === "ok" && (
             <>
               <div>
-                Detected{result?.version ? ` ${result.version}` : ""}. Ready to use your local
-                subscription — no API key needed.
+                {t("settings.sections.llm.cliDetected", { version: result?.version ? ` ${result.version}` : "", login: t("settings.sections.llm.claudeSubscription") })}
               </div>
               {result?.path && (
                 <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -791,23 +791,23 @@ function ClaudeCliStatusPill() {
                   the resulting "Unauthenticated" exit-1 as a LLM
                   Wiki bug. */}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
+                {t("settings.sections.llm.cliAuthBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   claude
                 </code>{" "}
-                in a terminal to refresh the OAuth login.
+                {" "}{t("settings.sections.llm.cliAuthAfter")}
               </div>
             </>
           )}
           {state === "err" && (
             <>
-              <div>{result?.error ?? "claude CLI not available."}</div>
+              <div>{result?.error ?? t("settings.sections.llm.cliUnavailable", { name: "Claude" })}</div>
               <div className="text-muted-foreground">
-                Install from{" "}
+                {t("settings.sections.llm.cliInstallBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   npm i -g @anthropic-ai/claude-code
                 </code>{" "}
-                then re-check.
+                {" "}{t("settings.sections.llm.cliInstallAfter")}
               </div>
             </>
           )}
@@ -818,6 +818,7 @@ function ClaudeCliStatusPill() {
 }
 
 function CodexCliStatusPill() {
+  const { t } = useTranslation()
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
 
@@ -845,14 +846,14 @@ function CodexCliStatusPill() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Label className="m-0">CLI status</Label>
+        <Label className="m-0">{t("settings.sections.llm.cliStatus")}</Label>
         <button
           type="button"
           onClick={() => void detect()}
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? t("settings.sections.llm.checkingCli") : t("settings.sections.llm.recheckCli")}
         </button>
       </div>
       <div
@@ -868,12 +869,11 @@ function CodexCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local codex binary…</div>}
+          {state === "loading" && <div>{t("settings.sections.llm.detectingCli", { name: "Codex" })}</div>}
           {state === "ok" && (
             <>
               <div>
-                Detected{result?.version ? ` ${result.version}` : ""}. Ready to use your local
-                Codex login — no API key needed.
+                {t("settings.sections.llm.cliDetected", { version: result?.version ? ` ${result.version}` : "", login: t("settings.sections.llm.codexLogin") })}
               </div>
               {result?.path && (
                 <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -881,23 +881,23 @@ function CodexCliStatusPill() {
                 </div>
               )}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
+                {t("settings.sections.llm.cliAuthBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   codex
                 </code>{" "}
-                in a terminal to refresh the login.
+                {" "}{t("settings.sections.llm.cliAuthAfter")}
               </div>
             </>
           )}
           {state === "err" && (
             <>
-              <div>{result?.error ?? "codex CLI not available."}</div>
+              <div>{result?.error ?? t("settings.sections.llm.cliUnavailable", { name: "Codex" })}</div>
               <div className="text-muted-foreground">
-                Install from{" "}
+                {t("settings.sections.llm.cliInstallBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   npm install -g @openai/codex
                 </code>{" "}
-                then re-check.
+                {" "}{t("settings.sections.llm.cliInstallAfter")}
               </div>
             </>
           )}

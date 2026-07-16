@@ -25,6 +25,7 @@ import {
 } from "@/lib/wiki-page-resolver"
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
+import { useTranslation } from "react-i18next"
 
 interface FrontmatterPanelProps {
   data: Record<string, FrontmatterValue>
@@ -42,6 +43,7 @@ const TOP_LEVEL_KEYS = new Set([
 ])
 
 export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
@@ -141,7 +143,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
 
       {origin && (
         <div className="mx-4 mt-3 rounded border-l-2 border-primary/40 bg-primary/5 px-3 py-1.5 text-xs text-foreground/80">
-          <span className="font-medium text-muted-foreground">Origin: </span>
+          <span className="font-medium text-muted-foreground">{t("editor.frontmatter.origin")}: </span>
           {origin}
         </div>
       )}
@@ -212,7 +214,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
       {/* Extras (any other key/values we didn't surface above) ──── */}
       {extras.length > 0 && (
         <div className="mx-4 mt-4 rounded border border-border/40 bg-background/50 px-3 py-2 text-xs">
-          <div className="mb-1 font-medium text-muted-foreground/80">More</div>
+          <div className="mb-1 font-medium text-muted-foreground/80">{t("editor.frontmatter.more")}</div>
           <div className="space-y-0.5">
             {extras.map(([k, v]) => (
               <div key={k} className="flex gap-2">

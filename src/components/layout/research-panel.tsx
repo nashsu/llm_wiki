@@ -123,6 +123,7 @@ function separateThinking(text: string): { thinking: string; answer: string } {
 }
 
 function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStreaming: boolean }) {
+  const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
   const { thinking, answer } = useMemo(() => separateThinking(synthesis), [synthesis])
   const renderLanguage = useMemo(() => detectLanguage(answer || synthesis), [answer, synthesis])
@@ -146,7 +147,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
 
   return (
     <div className="mb-2 flex flex-col min-h-0">
-      <div className="mb-1 font-medium text-muted-foreground">Synthesis</div>
+      <div className="mb-1 font-medium text-muted-foreground">{t("research.synthesis")}</div>
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto rounded bg-muted/30 p-2 prose prose-xs prose-invert max-w-none"
@@ -165,7 +166,7 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
               ) : (
                 <ChevronDown className="h-3 w-3" />
               )}
-              Thinking{isStreaming && !answer ? "..." : ""}
+              {t("research.thinking")}{isStreaming && !answer ? "..." : ""}
             </button>
             {!thinkingCollapsed && (
               <div className="mt-1 rounded border border-muted px-2 py-1 text-[10px] text-muted-foreground opacity-70 leading-relaxed whitespace-pre-wrap">

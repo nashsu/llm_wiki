@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.6.3"
+version = "0.6.4"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"

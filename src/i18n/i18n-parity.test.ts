@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import en from "./en.json"
 import zh from "./zh.json"
 
@@ -104,5 +104,36 @@ describe("i18n bundle parity (en.json ↔ zh.json)", () => {
     }
     check(en, "en.json")
     check(zh, "zh.json")
+  })
+
+  it("every literal translation key used by frontend code exists", () => {
+    const srcDir = join(i18nDir, "..")
+    const sourceFiles: string[] = []
+    const visit = (directory: string) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name)
+        if (entry.isDirectory()) visit(path)
+        else if (/\.(?:ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".test.ts")) {
+          sourceFiles.push(path)
+        }
+      }
+    }
+    visit(srcDir)
+
+    const missing = new Set<string>()
+    // Dynamic keys such as `sidebar.typeLabels.${type}` cannot be proven
+    // statically and remain covered by bundle parity plus their fallback.
+    const literalKey = /(?:\bt|i18n\.t)\(\s*["']([^"']+)["']/g
+    for (const file of sourceFiles) {
+      const source = readFileSync(file, "utf8")
+      for (const match of source.matchAll(literalKey)) {
+        if (!enKeys.has(match[1])) missing.add(match[1])
+      }
+    }
+
+    expect(
+      [...missing].sort(),
+      "Literal i18n keys used by frontend code but missing from the bundles",
+    ).toEqual([])
   })
 })

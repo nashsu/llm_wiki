@@ -3,6 +3,19 @@
     "title": "LLM Wiki",
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
+  "common": {
+    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭",
+    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+  },
+  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
+  "errors": { "generic": "出现错误" },
+  "mermaid": {
+    "renderFailed": "无法渲染 Mermaid 图表",
+    "showDetails": "查看解析器详情",
+    "enlarge": "放大图表",
+    "rendering": "正在渲染图表……",
+    "diagram": "图表"
+  },
   "nav": {
     "chat": "对话",
     "wiki": "Wiki",
@@ -29,7 +42,15 @@
   },
   "sidebar": {
     "knowledge": "知识库",
-    "files": "文件"
+    "files": "文件",
+    "rawSources": "原始资料",
+    "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
+    "typeLabels": {
+      "overview": "概览", "entity": "实体", "concept": "概念",
+      "source": "来源", "synthesis": "综合", "finding": "发现",
+      "thesis": "论点", "methodology": "方法论",
+      "comparison": "比较", "query": "查询"
+    }
   },
   "editor": {
     "edit": "编辑",
@@ -70,6 +91,7 @@
       "createFailed": "无法创建缺失页面。",
       "emptyDraftError": "模型返回了空白草稿。"
     },
+    "frontmatter": { "origin": "来源", "more": "更多" },
     "rawMarkdownEditor": "Markdown 源码编辑器"
   },
   "research": {
@@ -82,6 +104,8 @@
     "sourcesCount": "来源（{{count}}）",
     "anyTxtSource": "AnyTXT 来源",
     "webSource": "网页来源",
+    "synthesis": "综合结果",
+    "thinking": "思考中",
     "open": "打开",
     "remove": "移除",
     "status": {
@@ -196,6 +220,16 @@
     "saveToWiki": "保存到 Wiki",
     "saving": "保存中...",
     "saved": "已保存！",
+    "regenerate": "重新生成",
+    "regenerateResponse": "重新生成此回复",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyToClipboard": "复制到剪贴板",
+    "thinking": "思考中……",
+    "lineCount": "{{count}} 行",
+    "lineCount_other": "{{count}} 行",
+    "thoughtLineCount": "思考过程共 {{count}} 行",
+    "thoughtLineCount_other": "思考过程共 {{count}} 行",
     "writeToWiki": "写入 Wiki",
     "emptyHint": "提问或开始提取资料。",
     "sources": "来源",
@@ -249,6 +283,7 @@
     "references": "引用",
     "generatedOutputs": "生成物",
     "generatedOutput": "生成",
+    "openGeneratedOutputFolder": "打开生成物目录",
     "generatedOutputCount": "{{count}} 个文件",
     "generatedOutputCount_plural": "{{count}} 个文件",
     "closeGeneratedOutputs": "关闭生成物列表",
@@ -278,6 +313,21 @@
   "search": {
     "title": "搜索",
     "placeholder": "搜索 Wiki 页面...",
+    "placeholderWithShortcut": "搜索 Wiki 页面……（按 Enter 搜索）",
+    "searching": "正在搜索……",
+    "pressEnter": "按 Enter 开始搜索",
+    "pageCount": "{{count}} 个页面",
+    "pageCount_other": "{{count}} 个页面",
+    "imageMatchCount": "{{count}} 个图片匹配",
+    "imageMatchCount_other": "{{count}} 个图片匹配",
+    "supportingImageCount": "匹配页面中的另外 {{count}} 张图片",
+    "images": "图片",
+    "pages": "页面",
+    "hideSupporting": "隐藏补充图片",
+    "showAllSupporting": "显示全部（+{{count}}）",
+    "noCaption": "无图片说明",
+    "fromSource": "来源：{{source}}",
+    "jumpToSource": "跳转到来源文档",
     "noResults": "未找到相关结果",
     "startSearching": "输入关键词搜索 Wiki 页面"
   },
@@ -332,6 +382,7 @@
     "selectedCount": "已选择 {{count}} 项",
     "markSelectedResolved": "标记为已解决",
     "dismissSelected": "忽略选中项",
+    "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —"
   },
@@ -436,6 +487,20 @@
         "codexCliTimeout": "Codex CLI 超时时间",
         "codexCliTimeoutUnit": "分钟",
         "codexCliTimeoutHint": "单次 Codex CLI 请求的总超时时间。长 PDF 摄取或较慢的本地 / 网络会话可适当调大。",
+        "requestTimeout": "请求超时时间（分钟）",
+        "requestTimeoutHint": "本地 CPU 模型响应较慢时可适当调高，默认 30 分钟。",
+        "cliStatus": "CLI 状态",
+        "checkingCli": "正在检查……",
+        "recheckCli": "重新检查",
+        "detectingCli": "正在检测本地 {{name}} 程序……",
+        "cliDetected": "已检测到{{version}}，可以使用本地{{login}}，无需 API Key。",
+        "claudeSubscription": "订阅账户",
+        "codexLogin": "Codex 登录",
+        "cliAuthBefore": "如果聊天提示认证失败，请在终端运行",
+        "cliAuthAfter": "以刷新登录状态。",
+        "cliUnavailable": "无法使用 {{name}} CLI。",
+        "cliInstallBefore": "请运行",
+        "cliInstallAfter": "完成安装后重新检查。",
         "testConnection": "测试连接",
         "testFunction": "测试功能",
         "testingConnection": "正在测试连接…",
@@ -749,6 +814,8 @@
           "delete": "删除",
           "queueTitle": "进行中的合并",
           "queueDescription": "上次扫描后排进队列、还未跑完的合并任务。每次只跑一个。",
+          "restoredBacklog": "这些合并任务由上次会话恢复，当前已暂停，以免意外消耗 LLM 配额。",
+          "resumeRestored": "继续合并",
           "notDuplicates": "不是重复",
           "merged": "已合并",
           "skipped": "已标记为不重复"
@@ -856,10 +923,22 @@
     "cancelAllTitle": "取消所有排队和正在处理的任务",
     "cancelAllConfirm": "要取消全部 {{count}} 个排队/处理中摄取任务吗？正在处理任务产生的部分文件会被移除；失败任务会保留，之后仍可重试。",
     "retryFailed": "重试失败项",
-    "retryFailedTitle": "重试所有失败的摄取任务"
+    "retryFailedTitle": "重试所有失败的摄取任务",
+    "fileSync": "文件同步",
+    "rescan": "重新扫描",
+    "rescanTitle": "扫描项目文件的外部变更",
+    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "fileTypes": {
+      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
+      "synthesis": "综合", "comparison": "比较", "finding": "发现",
+      "thesis": "论点", "methodology": "方法论", "overview": "概览",
+      "index": "索引", "log": "日志", "file": "文件"
+    }
   },
   "fileTree": {
-    "noProject": "未打开项目"
+    "noProject": "未打开项目",
+    "openProjectFolder": "打开项目目录",
+    "openProjectFolderFailed": "无法打开项目目录。"
   },
   "graph": {
     "openProject": "打开项目以查看关系图",
@@ -879,6 +958,12 @@
     "noVisibleNodes": "没有可见节点",
     "filter": "过滤器",
     "reset": "重置",
+    "resetFilters": "重置图谱筛选条件",
+    "any": "不限",
+    "showAllTypes": "显示全部类型",
+    "doubleClickToggle": "双击切换可见性",
+    "expandLegend": "展开图例",
+    "collapseLegend": "收起图例",
     "type": "类型",
     "community": "社区",
     "insights": "洞察",

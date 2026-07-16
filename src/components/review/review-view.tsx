@@ -24,12 +24,12 @@ import { createReviewPageDrafts } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
 
-const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; label: string; color: string }> = {
-  contradiction: { icon: AlertTriangle, label: "Contradiction", color: "text-amber-500" },
-  duplicate: { icon: Copy, label: "Possible Duplicate", color: "text-blue-500" },
-  "missing-page": { icon: FileQuestion, label: "Missing Page", color: "text-purple-500" },
-  confirm: { icon: MessageSquare, label: "Needs Confirmation", color: "text-foreground" },
-  suggestion: { icon: Lightbulb, label: "Suggestion", color: "text-emerald-500" },
+const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; color: string }> = {
+  contradiction: { icon: AlertTriangle, color: "text-amber-500" },
+  duplicate: { icon: Copy, color: "text-blue-500" },
+  "missing-page": { icon: FileQuestion, color: "text-purple-500" },
+  confirm: { icon: MessageSquare, color: "text-foreground" },
+  suggestion: { icon: Lightbulb, color: "text-emerald-500" },
 }
 
 export function ReviewView() {
@@ -462,7 +462,7 @@ function ReviewCard({
 
       {item.affectedPages && item.affectedPages.length > 0 && (
         <div className="mb-3 text-xs text-muted-foreground">
-          Pages: {item.affectedPages.join(", ")}
+          {t("review.affectedPages")}: {item.affectedPages.join(", ")}
         </div>
       )}
 
