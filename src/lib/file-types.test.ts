@@ -33,4 +33,11 @@ describe("file types", () => {
     expect(getFileCategory("C:\\project\\diagram.MERMAID")).toBe("code")
     expect(getCodeLanguage("/project/diagram.mmd")).toBe("mermaid")
   })
+
+  it("classifies extensionless basenames (Dockerfile/Makefile) under a directory as code", () => {
+    // Bare names already worked; path-prefixed ones regressed to "unknown" (binary).
+    expect(getFileCategory("Dockerfile")).toBe("code")
+    expect(getFileCategory("/project/Dockerfile")).toBe("code")
+    expect(getFileCategory("C:\\project\\Makefile")).toBe("code")
+  })
 })
