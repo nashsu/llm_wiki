@@ -335,6 +335,8 @@ export interface CustomLlmPreset {
 export interface TaskModelRoutingConfig {
   /** Null keeps chat on the globally active provider preset. */
   chatPresetId: string | null
+  /** Resolved non-secret profile for local API chat callers. */
+  chatProfile?: Omit<LlmConfig, "apiKey">
   /** Null keeps ingest on the globally active provider preset. */
   ingestPresetId: string | null
 }

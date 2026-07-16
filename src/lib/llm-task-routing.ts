@@ -1,5 +1,6 @@
 import { findLlmPreset } from "@/components/settings/llm-presets"
 import { resolveConfig } from "@/components/settings/preset-resolver"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
 import type {
   LlmConfig,
   ProjectLlmOverride,
@@ -50,6 +51,7 @@ export function resolveTaskLlmConfig(
   customPresets: CustomLlmPreset[] = [],
 ): LlmConfig {
   if (projectOverride?.enabled) return fallback
+  if (!hasUsableLlm(fallback)) return fallback
   const presetId = task === "chat" ? routing.chatPresetId : routing.ingestPresetId
   if (!presetId) return fallback
   const preset = findLlmPreset(presetId, customPresets)
