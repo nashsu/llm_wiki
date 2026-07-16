@@ -123,3 +123,117 @@ describe("sanitizeIngestedFileContent", () => {
     )
   })
 })
+
+describe("normalizeBlockScalarsInFrontmatter (via sanitizeIngestedFileContent)", () => {
+  it("normalises a folded block scalar (>-) to a plain inline string", () => {
+    const input = [
+      "---",
+      "type: entity",
+      "description: >-",
+      "  A long description",
+      "  that the LLM folded.",
+      "---",
+      "",
+      "# Body",
+    ].join("\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toMatch(/^---\n/)
+    expect(out).toMatch(/description: A long description that the LLM folded\./)
+    // Block scalar indicator must be gone
+    expect(out).not.toMatch(/description: >-/)
+    expect(out).toMatch(/---\n\n# Body$/)
+  })
+
+  it("normalises a literal block scalar (|-) collapsing embedded newlines to spaces", () => {
+    const input = [
+      "---",
+      "type: entity",
+      "description: |-",
+      "  Line one.",
+      "  Line two.",
+      "---",
+      "",
+      "# Body",
+    ].join("\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).not.toMatch(/\|-/)
+    // Both lines collapsed to a single space-separated string
+    expect(out).toMatch(/description:.*Line one\..*Line two\./)
+  })
+
+  it("normalises a folded block scalar without chomping (>)", () => {
+    const input = "---\ntitle: >\n  Folded Title\n---\n\n# Body"
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).not.toMatch(/title: >/)
+    expect(out).toMatch(/title:.*Folded Title/)
+  })
+
+
+  it("preserves CRLF and whitespace-padded frontmatter fences", () => {
+    const input = [
+      "--- ",
+      "type: entity",
+      "description: >-",
+      "  A Windows-line-ending description.",
+      "--- ",
+      "",
+      "# Body",
+    ].join("\r\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toMatch(/^--- \r\n/)
+    expect(out).toContain("description: A Windows-line-ending description.")
+    expect(out).toMatch(/\r\n--- \r\n\r\n# Body$/)
+  })
+
+  it("is a no-op when frontmatter has no block scalar indicators", () => {
+    const input = "---\ntype: entity\ntitle: Short\ndescription: A plain description.\n---\n\n# Body"
+    expect(sanitizeIngestedFileContent(input)).toBe(input)
+  })
+
+  it("is a no-op when there is no frontmatter", () => {
+    const input = "# Just a heading\n\nsome body text"
+    expect(sanitizeIngestedFileContent(input)).toBe(input)
+  })
+
+  it("preserves non-description fields when normalising a block scalar", () => {
+    const input = [
+      "---",
+      "type: entity",
+      "title: My Title",
+      "description: >-",
+      "  Block scalar value.",
+      "tags:",
+      "  - foo",
+      "  - bar",
+      "---",
+      "",
+      "# Body",
+    ].join("\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).toMatch(/type: entity/)
+    expect(out).toMatch(/title: My Title/)
+    expect(out).toMatch(/description:.*Block scalar value\./)
+    // Tags array must survive
+    expect(out).toMatch(/foo/)
+    expect(out).toMatch(/bar/)
+    expect(out).not.toMatch(/>-/)
+  })
+
+  it("composes block scalar normalisation with code-fence stripping", () => {
+    const input = [
+      "```yaml",
+      "---",
+      "type: entity",
+      "description: >-",
+      "  Fenced and folded.",
+      "---",
+      "",
+      "# Body",
+      "```",
+    ].join("\n")
+    const out = sanitizeIngestedFileContent(input)
+    expect(out).not.toMatch(/```/)
+    expect(out).not.toMatch(/>-/)
+    expect(out).toMatch(/description:.*Fenced and folded\./)
+  })
+})
