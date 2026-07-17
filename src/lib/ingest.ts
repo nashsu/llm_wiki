@@ -1902,7 +1902,14 @@ async function regenerateAggregateFiles(
   const wikiRoot = `${pp}/wiki`
 
   // index.md — read all pages, regenerate from frontmatter, write.
+  // The rewrite is wholesale, so carry the existing `created` forward;
+  // otherwise it would be restamped to `date` on every ingest.
   try {
+    const indexPath = `${wikiRoot}/index.md`
+    const existingIndex = await tryReadFile(indexPath)
+    const existingCreated = existingIndex
+      ? parseFrontmatter(existingIndex).frontmatter?.created
+      : undefined
     const tree = await listDirectory(wikiRoot)
     const mdNodes = collectMdNodes(tree)
     const pages: IndexInputPage[] = []
@@ -1914,15 +1921,19 @@ async function regenerateAggregateFiles(
       const content = await tryReadFile(node.path)
       if (content) pages.push({ relativePath, content })
     }
-    const indexContent = generateIndexMd(pages, { date })
-    await writeFile(`${wikiRoot}/index.md`, indexContent)
+    const indexContent = generateIndexMd(pages, {
+      date,
+      created: typeof existingCreated === "string" ? existingCreated : undefined,
+    })
+    await writeFile(indexPath, indexContent)
   } catch (err) {
     warnings.push(
       `index.md regeneration failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 
-  // log.md — append one line, never rewrite prior entries.
+  // log.md — rewrite with prior entries preserved verbatim plus one
+  // new line. Read-modify-write, so callers must hold the project lock.
   try {
     const logPath = `${wikiRoot}/log.md`
     const existing = await tryReadFile(logPath)
@@ -3277,6 +3288,14 @@ export async function executeIngestWrites(
   // Regenerate index.md + append a log line deterministically, matching
   // the autoIngest path so the chat "Save to Wiki" flow never clobbers
   // the index or duplicates the log either.
+  //
+  // Unlike autoIngest — which holds the project lock across its whole
+  // body — this path is unlocked, so the regen takes the lock itself.
+  // log.md is read-modify-write: without it, a concurrent queue ingest
+  // and a Save-to-Wiki both read the same log, each appends its own
+  // entry, and the second write drops the first. Only the regen is
+  // wrapped, not the LLM work above it, which would pin the lock for
+  // the whole wave.
   if (writtenPaths.length > 0) {
     try {
       const logTitle = activeSourceIdentity
@@ -3285,7 +3304,9 @@ export async function executeIngestWrites(
             activeSourceIdentity,
           )
         : "chat ingest"
-      await regenerateAggregateFiles(pp, logTitle, currentWikiDate())
+      await withProjectLock(pp, () =>
+        regenerateAggregateFiles(pp, logTitle, currentWikiDate()),
+      )
     } catch (err) {
       console.warn(
         `[executeIngestWrites] aggregate regeneration failed:`,
