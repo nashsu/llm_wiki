@@ -2353,7 +2353,7 @@ function buildAggregateRepairPrompt(
     languageRule(sourceContext),
     "",
     "Generate ONLY the requested aggregate FILE blocks listed below.",
-    "Do not generate entity, concept, source summary, query, comparison, or synthesis pages.",
+    "Do not generate entity, concept, source summary, query, comparison, synthesis, or repository pages.",
     "",
     "Requested paths:",
     ...paths.map((path) => `- ${path}`),

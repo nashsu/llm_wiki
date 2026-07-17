@@ -3,6 +3,7 @@ import {
   parseWikiSchemaRouting,
   validateWikiPageRouting,
 } from "./wiki-schema"
+import { getTemplate } from "./templates"
 
 const SCHEMA = `# Wiki Schema
 
@@ -94,5 +95,38 @@ describe("validateWikiPageRouting", () => {
 
   it("does not enforce pages without a parseable type", () => {
     expect(validateWikiPageRouting("wiki/concepts/no-type.md", "# No Type", routing)).toBeNull()
+  })
+})
+
+describe("Research Profile v2 routing", () => {
+  const routing = parseWikiSchemaRouting(getTemplate("research").schema)
+  const repositoryPage = [
+    "---",
+    "type: repository",
+    "title: Nashsu / llm_wiki",
+    "---",
+    "",
+    "# Nashsu / llm_wiki",
+  ].join("\n")
+
+  it("routes repository pages to wiki/repositories", () => {
+    expect(routing.typeDirs.repository).toBe("wiki/repositories")
+    expect(
+      validateWikiPageRouting(
+        "wiki/repositories/nashsu-llm-wiki.md",
+        repositoryPage,
+        routing,
+      ),
+    ).toBeNull()
+  })
+
+  it("rejects repository pages written outside their schema directory", () => {
+    expect(
+      validateWikiPageRouting(
+        "wiki/sources/nashsu-llm-wiki.md",
+        repositoryPage,
+        routing,
+      )?.message,
+    ).toContain('type "repository" must be under "wiki/repositories/"')
   })
 })

@@ -9,7 +9,7 @@ import "katex/dist/katex.min.css"
 import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
-  TrendingUp, Target, Sparkles, Image as ImageIcon, FileSearch, Terminal,
+  TrendingUp, Target, GitBranch, Sparkles, Image as ImageIcon, FileSearch, Terminal,
 } from "lucide-react"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -655,6 +655,7 @@ const REF_TYPE_CONFIG: Record<string, { icon: typeof FileText; color: string }> 
   finding: { icon: TrendingUp, color: "text-purple-500" },
   thesis: { icon: Target, color: "text-rose-500" },
   methodology: { icon: BookOpen, color: "text-teal-500" },
+  repository: { icon: GitBranch, color: "text-sky-500" },
   overview: { icon: Layout, color: "text-yellow-500" },
   clip: { icon: Globe, color: "text-blue-400" },
   external: { icon: Globe, color: "text-sky-500" },

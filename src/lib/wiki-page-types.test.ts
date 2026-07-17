@@ -15,6 +15,7 @@ describe("inferWikiTypeFromPath", () => {
     expect(inferWikiTypeFromPath("/project/wiki/findings/result.md")).toBe("finding")
     expect(inferWikiTypeFromPath("/project/wiki/thesis/main-claim.md")).toBe("thesis")
     expect(inferWikiTypeFromPath("/project/wiki/methodology/systematic-review.md")).toBe("methodology")
+    expect(inferWikiTypeFromPath("/project/wiki/repositories/nashsu-llm-wiki.md")).toBe("repository")
   })
 
   it("handles Windows separators and overview pages", () => {
@@ -33,6 +34,7 @@ describe("wikiTypeLabel", () => {
     expect(wikiTypeLabel("finding")).toBe("Finding")
     expect(wikiTypeLabel("thesis")).toBe("Thesis")
     expect(wikiTypeLabel("methodology")).toBe("Methodology")
+    expect(wikiTypeLabel("repository")).toBe("Repository")
     expect(wikiTypeLabel("custom-topic")).toBe("Custom Topic")
   })
 
@@ -40,5 +42,6 @@ describe("wikiTypeLabel", () => {
     expect(GENERATION_WIKI_TYPES).toContain("finding")
     expect(GENERATION_WIKI_TYPES).toContain("thesis")
     expect(GENERATION_WIKI_TYPES).toContain("methodology")
+    expect(GENERATION_WIKI_TYPES).toContain("repository")
   })
 })

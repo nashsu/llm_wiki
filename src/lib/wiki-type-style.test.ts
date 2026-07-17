@@ -38,7 +38,7 @@ describe("getWikiTypeStyle", () => {
   it("covers every documented page type", () => {
     const expected = [
       "entity", "concept", "query", "source",
-      "thesis", "finding", "methodology", "event", "overview",
+      "thesis", "finding", "methodology", "repository", "event", "overview",
     ]
     for (const t of expected) {
       const style = getWikiTypeStyle(t)

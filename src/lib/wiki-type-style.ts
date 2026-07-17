@@ -7,6 +7,7 @@ import {
   Target,
   TrendingUp,
   BookOpen,
+  GitBranch,
   Calendar,
   Hash,
 } from "lucide-react"
@@ -70,6 +71,12 @@ export const WIKI_TYPE_STYLES: Record<string, WikiTypeStyle> = {
     icon: BookOpen,
     chipClass: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
     dotClass: "bg-teal-500",
+  },
+  repository: {
+    label: "Repository",
+    icon: GitBranch,
+    chipClass: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+    dotClass: "bg-sky-500",
   },
   event: {
     label: "Event",

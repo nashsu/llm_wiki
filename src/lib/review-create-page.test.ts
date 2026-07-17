@@ -46,5 +46,19 @@ describe("createReviewPageDrafts", () => {
       { title: "Policy version gap", pageType: "query", dir: "queries" },
     ])
   })
-})
 
+  it("routes an explicit repository page action to the Research directory", () => {
+    const drafts = createReviewPageDrafts(
+      review({
+        type: "suggestion",
+        title: "Create: Nashsu llm_wiki repository",
+        description: "Save the associated software repository.",
+      }),
+      "Create repository page",
+    )
+
+    expect(drafts).toEqual([
+      { title: "Nashsu llm_wiki", pageType: "repository", dir: "repositories" },
+    ])
+  })
+})
