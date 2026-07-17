@@ -67,10 +67,16 @@ interface IndexEntry {
  * Pages are grouped by type (entity, concept, …) in a stable order;
  * each entry is `- [[slug]] — description`. The slug is the page's
  * filename without extension so it resolves as an Obsidian wikilink.
+ *
+ * `opts.created` carries the existing index's creation date forward:
+ * the file is rewritten wholesale every wave, so without it `created`
+ * would be stamped to the current date each run and never mean
+ * anything but "last ingest". Omit it for a brand-new index, where
+ * `opts.date` is the creation date.
  */
 export function generateIndexMd(
   pages: IndexInputPage[],
-  opts: { date: string },
+  opts: { date: string; created?: string },
 ): string {
   const entries: IndexEntry[] = []
   for (const page of pages) {
@@ -128,7 +134,7 @@ export function generateIndexMd(
     "title: Wiki Index",
     "tags: []",
     "related: []",
-    `created: ${opts.date}`,
+    `created: ${opts.created?.trim() || opts.date}`,
     `updated: ${opts.date}`,
     "---",
   ].join("\n")

@@ -46,6 +46,18 @@ describe("generateIndexMd", () => {
     expect(out).toContain("# Wiki Index")
   })
 
+  it("carries an existing created date forward, refreshing only updated", () => {
+    const out = generateIndexMd([], { date: "2026-06-27", created: "2026-01-05" })
+    expect(out).toContain("created: 2026-01-05")
+    expect(out).toContain("updated: 2026-06-27")
+  })
+
+  it("falls back to the ingest date when created is absent or blank", () => {
+    expect(generateIndexMd([], { date: "2026-06-27", created: "   " })).toContain(
+      "created: 2026-06-27",
+    )
+  })
+
   it("excludes index.md, log.md, and overview.md themselves", () => {
     const pages = [
       page("wiki/index.md", { type: "overview", title: "Wiki Index" }, "# Wiki Index"),
