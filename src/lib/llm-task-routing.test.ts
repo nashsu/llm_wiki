@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { resolveProjectLlmConfig, resolveTaskLlmConfig } from "./llm-task-routing"
+import { disabledLlmConfig } from "@/components/settings/preset-resolver"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 const fallback: LlmConfig = {
@@ -43,6 +44,16 @@ describe("resolveTaskLlmConfig", () => {
       chatPresetId: null,
       ingestPresetId: "removed-provider",
     })).toBe(fallback)
+  })
+
+  it("does not resolve a saved task route after the global provider is disabled", () => {
+    const disabled = disabledLlmConfig(fallback)
+    expect(resolveTaskLlmConfig("ingest", disabled, {
+      anthropic: { apiKey: "saved-key", model: "claude-sonnet-4-6" },
+    }, {
+      chatPresetId: null,
+      ingestPresetId: "anthropic",
+    })).toBe(disabled)
   })
 
   it("routes tasks through a user-defined custom provider", () => {

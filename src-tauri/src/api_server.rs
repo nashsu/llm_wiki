@@ -1802,22 +1802,56 @@ struct AgentRuntimeConfig {
 
 fn project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provider::LlmConfig> {
     let global = parsed.get("llmConfig").cloned();
-    let Some(project) = parsed
+    let project = parsed
         .get("projectLlmOverrides")
-        .and_then(|value| value.get(project_id))
-    else {
-        return global.and_then(|value| serde_json::from_value(value).ok());
-    };
-    if project.get("enabled").and_then(Value::as_bool) != Some(true) {
-        return global.and_then(|value| serde_json::from_value(value).ok());
+        .and_then(|value| value.get(project_id));
+    if let Some(project) = project {
+        if project.get("enabled").and_then(Value::as_bool) == Some(true) {
+            let profile = project.get("profile")?.clone();
+            let preset_id = project.get("presetId").and_then(Value::as_str)?;
+            let model_override = project.get("model").and_then(Value::as_str);
+            return resolve_routed_llm_config(parsed, profile, preset_id, model_override)
+                .or_else(|| global.and_then(|value| serde_json::from_value(value).ok()));
+        }
     }
 
+    let global_config = global
+        .clone()
+        .and_then(|value| serde_json::from_value::<agent::provider::LlmConfig>(value).ok());
+    if !global_config.as_ref().is_some_and(is_llm_enabled) {
+        return global_config;
+    }
+    let chat_config = parsed
+        .get("taskModelRouting")
+        .and_then(|routing| {
+            Some((
+                routing.get("chatProfile")?.clone(),
+                routing.get("chatPresetId")?.as_str()?,
+            ))
+        })
+        .and_then(|(profile, preset_id)| {
+            resolve_routed_llm_config(parsed, profile, preset_id, None)
+        });
+    chat_config.or(global_config)
+}
+
+fn is_llm_enabled(config: &agent::provider::LlmConfig) -> bool {
+    matches!(
+        config.provider.as_str(),
+        "ollama" | "custom" | "claude-code" | "codex-cli"
+    ) || !config.api_key.trim().is_empty()
+}
+
+fn resolve_routed_llm_config(
+    parsed: &Value,
+    mut profile: Value,
+    preset_id: &str,
+    model_override: Option<&str>,
+) -> Option<agent::provider::LlmConfig> {
     // The frontend persists a resolved, non-secret profile. Merge the current
     // provider override here so credential rotation and endpoint edits apply to
     // native API calls without duplicating API keys in every project record.
-    let mut profile = project.get("profile")?.clone();
     let profile_object = profile.as_object_mut()?;
-    let preset_id = project.get("presetId").and_then(Value::as_str)?;
     let provider = parsed
         .get("providerConfigs")
         .and_then(|value| value.get(preset_id))
@@ -1835,10 +1869,10 @@ fn project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provide
         })
         .unwrap_or(false);
     // Match resolveProjectLlmConfig in src/lib/llm-task-routing.ts: deleting a
-    // custom preset must make every project that referenced it fall back to
-    // the global config, including projects that are not currently open.
+    // custom preset must make every route that referenced it fall back to the
+    // global config, including projects that are not currently open.
     if preset_id.starts_with("custom-") && !custom_preset_exists {
-        return global.and_then(|value| serde_json::from_value(value).ok());
+        return None;
     }
     if let Some(provider) = provider {
         for key in [
@@ -1852,13 +1886,7 @@ fn project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provide
                 profile_object.insert(key.to_string(), value.clone());
             }
         }
-        if project
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-        {
+        if model_override.map(str::trim).unwrap_or("").is_empty() {
             if let Some(value) = provider.get("model") {
                 profile_object.insert("model".to_string(), value.clone());
             }
@@ -2819,6 +2847,44 @@ mod tests {
         assert_eq!(config.api_key, "rotated");
         assert_eq!(config.model, "project-model");
         assert_eq!(config.custom_endpoint, "https://new.example/v1");
+    }
+
+    #[test]
+    fn project_llm_config_uses_chat_route_without_project_override() {
+        let state = json!({
+            "llmConfig": { "provider": "openai", "apiKey": "global", "model": "gpt-global", "ollamaUrl": "", "customEndpoint": "", "maxContextSize": 1000 },
+            "providerConfigs": {
+                "deepseek": { "apiKey": "chat-secret", "model": "chat-model", "baseUrl": "https://new.example/v1", "apiMode": "chat_completions" }
+            },
+            "taskModelRouting": {
+                "chatPresetId": "deepseek",
+                "chatProfile": { "provider": "custom", "model": "old-model", "ollamaUrl": "", "customEndpoint": "https://old.example/v1", "maxContextSize": 64000, "apiMode": "chat_completions" }
+            }
+        });
+
+        let config = project_llm_config(&state, "project-without-override").expect("chat config");
+        assert_eq!(config.provider, "custom");
+        assert_eq!(config.api_key, "chat-secret");
+        assert_eq!(config.model, "chat-model");
+        assert_eq!(config.custom_endpoint, "https://new.example/v1");
+    }
+
+    #[test]
+    fn project_llm_config_does_not_use_chat_route_when_global_provider_is_disabled() {
+        let state = json!({
+            "llmConfig": { "provider": "openai", "apiKey": "", "model": "", "ollamaUrl": "", "customEndpoint": "", "maxContextSize": 1000 },
+            "providerConfigs": {
+                "deepseek": { "apiKey": "saved-secret", "model": "chat-model", "baseUrl": "https://new.example/v1", "apiMode": "chat_completions" }
+            },
+            "taskModelRouting": {
+                "chatPresetId": "deepseek",
+                "chatProfile": { "provider": "custom", "model": "chat-model", "ollamaUrl": "", "customEndpoint": "https://new.example/v1", "maxContextSize": 64000, "apiMode": "chat_completions" }
+            }
+        });
+
+        let config = project_llm_config(&state, "project-without-override").expect("global config");
+        assert_eq!(config.provider, "openai");
+        assert!(config.api_key.is_empty());
     }
 
     #[test]

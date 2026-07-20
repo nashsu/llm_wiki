@@ -76,6 +76,27 @@ mod tests {
         let _ = fs::remove_dir_all(target);
         let _ = fs::remove_file(archive);
     }
+
+    #[test]
+    fn export_rejects_destination_that_resolves_inside_project() {
+        let root = temp("export-inside-project");
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("wiki/index.md"), "# Index").unwrap();
+        let destination = root.join("nested/../wiki/index.md");
+
+        let result = export_project_archive_inner(
+            root.to_string_lossy().into_owned(),
+            destination.to_string_lossy().into_owned(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(root.join("wiki/index.md")).unwrap(),
+            "# Index"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[tauri::command]
@@ -98,7 +119,21 @@ fn export_project_archive_inner(project_path: String, destination: String) -> Re
         .canonicalize()
         .map_err(|e| e.to_string())?;
     let output = PathBuf::from(destination);
-    if output.starts_with(&root) {
+    let parent = output
+        .parent()
+        .ok_or_else(|| "Export destination must have a parent directory".to_string())?;
+    let filename = output
+        .file_name()
+        .ok_or_else(|| "Export destination must be a file path".to_string())?;
+    let resolved_output = if output.exists() {
+        output.canonicalize().map_err(|e| e.to_string())?
+    } else {
+        parent
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .join(filename)
+    };
+    if resolved_output.starts_with(&root) {
         return Err("Export destination must be outside the project directory".into());
     }
     let file = File::create(&output).map_err(|e| e.to_string())?;

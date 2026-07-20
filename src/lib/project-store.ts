@@ -49,6 +49,7 @@ const PROJECT_LLM_OVERRIDES_KEY = "projectLlmOverrides"
 const CUSTOM_LLM_PRESETS_KEY = "customLlmPresets"
 let projectLlmOverrideWrite = Promise.resolve()
 let customLlmPresetWrite = Promise.resolve()
+let taskModelRoutingWrite = Promise.resolve()
 
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
   const store = await getStore()
@@ -113,8 +114,12 @@ export async function loadActivePresetId(): Promise<string | null> {
 }
 
 export async function saveTaskModelRouting(config: TaskModelRoutingConfig): Promise<void> {
-  const store = await getStore()
-  await store.set(TASK_MODEL_ROUTING_KEY, config)
+  const write = taskModelRoutingWrite.then(async () => {
+    const store = await getStore()
+    await store.set(TASK_MODEL_ROUTING_KEY, config)
+  })
+  taskModelRoutingWrite = write.catch(() => {})
+  await write
 }
 
 export async function loadTaskModelRouting(): Promise<TaskModelRoutingConfig | null> {
@@ -123,6 +128,7 @@ export async function loadTaskModelRouting(): Promise<TaskModelRoutingConfig | n
   if (!saved) return null
   return {
     chatPresetId: typeof saved.chatPresetId === "string" ? saved.chatPresetId : null,
+    chatProfile: saved.chatProfile,
     ingestPresetId: typeof saved.ingestPresetId === "string" ? saved.ingestPresetId : null,
   }
 }

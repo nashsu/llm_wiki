@@ -69,18 +69,37 @@ export function LlmProviderSection() {
   }
 
   function updateOverride(id: string, patch: ProviderOverride) {
-    const currentConfigs = useWikiStore.getState().providerConfigs
+    const state = useWikiStore.getState()
+    const currentConfigs = state.providerConfigs
     const merged: ProviderOverride = { ...(currentConfigs[id] ?? {}), ...patch }
     const next = { ...currentConfigs, [id]: merged }
     setProviderConfigs(next)
     persist(next, activePresetId).catch(() => {})
-    // If this preset is active, refresh the resolved LlmConfig live.
-    if (id === activePresetId) {
+    const usesProjectOverride = projectLlmOverride.enabled && projectLlmOverride.presetId === id
+    if (id === activePresetId || usesProjectOverride) {
       const preset = findLlmPreset(id, customLlmPresets)
       if (preset) {
-        const resolved = resolveConfig(preset, merged, globalLlmConfig)
-        setGlobalLlmConfig(resolved)
-        setLlmConfig(resolveProjectLlmConfig(resolved, next, projectLlmOverride, customLlmPresets))
+        const global = id === activePresetId
+          ? resolveConfig(preset, merged, globalLlmConfig)
+          : globalLlmConfig
+        if (id === activePresetId) setGlobalLlmConfig(global)
+        const resolved = resolveProjectLlmConfig(global, next, projectLlmOverride, customLlmPresets)
+        setLlmConfig(resolved)
+        if (project && usesProjectOverride) {
+          const updatedOverride = { ...projectLlmOverride, profile: projectLlmProfile(resolved) }
+          setProjectLlmOverride(updatedOverride)
+          saveProjectLlmOverride(project.id, updatedOverride).catch(() => {})
+        }
+        if (state.taskModelRouting.chatPresetId === id) {
+          const nextRouting = {
+            ...state.taskModelRouting,
+            chatProfile: projectLlmProfile(resolveConfig(preset, merged, globalLlmConfig)),
+          }
+          setTaskModelRouting(nextRouting)
+          import("@/lib/project-store")
+            .then(({ saveTaskModelRouting }) => saveTaskModelRouting(nextRouting))
+            .catch(() => {})
+        }
       }
     }
     setSavedId(id)
@@ -95,9 +114,21 @@ export function LlmProviderSection() {
   }
 
   async function updateTaskRouting(task: "chat" | "ingest", value: string) {
+    const state = useWikiStore.getState()
+    const presetId = value || null
     const next = {
-      ...taskModelRouting,
+      ...state.taskModelRouting,
       [task === "chat" ? "chatPresetId" : "ingestPresetId"]: value || null,
+    }
+    if (task === "chat") {
+      if (!presetId) {
+        next.chatProfile = undefined
+      } else {
+        const preset = findLlmPreset(presetId, state.customLlmPresets)
+        next.chatProfile = preset
+          ? projectLlmProfile(resolveConfig(preset, state.providerConfigs[presetId], state.globalLlmConfig))
+          : undefined
+      }
     }
     setTaskModelRouting(next)
     const { saveTaskModelRouting } = await import("@/lib/project-store")
@@ -136,7 +167,9 @@ export function LlmProviderSection() {
     const nextPresets = state.customLlmPresets.filter((preset) => preset.id !== id)
     const { [id]: _removed, ...nextConfigs } = state.providerConfigs
     const nextRouting = {
+      ...state.taskModelRouting,
       chatPresetId: state.taskModelRouting.chatPresetId === id ? null : state.taskModelRouting.chatPresetId,
+      chatProfile: state.taskModelRouting.chatPresetId === id ? undefined : state.taskModelRouting.chatProfile,
       ingestPresetId: state.taskModelRouting.ingestPresetId === id ? null : state.taskModelRouting.ingestPresetId,
     }
     setCustomLlmPresets(nextPresets)
