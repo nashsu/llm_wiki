@@ -266,11 +266,11 @@
     },
     "agentMode": "Agent 模式",
     "retrievalMode": "检索模式",
-    "retrievalModeHint": "传统检索保持现有行为；智能检索按证据缺口迭代；原文忠实模式只依据原始资料片段回答。",
+    "retrievalModeHint": "传统检索保持现有行为；智能检索按证据缺口迭代；只读原文模式只依据原始资料片段回答。",
     "retrievalModes": {
       "standard": "传统检索",
       "smart": "智能检索",
-      "faithful": "原文忠实"
+      "faithful": "只读原文"
     },
     "agentModes": {
       "fast": "快速",

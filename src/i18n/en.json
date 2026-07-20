@@ -266,11 +266,11 @@
     },
     "agentMode": "Agent mode",
     "retrievalMode": "Retrieval mode",
-    "retrievalModeHint": "Standard keeps the existing behavior. Smart iteratively closes evidence gaps. Faithful answers only from raw source excerpts.",
+    "retrievalModeHint": "Standard keeps the existing behavior. Smart iteratively closes evidence gaps. Raw sources only answers exclusively from original source excerpts.",
     "retrievalModes": {
       "standard": "Standard retrieval",
       "smart": "Smart retrieval",
-      "faithful": "Faithful sources"
+      "faithful": "Raw sources only"
     },
     "agentModes": {
       "fast": "Fast",
