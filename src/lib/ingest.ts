@@ -30,6 +30,7 @@ import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
 import { parseFrontmatter } from "@/lib/frontmatter"
 import { makeQuerySlug } from "@/lib/wiki-filename"
+import { generateIndexMd, buildLogEntry, type IndexInputPage } from "@/lib/index-generator"
 import type { FileNode } from "@/types/wiki"
 import {
   extractAndSaveSourceImages,
@@ -55,7 +56,6 @@ const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
-const AGGREGATE_WIKI_PATHS = ["wiki/index.md", "wiki/overview.md", "wiki/log.md"] as const
 
 function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): string {
   if (images.length === 0) return content
@@ -603,17 +603,6 @@ export function formatIngestWarningLogEntry(
   ].join("\n")
 }
 
-export function buildDeterministicIngestLog(
-  existing: string,
-  sourceIdentity: string,
-  date = currentWikiDate(),
-): string {
-  const entry = `## [${date}] ingest | ${sourceIdentity}`
-  return existing.trim()
-    ? `${existing.trimEnd()}\n\n${entry}\n`
-    : `# Wiki Log\n\n${entry}\n`
-}
-
 async function appendIngestWarningLog(
   projectPath: string,
   sourceIdentity: string,
@@ -1123,48 +1112,6 @@ async function autoIngestImpl(
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
 
-  try {
-    if (await updateWikiIndexDeterministically(pp, writtenPaths)) {
-      writtenPaths.push("wiki/index.md")
-      onFileWritten?.("wiki/index.md")
-    }
-  } catch (err) {
-    writeWarnings.push(
-      `Deterministic index update failed: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
-
-  // log.md is append-only structural metadata. If the model omitted its FILE
-  // block, write a deterministic entry instead of starting another LLM turn.
-  // This keeps multi-file imports at two generation stages per source and
-  // prevents a slow provider from making the queue appear stuck in "repair".
-  if (!writtenPaths.some((path) => normalizePath(path).toLowerCase() === "wiki/log.md") && !signal?.aborted) {
-    try {
-      const logPath = `${pp}/wiki/log.md`
-      const existingLog = await tryReadFile(logPath)
-      await writeFile(logPath, buildDeterministicIngestLog(existingLog, sourceIdentity))
-      writtenPaths.push("wiki/log.md")
-      onFileWritten?.("wiki/log.md")
-    } catch (err) {
-      writeWarnings.push(
-        `Deterministic log update failed: ${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
-  }
-
-  // Surface parser / writer warnings to the activity panel so users
-  // don't have to open devtools to find out a block was dropped.
-  // Keeping the base "Writing files..." detail on top and appending the
-  // first few warnings; full list is also persisted to .llm-wiki.
-  let warningSummary = ""
-  if (writeWarnings.length > 0) {
-    await appendIngestWarningLog(pp, sourceIdentity, writeWarnings)
-    warningSummary = writeWarnings.length === 1
-      ? writeWarnings[0]
-      : `${writeWarnings.length} ingest warnings: ${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` … (+${writeWarnings.length - 2} more in .llm-wiki/ingest-warnings.log)` : ""}`
-    activity.updateItem(activityId, { detail: `${warningSummary} — saved to .llm-wiki/ingest-warnings.log` })
-  }
-
   // Ensure source summary page exists (LLM may not have generated it correctly)
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   const hasSourceSummary = writtenPaths.some((p) => normalizePath(p) === sourceSummaryPath)
@@ -1194,6 +1141,39 @@ async function autoIngestImpl(
   // through the back door.
   if (mmCfg.enabled && savedImages.length > 0 && !signal?.aborted) {
     await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+  }
+
+  // ── Step 3.6: Regenerate deterministic aggregate files ──────────
+  // index.md and log.md are NOT written by the LLM (their blocks were
+  // dropped in writeFileBlocks). Now that every content page for this
+  // source is on disk, rebuild index.md from all page frontmatter and
+  // append a single log line. Runs inside the project lock (autoIngest
+  // wraps this), so "last writer regenerates from disk" is race-free.
+  if (writtenPaths.length > 0 && !signal?.aborted) {
+    try {
+      const logTitle = await sourceSummaryTitle(sourceSummaryFullPath, sourceIdentity)
+      const aggregateWarnings = await regenerateAggregateFiles(pp, logTitle, currentWikiDate())
+      writeWarnings.push(...aggregateWarnings)
+    } catch (err) {
+      // Non-fatal: a failed index/log regen shouldn't fail the ingest.
+      const msg = `Aggregate file regeneration failed: ${err instanceof Error ? err.message : String(err)}`
+      console.warn(`[ingest] ${msg}`)
+      writeWarnings.push(msg)
+    }
+  }
+
+  // Surface parser / writer / aggregate warnings to the activity panel so
+  // users don't have to open devtools to find out a block was dropped or
+  // aggregate regen failed. Runs AFTER Step 3.6 so late-added warnings
+  // (from regenerateAggregateFiles) are included in both the log and the
+  // activity detail. Full list is also persisted to .llm-wiki.
+  let warningSummary = ""
+  if (writeWarnings.length > 0) {
+    await appendIngestWarningLog(pp, sourceIdentity, writeWarnings)
+    warningSummary = writeWarnings.length === 1
+      ? writeWarnings[0]
+      : `${writeWarnings.length} ingest warnings: ${writeWarnings.slice(0, 2).join(" · ")}${writeWarnings.length > 2 ? ` … (+${writeWarnings.length - 2} more in .llm-wiki/ingest-warnings.log)` : ""}`
+    activity.updateItem(activityId, { detail: `${warningSummary} — saved to .llm-wiki/ingest-warnings.log` })
   }
 
   if (writtenPaths.length > 0) {
@@ -1310,6 +1290,10 @@ function isLogPath(relativePath: string): boolean {
   return relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")
 }
 
+function isIndexPath(relativePath: string): boolean {
+  return relativePath === "wiki/index.md" || relativePath.endsWith("/index.md")
+}
+
 function isListingPath(relativePath: string): boolean {
   return (
     relativePath === "wiki/index.md" ||
@@ -1364,63 +1348,6 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   if (!containsCjk(slug)) return relativePath
   const nextPath = `${dir}${slug}.md`
   return isSafeIngestPath(nextPath) ? nextPath : relativePath
-}
-
-async function updateWikiIndexDeterministically(
-  projectPath: string,
-  writtenPaths: string[],
-): Promise<boolean> {
-  const candidates = Array.from(new Set(writtenPaths.map(normalizePath))).filter((path) =>
-    path.startsWith("wiki/")
-      && path.endsWith(".md")
-      && !AGGREGATE_WIKI_PATHS.includes(path as (typeof AGGREGATE_WIKI_PATHS)[number]),
-  )
-  if (candidates.length === 0) return false
-
-  const indexPath = `${projectPath}/wiki/index.md`
-  const index = await readFile(indexPath).catch(() => "# Wiki Index\n")
-  const knownTargets = new Set(
-    Array.from(index.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g))
-      .map((match) => normalizeIndexTarget(match[1])),
-  )
-  const additions: string[] = []
-  for (const path of candidates) {
-    const target = path.replace(/^wiki\//, "").replace(/\.md$/i, "")
-    if (knownTargets.has(normalizeIndexTarget(target))) continue
-    const content = await readFile(`${projectPath}/${path}`).catch(() => "")
-    const parsed = parseFrontmatter(content)
-    const title = typeof parsed.frontmatter?.title === "string"
-      ? parsed.frontmatter.title.trim()
-      : getFileName(path).replace(/\.md$/i, "")
-    additions.push(`- [[${target}]] — ${title}`)
-  }
-  if (additions.length === 0) return false
-
-  await writeFile(indexPath, updateBoundedRecentIndexSection(index, additions))
-  return true
-}
-
-function normalizeIndexTarget(target: string): string {
-  return normalizePath(target)
-    .replace(/^wiki\//i, "")
-    .replace(/\.md$/i, "")
-    .toLowerCase()
-}
-
-export function updateBoundedRecentIndexSection(index: string, additions: string[]): string {
-  const section = "## Recently Updated"
-  const lines = index.trimEnd().split("\n")
-  const start = lines.findIndex((line) => line.trim() === section)
-  const prefix = start >= 0 ? lines.slice(0, start) : lines
-  const sectionEnd = start >= 0
-    ? lines.findIndex((line, position) => position > start && /^##\s+/.test(line))
-    : -1
-  const existing = start >= 0
-    ? lines.slice(start + 1, sectionEnd >= 0 ? sectionEnd : undefined).filter((line) => /^-\s+/.test(line))
-    : []
-  const suffix = sectionEnd >= 0 ? lines.slice(sectionEnd) : []
-  const recent = Array.from(new Set([...additions, ...existing])).slice(0, 200)
-  return [...prefix, "", section, ...recent, ...(suffix.length ? ["", ...suffix] : []), ""].join("\n")
 }
 
 function isValidSourceReference(source: string, activeSourceIdentity: string): boolean {
@@ -1660,17 +1587,6 @@ export function stampGeneratedFrontmatterDates(content: string, date: string): s
   return `${match[1]}${payload}${match[3]}${content.slice(match[0].length)}`
 }
 
-export function stampGeneratedLogDate(content: string, date: string): string {
-  const normalized = content.replace(/\bYYYY-MM-DD\b/g, date)
-  if (/^\s*##\s*\[?\d{4}-\d{2}-\d{2}\]?/m.test(normalized)) {
-    return normalized.replace(
-      /^(\s*##\s*\[?)\d{4}-\d{2}-\d{2}(\]?)/m,
-      `$1${date}$2`,
-    )
-  }
-  return normalized
-}
-
 function setOrAppendFrontmatterDate(payload: string, key: "created" | "updated", date: string): string {
   const lineRe = new RegExp(`(^|\\n)(${key}\\s*:\\s*)[^\\n\\r]*`, "i")
   if (lineRe.test(payload)) {
@@ -1719,6 +1635,18 @@ async function writeFileBlocks(
       continue
     }
 
+    // index.md and log.md are generated deterministically after all
+    // content pages land (see regenerateAggregateFiles). Drop any
+    // blocks the model emitted for them — this is what stops the LLM
+    // from clobbering the index (dropping existing entries) or
+    // duplicating the entire log on every wave.
+    if (isIndexPath(relativePath) || isLogPath(relativePath)) {
+      warnings.push(
+        `Dropped LLM-emitted "${relativePath}" — generated deterministically by the system.`,
+      )
+      continue
+    }
+
     // Sanitize at the boundary — strip stray code-fence wrappers,
     // `frontmatter:` prefixes, and repair invalid wikilink-list
     // YAML lines so the file we write is canonical regardless of
@@ -1727,13 +1655,12 @@ async function writeFileBlocks(
     // step ~45% of generated entity pages went to disk with
     // unparseable frontmatter and the read-time fallback had to
     // paper over it forever.
+    // index.md / log.md are already dropped above; only overview.md
+    // reaches here as a listing path, and its frontmatter dates are
+    // managed by the LLM aggregate-repair pass, so skip stamping it.
     let content = sanitizeIngestedFileContent(rawContent)
-    if (isLogPath(relativePath)) {
-      content = stampGeneratedLogDate(content, today)
-    } else if (!isListingPath(relativePath)) {
+    if (!isListingPath(relativePath)) {
       content = stampGeneratedFrontmatterDates(content, today)
-    }
-    if (!isLogPath(relativePath) && !isListingPath(relativePath)) {
       content = canonicalizeSourcesField(content, sourceFileName)
     }
     if (sourceSummaryPath && relativePath === sourceSummaryPath) {
@@ -1761,13 +1688,12 @@ async function writeFileBlocks(
 
     // Language guard: reject individual FILE blocks whose body contradicts
     // the user-set target language. Skip:
-    // - log.md (structural, short)
     // - /sources/ and /entities/ pages: these legitimately cite cross-
     //   language proper nouns (a German philosophy source summary naturally
     //   quotes Russian philosophers) which confuses naive script-based
     //   detection. Keep the check for /concepts/ pages, which should be
     //   authoritative content in the target language.
-    const isLog = isLogPath(relativePath)
+    // (log.md never reaches here — it's dropped above.)
     const isEntityOrSource =
       relativePath.startsWith("wiki/entities/") ||
       relativePath.includes("/entities/") ||
@@ -1776,7 +1702,6 @@ async function writeFileBlocks(
     if (
       targetLang &&
       targetLang !== "auto" &&
-      !isLog &&
       !isEntityOrSource &&
       !contentMatchesTargetLanguage(content, targetLang)
     ) {
@@ -1788,17 +1713,11 @@ async function writeFileBlocks(
 
     const fullPath = `${projectPath}/${relativePath}`
     try {
-      if (isLogPath(relativePath)) {
-        const existing = await tryReadFile(fullPath)
-        const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
-        await writeFile(fullPath, appended)
-      } else if (
-        isListingPath(relativePath)
-      ) {
-        // Listing pages (index / overview) are always overwritten
-        // wholesale — their sources field is incidental and merging
-        // wouldn't make semantic sense (they aren't source-derived
-        // content pages).
+      if (isListingPath(relativePath)) {
+        // Only overview.md reaches here (index.md was dropped above).
+        // Listing pages are overwritten wholesale — their sources
+        // field is incidental and merging wouldn't make semantic
+        // sense (they aren't source-derived content pages).
         await writeFile(fullPath, content)
       } else {
         // Content pages (entities / concepts / queries / synthesis /
@@ -1852,6 +1771,97 @@ async function writeFileBlocks(
   }
 
   return { writtenPaths, warnings, hardFailures }
+}
+
+/** Recursively collect every `.md` FileNode under a directory tree. */
+function collectMdNodes(nodes: FileNode[]): FileNode[] {
+  const out: FileNode[] = []
+  for (const node of nodes) {
+    if (node.is_dir) {
+      if (node.children) out.push(...collectMdNodes(node.children))
+    } else if (node.name.endsWith(".md")) {
+      out.push(node)
+    }
+  }
+  return out
+}
+
+/** Title for the log entry: the source summary page's title, falling
+ * back to the source identity's basename. */
+async function sourceSummaryTitle(
+  summaryFullPath: string,
+  sourceIdentity: string,
+): Promise<string> {
+  const content = await tryReadFile(summaryFullPath)
+  if (content) {
+    const title = extractGeneratedPageTitle(content)
+    if (title) return title
+  }
+  return getFileName(sourceIdentity).replace(/\.[^.]+$/, "")
+}
+
+/**
+ * Rebuild wiki/index.md deterministically from every page's
+ * frontmatter and append a single line to wiki/log.md. The LLM never
+ * authors either file (its blocks are dropped in writeFileBlocks);
+ * this is the only writer. Returns non-fatal warnings — a failure here
+ * must not fail the ingest. Callers run this inside the project lock.
+ */
+async function regenerateAggregateFiles(
+  projectPath: string,
+  logTitle: string,
+  date: string,
+): Promise<string[]> {
+  const warnings: string[] = []
+  const pp = normalizePath(projectPath)
+  const wikiRoot = `${pp}/wiki`
+
+  // index.md — read all pages, regenerate from frontmatter, write.
+  // The rewrite is wholesale, so carry the existing `created` forward;
+  // otherwise it would be restamped to `date` on every ingest.
+  try {
+    const indexPath = `${wikiRoot}/index.md`
+    const existingIndex = await tryReadFile(indexPath)
+    const existingCreated = existingIndex
+      ? parseFrontmatter(existingIndex).frontmatter?.created
+      : undefined
+    const tree = await listDirectory(wikiRoot)
+    const mdNodes = collectMdNodes(tree)
+    const pages: IndexInputPage[] = []
+    for (const node of mdNodes) {
+      const abs = normalizePath(node.path)
+      const wikiIdx = abs.toLowerCase().lastIndexOf("/wiki/")
+      const relativePath =
+        wikiIdx >= 0 ? abs.slice(wikiIdx + 1) : `wiki/${node.name}`
+      const content = await tryReadFile(node.path)
+      if (content) pages.push({ relativePath, content })
+    }
+    const indexContent = generateIndexMd(pages, {
+      date,
+      created: typeof existingCreated === "string" ? existingCreated : undefined,
+    })
+    await writeFile(indexPath, indexContent)
+  } catch (err) {
+    warnings.push(
+      `index.md regeneration failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  // log.md — rewrite with prior entries preserved verbatim plus one
+  // new line. Read-modify-write, so callers must hold the project lock.
+  try {
+    const logPath = `${wikiRoot}/log.md`
+    const existing = await tryReadFile(logPath)
+    const entry = buildLogEntry(date, logTitle)
+    const next = existing.trim() ? `${existing.trim()}\n\n${entry}` : entry
+    await writeFile(logPath, `${next}\n`)
+  } catch (err) {
+    warnings.push(
+      `log.md append failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  return warnings
 }
 
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
@@ -2026,7 +2036,7 @@ export function buildGenerationPrompt(
     `## IMPORTANT: Source File`,
     `The original source file is: **${sourceFileName}**`,
     `All wiki pages generated from this source MUST include this filename in their frontmatter \`sources\` field.`,
-    `Today's date is **${today}**. Use this exact date for all new \`created\`, \`updated\`, and wiki/log.md ingest dates.`,
+    `Today's date is **${today}**. Use this exact date for all new \`created\` and \`updated\` frontmatter dates.`,
     "",
     schema
       ? [
@@ -2045,8 +2055,8 @@ export function buildGenerationPrompt(
     `1. A source summary page at **${summaryPath}** (MUST use this exact path)`,
     "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
     "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
-    "4. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-    "Do not generate wiki/index.md or wiki/overview.md. The application maintains aggregate navigation separately so large wikis are never rewritten through model output.",
+    "",
+    "DO NOT output wiki/index.md, wiki/log.md, or wiki/overview.md. index.md and log.md are generated automatically by the system from page frontmatter, and the application maintains aggregate navigation separately so large wikis are never rewritten through model output. Any FILE block for them is discarded.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
@@ -2126,7 +2136,7 @@ export function buildGenerationPrompt(
     "  SEARCH: automated technical debt detection AI generated code | software quality metrics LLM code generation | static analysis tools agentic software development",
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
-    index ? `## Current Wiki Index (preserve all existing entries, add new ones)\n${index}` : "",
+    index ? `## Current Wiki Index (READ-ONLY context for cross-linking and de-duplication — do NOT output an index file)\n${index}` : "",
     overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──
@@ -3067,8 +3077,8 @@ async function executeIngestWritesImpl(
     "---END FILE---",
     "```",
     "",
-    "For wiki/log.md, include a log entry to append. For all other files, output the complete file content.",
-    "Do not generate wiki/index.md or wiki/overview.md. The application owns those aggregate files.",
+    "DO NOT output wiki/index.md, wiki/log.md, or wiki/overview.md — the application owns the aggregate files; any FILE block for them is discarded.",
+    "For all other files, output the complete file content.",
     "Use relative paths from the project root (e.g., wiki/sources/topic.md).",
     "Do not include any other text outside the FILE blocks.",
   ]
@@ -3137,29 +3147,46 @@ async function executeIngestWritesImpl(
       continue
     }
 
-    if (
-      activeSourceIdentity &&
-      !isLogPath(relativePath) &&
-      !isListingPath(relativePath)
-    ) {
+    // index.md / log.md are generated deterministically after the loop;
+    // drop any blocks the model emitted for them.
+    if (isIndexPath(relativePath) || isLogPath(relativePath)) {
+      continue
+    }
+
+    if (activeSourceIdentity && !isListingPath(relativePath)) {
       content = canonicalizeSourcesField(content, activeSourceIdentity)
     }
 
     const fullPath = `${pp}/${relativePath}`
 
     try {
-      if (isLogPath(relativePath)) {
-        const existing = await tryReadFile(fullPath)
-        const appended = existing
-          ? `${existing}\n\n${content.trim()}`
-          : content.trim()
-        await writeFile(fullPath, appended)
-      } else {
-        await writeFile(fullPath, content)
-      }
+      await writeFile(fullPath, content)
       writtenPaths.push(fullPath)
     } catch (err) {
       console.error(`Failed to write ${fullPath}:`, err)
+    }
+  }
+
+  // Regenerate index.md + append a log line deterministically, matching
+  // the autoIngest path so the chat "Save to Wiki" flow never clobbers
+  // the index or duplicates the log either. log.md is read-modify-write,
+  // but the whole write path already runs inside withProjectLock (see
+  // executeIngestWrites), so the regen is serialized against concurrent
+  // queue ingests without taking the (non-reentrant) lock again here.
+  if (writtenPaths.length > 0) {
+    try {
+      const logTitle = activeSourceIdentity
+        ? await sourceSummaryTitle(
+            activeSourceSummaryPath ? `${pp}/${activeSourceSummaryPath}` : "",
+            activeSourceIdentity,
+          )
+        : "chat ingest"
+      await regenerateAggregateFiles(pp, logTitle, currentWikiDate())
+    } catch (err) {
+      console.warn(
+        `[executeIngestWrites] aggregate regeneration failed:`,
+        err instanceof Error ? err.message : err,
+      )
     }
   }
 

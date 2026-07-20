@@ -22,14 +22,11 @@ import {
   parseFileBlocks,
   isSafeIngestPath,
   stampGeneratedFrontmatterDates,
-  stampGeneratedLogDate,
   buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
-  buildDeterministicIngestLog,
   rewriteIngestPathFromTitleForTargetLanguage,
   canonicalizeSourcesField,
   isAppManagedAggregatePath,
-  updateBoundedRecentIndexSection,
 } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
@@ -109,18 +106,6 @@ describe("source summary media refs", () => {
       "![Already relative](../media/report/keep.png)",
     ].join("\n"))
   })
-})
-
-describe("deterministic ingest log", () => {
-  it("builds a deterministic append-only log entry without another LLM call", () => {
-    expect(buildDeterministicIngestLog("", "raw/sources/a.pdf", "2026-07-20")).toBe(
-      "# Wiki Log\n\n## [2026-07-20] ingest | raw/sources/a.pdf\n",
-    )
-    expect(buildDeterministicIngestLog("# Wiki Log\n", "raw/sources/b.pdf", "2026-07-20")).toBe(
-      "# Wiki Log\n\n## [2026-07-20] ingest | raw/sources/b.pdf\n",
-    )
-  })
-
 })
 
 // ── H1: CRLF normalization ─────────────────────────────────────────
@@ -552,13 +537,6 @@ describe("generated ingest dates", () => {
     expect(out).toContain("updated: 2026-06-07")
   })
 
-  it("stamps generated log headings to the application date", () => {
-    expect(stampGeneratedLogDate("## [2024-01-01] ingest | Foo", "2026-06-07"))
-      .toBe("## [2026-06-07] ingest | Foo")
-    expect(stampGeneratedLogDate("## [YYYY-MM-DD] ingest | Foo", "2026-06-07"))
-      .toBe("## [2026-06-07] ingest | Foo")
-  })
-
   it("tells the model the exact current date in the generation prompt", () => {
     const prompt = buildGenerationPrompt("", "", "", "paper.pdf")
 
@@ -635,22 +613,5 @@ describe("application-managed aggregate boundaries", () => {
     expect(isAppManagedAggregatePath("wiki/INDEX.md")).toBe(true)
     expect(isAppManagedAggregatePath("wiki\\overview.MD")).toBe(true)
     expect(isAppManagedAggregatePath("wiki/entities/index.md")).toBe(false)
-  })
-
-  it("bounds recent entries and preserves following sections", () => {
-    const existing = [
-      "# Wiki Index",
-      "",
-      "## Recently Updated",
-      ...Array.from({ length: 205 }, (_, index) => `- [[old-${index}]] — Old ${index}`),
-      "",
-      "## Other",
-      "Keep me",
-    ].join("\n")
-    const result = updateBoundedRecentIndexSection(existing, ["- [[new]] — New"])
-    const recent = result.split("## Recently Updated")[1].split("## Other")[0]
-    expect(recent.match(/^- \[\[/gm)).toHaveLength(200)
-    expect(recent).toContain("[[new]]")
-    expect(result).toContain("## Other\nKeep me")
   })
 })
