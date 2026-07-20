@@ -105,8 +105,8 @@ function cloneDb(db: ImportDb): ImportDb {
 }
 
 function isPathInside(path: string, parent: string): boolean {
-  const normalizedPath = normalizePath(path)
-  const normalizedParent = normalizePath(parent).replace(/\/+$/, "")
+  const normalizedPath = dbDirectoryKey(path)
+  const normalizedParent = dbDirectoryKey(parent).replace(/\/+$/, "")
   return (
     normalizedPath === normalizedParent ||
     normalizedPath.startsWith(`${normalizedParent}/`)
