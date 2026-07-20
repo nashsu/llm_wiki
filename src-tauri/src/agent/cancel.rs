@@ -114,7 +114,10 @@ fn cancel_key(project_id: &str, session_id: &str, run_id: &str) -> String {
 }
 
 fn normalize_key(value: &str) -> String {
-    value.replace(['\\', '/'], "_")
+    // `:` must be neutralized too, not just path separators: cancel_key joins
+    // fields with `::`, so an unescaped `:` in one field can shift the split and
+    // collide with a different (session_id, run_id) pair's key.
+    value.replace(['\\', '/', ':'], "_")
 }
 
 #[cfg(test)]
@@ -149,6 +152,18 @@ mod tests {
         registry.finish("p2", "same", "r1");
         assert!(registry.cancel("p2", "same", Some("r2")));
         assert!(r2.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_registry_does_not_collide_on_embedded_delimiter() {
+        let registry = AgentCancellationRegistry::default();
+        // (session "a::b", run "c") and (session "a", run "b::c") must not
+        // collapse to the same key just because "::" is also the field delimiter.
+        let target = registry.start("p1", "a::b", "c");
+        let unrelated = registry.start("p1", "a", "b::c");
+        assert!(registry.cancel("p1", "a::b", Some("c")));
+        assert!(target.is_cancelled());
+        assert!(!unrelated.is_cancelled());
     }
 
     #[test]
