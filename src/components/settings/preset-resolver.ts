@@ -40,6 +40,7 @@ export function resolveConfig(
     typeof ov.codexCliTimeoutMinutes === "number" && Number.isFinite(ov.codexCliTimeoutMinutes)
       ? Math.max(1, Math.min(240, Math.floor(ov.codexCliTimeoutMinutes)))
       : undefined
+<<<<<<< HEAD
   const requestTimeoutMinutes =
     typeof ov.requestTimeoutMinutes === "number" && Number.isFinite(ov.requestTimeoutMinutes)
       ? Math.max(1, Math.min(1440, Math.floor(ov.requestTimeoutMinutes)))
@@ -50,6 +51,9 @@ export function resolveConfig(
   // the previous provider's disabled state. Missing means legacy/default on.
   const streamingEnabled = ov.streamingEnabled
   const streamingConfig = streamingEnabled === undefined ? {} : { streamingEnabled }
+=======
+  const customHeaders = ov.customHeaders ?? preset.customHeaders
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
 
   if (preset.provider === "custom") {
     return {
@@ -60,6 +64,7 @@ export function resolveConfig(
       customEndpoint: ov.baseUrl ?? preset.baseUrl ?? "",
       maxContextSize,
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
+      customHeaders,
       reasoning,
       localCliIsolation: false,
       requestTimeoutMinutes,

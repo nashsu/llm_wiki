@@ -93,6 +93,7 @@ export async function fetchEmbedding(
   maxRetries = 3,
 ): Promise<number[] | null> {
   if (!cfg.endpoint) return null
+<<<<<<< HEAD
   const failureVersionAtStart = embeddingFailureVersion
   try {
     const embedding = await invoke<number[]>("embedding_fetch", {
@@ -110,6 +111,137 @@ export async function fetchEmbedding(
     console.warn(`[Embedding] ${lastEmbeddingError}`)
     return null
   }
+=======
+
+  const isGoogleNative = isGoogleEmbeddingConfig(cfg)
+  const isDoubaoMultimodal = isDoubaoMultimodalEmbeddingConfig(cfg)
+  const isTei = isTeiEmbeddingConfig(cfg)
+  const endpoint = isGoogleNative
+    ? googleEmbeddingEndpoint(cfg)
+    : volcengineEmbeddingEndpoint(cfg)
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(isLocalOrPrivateHttpEndpoint(endpoint) ? localLlmOriginHeader() : {}),
+  }
+  if (cfg.apiKey) {
+    if (isGoogleNative) {
+      headers["x-goog-api-key"] = cfg.apiKey
+    } else {
+      headers.Authorization = `Bearer ${cfg.apiKey}`
+    }
+  }
+  if (cfg.extraHeaders) {
+    for (const [k, v] of Object.entries(cfg.extraHeaders)) {
+      const name = k.trim()
+      const value = v.trim()
+      if (!isSafeExtraHeader(name, value)) continue
+      headers[name] = value
+    }
+  }
+
+  let current = text
+  let attempts = 0
+  while (attempts <= maxRetries) {
+    attempts++
+    try {
+      const httpFetch = await getHttpFetch()
+      const resp = await httpFetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(
+          isGoogleNative
+            ? googleEmbeddingBody(cfg.model, current, cfg.outputDimensionality)
+            : isDoubaoMultimodal
+              ? doubaoMultimodalEmbeddingBody(cfg.model, current)
+              : isTei
+                ? { inputs: current }
+                : { model: cfg.model, input: current },
+        ),
+      })
+
+      if (resp.ok) {
+        const data = await resp.json()
+        let embedding: unknown = null
+        if (isGoogleNative) {
+          embedding = data?.embedding?.values ?? null
+        } else if (isDoubaoMultimodal) {
+          embedding = data?.data?.embedding ?? null
+        } else if (isTei) {
+          if (Array.isArray(data)) {
+            if (Array.isArray(data[0])) {
+              embedding = data[0]
+            } else if (typeof data[0] === "number") {
+              embedding = data
+            }
+          }
+        } else {
+          embedding = data?.data?.[0]?.embedding ?? null
+        }
+        
+        if (isNonEmptyNumberArray(embedding)) {
+          lastEmbeddingError = null
+          return embedding
+        }
+        const expectedShape = isGoogleNative
+          ? "embedding.values"
+          : isDoubaoMultimodal
+            ? "data.embedding"
+            : isTei
+              ? "[ [...] ]"
+              : "data[0].embedding"
+        lastEmbeddingError = `Embedding response missing ${expectedShape} (got ${JSON.stringify(data).slice(0, 200)})`
+        console.warn(`[Embedding] ${lastEmbeddingError}`)
+        return null
+      }
+
+      // Non-OK: try to read the body for an oversize hint.
+      let bodyText = ""
+      try {
+        bodyText = await resp.text()
+      } catch {
+        // ignore — some servers return empty bodies on error
+      }
+
+      if (looksLikeOversizeError(resp.status, bodyText)) {
+        // Can we still halve-and-retry? Need room on both axes:
+        // text not yet at the 64-char floor, and retry budget left.
+        if (current.length > 64 && attempts <= maxRetries) {
+          const prev = current.length
+          current = current.slice(0, Math.floor(current.length / 2))
+          console.warn(
+            `[Embedding] auto-halving after HTTP ${resp.status} at ${prev} chars → retrying at ${current.length} chars (attempt ${attempts}/${maxRetries + 1})`,
+          )
+          continue
+        }
+        // Out of retries on a SERVER-oversize error — give the user a
+        // message that names the smallest size that still failed so
+        // they can tune Settings → Embedding accordingly.
+        lastEmbeddingError = `Endpoint rejected input even at ${current.length} chars — server context smaller than expected. Lower Settings → Embedding → Max Chunk Chars (${bodyText.slice(0, 160)}).`
+        console.warn(`[Embedding] ${lastEmbeddingError}`)
+        return null
+      }
+
+      // Non-oversize definitive failure (auth, rate limit, server down, …).
+      lastEmbeddingError = `API ${resp.status} ${resp.statusText}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ""} at ${endpoint}`
+      console.warn(`[Embedding] ${lastEmbeddingError}`)
+      return null
+    } catch (err) {
+      if (isFetchNetworkError(err)) {
+        lastEmbeddingError = `Network error reaching ${endpoint}. Check endpoint URL, API key, and connectivity.`
+      } else {
+        lastEmbeddingError = err instanceof Error ? err.message : String(err)
+      }
+      console.warn(`[Embedding] ${lastEmbeddingError}`)
+      return null
+    }
+  }
+
+  // Exhausted retries (only reachable if every halving round triggered
+  // the retry branch and then the loop condition ended).
+  lastEmbeddingError = `Embedding endpoint rejected every size down to ${current.length} chars — the server's context is smaller than ${current.length * 2}. Lower Settings → Embedding → Max Chunk Chars.`
+  console.warn(`[Embedding] ${lastEmbeddingError}`)
+  return null
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
 }
 
 async function fetchBatchEmbeddings(
@@ -132,7 +264,15 @@ async function fetchBatchEmbeddings(
   }
 }
 
+<<<<<<< HEAD
 function supportsOpenAiCompatibleBatch(cfg: EmbeddingConfig): boolean {
+=======
+function isTeiEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+  return cfg.endpoint.replace(/\/+$/, "").toLowerCase().endsWith("/embed")
+}
+
+function isGoogleEmbeddingConfig(cfg: EmbeddingConfig): boolean {
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
   const endpoint = cfg.endpoint.toLowerCase()
   const model = cfg.model.toLowerCase()
   return !endpoint.includes("generativelanguage.googleapis.com")
