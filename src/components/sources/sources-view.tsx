@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown } from "lucide-react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -21,6 +21,8 @@ import {
 } from "@/lib/source-lifecycle"
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -39,6 +41,10 @@ export function SourcesView() {
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [urlDialogOpen, setUrlDialogOpen] = useState(false)
+  const [urlInput, setUrlInput] = useState("")
+  const [urlError, setUrlError] = useState<string | null>(null)
+  const [urlResults, setUrlResults] = useState<UrlImportResult[]>([])
   /**
    * Path of the source-tree node currently in "click again to
    * confirm delete" state. Lifted up here (rather than living
@@ -107,7 +113,7 @@ export function SourcesView() {
             "md", "mdx", "txt", "rtf", "pdf",
             "html", "htm", "xml",
             "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-            "odt", "ods", "odp", "epub", "pages", "numbers", "key",
+            "odt", "ods", "odp", "epub", "mobi", "pages", "numbers", "key",
           ],
         },
         {
@@ -161,6 +167,29 @@ export function SourcesView() {
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function handleImportUrls() {
+    if (!project || importing) return
+    let urls: string[]
+    try {
+      urls = parseImportUrls(urlInput)
+      if (urls.length === 0) throw new Error(t("sources.urlImport.empty"))
+    } catch (error) {
+      setUrlError(error instanceof Error ? error.message : String(error))
+      return
+    }
+    setImporting(true)
+    setUrlError(null)
+    setUrlResults([])
+    try {
+      const results = await importSourceUrls(project, urls, llmConfig, sourceWatchConfig)
+      setUrlResults(results)
+      await loadSources()
+      if (results.every((result) => result.path && !result.error)) setUrlInput("")
     } finally {
       setImporting(false)
     }
@@ -290,8 +319,51 @@ export function SourcesView() {
             <Plus className="mr-1 h-4 w-4" />
             {t("sources.importFolder", "Folder")}
           </Button>
+          <Button size="sm" onClick={() => setUrlDialogOpen(true)} disabled={importing}>
+            <Link className="mr-1 h-4 w-4" />
+            {t("sources.importUrls")}
+          </Button>
         </div>
       </div>
+
+      <Dialog open={urlDialogOpen} onOpenChange={setUrlDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("sources.urlImport.title")}</DialogTitle>
+            <DialogDescription>{t("sources.urlImport.description")}</DialogDescription>
+          </DialogHeader>
+          <textarea
+            className="min-h-44 w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={urlInput}
+            onChange={(event) => {
+              setUrlInput(event.target.value)
+              setUrlError(null)
+              setUrlResults([])
+            }}
+            placeholder={t("sources.urlImport.placeholder")}
+            disabled={importing}
+          />
+          {urlError && <p className="text-sm text-destructive">{urlError}</p>}
+          {urlResults.length > 0 && (
+            <div className="max-h-40 space-y-1 overflow-auto rounded-md border p-2 text-xs">
+              {urlResults.map((result) => (
+                <div key={result.url} className={result.error ? "text-destructive" : "text-muted-foreground"}>
+                  <span className="break-all">{result.url}</span>
+                  <span className="ml-2">{result.error ?? t("sources.urlImport.imported")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUrlDialogOpen(false)} disabled={importing}>
+              {t("common.close")}
+            </Button>
+            <Button onClick={() => void handleImportUrls()} disabled={importing || !urlInput.trim()}>
+              {importing ? t("sources.importing") : t("sources.urlImport.submit")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ScrollArea className="min-h-0 flex-1 overflow-hidden">
         {refreshError && (

@@ -1,4 +1,4 @@
-import type { AzureModelFamily } from "@/stores/wiki-store"
+import type { AzureModelFamily, CustomLlmPreset } from "@/stores/wiki-store"
 
 /**
  * Curated LLM provider presets.
@@ -533,6 +533,23 @@ export const LLM_PRESETS: LlmPreset[] = [
     // No suggestedModels: user knows what their gateway exposes.
   },
 ]
+
+export function availableLlmPresets(customPresets: CustomLlmPreset[] = []): LlmPreset[] {
+  return [
+    ...LLM_PRESETS,
+    ...customPresets.map((preset) => ({
+      id: preset.id,
+      label: preset.label,
+      hint: "Custom OpenAI- or Anthropic-compatible endpoint",
+      provider: "custom" as const,
+      apiMode: "chat_completions" as const,
+    })),
+  ]
+}
+
+export function findLlmPreset(id: string, customPresets: CustomLlmPreset[] = []): LlmPreset | undefined {
+  return availableLlmPresets(customPresets).find((preset) => preset.id === id)
+}
 
 /**
  * Best-effort reverse lookup: given the current LlmConfig fields, which

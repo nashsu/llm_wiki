@@ -24,9 +24,9 @@ import {
   stampGeneratedFrontmatterDates,
   buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
-  aggregatePathsNeedingRepair,
-  filterAggregateRepairOutput,
   rewriteIngestPathFromTitleForTargetLanguage,
+  canonicalizeSourcesField,
+  isAppManagedAggregatePath,
 } from "./ingest"
 
 // ── Happy paths ─────────────────────────────────────────────────────
@@ -105,43 +105,6 @@ describe("source summary media refs", () => {
       '<img src="../media/report/raw.png" />',
       "![Already relative](../media/report/keep.png)",
     ].join("\n"))
-  })
-})
-
-describe("aggregate repair targeting", () => {
-  it("requests missing aggregate pages and aggregate pages dropped by truncation warnings", () => {
-    expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/log.md"],
-      ['FILE block "wiki/overview.md" was not closed before end of stream — likely truncation.'],
-    )).toEqual(["wiki/overview.md"])
-
-    expect(aggregatePathsNeedingRepair(
-      ["wiki/index.md", "wiki/overview.md", "wiki/log.md"],
-      [],
-    )).toEqual([])
-  })
-
-  it("filters aggregate repair output to the requested aggregate paths only", () => {
-    const raw = [
-      "---FILE: wiki/overview.md---",
-      "# Overview",
-      "---END FILE---",
-      "",
-      "---FILE: wiki/sources/should-not-touch.md---",
-      "# Stray Source Summary",
-      "---END FILE---",
-      "",
-      "---FILE: wiki/entities/stray.md---",
-      "# Stray Entity",
-      "---END FILE---",
-    ].join("\n")
-
-    const filtered = filterAggregateRepairOutput(raw, ["wiki/overview.md"])
-
-    expect(filtered.text).toContain("---FILE: wiki/overview.md---")
-    expect(filtered.text).not.toContain("should-not-touch")
-    expect(filtered.text).not.toContain("wiki/entities/stray.md")
-    expect(filtered.warnings.join("\n")).toContain("Dropped 2 non-aggregate")
   })
 })
 
@@ -615,5 +578,40 @@ describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
     expect(
       rewriteIngestPathFromTitleForTargetLanguage("wiki/index.md", content, "Chinese"),
     ).toBe("wiki/index.md")
+  })
+})
+
+describe("canonicalizeSourcesField", () => {
+  it("removes generated and unsafe paths while preserving raw source identities", () => {
+    const content = [
+      "---",
+      "title: Entity",
+      'sources: ["wiki/log.md", "wiki/index.md", ".llm-wiki/state.json", "/tmp/secret.md", "../escape.md", "raw/sources/folder/source.md"]',
+      "---",
+      "# Entity",
+    ].join("\n")
+
+    const result = canonicalizeSourcesField(content, "folder/source.md")
+
+    expect(result).toContain('sources: ["folder/source.md"]')
+    expect(result).not.toContain("wiki/log.md")
+    expect(result).not.toContain(".llm-wiki")
+    expect(result).not.toContain("/tmp/secret.md")
+    expect(result).not.toContain("../escape.md")
+  })
+
+  it("preserves a legitimate source identity under a wiki-named raw subfolder", () => {
+    const content = '---\ntitle: Notes\nsources: ["raw/sources/wiki/notes.md"]\n---\n# Notes'
+    expect(canonicalizeSourcesField(content, "wiki/notes.md")).toContain(
+      'sources: ["wiki/notes.md"]',
+    )
+  })
+})
+
+describe("application-managed aggregate boundaries", () => {
+  it("recognizes case and separator variants", () => {
+    expect(isAppManagedAggregatePath("wiki/INDEX.md")).toBe(true)
+    expect(isAppManagedAggregatePath("wiki\\overview.MD")).toBe(true)
+    expect(isAppManagedAggregatePath("wiki/entities/index.md")).toBe(false)
   })
 })

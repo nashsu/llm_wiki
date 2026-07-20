@@ -24,6 +24,7 @@ export function SkillsSection() {
   const useWebSearch = useChatStore((s) => s.useWebSearch)
   const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
   const agentMode = useChatStore((s) => s.agentMode)
+  const retrievalMode = useChatStore((s) => s.retrievalMode)
   const selectedSkills = useChatStore((s) => s.selectedSkills)
   const disabledSkills = useChatStore((s) => s.disabledSkills)
   const setSelectedSkills = useChatStore((s) => s.setSelectedSkills)
@@ -57,10 +58,11 @@ export function SkillsSection() {
       useWebSearch,
       useAnyTxtSearch,
       agentMode,
+      retrievalMode,
       selectedSkills: nextSelected,
       disabledSkills: nextDisabled,
     })
-  }, [agentMode, project?.path, useAnyTxtSearch, useWebSearch])
+  }, [agentMode, project?.path, retrievalMode, useAnyTxtSearch, useWebSearch])
 
   const scan = useCallback(async () => {
     if (!project?.path) {

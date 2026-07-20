@@ -17,6 +17,13 @@ describe("language metadata", () => {
     expect(sameScriptFamily("Persian", "Arabic")).toBe(true)
   })
 
+  it("provides Czech rendering and prompt metadata", () => {
+    expect(getLanguagePromptName("Czech")).toBe("Czech / čeština")
+    expect(getTextDirection("Czech")).toBe("ltr")
+    expect(getHtmlLang("Czech")).toBe("cs")
+    expect(sameScriptFamily("Czech", "English")).toBe(true)
+  })
+
   it("defaults unknown languages to LTR with the original prompt name", () => {
     expect(getLanguagePromptName("Vietnamese")).toBe("Vietnamese")
     expect(getTextDirection("Vietnamese")).toBe("ltr")

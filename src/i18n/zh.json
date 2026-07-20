@@ -3,6 +3,19 @@
     "title": "LLM Wiki",
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
+  "common": {
+    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭",
+    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+  },
+  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
+  "errors": { "generic": "出现错误" },
+  "mermaid": {
+    "renderFailed": "无法渲染 Mermaid 图表",
+    "showDetails": "查看解析器详情",
+    "enlarge": "放大图表",
+    "rendering": "正在渲染图表……",
+    "diagram": "图表"
+  },
   "nav": {
     "chat": "对话",
     "wiki": "Wiki",
@@ -29,7 +42,57 @@
   },
   "sidebar": {
     "knowledge": "知识库",
-    "files": "文件"
+    "files": "文件",
+    "rawSources": "原始资料",
+    "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
+    "typeLabels": {
+      "overview": "概览", "entity": "实体", "concept": "概念",
+      "source": "来源", "synthesis": "综合", "finding": "发现",
+      "thesis": "论点", "methodology": "方法论",
+      "comparison": "比较", "query": "查询"
+    }
+  },
+  "editor": {
+    "edit": "编辑",
+    "done": "完成",
+    "editRaw": "编辑原始 Markdown",
+    "doneEditing": "完成编辑",
+    "selection": {
+      "askAgent": "让 Agent 处理选中内容",
+      "placeholder": "解释、改写、缩短……",
+      "send": "发送",
+      "ask": "询问",
+      "edit": "修改",
+      "generating": "正在生成……",
+      "stop": "停止",
+      "askAgain": "继续询问",
+      "askOnlyHint": "该渲染选区无法唯一映射到 Markdown 源码位置。你仍可询问，但为防止误改，当前不能直接写回修改。",
+      "wordDiff": "词级修改",
+      "regenerate": "重新生成",
+      "closeReference": "关闭",
+      "requestFailed": "选区助手未能完成本次请求。",
+      "applyFailed": "无法更新选中的文本。",
+      "sourceChanged": "选中文本后文件已经发生变化。请重新选择文本，再应用修改。",
+      "referenceFailed": "无法打开引用页面。",
+      "emptyResponse": "模型没有返回回答，请重试。"
+    },
+    "pageLinks": {
+      "button": "链接",
+      "title": "页面链接",
+      "outgoing": "出站链接",
+      "backlinks": "反向链接",
+      "missing": "缺失链接",
+      "noOutgoing": "当前页面没有出站 Wiki 链接。",
+      "noBacklinks": "暂无其他页面链接到这里。",
+      "noMissing": "所有 Wiki 链接都能解析到现有页面。",
+      "create": "创建",
+      "draft": "Agent 草稿",
+      "loadFailed": "无法加载页面链接。",
+      "createFailed": "无法创建缺失页面。",
+      "emptyDraftError": "模型返回了空白草稿。"
+    },
+    "frontmatter": { "origin": "来源", "more": "更多" },
+    "rawMarkdownEditor": "Markdown 源码编辑器"
   },
   "research": {
     "title": "深度研究",
@@ -41,6 +104,8 @@
     "sourcesCount": "来源（{{count}}）",
     "anyTxtSource": "AnyTXT 来源",
     "webSource": "网页来源",
+    "synthesis": "综合结果",
+    "thinking": "思考中",
     "open": "打开",
     "remove": "移除",
     "status": {
@@ -102,8 +167,17 @@
     "importHint": "导入文档，开始构建你的 Wiki",
     "importFiles": "导入文件",
     "importFolder": "文件夹",
+    "importUrls": "网址",
     "importSourceFiles": "导入源文件",
     "importSourceFolder": "导入源文件夹",
+    "urlImport": {
+      "title": "导入网页",
+      "description": "每行输入一个 HTTP(S) 网址。网页会保存为原始资料并进入提取队列；单个网址失败不会中断整批任务。",
+      "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
+      "submit": "导入网址",
+      "empty": "请至少输入一个网址。",
+      "imported": "已导入"
+    },
     "refresh": "刷新",
     "refreshFolder": "刷新文件夹",
     "refreshingFolder": "刷新中...",
@@ -123,6 +197,15 @@
     "sourceCount_plural": "{{count}} 个资料"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "选中内容修改建议",
+      "reviewHint": "写入前请确认",
+      "original": "原文",
+      "replacement": "替换内容",
+      "accept": "接受",
+      "reject": "拒绝",
+      "applying": "正在应用……"
+    },
     "agentChanges": {
       "title": "Agent 文件修改",
       "taskTitle": "Agent 活动",
@@ -146,6 +229,16 @@
     "saveToWiki": "保存到 Wiki",
     "saving": "保存中...",
     "saved": "已保存！",
+    "regenerate": "重新生成",
+    "regenerateResponse": "重新生成此回复",
+    "copy": "复制",
+    "copied": "已复制！",
+    "copyToClipboard": "复制到剪贴板",
+    "thinking": "思考中……",
+    "lineCount": "{{count}} 行",
+    "lineCount_other": "{{count}} 行",
+    "thoughtLineCount": "思考过程共 {{count}} 行",
+    "thoughtLineCount_other": "思考过程共 {{count}} 行",
     "writeToWiki": "写入 Wiki",
     "emptyHint": "提问或开始提取资料。",
     "sources": "来源",
@@ -172,6 +265,12 @@
       "agents": "Agents"
     },
     "agentMode": "Agent 模式",
+    "retrievalMode": "检索模式",
+    "retrievalModeHint": "传统检索保持现有行为；智能检索会在严格预算内根据证据缺口迭代检索。",
+    "retrievalModes": {
+      "standard": "传统检索",
+      "smart": "智能检索"
+    },
     "agentModes": {
       "fast": "快速",
       "standard": "标准",
@@ -193,6 +292,7 @@
     "references": "引用",
     "generatedOutputs": "生成物",
     "generatedOutput": "生成",
+    "openGeneratedOutputFolder": "打开生成物目录",
     "generatedOutputCount": "{{count}} 个文件",
     "generatedOutputCount_plural": "{{count}} 个文件",
     "closeGeneratedOutputs": "关闭生成物列表",
@@ -222,6 +322,21 @@
   "search": {
     "title": "搜索",
     "placeholder": "搜索 Wiki 页面...",
+    "placeholderWithShortcut": "搜索 Wiki 页面……（按 Enter 搜索）",
+    "searching": "正在搜索……",
+    "pressEnter": "按 Enter 开始搜索",
+    "pageCount": "{{count}} 个页面",
+    "pageCount_other": "{{count}} 个页面",
+    "imageMatchCount": "{{count}} 个图片匹配",
+    "imageMatchCount_other": "{{count}} 个图片匹配",
+    "supportingImageCount": "匹配页面中的另外 {{count}} 张图片",
+    "images": "图片",
+    "pages": "页面",
+    "hideSupporting": "隐藏补充图片",
+    "showAllSupporting": "显示全部（+{{count}}）",
+    "noCaption": "无图片说明",
+    "fromSource": "来源：{{source}}",
+    "jumpToSource": "跳转到来源文档",
     "noResults": "未找到相关结果",
     "startSearching": "输入关键词搜索 Wiki 页面"
   },
@@ -229,6 +344,8 @@
     "title": "Wiki 检查",
     "semantic": "语义检查 (LLM)",
     "running": "检查中...",
+    "cancel": "取消检查",
+    "cancelProgress": "取消 {{completed}}/{{total}}",
     "runLint": "开始检查",
     "runLintHint": "运行检查以诊断 Wiki 健康状况",
     "runLintDescription": "检查孤立页面、失效链接等问题",
@@ -276,6 +393,7 @@
     "selectedCount": "已选择 {{count}} 项",
     "markSelectedResolved": "标记为已解决",
     "dismissSelected": "忽略选中项",
+    "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —"
   },
@@ -348,7 +466,27 @@
       },
       "llm": {
         "title": "LLM 模型",
-        "description": "每个厂商一条独立配置。打开开关即切换为当前活跃 provider；其他的会自动关闭。配置改动即时保存,每个厂商的 API Key 独立存储,切换之间不丢失。",
+        "description": "配置内置 Provider，或添加多个自定义端点。启用一个会自动停用其他项，每个 Provider 都独立保存凭据与模型设置。",
+        "taskRouting": {
+          "chat": "Chat 模型",
+          "ingest": "Ingest 模型",
+          "activeDefault": "使用当前活跃模型",
+          "hint": "可为交互聊天和文档摄取分别选择模型；未指定时继续使用当前活跃模型。"
+        },
+      "projectOverride": {
+          "enabled": "为当前项目使用独立模型",
+          "provider": "项目 Provider",
+          "selectProvider": "选择 Provider",
+          "model": "项目模型",
+          "modelPlaceholder": "使用 Provider 已配置的模型",
+          "hint": "启用后，当前项目的 Chat 和 Ingest 都使用这里选择的 Provider 与模型；API Key 仍保存在全局 Provider 设置中。"
+        },
+        "customProfiles": {
+          "add": "添加自定义 Provider",
+          "defaultName": "自定义 Provider {{number}}",
+          "name": "Provider 名称",
+          "delete": "删除自定义 Provider"
+        },
         "expand": "展开配置",
         "collapse": "收起",
         "toggleOff": "点击关闭",
@@ -380,6 +518,20 @@
         "codexCliTimeout": "Codex CLI 超时时间",
         "codexCliTimeoutUnit": "分钟",
         "codexCliTimeoutHint": "单次 Codex CLI 请求的总超时时间。长 PDF 摄取或较慢的本地 / 网络会话可适当调大。",
+        "requestTimeout": "请求超时时间（分钟）",
+        "requestTimeoutHint": "本地 CPU 模型响应较慢时可适当调高，默认 30 分钟。",
+        "cliStatus": "CLI 状态",
+        "checkingCli": "正在检查……",
+        "recheckCli": "重新检查",
+        "detectingCli": "正在检测本地 {{name}} 程序……",
+        "cliDetected": "已检测到{{version}}，可以使用本地{{login}}，无需 API Key。",
+        "claudeSubscription": "订阅账户",
+        "codexLogin": "Codex 登录",
+        "cliAuthBefore": "如果聊天提示认证失败，请在终端运行",
+        "cliAuthAfter": "以刷新登录状态。",
+        "cliUnavailable": "无法使用 {{name}} CLI。",
+        "cliInstallBefore": "请运行",
+        "cliInstallAfter": "完成安装后重新检查。",
         "testConnection": "测试连接",
         "testFunction": "测试功能",
         "testingConnection": "正在测试连接…",
@@ -424,6 +576,10 @@
         "maxChunkCharsHint": "单个 chunk 的目标长度。endpoint 上下文较小时（llama.cpp n_ctx=512、mxbai-embed-large 等）调低（如 500）。",
         "overlapChunkChars": "重叠字符数",
         "overlapChunkCharsHint": "相邻 chunk 之间的重叠字符数，避免语义在边界被切断。",
+        "concurrency": "并发请求数",
+        "concurrencyHint": "同时进行的 embedding 请求上限（1–32）。请根据 endpoint 承载能力逐步调高。",
+        "batchSize": "单次请求输入数",
+        "batchSizeHint": "仅 OpenAI 兼容 endpoint 支持（1–64）；不支持的 Provider 会自动使用单条请求。",
         "providerTests": "Provider 测试",
         "providerTestsHint": "连接测试会发送一次短 embedding 请求；功能测试会验证返回的是稳定、有限的向量，并显示维度。",
         "testConnection": "测试连接",
@@ -504,7 +660,7 @@
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
-        "firecrawlHint": "使用 Firecrawl 的匿名搜索 API（`https://api.firecrawl.dev/v2/search`），这里不需要 API Key；但 Firecrawl 可能会拦截可疑 IP。",
+        "firecrawlHint": "API Key 留空时使用匿名搜索；填写 Firecrawl API Key 后使用认证额度。Base URL 也可指向兼容的自托管端点。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
         "searchCategories": "搜索分类",
         "searxngCategoriesHint": "分类会作为 SearXNG 的 `categories` 参数发送。",
@@ -665,6 +821,16 @@
         "description": "清理 wiki 的工具 —— 检测并合并 LLM 在多次再导入时用不同名字创建的重复实体 / 概念。",
         "noProject": "请先打开一个项目。",
         "noLlm": "请先配置 LLM 服务。",
+        "projectData": {
+          "title": "项目数据",
+          "description": "根据现有页面重建导航，或完整迁移项目及其隐藏的处理状态。",
+          "rebuild": "重建索引",
+          "export": "导出项目",
+          "import": "导入项目",
+          "rebuilt": "已使用 {{pages}} 个页面、{{groups}} 个分组重建索引。",
+          "exported": "项目已导出到 {{path}}",
+          "imported": "已导入 {{name}}，请切换项目后打开。"
+        },
         "dedup": {
           "title": "检测重复实体 / 概念",
           "description": "让 LLM 扫描全部 entity / concept 页面，把可能指向同一主题但用了不同名字的页面分组（中英对照、单复数、缩写与全称等）。每一组都需要你确认后才会合并。合并任务会进入串行队列依次执行，避免交叉引用被并发改写覆盖。",
@@ -683,6 +849,8 @@
           "delete": "删除",
           "queueTitle": "进行中的合并",
           "queueDescription": "上次扫描后排进队列、还未跑完的合并任务。每次只跑一个。",
+          "restoredBacklog": "这些合并任务由上次会话恢复，当前已暂停，以免意外消耗 LLM 配额。",
+          "resumeRestored": "继续合并",
           "notDuplicates": "不是重复",
           "merged": "已合并",
           "skipped": "已标记为不重复"
@@ -716,9 +884,32 @@
       },
       "mineru": {
         "title": "MinerU PDF 解析",
-        "description": "使用 MinerU 云端 API 获得更高质量的 PDF 解析（表格、公式、复杂排版）。默认使用内置 pdfium 提取。",
+        "description": "使用 MinerU 云端或自托管本地服务获得更高质量的 PDF 解析（表格、公式、复杂排版）。默认使用内置 pdfium 提取。",
         "privacyNotice": "启用后，PDF 内容会上传到 MinerU 云端进行解析。除非你接受这一点，否则不要用于敏感文档。",
         "enabled": "启用 MinerU",
+        "backend": "解析后端",
+        "cloudBackend": "云端（mineru.net）——需要 Token，解析质量更高",
+        "localBackend": "官方自托管 mineru-api——私有、离线",
+        "localEndpoint": "本地服务地址",
+        "localInfo": "填写官方 mineru-api 或 mineru-router 服务的基础地址。",
+        "parsingBackend": "解析后端",
+        "backendHybrid": "Hybrid engine（推荐）",
+        "backendPipeline": "Pipeline",
+        "backendVlm": "VLM engine",
+        "backendHybridHttp": "Hybrid HTTP client",
+        "backendVlmHttp": "VLM HTTP client",
+        "effort": "Hybrid 精度",
+        "effortMedium": "Medium（更快）",
+        "effortHigh": "High（图片分析和最高精度）",
+        "ocrLanguage": "OCR 语言",
+        "parseMethod": "解析方式",
+        "parseAuto": "自动",
+        "parseText": "文本提取",
+        "parseOcr": "强制 OCR",
+        "serverUrl": "OpenAI-compatible 模型服务地址",
+        "formulaParsing": "公式解析",
+        "tableParsing": "表格解析",
+        "imageAnalysis": "图片分析",
         "token": "API Token",
         "tokenHint": "从 mineru.net 获取您的 Token",
         "model": "模型版本",
@@ -767,10 +958,22 @@
     "cancelAllTitle": "取消所有排队和正在处理的任务",
     "cancelAllConfirm": "要取消全部 {{count}} 个排队/处理中摄取任务吗？正在处理任务产生的部分文件会被移除；失败任务会保留，之后仍可重试。",
     "retryFailed": "重试失败项",
-    "retryFailedTitle": "重试所有失败的摄取任务"
+    "retryFailedTitle": "重试所有失败的摄取任务",
+    "fileSync": "文件同步",
+    "rescan": "重新扫描",
+    "rescanTitle": "扫描项目文件的外部变更",
+    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "fileTypes": {
+      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
+      "synthesis": "综合", "comparison": "比较", "finding": "发现",
+      "thesis": "论点", "methodology": "方法论", "overview": "概览",
+      "index": "索引", "log": "日志", "file": "文件"
+    }
   },
   "fileTree": {
-    "noProject": "未打开项目"
+    "noProject": "未打开项目",
+    "openProjectFolder": "打开项目目录",
+    "openProjectFolderFailed": "无法打开项目目录。"
   },
   "graph": {
     "openProject": "打开项目以查看关系图",
@@ -790,6 +993,12 @@
     "noVisibleNodes": "没有可见节点",
     "filter": "过滤器",
     "reset": "重置",
+    "resetFilters": "重置图谱筛选条件",
+    "any": "不限",
+    "showAllTypes": "显示全部类型",
+    "doubleClickToggle": "双击切换可见性",
+    "expandLegend": "展开图例",
+    "collapseLegend": "收起图例",
     "type": "类型",
     "community": "社区",
     "insights": "洞察",

@@ -58,12 +58,14 @@
 export function sanitizeIngestedFileContent(content: string): string {
   let cleaned = content
 
-  // (1) Strip an outer code fence wrapping the whole document.
+  // (1) Strip a code fence wrapping the whole document or just its
+  // frontmatter block.
   // We only act when the FIRST non-empty line is an opening fence
   // (`\`\`\`yaml`, `\`\`\`md`, `\`\`\`markdown`, or just `\`\`\``)
-  // AND the LAST non-empty line is a matching closing fence. This
-  // avoids touching pages that legitimately end with an unclosed
-  // fence (we don't try to "fix" mid-stream truncation here).
+  // with a matching close either at the end of the document or directly
+  // after a complete frontmatter block. This avoids touching pages that
+  // legitimately start with an unclosed fence (we don't try to "fix"
+  // mid-stream truncation here).
   cleaned = stripOuterCodeFence(cleaned)
 
   // (2) Strip a stray `frontmatter:` line that prefixes the real
@@ -86,17 +88,27 @@ export function sanitizeIngestedFileContent(content: string): string {
   return cleaned
 }
 
-/** Top-level fence wrapper. Removes the open + close fence lines. */
+/** Top-level fence wrapper. Removes the open + matching close fence lines. */
 function stripOuterCodeFence(content: string): string {
-  const open = content.match(/^[ \t]*```(?:yaml|md|markdown)?[ \t]*\r?\n/)
+  const open = content.match(
+    /^(?:\uFEFF)?(?:[ \t]*\r?\n)*[ \t]*```(?:yaml|md|markdown)?[ \t]*\r?\n/i,
+  )
   if (!open) return content
   const afterOpen = content.slice(open[0].length)
 
   // Closing fence: a final ``` on its own line, ignoring trailing
   // whitespace/newlines after it.
   const close = afterOpen.match(/\r?\n[ \t]*```[ \t]*\r?\n?\s*$/)
-  if (!close) return content
-  return afterOpen.slice(0, close.index)
+  if (close) return afterOpen.slice(0, close.index)
+
+  // Some models close the fence immediately after the frontmatter and
+  // continue with an unfenced Markdown body. Only strip this shape when
+  // the fenced section is exactly a complete `---` frontmatter block.
+  const frontmatterOnly = afterOpen.match(
+    /^(---[ \t]*\r?\n[\s\S]*?^---[ \t]*\r?\n)[ \t]*```[ \t]*(?:\r?\n|$)/m,
+  )
+  if (!frontmatterOnly) return content
+  return frontmatterOnly[1] + afterOpen.slice(frontmatterOnly[0].length)
 }
 
 /**
@@ -141,12 +153,12 @@ function addMissingOpeningFrontmatterFence(content: string): string {
  * outside the frontmatter block are left untouched.
  */
 function repairWikilinkListsInFrontmatter(content: string): string {
-  const fmRe = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(\r?\n|$)/
+  const fmRe = /^(---[ \t]*(\r?\n))([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/
   const m = content.match(fmRe)
   if (!m) return content
 
-  const repairedPayload = m[1]
-    .split("\n")
+  const repairedPayload = m[3]
+    .split(/\r?\n/)
     .map((line) => {
       const lm = line.match(
         /^(\s*[A-Za-z_][\w-]*\s*:\s*)(\[\[[^\]]+\]\](?:\s*,\s*\[\[[^\]]+\]\])+)\s*$/,
@@ -160,13 +172,10 @@ function repairWikilinkListsInFrontmatter(content: string): string {
         .join(", ")
       return `${lm[1]}[${items}]`
     })
-    .join("\n")
+    .join(m[2])
 
-  // Replace ONLY the payload between fences; preserve the original
-  // fence lines and trailing newline shape.
-  return (
-    content.slice(0, m.index! + 4) + // up to and including "---\n"
-    repairedPayload +
-    content.slice(m.index! + 4 + m[1].length)
-  )
+  // Rebuild from captured delimiters instead of assuming the opening fence is
+  // four bytes. Windows CRLF makes `---\r\n` five bytes, and hard-coded offsets
+  // corrupt both the opening fence and the payload boundary.
+  return m[1] + repairedPayload + m[4] + content.slice(m[0].length)
 }

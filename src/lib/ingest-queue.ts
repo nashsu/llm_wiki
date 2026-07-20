@@ -1,9 +1,9 @@
 import { readFile, writeFile } from "@/commands/fs"
 import { autoIngest } from "./ingest"
-import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -715,7 +715,7 @@ async function processNext(projectId: string): Promise<void> {
   await saveQueue(pp)
   if (currentProjectId !== projectId) return
 
-  const llmConfig = useWikiStore.getState().llmConfig
+  const llmConfig = getTaskLlmConfig("ingest")
 
   // Check if LLM is configured
   if (!hasUsableLlm(llmConfig)) {

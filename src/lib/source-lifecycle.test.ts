@@ -55,6 +55,11 @@ describe("source-lifecycle path helpers", () => {
     expect(isIngestableSourcePath("/project/raw/sources/.cache/report.pdf.txt")).toBe(false)
   })
 
+  it("accepts supported ebook source formats", () => {
+    expect(isIngestableSourcePath("raw/sources/book.epub")).toBe(true)
+    expect(isIngestableSourcePath("C:\\project\\raw\\sources\\book.MOBI")).toBe(true)
+  })
+
   it("derives folder context from absolute raw/sources paths without leaking the project prefix", () => {
     expect(
       folderContextForSourcePath("/tmp/project/raw/sources/reports/2026/report.pdf"),
@@ -234,6 +239,36 @@ describe("source-lifecycle path helpers", () => {
         folderContext: "",
       },
     ])
+  })
+
+  it("allows an explicitly selected ebook with an older watch include-list", async () => {
+    const copied = await importSourceFiles(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/external/book.epub"],
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+      {
+        enabled: true,
+        autoIngest: true,
+        includeExtensions: ["md", "pdf"],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
+    )
+
+    expect(copied).toEqual(["/project/raw/sources/book.epub"])
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/external/book.epub",
+      "/project/raw/sources/book.epub",
+    )
   })
 
   it("skips sensitive tool config files at the shared ingest enqueue boundary", async () => {

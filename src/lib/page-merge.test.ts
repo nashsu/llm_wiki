@@ -64,6 +64,58 @@ describe("mergePageContent — fast paths", () => {
   })
 })
 
+describe("mergePageContent — corrected single-source replacement", () => {
+  it("replaces only the body while preserving metadata, arrays, and backup", async () => {
+    const existing = PAGE(
+      'type: entity\ntitle: Stable title\ncreated: 2025-01-01\nupdated: 2025-01-02\nsources: ["doc.pdf"]\ntags: [manual]\nrelated: [kept-link]',
+      "obsolete source wording plus a manual-era body",
+    )
+    const incoming = PAGE(
+      'type: concept\ntitle: Changed title\ncreated: 2026-01-01\nsources: ["doc.pdf"]\ntags: [generated]\nrelated: [new-link]',
+      "corrected source wording",
+    )
+    const merger = vi.fn()
+    const backup = vi.fn().mockResolvedValue(undefined)
+
+    const out = await mergePageContent(incoming, existing, merger, {
+      ...baseOpts,
+      replaceExistingBody: true,
+      backup,
+    })
+
+    expect(out).toContain("corrected source wording")
+    expect(out).not.toContain("obsolete source wording")
+    expect(out).toContain("type: entity")
+    expect(out).toContain("title: Stable title")
+    expect(out).toContain("created: 2025-01-01")
+    expect(out).toContain("updated: 2026-04-30")
+    expect(out).toMatch(/tags:\s*\[\s*"manual",\s*"generated"\s*\]/)
+    expect(out).toMatch(/related:\s*\[\s*"kept-link",\s*"new-link"\s*\]/)
+    expect(backup).toHaveBeenCalledWith(existing)
+    expect(merger).not.toHaveBeenCalled()
+  })
+
+  it("keeps normal merge behavior for a page with another source", async () => {
+    const existing = PAGE(
+      'type: entity\ntitle: Shared\nsources: ["doc.pdf", "other.pdf"]',
+      "other source contribution",
+    )
+    const incoming = PAGE(
+      'type: entity\ntitle: Shared\nsources: ["doc.pdf"]',
+      "corrected doc contribution",
+    )
+    const merger = vi.fn().mockResolvedValue(PAGE(
+      'type: entity\ntitle: Shared\nsources: ["doc.pdf", "other.pdf"]',
+      "other source contribution and corrected doc contribution retained together",
+    ))
+
+    const out = await mergePageContent(incoming, existing, merger, baseOpts)
+    expect(merger).toHaveBeenCalledOnce()
+    expect(out).toContain("other source contribution")
+    expect(out).toContain("corrected doc contribution")
+  })
+})
+
 // ──────────────────────────────────────────────────────────────────
 // LLM merge happy path
 // ──────────────────────────────────────────────────────────────────

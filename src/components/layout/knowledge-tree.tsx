@@ -12,6 +12,7 @@ import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { filterRawSourceTree } from "@/lib/source-filter"
+import { useTranslation } from "react-i18next"
 
 interface WikiPageInfo {
   path: string
@@ -39,6 +40,7 @@ function typeConfig(type: string): { icon: typeof FileText; label: string; color
 }
 
 export function KnowledgeTree() {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -165,7 +167,7 @@ export function KnowledgeTree() {
 
         {sortedGroups.length === 0 && (
           <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-            No wiki pages yet. Import sources to get started.
+            {t("sidebar.noWikiPages")}
           </div>
         )}
 
@@ -186,7 +188,9 @@ export function KnowledgeTree() {
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 )}
                 <Icon className={`h-3.5 w-3.5 shrink-0 ${config.color}`} />
-                <span className="flex-1 text-left font-medium">{config.label}</span>
+                <span className="flex-1 text-left font-medium">
+                  {t(`sidebar.typeLabels.${type}`, { defaultValue: config.label })}
+                </span>
                 <span className="text-xs text-muted-foreground">{items.length}</span>
               </button>
 
@@ -246,6 +250,7 @@ export function KnowledgeTree() {
 }
 
 function RawSourcesSection() {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const selectedFile = useWikiStore((s) => s.selectedFile)
@@ -274,7 +279,7 @@ function RawSourcesSection() {
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-        <span className="flex-1 text-left font-medium text-muted-foreground">Raw Sources</span>
+        <span className="flex-1 text-left font-medium text-muted-foreground">{t("sidebar.rawSources")}</span>
         <span className="text-xs text-muted-foreground">{sources.length}</span>
       </button>
       {expanded && (

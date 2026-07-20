@@ -351,6 +351,8 @@ pub struct WebSearchProviderOverride {
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
     pub ollama_url: Option<String>,
     #[serde(default)]
     pub sear_xng_url: Option<String>,
@@ -1183,7 +1185,7 @@ pub async fn run_web_search(
         .build()
         .map_err(|err| format!("Failed to build web search client: {err}"))?;
     let raw = match provider.as_str() {
-        "firecrawl" => firecrawl_search(&client, query, max_results).await?,
+        "firecrawl" => firecrawl_search(&client, query, &config, max_results).await?,
         "searxng" => searxng_search(&client, query, &config, max_results).await?,
         "tavily" => tavily_search(&client, query, &config, max_results).await?,
         "ollama" => ollama_search(&client, query, &config, max_results).await?,
@@ -1595,11 +1597,28 @@ struct WebSearchItem {
 async fn firecrawl_search(
     client: &reqwest::Client,
     query: &str,
+    config: &WebSearchConfig,
     max_results: usize,
 ) -> Result<Vec<WebSearchItem>, String> {
-    let response = client
-        .post("https://api.firecrawl.dev/v2/search")
-        .header("Accept", "application/json")
+    let override_cfg = config
+        .provider_configs
+        .as_ref()
+        .and_then(|values| values.get("firecrawl"));
+    let base = override_cfg
+        .and_then(|value| value.base_url.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("https://api.firecrawl.dev")
+        .trim_end_matches('/');
+    let mut request = client
+        .post(format!("{base}/v2/search"))
+        .header("Accept", "application/json");
+    if let Some(key) = override_cfg
+        .and_then(|value| value.api_key.as_deref())
+        .filter(|value| !value.trim().is_empty())
+    {
+        request = request.bearer_auth(key.trim());
+    }
+    let response = request
         .json(&json!({ "query": query, "limit": max_results }))
         .send()
         .await
@@ -1968,7 +1987,7 @@ fn friendly_firecrawl_error(error: &str) -> String {
         .to_ascii_lowercase()
         .contains("ip address looks suspicious")
     {
-        "Firecrawl Search rejected this IP for key-free access. Add a Firecrawl API key when that backend supports authenticated search, or choose another Web Search provider.".to_string()
+        "Firecrawl Search rejected this IP for key-free access. Add a Firecrawl API key in Settings or choose another Web Search provider.".to_string()
     } else {
         format!("Firecrawl search failed: {error}")
     }

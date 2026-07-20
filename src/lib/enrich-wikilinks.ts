@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "@/commands/fs"
+import { listDirectory, readFile, writeFile } from "@/commands/fs"
+import type { FileNode } from "@/types/wiki"
 import { streamChat } from "./llm-client"
 import { useWikiStore, type LlmConfig } from "@/stores/wiki-store"
 import { buildLanguageDirective } from "./output-language"
@@ -29,9 +30,10 @@ export async function enrichWithWikilinks(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   const fp = normalizePath(filePath)
-  const [content, index] = await Promise.all([
+  const [content, index, wikiTree] = await Promise.all([
     readFile(fp),
     readFile(`${pp}/wiki/index.md`).catch(() => ""),
+    listDirectory(`${pp}/wiki`).catch(() => []),
   ])
 
   if (!content || !index) return
@@ -88,7 +90,18 @@ export async function enrichWithWikilinks(
   )
 
   // Parse the LLM response. Be tolerant of fences / prose wrappers.
-  const links = parseLinkResponse(raw)
+  const pageSlugs = collectWikiPageSlugs(wikiTree)
+  const parsedLinks = parseLinkResponse(raw)
+  // The index is prompt context, not an authority boundary: models can still
+  // invent or translate a target. Only write links that resolve to a page on
+  // disk. If listing fails or yields no authoritative pages, skip this
+  // optional enrichment pass rather than reintroducing broken links.
+  const links = pageSlugs.size === 0
+    ? []
+    : parsedLinks.flatMap((link) => {
+        const canonicalTarget = pageSlugs.get(normalizeTargetSlug(link.target))
+        return canonicalTarget ? [{ ...link, target: canonicalTarget }] : []
+      })
   if (links.length === 0) return // nothing to do
 
   // Apply substitutions to the ORIGINAL content. This guarantees the only
@@ -103,6 +116,40 @@ export async function enrichWithWikilinks(
 interface LinkEntry {
   term: string
   target: string
+}
+
+function collectWikiPageSlugs(nodes: FileNode[]): Map<string, string> {
+  const candidates = new Map<string, Set<string>>()
+  const visit = (entries: FileNode[]) => {
+    for (const node of entries) {
+      if (node.is_dir) {
+        visit(node.children ?? [])
+        continue
+      }
+      const name = normalizePath(node.path).split("/").pop() ?? ""
+      if (name.toLowerCase().endsWith(".md")) {
+        const canonical = name.slice(0, -3)
+        const key = normalizeTargetSlug(canonical)
+        const values = candidates.get(key) ?? new Set<string>()
+        values.add(canonical)
+        candidates.set(key, values)
+      }
+    }
+  }
+  visit(nodes)
+  const slugs = new Map<string, string>()
+  for (const [key, values] of candidates) {
+    // Case/Unicode-equivalent filenames can coexist on case-sensitive file
+    // systems. Do not choose arbitrarily when the reader would be ambiguous.
+    if (values.size === 1) slugs.set(key, [...values][0])
+  }
+  return slugs
+}
+
+function normalizeTargetSlug(target: string): string {
+  const withoutAlias = target.split("|", 1)[0].split("#", 1)[0]
+  const name = normalizePath(withoutAlias).split("/").pop() ?? ""
+  return name.replace(/\.md$/i, "").normalize("NFKC").trim().toLowerCase()
 }
 
 function parseLinkResponse(raw: string): LinkEntry[] {

@@ -7,6 +7,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { sourceSummarySlugFromIdentity } from "./source-identity"
+import { migrateSourcePath } from "./source-lifecycle"
 
 vi.mock("@/commands/fs", () => realFs)
 
@@ -15,6 +16,8 @@ let failLongChunksOnce = new Set<number>()
 let extraReviewResponse = ""
 let generationSuffix = ""
 let abortDuringReview: AbortController | null = null
+let interactiveGenerationOverride = ""
+let mergeRequestCount = 0
 
 vi.mock("./llm-client", () => ({
   streamChat: vi.fn(async (_cfg, messages, cb) => {
@@ -22,6 +25,7 @@ vi.mock("./llm-client", () => ({
     const userPrompt = String(messages?.[1]?.content ?? "")
 
     if (systemPrompt.startsWith("You are merging two versions")) {
+      mergeRequestCount++
       const incoming = userPrompt.split("## Newly generated version")[1]?.split("---")[2]
       cb.onToken(incoming?.trim() || "---\ntitle: merged\n---\n\n# merged")
       cb.onDone()
@@ -29,6 +33,11 @@ vi.mock("./llm-client", () => ({
     }
 
     if (systemPrompt.startsWith("You are a wiki generation assistant")) {
+      if (interactiveGenerationOverride) {
+        cb.onToken(interactiveGenerationOverride)
+        cb.onDone()
+        return
+      }
       cb.onToken([
         "---FILE: wiki/sources/config.md---",
         "---",
@@ -113,7 +122,12 @@ vi.mock("./mineru", () => ({
   parseWithMineruResult: vi.fn(),
 }))
 
-import { autoIngest, executeIngestWrites, hasMineruImageRefs } from "./ingest"
+import {
+  autoIngest,
+  buildFallbackSourceSummary,
+  executeIngestWrites,
+  hasMineruImageRefs,
+} from "./ingest"
 import { streamChat } from "./llm-client"
 import { parseWithMineruResult } from "./mineru"
 
@@ -129,6 +143,8 @@ describe("autoIngest source summary paths", () => {
     extraReviewResponse = ""
     generationSuffix = ""
     abortDuringReview = null
+    interactiveGenerationOverride = ""
+    mergeRequestCount = 0
     mockStreamChat.mockClear()
     mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
@@ -178,6 +194,12 @@ describe("autoIngest source summary paths", () => {
         apiKey: "",
         model: "",
       },
+      mineruConfig: {
+        enabled: false,
+        backend: "cloud",
+        token: "",
+        modelVersion: "vlm",
+      },
     })
   })
 
@@ -199,6 +221,13 @@ describe("autoIngest source summary paths", () => {
       "![chart](media/other/mineru/images/chart.png)",
       "污水 paper",
     )).toBe(false)
+  })
+
+  it("preserves complete analysis in a fallback source summary", () => {
+    const analysis = `begin-${"x".repeat(5000)}-end`
+    const content = buildFallbackSourceSummary("long.md", analysis, "2026-07-11")
+    expect(content).toContain(analysis)
+    expect(content).toContain("-end")
   })
 
   it("keeps distinct source summaries for same-basename files in different source subdirectories", async () => {
@@ -232,6 +261,110 @@ describe("autoIngest source summary paths", () => {
     expect(summaryFiles).toHaveLength(2)
     expect(allSummaries).toContain("project-a/config.yaml")
     expect(allSummaries).toContain("project-b/config.yaml")
+  })
+
+  it("replaces stale content when a corrected source solely owns the page", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["obsolete wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+
+    await writeFileRaw(sourcePath, "name: corrected\n")
+    sourceMarkers = ["corrected wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+
+    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    const content = await fs.readFile(summaryPath, "utf8")
+    expect(content).toContain("corrected wording")
+    expect(content).not.toContain("obsolete wording")
+    expect(mergeRequestCount).toBe(0)
+  })
+
+  it("moves the canonical source summary and its source reference", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["movable summary"]
+    const oldSource = `${tmp.path}/raw/sources/project-a/config.yaml`
+    await autoIngest(tmp.path, oldSource, useWikiStore.getState().llmConfig)
+
+    const oldIdentity = "project-a/config.yaml"
+    const newIdentity = "archive/config.yaml"
+    const oldSummary = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity(oldIdentity)}.md`
+    const newSummary = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity(newIdentity)}.md`
+    await migrateSourcePath(
+      tmp.path,
+      "raw/sources/project-a/config.yaml",
+      "raw/sources/archive/config.yaml",
+    )
+
+    await expect(fs.access(oldSummary)).rejects.toThrow()
+    const content = await fs.readFile(newSummary, "utf8")
+    expect(content).toContain('sources: ["archive/config.yaml"]')
+  })
+
+  it("migrates source references for a case-only rename", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const pagePath = `${tmp.path}/wiki/entities/case.md`
+    await writeFileRaw(pagePath, [
+      "---",
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "# Case",
+    ].join("\n"))
+
+    await migrateSourcePath(
+      tmp.path,
+      "raw/sources/project-a/config.yaml",
+      "raw/sources/Project-A/config.yaml",
+    )
+
+    expect(await fs.readFile(pagePath, "utf8")).toContain(
+      'sources: ["Project-A/config.yaml"]',
+    )
+  })
+
+  it("migrates a unique legacy basename source reference", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    // Remove the second same-basename source so the legacy shorthand is
+    // unambiguous after the move.
+    await fs.rm(`${tmp.path}/raw/sources/project-b/config.yaml`)
+    const pagePath = `${tmp.path}/wiki/entities/legacy.md`
+    await writeFileRaw(pagePath, [
+      "---",
+      'sources: ["config.yaml"]',
+      "---",
+      "# Legacy",
+    ].join("\n"))
+
+    await migrateSourcePath(
+      tmp.path,
+      "raw/sources/project-a/config.yaml",
+      "raw/sources/archive/config.yaml",
+    )
+
+    expect(await fs.readFile(pagePath, "utf8")).toContain(
+      'sources: ["archive/config.yaml"]',
+    )
+  })
+
+  it("does not rewrite an ambiguous legacy basename source reference", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const pagePath = `${tmp.path}/wiki/entities/ambiguous.md`
+    await writeFileRaw(pagePath, [
+      "---",
+      'sources: ["config.yaml"]',
+      "---",
+      "# Ambiguous",
+    ].join("\n"))
+
+    await migrateSourcePath(
+      tmp.path,
+      "raw/sources/project-a/config.yaml",
+      "raw/sources/archive/config.yaml",
+    )
+
+    expect(await fs.readFile(pagePath, "utf8")).toContain(
+      'sources: ["config.yaml"]',
+    )
   })
 
   it("migrates a safe legacy basename source summary to the canonical nested source path", async () => {
@@ -542,6 +675,34 @@ describe("autoIngest source summary paths", () => {
     updateSpy.mockRestore()
   })
 
+  it("uses a configured local MinerU backend without a cloud token", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["local mineru source"]
+    await writeFileRaw(`${tmp.path}/raw/sources/project-a/local.pdf`, "pdf fallback text\n")
+    useWikiStore.setState({
+      mineruConfig: {
+        enabled: true,
+        backend: "local",
+        token: "",
+        modelVersion: "vlm",
+      },
+    })
+    mockParseWithMineru.mockResolvedValueOnce({
+      markdown: "local MinerU markdown",
+      savedImages: [],
+    })
+
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/local.pdf`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )
+
+    expect(mockParseWithMineru).toHaveBeenCalled()
+  })
+
   it("does not fall back to built-in PDF extraction when MinerU is cancelled", async () => {
     if (!tmp) throw new Error("missing temp project")
     await writeFileRaw(`${tmp.path}/raw/sources/project-a/cancelled.pdf`, "pdf fallback text\n")
@@ -619,5 +780,20 @@ describe("autoIngest source summary paths", () => {
     expect(writtenPaths.map((p) => p.replace(/\\/g, "/"))).toEqual([canonicalSummaryPath])
     await expect(fs.access(staleSummaryPath)).rejects.toThrow()
     expect(content).toContain('sources: ["project-a/config.yaml"]')
+  })
+
+  it("rejects unsafe and application-managed paths from interactive writes", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    interactiveGenerationOverride = [
+      "---FILE: wiki/INDEX.md---\n# hostile index\n---END FILE---",
+      "---FILE: wiki\\overview.MD---\n# hostile overview\n---END FILE---",
+      "---FILE: ../escape.md---\n# escape\n---END FILE---",
+    ].join("\n")
+    useChatStore.setState({ ingestSource: `${tmp.path}/raw/sources/project-a/config.yaml` })
+
+    const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
+
+    expect(written).toEqual([])
+    await expect(fs.access(path.join(tmp.path, "escape.md"))).rejects.toThrow()
   })
 })

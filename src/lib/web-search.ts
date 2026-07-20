@@ -15,6 +15,8 @@ export interface WebSearchResult {
   source: string
 }
 
+export const DEFAULT_FIRECRAWL_URL = "https://api.firecrawl.dev"
+
 export const SERPAPI_ENGINE_OPTIONS: { value: SerpApiEngine; label: string; hint: string }[] = [
   { value: "google", label: "Google Web", hint: "SerpApi Google Search API organic results" },
   { value: "google_news", label: "Google News", hint: "News-focused results" },

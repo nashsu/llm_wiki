@@ -3,6 +3,19 @@
     "title": "LLM Wiki",
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
+  "common": {
+    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close",
+    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+  },
+  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
+  "errors": { "generic": "Something went wrong" },
+  "mermaid": {
+    "renderFailed": "Mermaid diagram could not be rendered",
+    "showDetails": "Show parser details",
+    "enlarge": "Enlarge diagram",
+    "rendering": "Rendering diagram...",
+    "diagram": "Diagram"
+  },
   "nav": {
     "chat": "Chat",
     "wiki": "Wiki",
@@ -29,7 +42,57 @@
   },
   "sidebar": {
     "knowledge": "Knowledge",
-    "files": "Files"
+    "files": "Files",
+    "rawSources": "Raw Sources",
+    "noWikiPages": "No wiki pages yet. Import sources to get started.",
+    "typeLabels": {
+      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
+      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
+      "thesis": "Theses", "methodology": "Methodologies",
+      "comparison": "Comparisons", "query": "Queries"
+    }
+  },
+  "editor": {
+    "edit": "Edit",
+    "done": "Done",
+    "editRaw": "Edit raw Markdown",
+    "doneEditing": "Done editing",
+    "selection": {
+      "askAgent": "Ask Agent about selection",
+      "placeholder": "Explain, rewrite, shorten...",
+      "send": "Send",
+      "ask": "Ask",
+      "edit": "Edit",
+      "generating": "Generating...",
+      "stop": "Stop",
+      "askAgain": "Ask again",
+      "askOnlyHint": "This rendered selection cannot be mapped to one exact Markdown source range. You can ask about it, but editing is disabled to prevent changing the wrong text.",
+      "wordDiff": "Word-level changes",
+      "regenerate": "Regenerate",
+      "closeReference": "Close",
+      "requestFailed": "The selection assistant could not complete this request.",
+      "applyFailed": "The selected text could not be updated.",
+      "sourceChanged": "The file changed after this text was selected. Select the text again before applying the edit.",
+      "referenceFailed": "The referenced page could not be opened.",
+      "emptyResponse": "The model returned no answer. Please try again."
+    },
+    "pageLinks": {
+      "button": "Links",
+      "title": "Page links",
+      "outgoing": "Outgoing links",
+      "backlinks": "Backlinks",
+      "missing": "Missing links",
+      "noOutgoing": "This page has no outgoing wiki links.",
+      "noBacklinks": "No other page links here yet.",
+      "noMissing": "All wiki links resolve to existing pages.",
+      "create": "Create",
+      "draft": "Agent draft",
+      "loadFailed": "Page links could not be loaded.",
+      "createFailed": "The missing page could not be created.",
+      "emptyDraftError": "The model returned an empty draft."
+    },
+    "frontmatter": { "origin": "Origin", "more": "More" },
+    "rawMarkdownEditor": "Raw Markdown editor"
   },
   "research": {
     "title": "Deep Research",
@@ -41,6 +104,8 @@
     "sourcesCount": "Sources ({{count}})",
     "anyTxtSource": "AnyTXT source",
     "webSource": "Web source",
+    "synthesis": "Synthesis",
+    "thinking": "Thinking",
     "open": "Open",
     "remove": "Remove",
     "status": {
@@ -102,8 +167,17 @@
     "importHint": "Import documents to start building your wiki",
     "importFiles": "Import Files",
     "importFolder": "Folder",
+    "importUrls": "URLs",
     "importSourceFiles": "Import Source Files",
     "importSourceFolder": "Import Source Folder",
+    "urlImport": {
+      "title": "Import web pages",
+      "description": "Enter one HTTP(S) URL per line. Each page is saved as a source and queued for ingest; failed URLs do not stop the rest of the batch.",
+      "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
+      "submit": "Import URLs",
+      "empty": "Enter at least one URL.",
+      "imported": "Imported"
+    },
     "refresh": "Refresh",
     "refreshFolder": "Refresh folder",
     "refreshingFolder": "Refreshing...",
@@ -123,6 +197,15 @@
     "sourceCount_plural": "{{count}} sources"
   },
   "chat": {
+    "selectionEdit": {
+      "title": "Proposed selection edit",
+      "reviewHint": "Review before writing",
+      "original": "Original",
+      "replacement": "Replacement",
+      "accept": "Accept",
+      "reject": "Reject",
+      "applying": "Applying..."
+    },
     "agentChanges": {
       "title": "Agent file changes",
       "taskTitle": "Agent activity",
@@ -146,6 +229,16 @@
     "saveToWiki": "Save to Wiki",
     "saving": "Saving...",
     "saved": "Saved!",
+    "regenerate": "Regenerate",
+    "regenerateResponse": "Regenerate this response",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "copyToClipboard": "Copy to clipboard",
+    "thinking": "Thinking...",
+    "lineCount": "{{count}} line",
+    "lineCount_other": "{{count}} lines",
+    "thoughtLineCount": "Thought for {{count}} line",
+    "thoughtLineCount_other": "Thought for {{count}} lines",
     "writeToWiki": "Write to Wiki",
     "emptyHint": "Ask a question or start an ingest to begin.",
     "sources": "Sources",
@@ -172,6 +265,12 @@
       "agents": "Agents"
     },
     "agentMode": "Agent mode",
+    "retrievalMode": "Retrieval mode",
+    "retrievalModeHint": "Standard keeps the existing retrieval behavior. Smart iteratively closes evidence gaps under a strict budget.",
+    "retrievalModes": {
+      "standard": "Standard retrieval",
+      "smart": "Smart retrieval"
+    },
     "agentModes": {
       "fast": "Fast",
       "standard": "Standard",
@@ -193,6 +292,7 @@
     "references": "References",
     "generatedOutputs": "Generated outputs",
     "generatedOutput": "Output",
+    "openGeneratedOutputFolder": "Open output folder",
     "generatedOutputCount": "{{count}} file",
     "generatedOutputCount_plural": "{{count}} files",
     "closeGeneratedOutputs": "Close generated outputs",
@@ -222,6 +322,21 @@
   "search": {
     "title": "Search",
     "placeholder": "Search wiki pages...",
+    "placeholderWithShortcut": "Search wiki pages... (Enter to search)",
+    "searching": "Searching...",
+    "pressEnter": "Press Enter to search",
+    "pageCount": "{{count}} page",
+    "pageCount_other": "{{count}} pages",
+    "imageMatchCount": "{{count}} image match",
+    "imageMatchCount_other": "{{count}} image matches",
+    "supportingImageCount": "+{{count}} from matched pages",
+    "images": "Images",
+    "pages": "Pages",
+    "hideSupporting": "Hide supporting",
+    "showAllSupporting": "Show all (+{{count}})",
+    "noCaption": "No caption",
+    "fromSource": "From: {{source}}",
+    "jumpToSource": "Jump to source document",
     "noResults": "No results found",
     "startSearching": "Type to search wiki pages"
   },
@@ -229,6 +344,8 @@
     "title": "Wiki Lint",
     "semantic": "Semantic (LLM)",
     "running": "Running...",
+    "cancel": "Cancel check",
+    "cancelProgress": "Cancel {{completed}}/{{total}}",
     "runLint": "Run Lint",
     "runLintHint": "Run lint to check wiki health",
     "runLintDescription": "Checks for orphan pages, broken links, and more",
@@ -276,6 +393,7 @@
     "selectedCount": "{{count}} selected",
     "markSelectedResolved": "Mark selected resolved",
     "dismissSelected": "Dismiss selected",
+    "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —"
   },
@@ -348,7 +466,27 @@
       },
       "llm": {
         "title": "LLM Models",
-        "description": "One row per vendor. Toggling one on automatically turns off the others. Changes save instantly; each vendor's API key is stored independently so switching doesn't lose data.",
+        "description": "Configure built-in providers or add multiple custom endpoints. Activating one automatically deactivates the others, while every provider keeps its own credentials and model settings.",
+        "taskRouting": {
+          "chat": "Chat model",
+          "ingest": "Ingest model",
+          "activeDefault": "Use active model",
+          "hint": "Choose separate models for interactive chat and document ingest. The active model remains the fallback."
+        },
+      "projectOverride": {
+          "enabled": "Use a project-specific model",
+          "provider": "Project provider",
+          "selectProvider": "Select a provider",
+          "model": "Project model",
+          "modelPlaceholder": "Use the provider's configured model",
+          "hint": "When enabled, this project uses the selected provider and model for both Chat and Ingest. Credentials remain in the global provider settings."
+        },
+        "customProfiles": {
+          "add": "Add custom provider",
+          "defaultName": "Custom provider {{number}}",
+          "name": "Provider name",
+          "delete": "Delete custom provider"
+        },
         "expand": "Expand config",
         "collapse": "Collapse",
         "toggleOff": "Click to deactivate",
@@ -380,6 +518,20 @@
         "codexCliTimeout": "Codex CLI timeout",
         "codexCliTimeoutUnit": "minutes",
         "codexCliTimeoutHint": "Overall timeout for one Codex CLI request. Raise this for long PDF ingest or slower local/network sessions.",
+        "requestTimeout": "Request timeout (minutes)",
+        "requestTimeoutHint": "Increase this for slow local CPU models. The default is 30 minutes.",
+        "cliStatus": "CLI status",
+        "checkingCli": "Checking…",
+        "recheckCli": "Re-check",
+        "detectingCli": "Detecting local {{name}} binary…",
+        "cliDetected": "Detected{{version}}. Ready to use your local {{login}} — no API key needed.",
+        "claudeSubscription": "subscription",
+        "codexLogin": "Codex login",
+        "cliAuthBefore": "If chat fails with an authentication error, run",
+        "cliAuthAfter": "in a terminal to refresh the login.",
+        "cliUnavailable": "{{name}} CLI not available.",
+        "cliInstallBefore": "Install with",
+        "cliInstallAfter": "then re-check.",
         "testConnection": "Test connection",
         "testFunction": "Test function",
         "testingConnection": "Testing connection…",
@@ -424,6 +576,10 @@
         "maxChunkCharsHint": "Target size of each chunk. Lower this (e.g. 500) when your endpoint's context is small (llama.cpp n_ctx=512, mxbai-embed-large, etc.).",
         "overlapChunkChars": "Overlap (characters)",
         "overlapChunkCharsHint": "Characters of overlap between adjacent chunks so ideas aren't severed at boundaries.",
+        "concurrency": "Concurrent requests",
+        "concurrencyHint": "Maximum embedding requests in flight (1–32). Increase gradually according to your endpoint's capacity.",
+        "batchSize": "Inputs per request",
+        "batchSizeHint": "OpenAI-compatible endpoints only (1–64). Unsupported providers automatically use single-input requests.",
         "providerTests": "Provider tests",
         "providerTestsHint": "Connection test sends one short embedding request. Functional test verifies stable finite vectors and reports the returned dimension.",
         "testConnection": "Test connection",
@@ -504,7 +660,7 @@
         "savedBadge": "Saved",
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
-        "firecrawlHint": "Uses Firecrawl's anonymous Search API (`https://api.firecrawl.dev/v2/search`). No API key is required here, but Firecrawl may block suspicious IP addresses.",
+        "firecrawlHint": "Leave API key blank for anonymous search, or add a Firecrawl API key for authenticated quota. Base URL supports compatible self-hosted endpoints.",
         "searxngJsonHint": "The instance must allow JSON search responses (`format=json`).",
         "searchCategories": "Search categories",
         "searxngCategoriesHint": "Categories are sent as the SearXNG `categories` parameter.",
@@ -665,6 +821,16 @@
         "description": "Tools for cleaning up the wiki — detect and merge duplicate entities/concepts that the LLM created under different names across re-ingests.",
         "noProject": "Open a project first.",
         "noLlm": "Configure an LLM provider first.",
+        "projectData": {
+          "title": "Project data",
+          "description": "Rebuild navigation from existing pages, or move a complete project including its hidden processing state.",
+          "rebuild": "Rebuild index",
+          "export": "Export project",
+          "import": "Import project",
+          "rebuilt": "Rebuilt index with {{pages}} pages in {{groups}} groups.",
+          "exported": "Project exported to {{path}}",
+          "imported": "Imported {{name}}. Switch projects to open it."
+        },
         "dedup": {
           "title": "Detect duplicate entities / concepts",
           "description": "Asks the LLM to scan all entity / concept pages and group ones that likely refer to the same topic under different names (English vs Chinese, plural vs singular, abbreviation vs full form). You confirm each group before merging. Merges are queued and run one at a time so cross-references stay consistent.",
@@ -683,6 +849,8 @@
           "delete": "Delete",
           "queueTitle": "In-progress merges",
           "queueDescription": "Tasks queued from a previous scan that haven't finished yet. Merges run one at a time.",
+          "restoredBacklog": "These merge tasks were restored from the previous session and are paused to avoid unexpected LLM usage.",
+          "resumeRestored": "Resume merges",
           "notDuplicates": "Not duplicates",
           "merged": "Merged",
           "skipped": "Marked not duplicates"
@@ -716,9 +884,32 @@
       },
       "mineru": {
         "title": "MinerU PDF Parser",
-        "description": "Use MinerU cloud API for higher quality PDF parsing (tables, formulas, complex layouts). Default uses built-in pdfium extraction.",
+        "description": "Use MinerU cloud or a self-hosted local service for higher quality PDF parsing (tables, formulas, complex layouts). Default uses built-in pdfium extraction.",
         "privacyNotice": "When enabled, PDF contents are uploaded to MinerU cloud for parsing. Do not enable this for sensitive documents unless you accept that.",
         "enabled": "Enable MinerU",
+        "backend": "Backend",
+        "cloudBackend": "Cloud (mineru.net) - requires token, higher quality",
+        "localBackend": "Official self-hosted mineru-api - private, offline",
+        "localEndpoint": "Local service endpoint",
+        "localInfo": "Base URL of an official mineru-api or mineru-router service.",
+        "parsingBackend": "Parsing backend",
+        "backendHybrid": "Hybrid engine (Recommended)",
+        "backendPipeline": "Pipeline",
+        "backendVlm": "VLM engine",
+        "backendHybridHttp": "Hybrid HTTP client",
+        "backendVlmHttp": "VLM HTTP client",
+        "effort": "Hybrid effort",
+        "effortMedium": "Medium (Faster)",
+        "effortHigh": "High (Image analysis and maximum accuracy)",
+        "ocrLanguage": "OCR language",
+        "parseMethod": "Parse method",
+        "parseAuto": "Auto",
+        "parseText": "Text extraction",
+        "parseOcr": "Force OCR",
+        "serverUrl": "OpenAI-compatible model server URL",
+        "formulaParsing": "Formula parsing",
+        "tableParsing": "Table parsing",
+        "imageAnalysis": "Image analysis",
         "token": "API Token",
         "tokenHint": "Get your token from mineru.net",
         "model": "Model Version",
@@ -767,10 +958,22 @@
     "cancelAllTitle": "Cancel all queued and in-progress tasks",
     "cancelAllConfirm": "Cancel all {{count}} queued/processing ingest tasks? Partial files from the in-progress task will be removed. Failed tasks will be kept so you can retry them.",
     "retryFailed": "Retry failed",
-    "retryFailedTitle": "Retry all failed ingest tasks"
+    "retryFailedTitle": "Retry all failed ingest tasks",
+    "fileSync": "File Sync",
+    "rescan": "Rescan",
+    "rescanTitle": "Scan project files for external changes",
+    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "fileTypes": {
+      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
+      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
+      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
+      "index": "Index", "log": "Log", "file": "File"
+    }
   },
   "fileTree": {
-    "noProject": "No project open"
+    "noProject": "No project open",
+    "openProjectFolder": "Open project folder",
+    "openProjectFolderFailed": "Failed to open the project folder."
   },
   "graph": {
     "openProject": "Open a project to view the graph",
@@ -790,6 +993,12 @@
     "noVisibleNodes": "No visible nodes",
     "filter": "Filter",
     "reset": "Reset",
+    "resetFilters": "Reset graph filters",
+    "any": "Any",
+    "showAllTypes": "Show all types",
+    "doubleClickToggle": "Double-click to toggle visibility",
+    "expandLegend": "Expand legend",
+    "collapseLegend": "Collapse legend",
     "type": "Type",
     "community": "Community",
     "insights": "Insights",

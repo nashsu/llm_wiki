@@ -1,4 +1,5 @@
 import type { LlmConfig, ReasoningConfig } from "@/stores/wiki-store"
+import { computeContextBudget } from "@/lib/context-budget"
 import {
   AZURE_OPENAI_API_VERSION,
   buildAzureOpenAiUrl,
@@ -798,8 +799,27 @@ function buildGoogleBody(
   }
 }
 
+/**
+ * Convert the character-based response reserve into an Anthropic output-token
+ * limit. The lower bound is defensive: settings UI enforces a useful context
+ * size, but migrated or hand-edited persisted configuration must never produce
+ * the protocol-invalid `max_tokens: 0` value.
+ */
+export function deriveAnthropicMaxTokens(maxContextSize: number | undefined): number {
+  const { responseReserve } = computeContextBudget(maxContextSize)
+  return Math.max(1, Math.min(16_384, Math.floor(responseReserve / 3)))
+}
+
 export function getProviderConfig(config: LlmConfig): ProviderConfig {
   const { provider, apiKey, model, ollamaUrl, customEndpoint } = config
+
+  // Default max_tokens for Anthropic-wire providers, derived from the
+  // configured context window rather than a hardcoded 4096. Converts the
+  // character-based responseReserve to tokens at ~3 chars/token and caps
+  // at 16 384 to stay within typical per-request limits. Explicit
+  // overrides from callers (e.g. max_tokens: 300 for routing decisions)
+  // always take precedence because they are spread after this value.
+  const anthropicBudgetTokens = deriveAnthropicMaxTokens(config.maxContextSize)
 
   switch (provider) {
     case "openai":
@@ -824,7 +844,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         buildBody: (messages, overrides) => {
           assertMiniMaxImageSupport(url, model, messages)
           return {
-            ...buildAnthropicBodyWithReasoning(config, messages, overrides),
+            ...buildAnthropicBodyWithReasoning(config, messages, { max_tokens: anthropicBudgetTokens, ...overrides }),
             model,
           }
         },
@@ -907,7 +927,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         buildBody: (messages, overrides) => {
           assertMiniMaxImageSupport(url, model, messages)
           return {
-            ...buildAnthropicBodyWithReasoning(config, messages, overrides),
+            ...buildAnthropicBodyWithReasoning(config, messages, { max_tokens: anthropicBudgetTokens, ...overrides }),
             model,
           }
         },
@@ -939,7 +959,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           buildBody: (messages, overrides) => {
             assertMiniMaxImageSupport(url, model, messages)
             return {
-              ...buildAnthropicBodyWithReasoning(config, messages, overrides),
+              ...buildAnthropicBodyWithReasoning(config, messages, { max_tokens: anthropicBudgetTokens, ...overrides }),
               model,
             }
           },

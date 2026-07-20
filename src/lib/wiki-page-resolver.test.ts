@@ -5,6 +5,7 @@ import {
   createEmptyProjectPathIndex,
   findInTreeByName,
   resolveRelatedSlug,
+  resolveSourceReference,
   resolveSourceName,
   unwrapWikilink,
 } from "./wiki-page-resolver"
@@ -63,6 +64,27 @@ const STRAY_CHILDREN_INDEX = buildProjectPathIndexFromTree([
     children: [file(`${WIKI}/should-not-index.md`)],
   },
 ])
+
+describe("buildProjectPathIndexFromTree", () => {
+  it("indexes each path once when overlapping trees are merged", () => {
+    // The full project scan and a hidden raw/sources rescan share the
+    // visible source files; merging them must not create duplicate
+    // filesByName entries, while still surfacing hidden-only files.
+    const rawSourcesRescan: FileNode[] = [
+      dir(`${SOURCES}`, [
+        file(`${SOURCES}/report.pdf`), // duplicate of the full scan
+        dir(`${SOURCES}/.claude`, [file(`${SOURCES}/.claude/memory.md`)]),
+      ]),
+    ]
+    const merged = buildProjectPathIndexFromTree([...TREE, ...rawSourcesRescan])
+
+    expect(merged.filesByName.get("report.pdf")).toHaveLength(1)
+    expect(merged.byPath.has(`${SOURCES}/.claude/memory.md`)).toBe(true)
+    expect(findInTreeByName(merged, "memory.md", `${SOURCES}/`)).toBe(
+      `${SOURCES}/.claude/memory.md`,
+    )
+  })
+})
 
 describe("unwrapWikilink", () => {
   it("unwraps a bare [[target]]", () => {
@@ -263,5 +285,84 @@ describe("resolveSourceName", () => {
     expect(resolveSourceName(INDEX, "wiki/sources/paper.md", SOURCES)).toBe(
       `${WIKI}/sources/paper.md`,
     )
+  })
+
+  it("resolves a source that lives inside a raw/sources dotfolder", () => {
+    // Real frontmatter shape: sources: [".claude/projects/.../MEMORY.md"].
+    // These only resolve once the hidden raw/sources rescan puts the
+    // dotfolder file into the index.
+    const dotIndex = buildProjectPathIndexFromTree([
+      dir(`${PP}/raw`, [
+        dir(`${SOURCES}`, [
+          dir(`${SOURCES}/.claude`, [
+            dir(`${SOURCES}/.claude/projects`, [
+              file(`${SOURCES}/.claude/projects/MEMORY.md`),
+            ]),
+          ]),
+        ]),
+      ]),
+    ])
+    expect(resolveSourceName(dotIndex, ".claude/projects/MEMORY.md", SOURCES)).toBe(
+      `${SOURCES}/.claude/projects/MEMORY.md`,
+    )
+  })
+})
+
+describe("resolveSourceReference", () => {
+  it("treats HTTP and HTTPS URLs as external sources", () => {
+    expect(
+      resolveSourceReference(
+        INDEX,
+        "https://developer.apple.com/videos/play/wwdc2025/230/",
+        SOURCES,
+      ),
+    ).toEqual({
+      kind: "external",
+      url: "https://developer.apple.com/videos/play/wwdc2025/230/",
+    })
+    expect(
+      resolveSourceReference(INDEX, "http://example.com/source", SOURCES),
+    ).toEqual({
+      kind: "external",
+      url: "http://example.com/source",
+    })
+  })
+
+  it("keeps existing local and missing source behavior", () => {
+    expect(resolveSourceReference(INDEX, "report.pdf", SOURCES)).toEqual({
+      kind: "local",
+      path: `${SOURCES}/report.pdf`,
+    })
+    expect(resolveSourceReference(INDEX, "ghost.pdf", SOURCES)).toEqual({
+      kind: "missing",
+    })
+  })
+
+  it("recognizes external URLs before local source roots are available", () => {
+    expect(
+      resolveSourceReference(INDEX, "https://example.com/source", null),
+    ).toEqual({
+      kind: "external",
+      url: "https://example.com/source",
+    })
+  })
+
+  it("does not classify non-HTTP URL-like values as external sources", () => {
+    expect(resolveSourceReference(INDEX, "javascript:alert(1)", SOURCES)).toEqual({
+      kind: "missing",
+    })
+    expect(resolveSourceReference(INDEX, "https://user:secret@example.com/file", SOURCES)).toEqual({
+      kind: "missing",
+    })
+    expect(resolveSourceReference(INDEX, "https://example.com/file\nname", SOURCES)).toEqual({
+      kind: "missing",
+    })
+  })
+
+  it("normalizes external URLs before exposing them to the opener", () => {
+    expect(resolveSourceReference(INDEX, "https://example.com", SOURCES)).toEqual({
+      kind: "external",
+      url: "https://example.com/",
+    })
   })
 })

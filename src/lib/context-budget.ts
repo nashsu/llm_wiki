@@ -25,10 +25,11 @@
  * is gated by `maxHistoryMessages` (count, not bytes). The leftover
  * just provides headroom.
  *
- * The response reserve is a "passive" reservation: we don't pass
- * `max_tokens: responseReserve / 3` to the LLM (yet — that's a
- * follow-up). We just refuse to fill above (maxCtx - responseReserve)
- * so the LLM has room to actually answer.
+ * The response reserve does double duty: we refuse to fill above
+ * (maxCtx - responseReserve) so the LLM has room to answer, and
+ * getProviderConfig() derives the default Anthropic `max_tokens` from
+ * it (~responseReserve / 3 tokens, capped) so the wire request actually
+ * reserves that room instead of defaulting to 4096.
  */
 
 /** Result of `computeContextBudget`. All values are character counts. */

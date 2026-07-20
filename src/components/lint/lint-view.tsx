@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import {
   Link2Off,
   Unlink,
@@ -70,35 +70,49 @@ export function LintView() {
   const clearLintItems = useLintStore((s) => s.clearItems)
 
   const [running, setRunning] = useState(false)
+  const [lintProgress, setLintProgress] = useState<{ completed: number; total: number } | null>(null)
   const [hasRun, setHasRun] = useState(false)
   const [runSemantic, setRunSemantic] = useState(false)
   const [fixingId, setFixingId] = useState<string | null>(null)
   const [batchFixing, setBatchFixing] = useState(false)
   const [fixError, setFixError] = useState<string | null>(null)
   const [selectedLintIds, setSelectedLintIds] = useState<Set<string>>(() => new Set())
+  const lintAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => lintAbortRef.current?.abort(), [])
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
     const pp = normalizePath(project.path)
     setRunning(true)
     setFixError(null)
+    setLintProgress(null)
     setSelectedLintIds(new Set())
     clearLintItems()
+    const controller = new AbortController()
+    lintAbortRef.current = controller
     try {
-      const structural = await runStructuralLint(pp)
+      const structural = await runStructuralLint(pp, {
+        signal: controller.signal,
+        onProgress: (completed, total) => setLintProgress({ completed, total }),
+      })
       let all = structural
 
       if (runSemantic && hasUsableLlm(llmConfig)) {
-        const semantic = await runSemanticLint(pp, llmConfig)
+        const semantic = await runSemanticLint(pp, llmConfig, controller.signal)
         all = [...structural, ...semantic]
       }
 
       addLintItems(all)
       setHasRun(true)
     } catch (err) {
-      console.error("Lint failed:", err)
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        console.error("Lint failed:", err)
+      }
     } finally {
+      lintAbortRef.current = null
       setRunning(false)
+      setLintProgress(null)
     }
   }, [project, llmConfig, running, runSemantic, addLintItems, clearLintItems])
 
@@ -167,7 +181,7 @@ export function LintView() {
     }
   }, [project, t])
 
-  async function handleFix(item: LintItem) {
+  async function handleFix(item: LintItem, refreshTree = true) {
     if (!project) return
     const pp = normalizePath(project.path)
     setFixingId(item.id)
@@ -223,11 +237,12 @@ export function LintView() {
         }
       }
 
-      // Refresh tree
-      await refreshProjectFileTree(pp, {
-        projectId: project.id,
-        bumpDataVersion: true,
-      })
+      if (refreshTree) {
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
+      }
     } catch (err) {
       console.error("Fix failed:", err)
       setFixError(err instanceof Error ? err.message : String(err))
@@ -314,15 +329,62 @@ export function LintView() {
   const handleBatchFix = useCallback(async () => {
     if (!project || batchFixing || selectedLintItems.length === 0) return
     setBatchFixing(true)
+    setFixError(null)
+    const pp = normalizePath(project.path)
+    let filesystemChanged = false
     try {
+      const edits = new Map<string, Array<{ id: string; apply: (content: string) => string }>>()
+      const queueEdit = (path: string, id: string, apply: (content: string) => string) => {
+        const pending = edits.get(path) ?? []
+        pending.push({ id, apply })
+        edits.set(path, pending)
+      }
+
       for (const item of selectedLintItems) {
-        await handleFix(item)
+        if (item.type === "orphan" && item.suggestedSource) {
+          queueEdit(`${pp}/wiki/${item.suggestedSource}`, item.id, (content) => appendWikilink(content, item.page))
+        } else if (item.type === "no-outlinks" && item.suggestedTarget) {
+          queueEdit(`${pp}/wiki/${item.page}`, item.id, (content) => appendWikilink(content, item.suggestedTarget!))
+        } else if (item.type === "broken-link" && item.brokenTarget) {
+          const stub = item.suggestedTarget ? null : await ensureBrokenLinkStub(pp, item.brokenTarget)
+          if (stub) filesystemChanged = true
+          const target = item.suggestedTarget ?? stub!.relativePath
+          queueEdit(`${pp}/wiki/${item.page}`, item.id, (content) =>
+            rewriteWikilinkTarget(content, item.brokenTarget!, target))
+        } else {
+          addLintItemToReview(item)
+          removeLintItems([item.id])
+        }
+      }
+
+      // Multiple findings can target the same page. Apply their transforms in
+      // memory and write that page once, avoiding lost updates and N full reads.
+      for (const [path, pending] of edits) {
+        const original = await readFile(path)
+        const updated = pending.reduce((content, edit) => edit.apply(content), original)
+        if (updated !== original) {
+          await writeFile(path, updated)
+          filesystemChanged = true
+        }
+        removeLintItems(pending.map((edit) => edit.id))
       }
       setSelectedLintIds(new Set())
+    } catch (err) {
+      console.error("Batch fix failed:", err)
+      setFixError(err instanceof Error ? err.message : String(err))
     } finally {
+      // Refresh even after a partial failure: earlier files or stubs may have
+      // been written successfully. The expensive recursive rebuild still runs
+      // at most once for the whole batch.
+      if (filesystemChanged) {
+        await refreshProjectFileTree(pp, {
+          projectId: project.id,
+          bumpDataVersion: true,
+        })
+      }
       setBatchFixing(false)
     }
-  }, [batchFixing, project, selectedLintItems])
+  }, [addLintItemToReview, batchFixing, project, removeLintItems, selectedLintItems])
 
   return (
     <div className="flex h-full flex-col">
@@ -347,11 +409,16 @@ export function LintView() {
           </label>
           <Button
             size="sm"
-            onClick={handleRunLint}
-            disabled={running || !project}
+            variant={running ? "outline" : "default"}
+            onClick={running ? () => lintAbortRef.current?.abort() : handleRunLint}
+            disabled={!project}
           >
             <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
-            {running ? t("lint.running") : t("lint.runLint")}
+            {running
+              ? lintProgress && lintProgress.total > 0
+                ? t("lint.cancelProgress", { completed: lintProgress.completed, total: lintProgress.total })
+                : t("lint.cancel")
+              : t("lint.runLint")}
           </Button>
         </div>
       </div>

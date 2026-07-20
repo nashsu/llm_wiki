@@ -54,6 +54,7 @@ When API unauthenticated mode is enabled, omit `LLM_WIKI_API_TOKEN`. If MCP acce
 
 - `llm_wiki_status`: health and current project summary.
 - `llm_wiki_projects`: known projects and active project.
+- `llm_wiki_set_project`: pin the MCP process session to a project. Once pinned, other project tools reject attempts to access a different project.
 - `llm_wiki_files`: list project files. `project_id` can be a project UUID, a project filesystem path, or `current`.
 - `llm_wiki_read_file`: read an allowed text file such as `wiki/index.md`.
 - `llm_wiki_reviews`: list Review tab items. Defaults to unresolved items and supports `status`, `type`, and `limit` filters.
@@ -71,5 +72,6 @@ The MCP server inherits the desktop API's security model:
 - File reads go through the API path allow-list. Internal app state files are not exposed.
 - Review data is exposed only through the dedicated Review endpoint/tool, which defaults to unresolved items rather than opening internal state files directly.
 - Search and graph tools operate on projects known to the app; use `project_id: "current"` for the active project.
+- For multi-project use, call `llm_wiki_set_project` once. The resolved project ID remains fixed for the lifetime of the MCP subprocess even if the desktop UI switches projects, and every project-tool response includes an `activeProject` marker.
 
 Do not pass API tokens via command-line arguments. Prefer environment variables so they do not appear in shell history.

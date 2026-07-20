@@ -26,6 +26,34 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.4",
+    date: "2026-07-16",
+    highlights: {
+      en: [
+        "Added EPUB and MOBI source support so ebooks can be imported, previewed, and ingested into a project.",
+        "Added support for the official local MinerU API, including configurable service endpoints and Pipeline mode.",
+        "Added ZIP-based project export and import for migrating wiki content, source files, and project state.",
+        "Added deterministic wiki index rebuilding from the pages currently stored in the project.",
+        "Added configurable LLM request timeouts for long-running cloud models and local services.",
+        "Expanded Firecrawl configuration with API key authentication and custom service URLs.",
+        "Added a persistent collapsible knowledge sidebar that preserves more space for the active workspace.",
+        "Added Czech as an AI output language option.",
+        "Improved existing features and fixed bugs across document import, frontmatter handling, source links, knowledge graphs, missing-page checks, and cross-platform compatibility.",
+      ],
+      zh: [
+        "新增 EPUB 和 MOBI 原始资料支持，电子书可直接导入、预览并摄取到项目中。",
+        "新增官方 Local MinerU API 支持，可配置服务地址并使用 Pipeline 模式。",
+        "新增 ZIP 项目导出与导入功能，可迁移 Wiki 内容、原始资料和项目状态。",
+        "新增 Wiki 索引重建功能，可根据项目中现有页面确定性生成索引。",
+        "新增 LLM 请求超时时间设置，适配耗时较长的云端模型和本地服务。",
+        "扩展 Firecrawl 配置，支持 API Key 鉴权和自定义服务地址。",
+        "新增可持久保存状态的知识库侧栏折叠功能，为当前工作区释放更多空间。",
+        "新增捷克语 AI 输出语言选项。",
+        "优化现有功能并修复文档导入、Frontmatter、来源链接、知识图谱、缺失页面检查和跨平台兼容等问题。",
+      ],
+    },
+  },
+  {
     version: "0.6.1",
     date: "2026-07-10",
     highlights: {

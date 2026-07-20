@@ -22,8 +22,9 @@ use super::router::route_query;
 use super::skills::{load_project_skills, AgentSkill};
 use super::tools::{self, AnyTxtConfig, ToolRegistry, WebSearchConfig};
 use super::types::{
-    AgentChatRequest, AgentChatResponse, AgentMode, AgentReference, AgentSkillMode, AgentToolEvent,
-    AgentUsage, AgentUserInputField, AgentUserInputOption, AgentUserInputRequest,
+    AgentChatRequest, AgentChatResponse, AgentMode, AgentReference, AgentRetrievalMode,
+    AgentSkillMode, AgentToolEvent, AgentUsage, AgentUserInputField, AgentUserInputOption,
+    AgentUserInputRequest,
 };
 use super::workspace::{agent_workspace_display, AGENT_WORKSPACE_DIR};
 
@@ -1341,12 +1342,14 @@ impl AgentRuntime {
         let mut observations = Vec::<AgentObservation>::new();
         let mut executed_retrievals = BTreeSet::<String>::new();
         let mut retrieval_steps = 0usize;
+        let mut consecutive_no_gain_retrievals = 0usize;
         let mut force_final_next = false;
         let mut last_prompt_chars = 0usize;
         let has_explicit_skills =
             request.skill_mode == AgentSkillMode::Explicit && !skills.is_empty();
         let max_iterations = agent_loop_iteration_budget(request.mode, has_explicit_skills);
-        let retrieval_budget = agent_loop_retrieval_budget(request.mode, has_explicit_skills);
+        let retrieval_budget =
+            agent_loop_retrieval_budget(request.mode, request.retrieval_mode, has_explicit_skills);
 
         if let Some(command) = request
             .shell_command
@@ -1412,7 +1415,7 @@ impl AgentRuntime {
                 )
             } else {
                 (
-                    build_agent_loop_system(&built_context.system),
+                    build_agent_loop_system(&built_context.system, request.retrieval_mode),
                     build_agent_loop_user(
                         &built_context.user,
                         request,
@@ -1682,10 +1685,12 @@ impl AgentRuntime {
                 });
             }
 
-            if action.tool.as_deref().is_some_and(is_agent_retrieval_tool) {
+            let retrieval_tool = action.tool.as_deref().is_some_and(is_agent_retrieval_tool);
+            let evidence_count_before = smart_evidence_count(&references);
+            if retrieval_tool {
                 let tool = action.tool.as_deref().unwrap_or_default();
                 if let Ok(input) = self.agent_loop_tool_input(request, tool, &action) {
-                    let signature = format!("{tool}:{}", canonical_json(&input));
+                    let signature = retrieval_signature(tool, &input, request.retrieval_mode);
                     if !executed_retrievals.insert(signature) {
                         observations.push(record_loop_tool_rejection(
                             tool,
@@ -1755,6 +1760,23 @@ impl AgentRuntime {
                 });
             }
             observations.push(observation);
+            if retrieval_tool && request.retrieval_mode == AgentRetrievalMode::Smart {
+                let evidence_count_after = smart_evidence_count(&references);
+                let latest = observations.last().expect("observation was just appended");
+                if retrieval_added_evidence(
+                    &latest.tool,
+                    &latest.summary,
+                    evidence_count_before,
+                    evidence_count_after,
+                ) {
+                    consecutive_no_gain_retrievals = 0;
+                } else {
+                    consecutive_no_gain_retrievals += 1;
+                    if consecutive_no_gain_retrievals >= 2 {
+                        force_final_next = true;
+                    }
+                }
+            }
         }
 
         let answer = agent_iteration_limit_answer(max_iterations, observations.len(), &references);
@@ -2737,7 +2759,18 @@ fn agent_loop_iteration_budget(mode: AgentMode, has_skills: bool) -> usize {
     }
 }
 
-fn agent_loop_retrieval_budget(mode: AgentMode, has_explicit_skills: bool) -> usize {
+fn agent_loop_retrieval_budget(
+    mode: AgentMode,
+    retrieval_mode: AgentRetrievalMode,
+    has_explicit_skills: bool,
+) -> usize {
+    if retrieval_mode == AgentRetrievalMode::Smart {
+        return match mode {
+            AgentMode::Fast => 3,
+            AgentMode::Standard | AgentMode::LocalFirst => 4,
+            AgentMode::Deep => 6,
+        };
+    }
     let base = match mode {
         AgentMode::Fast => 2,
         AgentMode::Standard | AgentMode::LocalFirst => 4,
@@ -2766,6 +2799,52 @@ fn canonical_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
+fn retrieval_signature(tool: &str, input: &Value, mode: AgentRetrievalMode) -> String {
+    if mode != AgentRetrievalMode::Smart {
+        return format!("{tool}:{}", canonical_json(input));
+    }
+    let mut normalized = input.clone();
+    if let Some(query) = normalized.get_mut("query") {
+        if let Some(value) = query.as_str() {
+            let compact = value
+                .to_lowercase()
+                .split(|character: char| {
+                    character.is_whitespace() || character.is_ascii_punctuation()
+                })
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            *query = Value::String(compact);
+        }
+    }
+    format!("{tool}:{}", canonical_json(&normalized))
+}
+
+fn smart_evidence_count(references: &[AgentReference]) -> usize {
+    references
+        .iter()
+        .map(|reference| format!("{}:{}", reference.kind, reference.path))
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+fn retrieval_added_evidence(
+    tool: &str,
+    summary: &str,
+    reference_count_before: usize,
+    reference_count_after: usize,
+) -> bool {
+    if reference_count_after > reference_count_before {
+        return true;
+    }
+    if tool == "wiki.read_page" {
+        return summary
+            .split_once('\n')
+            .is_some_and(|(_, content)| !content.trim().is_empty());
+    }
+    false
+}
+
 fn should_fallback_wiki_search(
     planner_unavailable_or_failed: bool,
     tools: &super::types::AgentToolOptions,
@@ -2774,7 +2853,12 @@ fn should_fallback_wiki_search(
     planner_unavailable_or_failed && tools.wiki && skills_empty
 }
 
-fn build_agent_loop_system(base_system: &str) -> String {
+fn build_agent_loop_system(base_system: &str, retrieval_mode: AgentRetrievalMode) -> String {
+    let smart_retrieval = if retrieval_mode == AgentRetrievalMode::Smart {
+        "\nSmart retrieval is enabled. Treat retrieval as a bounded evidence loop: after every observation, identify only the unresolved evidence gap, then either issue one concise revised retrieval action or answer. Prefer reading/following already discovered pages before broadening the query. Do not repeat equivalent queries. Stop as soon as the available evidence supports a cited answer; optional background is not a reason to continue."
+    } else {
+        ""
+    };
     format!(
         "{base_system}\n\nAgent loop protocol:\n\
 Return only compact JSON. Do not wrap it in markdown.\n\
@@ -2793,7 +2877,7 @@ Use tools when they are useful, then wait for the observation in the next turn b
 	Do not claim that a generated file exists until a workspace.write_file or shell.exec observation confirms it. In the final answer, mention only observed generated file paths.\n\
 	Converge quickly. Do not keep reading optional references, running optional validation, or polishing after the requested deliverable has been written. Prefer final as soon as the core user request is satisfied.\n\
 	Only use shell.exec when active skill instructions or the user's explicit request require command-line work after files have been written with workspace.write_file. Generated files must be written under the Agent workspace described above. Commands whose explicit file paths stay inside the Agent workspace can run without an approval prompt; commands that mention external paths, home directories, downloads, temp folders, or network URLs require approval.\n\
-Use wiki.write_page only when the user explicitly asks to create or update a wiki page. Existing pages are create-only unless allowOverwrite is explicitly justified by the user's request."
+Use wiki.write_page only when the user explicitly asks to create or update a wiki page. Existing pages are create-only unless allowOverwrite is explicitly justified by the user's request.{smart_retrieval}"
     )
 }
 
@@ -4460,12 +4544,91 @@ mod tests {
 
     #[test]
     fn retrieval_budget_expands_only_for_explicit_skill_turns() {
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::Fast, false), 2);
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::Standard, false), 4);
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::LocalFirst, false), 4);
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::Deep, false), 8);
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::Standard, true), 8);
-        assert_eq!(agent_loop_retrieval_budget(AgentMode::Deep, true), 12);
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Fast, AgentRetrievalMode::Standard, false),
+            2
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Standard, AgentRetrievalMode::Standard, false),
+            4
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::LocalFirst, AgentRetrievalMode::Standard, false),
+            4
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Deep, AgentRetrievalMode::Standard, false),
+            8
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Standard, AgentRetrievalMode::Standard, true),
+            8
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Deep, AgentRetrievalMode::Standard, true),
+            12
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Standard, AgentRetrievalMode::Smart, false),
+            4
+        );
+        assert_eq!(
+            agent_loop_retrieval_budget(AgentMode::Deep, AgentRetrievalMode::Smart, true),
+            6
+        );
+    }
+
+    #[test]
+    fn smart_retrieval_normalizes_equivalent_query_signatures() {
+        let left = serde_json::json!({"query": "Agent,   Runtime!", "topK": 5});
+        let right = serde_json::json!({"query": "agent runtime", "topK": 5});
+        assert_eq!(
+            retrieval_signature("wiki.search", &left, AgentRetrievalMode::Smart),
+            retrieval_signature("wiki.search", &right, AgentRetrievalMode::Smart),
+        );
+        assert_ne!(
+            retrieval_signature("wiki.search", &left, AgentRetrievalMode::Standard),
+            retrieval_signature("wiki.search", &right, AgentRetrievalMode::Standard),
+        );
+    }
+
+    #[test]
+    fn smart_retrieval_prompt_explains_bounded_evidence_loop() {
+        let prompt = build_agent_loop_system("base", AgentRetrievalMode::Smart);
+        assert!(prompt.contains("bounded evidence loop"));
+        assert!(prompt.contains("Do not repeat equivalent queries"));
+        assert!(
+            !build_agent_loop_system("base", AgentRetrievalMode::Standard)
+                .contains("bounded evidence loop")
+        );
+    }
+
+    #[test]
+    fn smart_retrieval_counts_page_reads_but_not_repeated_searches_as_new_evidence() {
+        assert!(retrieval_added_evidence(
+            "wiki.search",
+            "1 result(s), 1 new",
+            0,
+            1
+        ));
+        assert!(!retrieval_added_evidence(
+            "wiki.search",
+            "1 result(s), 0 new",
+            1,
+            1
+        ));
+        assert!(retrieval_added_evidence(
+            "wiki.read_page",
+            "read wiki/a.md\npage content",
+            1,
+            1
+        ));
+        assert!(!retrieval_added_evidence(
+            "wiki.read_page",
+            "read wiki/a.md\n",
+            1,
+            1
+        ));
     }
 
     #[test]

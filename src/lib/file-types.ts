@@ -116,6 +116,7 @@ const EXT_MAP: Record<string, FileCategory> = {
   numbers: "document",
   key: "document",
   epub: "document",
+  mobi: "document",
 
   // Data
   json: "data",
@@ -146,6 +147,8 @@ export const EXTRACTED_TEXT_PREVIEW_EXTENSIONS = new Set([
   "odt",
   "ods",
   "odp",
+  "epub",
+  "mobi",
 ])
 
 export function getFileExtension(filePath: string): string {

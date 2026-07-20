@@ -19,6 +19,8 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { normalizeReviewTitle } from "@/lib/review-utils"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { getTaskLlmConfig } from "@/lib/llm-task-routing"
+import { parseFrontmatter } from "@/lib/frontmatter"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
 }
 
 /** Build an index of wiki pages: id (filename without .md) + title → normalized */
-async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
+export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
   const pp = normalizePath(projectPath)
   const byId = new Set<string>()
   const byTitle = new Set<string>()
@@ -65,9 +67,9 @@ async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
       let title: string | null = null
       try {
         const content = await readFile(file.path)
-        const match = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
-        if (match) {
-          title = match[1].trim()
+        const fmTitle = parseFrontmatter(content).frontmatter?.title
+        if (typeof fmTitle === "string" && fmTitle.trim()) {
+          title = fmTitle.trim()
           byTitle.add(title.toLowerCase())
         }
       } catch {
@@ -195,7 +197,7 @@ async function judgeBatch(
 ): Promise<Set<string>> {
   if (batch.length === 0 || signal?.aborted) return new Set()
 
-  const llmConfig = useWikiStore.getState().llmConfig
+  const llmConfig = getTaskLlmConfig("ingest")
   if (!hasUsableLlm(llmConfig)) return new Set()
 
   const pages = index.pages.slice(0, MAX_PAGES_IN_PROMPT)

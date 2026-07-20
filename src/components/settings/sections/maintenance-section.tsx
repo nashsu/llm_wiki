@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { invoke } from "@tauri-apps/api/core"
+import { open, save } from "@tauri-apps/plugin-dialog"
 import {
   Wrench,
   Loader2,
@@ -9,6 +11,8 @@ import {
   Trash2,
   RotateCcw,
   Clock,
+  Archive,
+  ListRestart,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -27,6 +31,9 @@ import {
   type DedupTask,
 } from "@/lib/dedup-queue"
 import type { DuplicateGroup } from "@/lib/dedup"
+import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { openProject } from "@/commands/fs"
+import { addToRecentProjects } from "@/lib/project-store"
 
 interface GroupUiEntry {
   group: DuplicateGroup
@@ -54,6 +61,43 @@ export function MaintenanceSection() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [groups, setGroups] = useState<GroupUiEntry[]>([])
   const [scanCompleted, setScanCompleted] = useState(false)
+  const [projectToolStatus, setProjectToolStatus] = useState<string | null>(null)
+  const [projectToolBusy, setProjectToolBusy] = useState(false)
+
+  const handleRebuildIndex = useCallback(async () => {
+    if (!project) return
+    setProjectToolBusy(true)
+    try {
+      const result = await invoke<{ pages: number; groups: number }>("rebuild_wiki_index", { projectPath: project.path })
+      await refreshProjectFileTree(project.path, { bumpDataVersion: true })
+      setProjectToolStatus(t("settings.sections.maintenance.projectData.rebuilt", { pages: result.pages, groups: result.groups }))
+    } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
+  }, [project, t])
+
+  const handleExportProject = useCallback(async () => {
+    if (!project) return
+    const destination = await save({ defaultPath: `${project.name}.llmwiki.zip`, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
+    if (!destination) return
+    setProjectToolBusy(true)
+    try {
+      await invoke("export_project_archive", { projectPath: project.path, destination })
+      setProjectToolStatus(t("settings.sections.maintenance.projectData.exported", { path: destination }))
+    } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
+  }, [project, t])
+
+  const handleImportProject = useCallback(async () => {
+    const archive = await open({ multiple: false, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
+    if (!archive || Array.isArray(archive)) return
+    const destination = await open({ directory: true, multiple: false, createDirectories: true })
+    if (!destination || Array.isArray(destination)) return
+    setProjectToolBusy(true)
+    try {
+      const path = await invoke<string>("import_project_archive", { archivePath: archive, destination })
+      const imported = await openProject(path)
+      await addToRecentProjects(imported)
+      setProjectToolStatus(t("settings.sections.maintenance.projectData.imported", { name: imported.name }))
+    } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
+  }, [t])
 
   // Poll the queue at 1Hz so the UI reflects pending → processing →
   // failed transitions and cross-window queue activity (e.g. a merge
@@ -221,6 +265,17 @@ export function MaintenanceSection() {
               "Tools for cleaning up the wiki — detect and merge duplicate entities/concepts that the LLM created under different names across re-ingests.",
           })}
         </p>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <div className="flex items-center gap-2"><ListRestart className="h-4 w-4 text-muted-foreground" /><h3 className="text-sm font-semibold">{t("settings.sections.maintenance.projectData.title")}</h3></div>
+        <p className="text-xs text-muted-foreground">{t("settings.sections.maintenance.projectData.description")}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => void handleRebuildIndex()} disabled={!project || projectToolBusy}>{t("settings.sections.maintenance.projectData.rebuild")}</Button>
+          <Button variant="outline" onClick={() => void handleExportProject()} disabled={!project || projectToolBusy}><Archive className="h-4 w-4" />{t("settings.sections.maintenance.projectData.export")}</Button>
+          <Button variant="outline" onClick={() => void handleImportProject()} disabled={projectToolBusy}>{t("settings.sections.maintenance.projectData.import")}</Button>
+        </div>
+        {projectToolStatus && <p className="text-xs text-muted-foreground">{projectToolStatus}</p>}
       </div>
 
       <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">

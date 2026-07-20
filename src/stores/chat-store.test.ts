@@ -14,10 +14,17 @@ describe("chat-store conversation isolation", () => {
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      retrievalMode: "standard",
       selectedSkills: [],
       selectedContextFiles: [],
       disabledSkills: [],
     })
+  })
+
+  it("defaults to standard retrieval and allows smart retrieval opt-in", () => {
+    expect(useChatStore.getState().retrievalMode).toBe("standard")
+    useChatStore.getState().setRetrievalMode("smart")
+    expect(useChatStore.getState().retrievalMode).toBe("smart")
   })
 
   it("writes async assistant results back to the original conversation", () => {

@@ -10,17 +10,25 @@ import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
+import { PanelLeftOpen } from "lucide-react"
+import { useTranslation } from "react-i18next"
+
+const LEFT_PANEL_COLLAPSED_KEY = "llm-wiki:left-panel-collapsed"
 
 interface AppLayoutProps {
   onSwitchProject: () => void
 }
 
 export function AppLayout({ onSwitchProject }: AppLayoutProps) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
   const [leftWidth, setLeftWidth] = useState(220)
   const [rightWidth, setRightWidth] = useState(400)
+  const [leftCollapsed, setLeftCollapsed] = useState(
+    () => localStorage.getItem(LEFT_PANEL_COLLAPSED_KEY) === "true",
+  )
   const isDraggingLeft = useRef(false)
   const isDraggingRight = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -82,6 +90,13 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   // activity strip, and optional right research panel there so those
   // screens use the whole work area.
   const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
+  const toggleLeftPanel = () => {
+    setLeftCollapsed((value) => {
+      const next = !value
+      localStorage.setItem(LEFT_PANEL_COLLAPSED_KEY, String(next))
+      return next
+    })
+  }
 
   return (
     // Outer column layout: full-width update banner on top (when an
@@ -94,7 +109,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
         <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
-          {showLeftPanel && (
+          {showLeftPanel && !leftCollapsed && (
             <>
               {/* Left: File tree + Activity */}
               <div
@@ -102,7 +117,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 style={{ width: leftWidth }}
               >
                 <div className="flex-1 overflow-hidden">
-                  <SidebarPanel />
+                  <SidebarPanel onCollapse={toggleLeftPanel} />
                 </div>
                 <ActivityPanel />
               </div>
@@ -111,6 +126,20 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 onMouseDown={startDrag("left")}
               />
             </>
+          )}
+
+          {showLeftPanel && leftCollapsed && (
+            <div className="flex w-9 shrink-0 justify-center border-r bg-muted/20 pt-2">
+              <button
+                type="button"
+                onClick={toggleLeftPanel}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title={t("layout.showSidebar", "Show sidebar")}
+                aria-label={t("layout.showSidebar", "Show sidebar")}
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </button>
+            </div>
           )}
 
           {/* Center: Chat, wiki preview, or tool view */}

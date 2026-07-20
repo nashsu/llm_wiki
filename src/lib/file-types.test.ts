@@ -12,7 +12,14 @@ describe("file types", () => {
     expect(isExtractedTextPreviewFile("/project/raw/sources/report.docx")).toBe(true)
     expect(isExtractedTextPreviewFile("/project/raw/sources/slides.pptx")).toBe(true)
     expect(isExtractedTextPreviewFile("/project/raw/sources/sheet.xlsx")).toBe(true)
+    expect(isExtractedTextPreviewFile("/project/raw/sources/book.epub")).toBe(true)
+    expect(isExtractedTextPreviewFile("C:\\books\\book.MOBI")).toBe(true)
     expect(isExtractedTextPreviewFile("/project/raw/sources/archive.zip")).toBe(false)
+  })
+
+  it("classifies EPUB and MOBI as extracted documents", () => {
+    expect(getFileCategory("/project/book.epub")).toBe("document")
+    expect(getFileCategory("C:\\books\\book.MOBI")).toBe("document")
   })
 
   it("extracts extensions from windows and unix paths", () => {

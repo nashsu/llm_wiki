@@ -13,12 +13,13 @@ vi.mock("@/commands/fs", () => ({
 
 import { enrichWithWikilinks } from "./enrich-wikilinks"
 import { streamChat } from "./llm-client"
-import { readFile, writeFile } from "@/commands/fs"
+import { listDirectory, readFile, writeFile } from "@/commands/fs"
 import { useWikiStore } from "@/stores/wiki-store"
 
 const mockStreamChat = vi.mocked(streamChat)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
+const mockListDirectory = vi.mocked(listDirectory)
 
 function fakeLlmConfig(): LlmConfig {
   return {
@@ -43,6 +44,13 @@ beforeEach(() => {
   mockStreamChat.mockReset()
   mockReadFile.mockReset()
   mockWriteFile.mockReset()
+  mockListDirectory.mockReset()
+  mockListDirectory.mockResolvedValue([
+    { path: "/p/wiki/transformer.md", name: "transformer.md", is_dir: false },
+    { path: "/p/wiki/attention.md", name: "attention.md", is_dir: false },
+    { path: "/p/wiki/encoder.md", name: "encoder.md", is_dir: false },
+    { path: "/p/wiki/注意力机制.md", name: "注意力机制.md", is_dir: false },
+  ])
   useWikiStore.getState().setOutputLanguage("auto")
 })
 
@@ -103,6 +111,58 @@ describe("enrichWithWikilinks — language directive is built at call time", () 
 })
 
 describe("enrichWithWikilinks — JSON-based substitution", () => {
+  it("skips enrichment when the authoritative wiki listing is unavailable", async () => {
+    mockReadFile.mockResolvedValue("Transformer architecture.")
+    mockListDirectory.mockRejectedValue(new Error("scan failed"))
+    mockStreamChatReturns(JSON.stringify({
+      links: [{ term: "Transformer", target: "invented-page" }],
+    }))
+
+    await enrichWithWikilinks("/p", "/p/wiki/f.md", fakeLlmConfig())
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it("drops substitutions whose target has no wiki page", async () => {
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("index.md") ? "- transformer\n- 注意力" : "Transformer and 注意力 are related.",
+    )
+    mockListDirectory.mockResolvedValue([
+      { path: "/p/wiki/注意力.md", name: "注意力.md", is_dir: false },
+    ])
+    mockStreamChatReturns(JSON.stringify({
+      links: [
+        { term: "Transformer", target: "transformer" },
+        { term: "注意力", target: "注意力" },
+      ],
+    }))
+
+    await enrichWithWikilinks("/p", "/p/wiki/f.md", fakeLlmConfig())
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/p/wiki/f.md",
+      "Transformer and [[注意力]] are related.",
+    )
+  })
+
+  it("rewrites case-drifted targets to the reader-resolvable filename", async () => {
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("index.md") ? "- transformer" : "Transformer architecture.",
+    )
+    mockListDirectory.mockResolvedValue([
+      { path: "/p/wiki/Transformer.md", name: "Transformer.md", is_dir: false },
+    ])
+    mockStreamChatReturns(JSON.stringify({
+      links: [{ term: "Transformer", target: "transformer#overview" }],
+    }))
+
+    await enrichWithWikilinks("/p", "/p/wiki/f.md", fakeLlmConfig())
+
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/p/wiki/f.md",
+      "[[Transformer]] architecture.",
+    )
+  })
+
   it("does NOT overwrite when LLM response is not parseable JSON", async () => {
     // The v2 implementation expects a JSON `{links:[...]}` object; anything
     // else produces zero substitutions and writeFile is never called.

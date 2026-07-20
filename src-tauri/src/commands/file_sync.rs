@@ -767,7 +767,7 @@ fn upsert_task(
     }) {
         task.kind = merge_kind(&task.kind, &kind);
         task.hash_after = new.as_ref().and_then(|m| m.hash.clone());
-        task.size = new.as_ref().map(|m| m.size);
+        task.size = new.as_ref().or(old.as_ref()).map(|m| m.size);
         task.mtime_ms = new.as_ref().map(|m| m.mtime_ms);
         task.updated_at = now;
         if task.status == FileChangeStatus::Failed {
@@ -792,9 +792,11 @@ fn upsert_task(
         path: rel.to_string(),
         kind,
         status: FileChangeStatus::Pending,
-        hash_before: old.and_then(|m| m.hash),
+        hash_before: old.as_ref().and_then(|m| m.hash.clone()),
         hash_after: new.as_ref().and_then(|m| m.hash.clone()),
-        size: new.as_ref().map(|m| m.size),
+        // Deleted tasks need the previous size so frontend rename detection
+        // can reject empty/tiny hash matches without disabling all moves.
+        size: new.as_ref().or(old.as_ref()).map(|m| m.size),
         mtime_ms: new.as_ref().map(|m| m.mtime_ms),
         created_at: now,
         updated_at: now,
@@ -1629,6 +1631,28 @@ mod tests {
         assert_eq!(queue.tasks[0].retry_count, MAX_RETRY_COUNT);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleted_task_keeps_previous_file_size_for_move_detection() {
+        let mut queue = FileChangeQueue::default();
+        let old = FileMeta {
+            hash: Some("same".into()),
+            size: 128,
+            mtime_ms: 1,
+        };
+        upsert_task(
+            &mut queue,
+            "p1",
+            "raw/sources/old.md",
+            FileChangeKind::Deleted,
+            Some(old),
+            None,
+            2,
+        );
+
+        assert_eq!(queue.tasks[0].size, Some(128));
+        assert_eq!(queue.tasks[0].hash_before.as_deref(), Some("same"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import type { ChatMessage, ContentBlock } from "@/lib/llm-client"
 import i18n from "@/i18n"
-import type { ChatAgentFileChange, ChatAgentMode, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
+import type { ChatAgentFileChange, ChatAgentMode, ChatAgentStep, ChatRetrievalMode, ChatUserInputRequest } from "@/lib/chat-agent-types"
 
 /**
  * An image attached to a user message. Field names mirror the
@@ -60,6 +60,7 @@ interface ChatState {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
   selectedContextFiles: string[]
   disabledSkills: string[]
@@ -86,6 +87,7 @@ interface ChatState {
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
   setAgentMode: (mode: ChatAgentMode) => void
+  setRetrievalMode: (mode: ChatRetrievalMode) => void
   setSelectedSkills: (skills: string[]) => void
   setSelectedContextFiles: (paths: string[]) => void
   setDisabledSkills: (skills: string[]) => void
@@ -118,6 +120,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   useWebSearch: false,
   useAnyTxtSearch: false,
   agentMode: "standard",
+  retrievalMode: "standard",
   selectedSkills: [],
   selectedContextFiles: [],
   disabledSkills: [],
@@ -319,6 +322,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
 
   setAgentMode: (agentMode) => set({ agentMode }),
+
+  setRetrievalMode: (retrievalMode) => set({ retrievalMode }),
 
   setSelectedSkills: (selectedSkills) =>
     set((state) => ({

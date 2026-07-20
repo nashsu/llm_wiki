@@ -7,6 +7,7 @@ import {
   type ProjectPathIndex,
 } from "@/lib/wiki-page-resolver"
 import { DEFAULT_GRAPH_FILTERS, type GraphFilterState } from "@/lib/graph-filters"
+import type { OutputLanguage } from "@/lib/output-language-options"
 
 /**
  * Wire protocol used when `provider === "custom"`. Other providers have a
@@ -42,6 +43,8 @@ interface LlmConfig {
   localCliIsolation?: boolean
   /** Codex CLI provider only. Overall subprocess timeout in minutes. */
   codexCliTimeoutMinutes?: number
+  /** HTTP LLM request backstop. Defaults to 30 minutes for legacy configs. */
+  requestTimeoutMinutes?: number
 }
 
 export type SearchProvider =
@@ -79,6 +82,7 @@ export type SearXngCategory =
 
 export interface SearchProviderOverride {
   apiKey?: string
+  baseUrl?: string
   serpApiEngine?: SerpApiEngine
   searXngUrl?: string
   searXngCategories?: SearXngCategory[]
@@ -129,6 +133,10 @@ interface EmbeddingConfig {
    */
   maxChunkChars?: number
   overlapChunkChars?: number
+  /** Maximum embedding HTTP requests in flight. Defaults to 1 for compatibility. */
+  concurrency?: number
+  /** Texts per OpenAI-compatible embedding request. Defaults to 1. */
+  batchSize?: number
   /**
    * Extra HTTP headers to send with every embedding request, e.g.
    *   { "X-Model-Provider-Id": "siliconflow" }
@@ -254,9 +262,29 @@ interface SourceWatchConfig {
 }
 
 export type MineruModelVersion = "pipeline" | "vlm"
+export type MineruLocalBackend =
+  | "pipeline"
+  | "vlm-engine"
+  | "hybrid-engine"
+  | "vlm-http-client"
+  | "hybrid-http-client"
+export type MineruParseMethod = "auto" | "txt" | "ocr"
+export type MineruEffort = "medium" | "high"
 
 export interface MineruConfig {
   enabled: boolean
+  /** Parsing backend: MinerU cloud API (default) or a self-hosted local service. */
+  backend?: "cloud" | "local"
+  /** Base URL of a compatible self-hosted MinerU HTTP wrapper. */
+  localEndpoint?: string
+  localBackend?: MineruLocalBackend
+  localEffort?: MineruEffort
+  localParseMethod?: MineruParseMethod
+  localLanguage?: string
+  localFormulaEnabled?: boolean
+  localTableEnabled?: boolean
+  localImageAnalysis?: boolean
+  localServerUrl?: string
   token: string
   modelVersion: MineruModelVersion
 }
@@ -279,36 +307,6 @@ interface MultimodalConfig {
 }
 
 /**
- * Output language for LLM-generated content (wiki pages, chat responses, research).
- * "auto" = detect from user input / source document language.
- * Otherwise = force all LLM output to use the specified language.
- */
-type OutputLanguage =
-  | "auto"
-  | "English"
-  | "Chinese"
-  | "Traditional Chinese"
-  | "Japanese"
-  | "Korean"
-  | "Vietnamese"
-  | "French"
-  | "German"
-  | "Spanish"
-  | "Portuguese"
-  | "Italian"
-  | "Russian"
-  | "Arabic"
-  | "Persian"
-  | "Hindi"
-  | "Turkish"
-  | "Dutch"
-  | "Polish"
-  | "Swedish"
-  | "Indonesian"
-  | "Thai"
-  | "Ukrainian"
-
-/**
  * Per-preset saved fields. Each entry survives turning the preset off
  * and coming back — users don't have to re-enter an API key when they
  * briefly switch to a different provider.
@@ -324,9 +322,36 @@ export interface ProviderOverride {
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
+  requestTimeoutMinutes?: number
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>
+
+export interface CustomLlmPreset {
+  id: string
+  label: string
+}
+
+export interface TaskModelRoutingConfig {
+  /** Null keeps chat on the globally active provider preset. */
+  chatPresetId: string | null
+  /** Null keeps ingest on the globally active provider preset. */
+  ingestPresetId: string | null
+}
+
+export interface ProjectLlmOverride {
+  enabled: boolean
+  presetId: string | null
+  /** Empty uses the selected preset/global provider model. */
+  model: string
+  /**
+   * Resolved provider metadata for native/API callers. The API key is
+   * deliberately omitted: Rust merges the current credential from
+   * providerConfigs[presetId], so rotating a key never requires rewriting
+   * every project override and credentials are not duplicated per project.
+   */
+  profile?: Omit<LlmConfig, "apiKey">
+}
 
 export interface ExternalPreview {
   title: string
@@ -373,10 +398,15 @@ interface WikiState {
   pendingScrollImageSrc: string | null
   activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "skills" | "settings"
   llmConfig: LlmConfig
+  /** Persisted global/default config, kept separate while a project override is effective. */
+  globalLlmConfig: LlmConfig
   /** Per-provider-preset stored overrides (API key, model, endpoint, …). */
   providerConfigs: ProviderConfigs
+  customLlmPresets: CustomLlmPreset[]
   /** Which preset is currently active. `null` = no LLM configured. */
   activePresetId: string | null
+  taskModelRouting: TaskModelRoutingConfig
+  projectLlmOverride: ProjectLlmOverride
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
   multimodalConfig: MultimodalConfig
@@ -402,8 +432,12 @@ interface WikiState {
   setPendingScrollImageSrc: (src: string | null) => void
   setActiveView: (view: WikiState["activeView"]) => void
   setLlmConfig: (config: LlmConfig) => void
+  setGlobalLlmConfig: (config: LlmConfig) => void
   setProviderConfigs: (configs: ProviderConfigs) => void
+  setCustomLlmPresets: (presets: CustomLlmPreset[]) => void
   setActivePresetId: (id: string | null) => void
+  setTaskModelRouting: (config: TaskModelRoutingConfig) => void
+  setProjectLlmOverride: (config: ProjectLlmOverride) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
@@ -441,8 +475,30 @@ export const useWikiStore = create<WikiState>((set) => ({
     reasoning: { mode: "auto" },
     localCliIsolation: false,
   },
+  globalLlmConfig: {
+    provider: "openai",
+    apiKey: "",
+    maxContextSize: 204800,
+    model: "",
+    ollamaUrl: "http://localhost:11434",
+    customEndpoint: "",
+    azureApiVersion: "2024-10-21",
+    reasoning: { mode: "auto" },
+    localCliIsolation: false,
+  },
   providerConfigs: {},
+  customLlmPresets: [],
   activePresetId: null,
+  taskModelRouting: {
+    chatPresetId: null,
+    ingestPresetId: null,
+  },
+  projectLlmOverride: {
+    enabled: false,
+    presetId: null,
+    model: "",
+    profile: undefined,
+  },
 
   dataVersion: 0,
 
@@ -548,7 +604,21 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
-  mineruConfig: { enabled: false, token: "", modelVersion: "vlm" },
+  mineruConfig: {
+    enabled: false,
+    backend: "cloud",
+    localEndpoint: "http://127.0.0.1:8000",
+    localBackend: "hybrid-engine",
+    localEffort: "medium",
+    localParseMethod: "auto",
+    localLanguage: "ch",
+    localFormulaEnabled: true,
+    localTableEnabled: true,
+    localImageAnalysis: true,
+    localServerUrl: "",
+    token: "",
+    modelVersion: "vlm",
+  },
 
   // Default `enabled: true` preserves the pre-toggle behavior: anyone
   // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
@@ -571,8 +641,12 @@ export const useWikiStore = create<WikiState>((set) => ({
   graphUiState: createDefaultGraphUiState(),
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
+  setGlobalLlmConfig: (globalLlmConfig) => set({ globalLlmConfig }),
   setProviderConfigs: (providerConfigs) => set({ providerConfigs }),
+  setCustomLlmPresets: (customLlmPresets) => set({ customLlmPresets }),
   setActivePresetId: (activePresetId) => set({ activePresetId }),
+  setTaskModelRouting: (taskModelRouting) => set({ taskModelRouting }),
+  setProjectLlmOverride: (projectLlmOverride) => set({ projectLlmOverride }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),

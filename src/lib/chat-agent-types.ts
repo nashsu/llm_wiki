@@ -31,6 +31,7 @@ export interface ChatAgentEvent {
 }
 
 export type ChatAgentMode = "fast" | "standard" | "deep" | "local_first"
+export type ChatRetrievalMode = "standard" | "smart"
 
 export type ChatAgentToolName =
   | "project_files"

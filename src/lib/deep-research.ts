@@ -1,7 +1,7 @@
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "./anytxt-search"
 import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
-import { autoIngest, currentWikiDate } from "./ingest"
+import { currentWikiDate } from "./ingest"
 import { writeFile, readFile } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
@@ -335,12 +335,23 @@ async function executeResearch(
       // ignore
     }
 
-    // Auto-ingest the research result to generate entities, concepts, cross-references
-    if (isActiveProjectPath(pp)) {
-      autoIngest(pp, `${pp}/${savedPath}`, llmConfig).catch((err) => {
-        console.error("Failed to auto-ingest research result:", err)
-      })
+    // The query page no longer goes through source ingest, so index it here
+    // directly. This keeps freshly generated research available to hybrid
+    // search without recreating the review-amplifying ingest loop.
+    const embeddingConfig = useWikiStore.getState().embeddingConfig
+    if (embeddingConfig.enabled && embeddingConfig.model) {
+      try {
+        const { embedPage } = await import("@/lib/embedding")
+        await embedPage(pp, fileName.replace(/\.md$/i, ""), `Research: ${topic}`, pageContent, embeddingConfig)
+      } catch (err) {
+        console.warn("[DeepResearch] failed to index generated query page:", err)
+      }
     }
+
+    // A research result is already a generated wiki page. Feeding it back
+    // through source ingest creates a second summary page and recursively
+    // produces low-value review suggestions from its own gaps/references.
+    // Keep it directly searchable as the query page instead.
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     updateTaskIfActive(pp, taskId, {

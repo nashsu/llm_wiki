@@ -2,7 +2,7 @@ import { writeFile, readFile, createDirectory, listDirectory } from "@/commands/
 import { normalizeReviewItems, type ReviewItem } from "@/stores/review-store"
 import type { LintItem } from "@/stores/lint-store"
 import type { DisplayMessage, Conversation } from "@/stores/chat-store"
-import type { ChatAgentMode } from "@/lib/chat-agent-types"
+import type { ChatAgentMode, ChatRetrievalMode } from "@/lib/chat-agent-types"
 import { normalizePath } from "@/lib/path-utils"
 import type { FileNode } from "@/types/wiki"
 
@@ -52,6 +52,7 @@ export interface ChatPreferences {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
   disabledSkills: string[]
 }
@@ -258,6 +259,7 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
       useWebSearch: parsed.useWebSearch === true,
       useAnyTxtSearch: parsed.useAnyTxtSearch === true,
       agentMode: normalizePersistedAgentMode(parsed.agentMode),
+      retrievalMode: normalizePersistedRetrievalMode(parsed.retrievalMode),
       selectedSkills: normalizePersistedSkillList(parsed.selectedSkills),
       disabledSkills: normalizePersistedSkillList(parsed.disabledSkills),
     }
@@ -266,6 +268,7 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      retrievalMode: "standard",
       selectedSkills: [],
       disabledSkills: [],
     }
@@ -294,4 +297,8 @@ function normalizePersistedAgentMode(value: unknown): ChatAgentMode {
     default:
       return "standard"
   }
+}
+
+function normalizePersistedRetrievalMode(value: unknown): ChatRetrievalMode {
+  return value === "smart" ? "smart" : "standard"
 }

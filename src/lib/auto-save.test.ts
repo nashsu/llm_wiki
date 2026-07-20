@@ -144,6 +144,7 @@ describe("auto-save project-switch guard", () => {
       useWebSearch: false,
       useAnyTxtSearch: false,
       agentMode: "standard",
+      retrievalMode: "standard",
       selectedSkills: [],
       disabledSkills: [],
     })
@@ -156,6 +157,7 @@ describe("auto-save project-switch guard", () => {
       useWebSearch: true,
       useAnyTxtSearch: true,
       agentMode: "local_first",
+      retrievalMode: "smart",
       selectedSkills: ["reviewer"],
       disabledSkills: [],
     })
@@ -166,6 +168,7 @@ describe("auto-save project-switch guard", () => {
       useWebSearch: true,
       useAnyTxtSearch: true,
       agentMode: "local_first",
+      retrievalMode: "smart",
       selectedSkills: ["reviewer"],
       disabledSkills: [],
     })

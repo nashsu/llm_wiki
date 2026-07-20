@@ -19,6 +19,7 @@ import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
+  sourceReferenceIdentity,
   sourceSummarySlugCandidatesFromIdentity,
   sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
@@ -55,11 +56,6 @@ const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
-// index.md and log.md are generated deterministically (see
-// index-generator.ts) and are intentionally NOT in this list — the
-// LLM-driven aggregate repair pass only handles overview.md, which is
-// prose and can't be derived from frontmatter.
-const AGGREGATE_WIKI_PATHS = ["wiki/overview.md"] as const
 
 function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): string {
   if (images.length === 0) return content
@@ -657,7 +653,8 @@ async function autoIngestImpl(
   const mineruCfg = useWikiStore.getState().mineruConfig
   let mineruSucceeded = false
   let mineruSavedImages: SavedImage[] = []
-  if (isPdf && mineruCfg.enabled && mineruCfg.token) {
+  const mineruConfigured = mineruCfg.backend === "local" || Boolean(mineruCfg.token)
+  if (isPdf && mineruCfg.enabled && mineruConfigured) {
     try {
       const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
       const cachePath = `${cacheDir}/.cache/${fileName}.txt`
@@ -1115,89 +1112,6 @@ async function autoIngestImpl(
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
 
-  const aggregateRepairPaths = aggregatePathsNeedingRepair(writtenPaths, writeWarnings)
-  const repairableAggregatePaths = aggregateRepairPaths.filter((path) =>
-    isAggregateRepairSafe(path, index, overview, llmConfig.maxContextSize),
-  )
-  const skippedAggregatePaths = aggregateRepairPaths.filter((path) =>
-    !repairableAggregatePaths.includes(path),
-  )
-  if (skippedAggregatePaths.length > 0) {
-    writeWarnings.push(
-      `Skipped aggregate repair for ${skippedAggregatePaths.join(", ")} because the existing file is too large to safely regenerate without truncating existing entries.`,
-    )
-  }
-  if (repairableAggregatePaths.length > 0 && !signal?.aborted) {
-    activity.updateItem(activityId, {
-      detail: `Repairing aggregate wiki files: ${repairableAggregatePaths.join(", ")}`,
-    })
-    let aggregateRepairOutput = ""
-    try {
-      await streamChat(
-        llmConfig,
-        [
-          {
-            role: "system",
-            content: buildAggregateRepairPrompt(
-              repairableAggregatePaths,
-              purpose,
-              index,
-              overview,
-              sourceIdentity,
-              analysis,
-              sourceContext,
-              generation,
-              llmConfig.maxContextSize,
-            ),
-          },
-          {
-            role: "user",
-            content: "Emit the requested aggregate FILE blocks now. Start immediately with `---FILE:`.",
-          },
-        ],
-        {
-          onToken: (token) => { aggregateRepairOutput += token },
-          onDone: () => {},
-          onError: (err) => {
-            writeWarnings.push(`Aggregate repair failed: ${err.message}`)
-          },
-        },
-        signal,
-        {
-          temperature: 0.1,
-          reasoning: { mode: "off" },
-          max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
-        },
-      )
-      throwIfIngestAborted(signal, activityId)
-      if (aggregateRepairOutput.trim()) {
-        const filteredRepair = filterAggregateRepairOutput(
-          aggregateRepairOutput,
-          repairableAggregatePaths,
-        )
-        writeWarnings.push(...filteredRepair.warnings)
-        const repairResult = await writeFileBlocks(
-          pp,
-          filteredRepair.text,
-          llmConfig,
-          sourceIdentity,
-          sourceSummaryPath,
-          signal,
-          activityId,
-          onFileWritten,
-        )
-        writtenPaths.push(...repairResult.writtenPaths)
-        writeWarnings.push(...repairResult.warnings)
-        hardFailures.push(...repairResult.hardFailures)
-      }
-    } catch (err) {
-      throwIfIngestAborted(signal, activityId)
-      writeWarnings.push(
-        `Aggregate repair failed: ${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
-  }
-
   // Ensure source summary page exists (LLM may not have generated it correctly)
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   const hasSourceSummary = writtenPaths.some((p) => normalizePath(p) === sourceSummaryPath)
@@ -1210,22 +1124,7 @@ async function autoIngestImpl(
   // task for retry rather than "success".
   if (!hasSourceSummary && !signal?.aborted) {
     const date = new Date().toISOString().slice(0, 10)
-    const fallbackContent = [
-      "---",
-      `type: source`,
-      `title: "Source: ${sourceIdentity}"`,
-      `created: ${date}`,
-      `updated: ${date}`,
-      `sources: ["${sourceIdentity}"]`,
-      `tags: []`,
-      `related: []`,
-      "---",
-      "",
-      `# Source: ${sourceIdentity}`,
-      "",
-      analysis ? analysis.slice(0, 3000) : "(Analysis not available)",
-      "",
-    ].join("\n")
+    const fallbackContent = buildFallbackSourceSummary(sourceIdentity, analysis, date)
     try {
       await writeFile(sourceSummaryFullPath, fallbackContent)
       writtenPaths.push(sourceSummaryPath)
@@ -1325,8 +1224,8 @@ async function autoIngestImpl(
         if (!pageId || ["index", "log", "overview"].includes(pageId)) continue
         try {
           const content = await readFile(`${pp}/${wpath}`)
-          const titleMatch = content.match(/^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m)
-          const title = titleMatch ? titleMatch[1].trim() : pageId
+          const fmTitle = parseFrontmatter(content).frontmatter?.title
+          const title = typeof fmTitle === "string" && fmTitle.trim() ? fmTitle.trim() : pageId
           await embedPage(pp, pageId, title, content, embCfg)
         } catch {
           // non-critical
@@ -1404,6 +1303,11 @@ function isListingPath(relativePath: string): boolean {
   )
 }
 
+export function isAppManagedAggregatePath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/").toLowerCase()
+  return normalized === "wiki/index.md" || normalized === "wiki/overview.md"
+}
+
 const CJK_OUTPUT_LANGUAGES = new Set(["Chinese", "Traditional Chinese", "Japanese", "Korean"])
 
 function containsCjk(text: string): boolean {
@@ -1446,64 +1350,32 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   return isSafeIngestPath(nextPath) ? nextPath : relativePath
 }
 
-export function aggregatePathsNeedingRepair(writtenPaths: string[], warnings: string[]): string[] {
-  const written = new Set(writtenPaths.map((path) => normalizePath(path)))
-  const warningText = warnings.join("\n")
-  return AGGREGATE_WIKI_PATHS.filter((path) =>
-    !written.has(path) || warningText.includes(`"${path}"`),
-  )
-}
-
-export function filterAggregateRepairOutput(text: string, allowedPaths: string[]): {
-  text: string
-  warnings: string[]
-} {
-  const allowed = new Set(allowedPaths.map((path) => normalizePath(path)))
-  const { blocks, warnings } = parseFileBlocks(text)
-  const kept = blocks.filter((block) => allowed.has(normalizePath(block.path)))
-  const dropped = blocks.filter((block) => !allowed.has(normalizePath(block.path)))
-  if (dropped.length > 0) {
-    warnings.push(
-      `Dropped ${dropped.length} non-aggregate block(s) from aggregate repair output: ${dropped.map((block) => block.path).join(", ")}`,
-    )
-  }
-  return {
-    text: kept
-      .map((block) => `---FILE: ${block.path}---\n${block.content.trimEnd()}\n---END FILE---`)
-      .join("\n\n"),
-    warnings,
-  }
-}
-
-function aggregateRepairSectionCap(maxContextSize: number | undefined): number {
-  const { maxCtx } = computeContextBudget(maxContextSize)
-  return Math.max(4_000, Math.floor(maxCtx * 0.12))
-}
-
-function isAggregateRepairSafe(
-  path: string,
-  index: string,
-  overview: string,
-  maxContextSize: number | undefined,
-): boolean {
-  const cap = aggregateRepairSectionCap(maxContextSize)
-  if (path === "wiki/index.md") return index.length <= cap
-  if (path === "wiki/overview.md") return overview.length <= cap
+function isValidSourceReference(source: string, activeSourceIdentity: string): boolean {
+  const normalized = normalizePath(source).replace(/^(?:\.\/)+/, "")
+  const key = normalized.toLowerCase()
+  const identityKey = normalizePath(activeSourceIdentity).toLowerCase()
+  if (!normalized || normalized.startsWith("/") || /^[a-z]:\//i.test(normalized)) return false
+  if (normalized.split("/").some((part) => part === "..")) return false
+  if (sourceReferenceIdentity(normalized).toLowerCase() === identityKey) return true
+  if (["wiki/index.md", "wiki/overview.md", "wiki/log.md"].includes(key)) return false
+  if (key === ".llm-wiki" || key.startsWith(".llm-wiki/")) return false
   return true
 }
 
-function canonicalizeSourcesField(content: string, sourceIdentity: string): string {
+export function canonicalizeSourcesField(content: string, sourceIdentity: string): string {
   if (!/^---\n/.test(content)) return content
 
   const identityKey = normalizePath(sourceIdentity).toLowerCase()
   const identityBaseName = getFileName(sourceIdentity).toLowerCase()
   const sourceValues = parseSources(content)
-  const canonicalValues = sourceValues.map((source) => {
-    const normalized = normalizePath(source)
+  const canonicalValues = sourceValues.filter((source) =>
+    isValidSourceReference(source, sourceIdentity)
+  ).map((source) => {
+    const normalized = sourceReferenceIdentity(source)
     const key = normalized.toLowerCase()
     if (key === identityKey) return sourceIdentity
     if (!normalized.includes("/") && key === identityBaseName) return sourceIdentity
-    return source
+    return normalized
   })
   if (!canonicalValues.some((source) => normalizePath(source).toLowerCase() === identityKey)) {
     canonicalValues.push(sourceIdentity)
@@ -1678,6 +1550,32 @@ export function currentWikiDate(now: Date = new Date()): string {
   return `${year}-${month}-${day}`
 }
 
+export function buildFallbackSourceSummary(
+  sourceIdentity: string,
+  analysis: string,
+  date: string,
+): string {
+  return [
+    "---",
+    "type: source",
+    `title: "Source: ${sourceIdentity}"`,
+    `created: ${date}`,
+    `updated: ${date}`,
+    `sources: ["${sourceIdentity}"]`,
+    "tags: []",
+    "related: []",
+    "---",
+    "",
+    `# Source: ${sourceIdentity}`,
+    "",
+    // This is a recovery page, so preserving the complete analysis matters
+    // more than keeping the page short. Truncating here used to create
+    // syntactically valid but silently incomplete source summaries.
+    analysis || "(Analysis not available)",
+    "",
+  ].join("\n")
+}
+
 export function stampGeneratedFrontmatterDates(content: string, date: string): string {
   const fmRe = /^(---\s*\r?\n)([\s\S]*?)(\r?\n---\s*(?:\r?\n|$))/
   const match = content.match(fmRe)
@@ -1729,6 +1627,12 @@ async function writeFileBlocks(
     let relativePath = rawRelativePath
     if (sourceSummaryPath && relativePath.startsWith("wiki/sources/")) {
       relativePath = sourceSummaryPath
+    }
+    if (isAppManagedAggregatePath(relativePath)) {
+      warnings.push(
+        `Ignored model-generated "${relativePath}"; aggregate navigation is maintained by the application.`,
+      )
+      continue
     }
 
     // index.md and log.md are generated deterministically after all
@@ -1832,7 +1736,14 @@ async function writeFileBlocks(
         // body + array-field union" with a best-effort backup.
         // See page-merge.ts.
         const existing = await tryReadFile(fullPath)
-        const toWrite = await mergePageContent(
+        // Re-ingesting a corrected source must replace pages owned solely by
+        // that source. Merging the old body back into the new generation kept
+        // retracted wording alive indefinitely. Multi-source pages still use
+        // the merger because their other sources' contributions must survive.
+        const replaceExistingBody = Boolean(
+          existing && isOwnedOnlyBySource(existing, sourceFileName),
+        )
+        const merged = await mergePageContent(
           content,
           existing || null,
           buildPageMerger(llmConfig),
@@ -1841,8 +1752,12 @@ async function writeFileBlocks(
             pagePath: relativePath,
             signal,
             backup: (oldContent) => backupExistingPage(projectPath, relativePath, oldContent),
+            replaceExistingBody,
           },
         )
+        // The merge unions existing frontmatter arrays, so sanitize again to
+        // remove legacy/generated paths that may already be stored on disk.
+        const toWrite = canonicalizeSourcesField(merged, sourceFileName)
         await writeFile(fullPath, toWrite)
       }
       writtenPaths.push(relativePath)
@@ -1947,6 +1862,15 @@ async function regenerateAggregateFiles(
   }
 
   return warnings
+}
+
+function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
+  const sources = parseSources(content)
+  if (sources.length === 0) return false
+  const expected = sourceReferenceIdentity(sourceIdentity).toLowerCase()
+  return sources.every(
+    (source) => sourceReferenceIdentity(source).toLowerCase() === expected,
+  )
 }
 
 const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
@@ -2131,9 +2055,8 @@ export function buildGenerationPrompt(
     `1. A source summary page at **${summaryPath}** (MUST use this exact path)`,
     "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
     "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
-    "4. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
     "",
-    "DO NOT output wiki/index.md or wiki/log.md. Both are generated automatically by the system from page frontmatter — any FILE block for them is discarded.",
+    "DO NOT output wiki/index.md, wiki/log.md, or wiki/overview.md. index.md and log.md are generated automatically by the system from page frontmatter, and the application maintains aggregate navigation separately so large wikis are never rewritten through model output. Any FILE block for them is discarded.",
     "",
     "## Frontmatter Rules (CRITICAL — parser is strict)",
     "",
@@ -2314,62 +2237,6 @@ function buildReviewSuggestionPrompt(
     trimLongText(sourceContext, sectionCap),
     "",
     "## Generated Wiki Output",
-    trimLongText(generation, sectionCap),
-  ].filter(Boolean).join("\n")
-}
-
-function buildAggregateRepairPrompt(
-  paths: string[],
-  purpose: string,
-  index: string,
-  overview: string,
-  sourceIdentity: string,
-  analysis: string,
-  sourceContext: string,
-  generation: string,
-  maxContextSize: number | undefined,
-): string {
-  const sectionCap = aggregateRepairSectionCap(maxContextSize)
-  const today = currentWikiDate()
-  return [
-    "You are repairing aggregate wiki files after an ingest generation.",
-    "Do not output chain-of-thought, hidden reasoning, or explanatory preamble.",
-    "",
-    languageRule(sourceContext),
-    "",
-    "Generate ONLY the requested aggregate FILE blocks listed below.",
-    "Do not generate entity, concept, source summary, query, comparison, or synthesis pages.",
-    "",
-    "Requested paths:",
-    ...paths.map((path) => `- ${path}`),
-    "",
-    "Rules:",
-    `- Use today's date ${today} for log entries and frontmatter dates.`,
-    "- For wiki/index.md: output the complete updated index, preserving existing entries and adding the new source-derived entries.",
-    "- For wiki/overview.md: output the complete updated overview, reflecting the full wiki plus this new source.",
-    "- For wiki/log.md: output only the new log entry to append, format `## [YYYY-MM-DD] ingest | Title`.",
-    "- Output only FILE blocks. Nothing else.",
-    "",
-    "FILE block template:",
-    "```",
-    "---FILE: wiki/path.md---",
-    "(complete file content, or just the new log entry for wiki/log.md)",
-    "---END FILE---",
-    "```",
-    "",
-    purpose ? `## Wiki Purpose\n${trimLongText(purpose, Math.floor(sectionCap * 0.5))}` : "",
-    index ? `## Current Wiki Index\n${trimLongText(index, sectionCap)}` : "",
-    overview ? `## Current Overview\n${trimLongText(overview, sectionCap)}` : "",
-    "",
-    `## Source\n${sourceIdentity}`,
-    "",
-    "## Stage 1 Analysis",
-    trimLongText(analysis, sectionCap),
-    "",
-    "## Source Context",
-    trimLongText(sourceContext, sectionCap),
-    "",
-    "## First Generation Output",
     trimLongText(generation, sectionCap),
   ].filter(Boolean).join("\n")
 }
@@ -3044,10 +2911,8 @@ async function reembedSourceSummary(
   const sourceSummaryFullPath = `${pp}/wiki/sources/${sourceSummarySlug}.md`
   try {
     const content = await readFile(sourceSummaryFullPath)
-    const titleMatch = content.match(
-      /^---\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m,
-    )
-    const title = titleMatch ? titleMatch[1].trim() : sourceIdentity
+    const fmTitle = parseFrontmatter(content).frontmatter?.title
+    const title = typeof fmTitle === "string" && fmTitle.trim() ? fmTitle.trim() : sourceIdentity
     const { embedPage } = await import("@/lib/embedding")
     await embedPage(pp, sourceSummarySlug, title, content, embCfg)
     console.log(`[ingest:caption] re-embedded ${sourceSummarySlug} with captioned alt text`)
@@ -3149,7 +3014,19 @@ export async function startIngest(
   )
 }
 
-export async function executeIngestWrites(
+export function executeIngestWrites(
+  projectPath: string,
+  llmConfig: LlmConfig,
+  userGuidance?: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const pp = normalizePath(projectPath)
+  return withProjectLock(pp, () =>
+    executeIngestWritesImpl(pp, llmConfig, userGuidance, signal)
+  )
+}
+
+async function executeIngestWritesImpl(
   projectPath: string,
   llmConfig: LlmConfig,
   userGuidance?: string,
@@ -3200,7 +3077,7 @@ export async function executeIngestWrites(
     "---END FILE---",
     "```",
     "",
-    "DO NOT output wiki/index.md or wiki/log.md — both are generated automatically by the system; any FILE block for them is discarded.",
+    "DO NOT output wiki/index.md, wiki/log.md, or wiki/overview.md — the application owns the aggregate files; any FILE block for them is discarded.",
     "For all other files, output the complete file content.",
     "Use relative paths from the project root (e.g., wiki/sources/topic.md).",
     "Do not include any other text outside the FILE blocks.",
@@ -3265,6 +3142,11 @@ export async function executeIngestWrites(
       relativePath = activeSourceSummaryPath
     }
 
+    if (!isSafeIngestPath(relativePath) || isAppManagedAggregatePath(relativePath)) {
+      console.warn(`[executeIngestWrites] rejected unsafe or app-managed path: ${relativePath}`)
+      continue
+    }
+
     // index.md / log.md are generated deterministically after the loop;
     // drop any blocks the model emitted for them.
     if (isIndexPath(relativePath) || isLogPath(relativePath)) {
@@ -3287,15 +3169,10 @@ export async function executeIngestWrites(
 
   // Regenerate index.md + append a log line deterministically, matching
   // the autoIngest path so the chat "Save to Wiki" flow never clobbers
-  // the index or duplicates the log either.
-  //
-  // Unlike autoIngest — which holds the project lock across its whole
-  // body — this path is unlocked, so the regen takes the lock itself.
-  // log.md is read-modify-write: without it, a concurrent queue ingest
-  // and a Save-to-Wiki both read the same log, each appends its own
-  // entry, and the second write drops the first. Only the regen is
-  // wrapped, not the LLM work above it, which would pin the lock for
-  // the whole wave.
+  // the index or duplicates the log either. log.md is read-modify-write,
+  // but the whole write path already runs inside withProjectLock (see
+  // executeIngestWrites), so the regen is serialized against concurrent
+  // queue ingests without taking the (non-reentrant) lock again here.
   if (writtenPaths.length > 0) {
     try {
       const logTitle = activeSourceIdentity
@@ -3304,9 +3181,7 @@ export async function executeIngestWrites(
             activeSourceIdentity,
           )
         : "chat ingest"
-      await withProjectLock(pp, () =>
-        regenerateAggregateFiles(pp, logTitle, currentWikiDate()),
-      )
+      await regenerateAggregateFiles(pp, logTitle, currentWikiDate())
     } catch (err) {
       console.warn(
         `[executeIngestWrites] aggregate regeneration failed:`,

@@ -38,6 +38,7 @@ import {
   getEmbeddingCount,
   removePageEmbedding,
   resetEmbeddingOptimizeAccountingForTests,
+  extractEmbeddingTitle,
   type PageSearchResult,
 } from "./embedding"
 
@@ -1196,6 +1197,27 @@ describe("fetchEmbedding (via searchByEmbedding) — auto-halve", () => {
     await searchByEmbedding("/tmp/p", "q", cfg, 5)
     expect(getLastEmbeddingError()).toBeNull()
   })
+
+  it("does not let a concurrent success erase a later failure", async () => {
+    mockEmbeddingFetchInvoke.mockImplementation(async (args) => {
+      const { text } = args as { text: string }
+      if (text === "fails") {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        throw new Error("concurrent embedding failed")
+      }
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      return [0.1]
+    })
+    await Promise.all([
+      fetchEmbedding("fails", cfg),
+      fetchEmbedding("succeeds", cfg),
+    ])
+    expect(getLastEmbeddingError()).toContain("concurrent embedding failed")
+
+    mockEmbeddingFetchInvoke.mockResolvedValueOnce([0.2])
+    await fetchEmbedding("later sequential success", cfg)
+    expect(getLastEmbeddingError()).toBeNull()
+  })
 })
 
 // ── embedPage — replaces page's chunks in LanceDB ──────────────────
@@ -1481,6 +1503,84 @@ describe("embedAllPages", () => {
     },
   ]
 
+  it("bounds embedding requests by the configured global concurrency", async () => {
+    listDirectoryMock.mockResolvedValueOnce(Array.from({ length: 6 }, (_, index) => ({
+      name: `page-${index}.md`,
+      path: `/proj/wiki/page-${index}.md`,
+      is_dir: false,
+    })))
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    let active = 0
+    let peak = 0
+    mockEmbeddingFetchInvoke.mockImplementation(async () => {
+      active++
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      active--
+      return [0.5]
+    })
+
+    await expect(embedAllPages("/proj", { ...cfg, concurrency: 3 })).resolves.toBe(6)
+    expect(peak).toBe(3)
+  })
+
+  it("uses OpenAI-compatible batch requests and preserves chunk order", async () => {
+    listDirectoryMock.mockResolvedValueOnce([])
+    const batchCalls: Array<{ texts: string[] }> = []
+    mockInvoke.mockImplementation(async (command, args) => {
+      if (command === "embedding_fetch_batch") {
+        const input = args as { texts: string[] }
+        batchCalls.push(input)
+        return input.texts.map((_, index) => [index + 0.25])
+      }
+      return undefined
+    })
+    const content = Array.from(
+      { length: 8 },
+      (_, index) => `## Section ${index}\n\n${`content-${index} `.repeat(40)}`,
+    ).join("\n\n")
+
+    await expect(embedPage("/proj", "batched", "Batched", content, {
+      ...cfg,
+      maxChunkChars: 240,
+      overlapChunkChars: 0,
+      batchSize: 4,
+      concurrency: 2,
+    })).resolves.toBe(true)
+    expect(batchCalls.length).toBeGreaterThan(0)
+    expect(batchCalls.every((call) => call.texts.length <= 4)).toBe(true)
+    const upsert = mockInvoke.mock.calls.find((call) => call[0] === "vector_upsert_chunks")
+    const chunks = (upsert?.[1] as { chunks: Array<{ chunk_index: number }> }).chunks
+    expect(chunks.map((chunk) => chunk.chunk_index)).toEqual(
+      [...chunks].map((chunk) => chunk.chunk_index).sort((a, b) => a - b),
+    )
+  })
+
+  it("embeds chunks from one page concurrently without exceeding the limit", async () => {
+    let active = 0
+    let peak = 0
+    mockEmbeddingFetchInvoke.mockImplementation(async () => {
+      active++
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      active--
+      return [0.5]
+    })
+    const content = Array.from(
+      { length: 8 },
+      (_, index) => `## Section ${index}\n\n${`content-${index} `.repeat(40)}`,
+    ).join("\n\n")
+
+    await expect(embedPage("/proj", "concurrent", "Concurrent", content, {
+      ...cfg,
+      maxChunkChars: 240,
+      overlapChunkChars: 0,
+      concurrency: 3,
+      batchSize: 1,
+    })).resolves.toBe(true)
+    expect(peak).toBe(3)
+  })
+
   it("indexes every non-structural .md file, recursing into subdirs", async () => {
     listDirectoryMock.mockResolvedValueOnce(makeTree())
     readFileMock.mockResolvedValue("# Title\n\nBody.")
@@ -1631,7 +1731,7 @@ describe("embedAllPages", () => {
     warn.mockRestore()
   })
 
-  it("does not clear existing chunks when forced rebuild cannot embed every page", async () => {
+  it("updates successful pages without clearing existing chunks when some pages fail", async () => {
     listDirectoryMock.mockResolvedValueOnce([
       { name: "a.md", path: "/proj/wiki/a.md", is_dir: false },
       { name: "b.md", path: "/proj/wiki/b.md", is_dir: false },
@@ -1653,10 +1753,11 @@ describe("embedAllPages", () => {
       message = err instanceof Error ? err.message : String(err)
     }
     expect(message).toContain("1 of 2 pages could not be embedded")
+    expect(message).toContain("1 successful page(s) were updated")
     expect(message).not.toContain("Re-index failed: Re-index failed")
 
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_clear_chunks")
-    expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_upsert_chunks")
+    expect(mockInvoke.mock.calls.map((call) => call[0])).toContain("vector_upsert_chunks")
     expect(mockInvoke.mock.calls.map((call) => call[0])).not.toContain("vector_drop_legacy")
   })
 
@@ -1963,5 +2064,21 @@ describe("legacyVectorRowCount / dropLegacyVectorTable / getEmbeddingCount / rem
     mockInvoke.mockRejectedValueOnce(new Error("table missing"))
     // Must not throw — source-delete flow depends on silent failure.
     await expect(removePageEmbedding("/proj", "rope")).resolves.toBeUndefined()
+  })
+})
+
+describe("extractEmbeddingTitle", () => {
+  it("does not read a body prose line starting with title: as the frontmatter title", () => {
+    const content = "---\ntype: entity\n---\n# Real Heading\n\nSome text.\ntitle: not-frontmatter-at-all\n"
+    expect(extractEmbeddingTitle(content, "mypage")).toBe("mypage")
+  })
+
+  it("still uses a genuine frontmatter title", () => {
+    const content = "---\ntitle: Real Title\n---\n# Real Title\n"
+    expect(extractEmbeddingTitle(content, "mypage")).toBe("Real Title")
+  })
+
+  it("falls back to fallbackId when there is no frontmatter at all", () => {
+    expect(extractEmbeddingTitle("# Just a heading\n\nBody text.", "mypage")).toBe("mypage")
   })
 })

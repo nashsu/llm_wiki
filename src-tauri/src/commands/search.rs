@@ -67,6 +67,22 @@ struct GraphPage {
     links: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinkEntry {
+    pub title: String,
+    pub path: Option<String>,
+    pub snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLinksResponse {
+    pub outgoing: Vec<PageLinkEntry>,
+    pub backlinks: Vec<PageLinkEntry>,
+    pub missing: Vec<PageLinkEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchEmbeddingConfig {
@@ -118,6 +134,157 @@ pub async fn embedding_fetch(
         fetch_embedding_with_retry(&text, &cfg, max_retries.unwrap_or(3)).await
     })
     .await
+}
+
+#[tauri::command]
+pub async fn embedding_fetch_batch(
+    texts: Vec<String>,
+    cfg: SearchEmbeddingConfig,
+) -> Result<Vec<Vec<f32>>, String> {
+    run_guarded_async("embedding_fetch_batch", async move {
+        fetch_embedding_batch(&texts, &cfg).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_page_links(
+    project_path: String,
+    file_path: String,
+) -> Result<PageLinksResponse, String> {
+    tokio::task::spawn_blocking(move || get_page_links_inner(&project_path, &file_path))
+        .await
+        .map_err(|err| format!("page links worker failed: {err}"))?
+}
+
+/// Build link relationships from Markdown source rather than the UI's lazy
+/// file tree. Canonical paths enforce the project/wiki boundary, while the
+/// returned paths stay project-relative so all desktop platforms share one
+/// wire format and Windows separators never leak into frontend routing.
+fn get_page_links_inner(project_path: &str, file_path: &str) -> Result<PageLinksResponse, String> {
+    let project = fs::canonicalize(project_path)
+        .map_err(|err| format!("Failed to resolve project path: {err}"))?;
+    let file =
+        fs::canonicalize(file_path).map_err(|err| format!("Failed to resolve page path: {err}"))?;
+    let wiki_root = project.join("wiki");
+    if !file.starts_with(&wiki_root)
+        || !file.is_file()
+        || file.extension().and_then(|value| value.to_str()) != Some("md")
+    {
+        return Err("Page links target must be an existing Markdown file under wiki/".to_string());
+    }
+
+    let mut pages = BTreeMap::<String, GraphPage>::new();
+    let canonical_project = project.to_string_lossy();
+    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
+        if pages.len() >= MAX_SEARCH_FILES
+            || !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let path = relative_to_project(&canonical_project, entry.path());
+        let title = extract_title(
+            &content,
+            entry
+                .path()
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default(),
+        );
+        pages.insert(
+            normalize_path(&path),
+            GraphPage {
+                path,
+                title,
+                links: extract_wikilinks(&content),
+                content,
+            },
+        );
+    }
+
+    let current_path = normalize_path(&relative_to_project(&canonical_project, &file));
+    let current = pages
+        .get(&current_path)
+        .ok_or_else(|| "Page is not available in the current wiki index".to_string())?;
+    let mut outgoing = Vec::new();
+    let mut missing = Vec::new();
+    for link in &current.links {
+        if let Some(target_path) = resolve_reader_wikilink(&pages, link) {
+            if target_path.as_str() == current_path {
+                continue;
+            }
+            if let Some(target) = pages.get(target_path) {
+                outgoing.push(PageLinkEntry {
+                    title: target.title.clone(),
+                    path: Some(target.path.clone()),
+                    snippet: None,
+                });
+            }
+        } else {
+            missing.push(PageLinkEntry {
+                title: link.clone(),
+                path: None,
+                snippet: None,
+            });
+        }
+    }
+
+    let mut backlinks = Vec::new();
+    for (path, page) in &pages {
+        if path == &current_path {
+            continue;
+        }
+        let links_here = page.links.iter().any(|link| {
+            resolve_reader_wikilink(&pages, link)
+                .is_some_and(|target| target.as_str() == current_path)
+        });
+        if links_here {
+            backlinks.push(PageLinkEntry {
+                title: page.title.clone(),
+                path: Some(page.path.clone()),
+                snippet: Some(build_snippet(&page.content, &current.title)),
+            });
+        }
+    }
+
+    outgoing.sort_by(|a, b| a.title.cmp(&b.title));
+    outgoing.dedup_by(|a, b| a.path == b.path);
+    backlinks.sort_by(|a, b| a.title.cmp(&b.title));
+    missing.sort_by(|a, b| a.title.cmp(&b.title));
+    missing.dedup_by(|a, b| a.title == b.title);
+    Ok(PageLinksResponse {
+        outgoing,
+        backlinks,
+        missing,
+    })
+}
+
+/// Mirror `resolveRelatedSlug` in the frontend reader. Path-shaped links must
+/// match their project-relative path exactly; bare links resolve by exact
+/// filename after adding `.md`. Deliberately avoid title and fuzzy aliases so
+/// the links panel never claims a target that the rendered page cannot open.
+fn resolve_reader_wikilink<'a>(
+    pages: &'a BTreeMap<String, GraphPage>,
+    link: &str,
+) -> Option<&'a String> {
+    let link = link.trim().replace('\\', "/");
+    if link.contains('/') {
+        return pages.get_key_value(&link).map(|(path, _)| path);
+    }
+    let filename = if link.ends_with(".md") {
+        link
+    } else {
+        format!("{link}.md")
+    };
+    pages.keys().find(|path| {
+        std::path::Path::new(path.as_str())
+            .file_name()
+            .is_some_and(|name| name == filename.as_str())
+    })
 }
 
 pub async fn resolve_query_embedding(
@@ -924,6 +1091,123 @@ async fn fetch_embedding_with_retry(
             Err(EmbeddingFetchError::Other(message)) => return Err(message),
         }
     }
+}
+
+async fn fetch_embedding_batch(
+    texts: &[String],
+    cfg: &SearchEmbeddingConfig,
+) -> Result<Vec<Vec<f32>>, String> {
+    if texts.is_empty() || texts.len() > 64 {
+        return Err("Embedding batch must contain between 1 and 64 inputs".to_string());
+    }
+    if is_google_embedding_config(cfg) || is_doubao_multimodal_embedding_config(cfg) {
+        return Err(
+            "This embedding provider does not use the OpenAI-compatible batch format".to_string(),
+        );
+    }
+
+    let endpoint = volcengine_embedding_endpoint(cfg);
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            SEARCH_EMBEDDING_TIMEOUT_SECS,
+        ))
+        .build()
+        .map_err(|e| format!("Embedding HTTP client error: {e}"))?
+        .post(&endpoint)
+        .header("Content-Type", "application/json");
+    if is_local_or_private_http_endpoint(&endpoint) {
+        req = req.header("Origin", "http://localhost");
+    }
+    if !cfg.api_key.trim().is_empty() {
+        req = req.bearer_auth(cfg.api_key.trim());
+    }
+    if let Some(extra) = cfg.extra_headers.as_ref() {
+        for (name, value) in extra {
+            let name = name.trim();
+            let value = value.trim();
+            if !name.is_empty()
+                && !value.is_empty()
+                && is_safe_extra_header_name(name)
+                && !is_reserved_extra_header_name(name)
+            {
+                req = req.header(name, value);
+            }
+        }
+    }
+    let response = req
+        .json(&json!({ "model": cfg.model, "input": texts }))
+        .send()
+        .await
+        .map_err(|e| format!("Embedding batch request failed: {e}"))?;
+    let status = response.status();
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Embedding batch response read failed: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Embedding batch API HTTP {status}: {}",
+            response_text.chars().take(200).collect::<String>()
+        ));
+    }
+    let data: Value = serde_json::from_str(&response_text).map_err(|e| {
+        format!(
+            "Embedding batch response parse failed: {e}: {}",
+            response_text.chars().take(200).collect::<String>()
+        )
+    })?;
+    parse_embedding_batch_values(&data, texts.len())
+}
+
+fn parse_embedding_batch_values(data: &Value, expected: usize) -> Result<Vec<Vec<f32>>, String> {
+    let entries = data
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Embedding batch response missing data array".to_string())?;
+    if entries.len() != expected {
+        return Err(format!(
+            "Embedding batch returned {} vectors for {expected} inputs",
+            entries.len()
+        ));
+    }
+    let mut indexed = Vec::with_capacity(entries.len());
+    for (position, entry) in entries.iter().enumerate() {
+        let index = entry
+            .get("index")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(position);
+        if index >= expected {
+            return Err("Embedding batch response contains an out-of-range index".to_string());
+        }
+        let values = entry
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "Embedding batch response missing vector".to_string())?;
+        let mut vector = Vec::with_capacity(values.len());
+        for value in values {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| "Embedding batch response contains non-number values".to_string())?;
+            if !number.is_finite() {
+                return Err("Embedding batch response contains non-finite values".to_string());
+            }
+            vector.push(number as f32);
+        }
+        if vector.is_empty() {
+            return Err("Embedding batch response vector is empty".to_string());
+        }
+        indexed.push((index, vector));
+    }
+    indexed.sort_by_key(|(index, _)| *index);
+    if indexed.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err("Embedding batch response contains duplicate indexes".to_string());
+    }
+    let dimension = indexed.first().map(|(_, vector)| vector.len()).unwrap_or(0);
+    if indexed.iter().any(|(_, vector)| vector.len() != dimension) {
+        return Err("Embedding batch response contains inconsistent vector dimensions".to_string());
+    }
+    Ok(indexed.into_iter().map(|(_, vector)| vector).collect())
 }
 
 fn halve_text_on_char_boundary(text: &mut String) -> bool {
@@ -1798,6 +2082,91 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn page_links_resolve_outgoing_backlinks_and_missing_targets() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/concepts/Alpha.md",
+            "---\ntitle: Alpha\n---\n# Alpha\n\n[[Beta|label]], [[Alpha]], [[Title Only]], and [[Missing Page]].",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/Beta.md",
+            "---\ntitle: Beta\n---\n# Beta\n\nBeta details.",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/different-filename.md",
+            "---\ntitle: Title Only\n---\n# Title Only\n",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/gamma.md",
+            "---\ntitle: Gamma\n---\n# Gamma\n\nGamma references [[Alpha]] here.",
+        );
+
+        let links = get_page_links_inner(
+            root.to_str().unwrap(),
+            root.join("wiki/concepts/Alpha.md").to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(links.outgoing.len(), 1);
+        assert_eq!(links.outgoing[0].title, "Beta");
+        assert_eq!(links.backlinks.len(), 1);
+        assert_eq!(links.backlinks[0].title, "Gamma");
+        assert!(links.backlinks[0]
+            .snippet
+            .as_deref()
+            .unwrap()
+            .contains("Alpha"));
+        assert_eq!(links.missing.len(), 2);
+        assert!(links
+            .missing
+            .iter()
+            .any(|entry| entry.title == "Missing Page"));
+        assert!(links
+            .missing
+            .iter()
+            .any(|entry| entry.title == "Title Only"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn page_links_require_markdown_input_and_exact_reader_paths() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/concepts/current.md",
+            "[[wiki/concepts/target.md]] [[target#section]]",
+        );
+        write_page(&root, "wiki/concepts/target.md", "# Target");
+        write_page(&root, "wiki/concepts/not-markdown.txt", "text");
+
+        let links = get_page_links_inner(
+            root.to_str().unwrap(),
+            root.join("wiki/concepts/current.md").to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(links.outgoing.len(), 1);
+        assert_eq!(
+            links.outgoing[0].path.as_deref(),
+            Some("wiki/concepts/target.md")
+        );
+        assert_eq!(links.missing.len(), 1);
+        assert_eq!(links.missing[0].title, "target#section");
+
+        let error = get_page_links_inner(
+            root.to_str().unwrap(),
+            root.join("wiki/concepts/not-markdown.txt")
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.contains("Markdown"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn keyword_search_handles_cjk_bigram_queries() {
         let root = tmp_project();
@@ -1848,5 +2217,29 @@ mod tests {
 
         assert_eq!(out.results[0].title, "Phrase");
         let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn parses_openai_batch_vectors_in_input_order() {
+        let response = json!({
+            "data": [
+                { "index": 1, "embedding": [2.0, 2.5] },
+                { "index": 0, "embedding": [1.0, 1.5] }
+            ]
+        });
+        let vectors = parse_embedding_batch_values(&response, 2).unwrap();
+        assert_eq!(vectors, vec![vec![1.0, 1.5], vec![2.0, 2.5]]);
+    }
+
+    #[test]
+    fn rejects_duplicate_openai_batch_indexes() {
+        let response = json!({
+            "data": [
+                { "index": 0, "embedding": [1.0] },
+                { "index": 0, "embedding": [2.0] }
+            ]
+        });
+        assert!(parse_embedding_batch_values(&response, 2)
+            .unwrap_err()
+            .contains("duplicate"));
     }
 }

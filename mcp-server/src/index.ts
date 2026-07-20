@@ -15,13 +15,16 @@ import {
   type ApiReviewsResponse,
   type ApiChatResponse,
   type ApiSearchResult,
+  type ApiProject,
 } from "./api-client.js"
 import { VERSION } from "./version.js"
+import { McpProjectBinding, withActiveProject } from "./project-binding.js"
 
 const DEFAULT_PROJECT_ID = "current"
 const MAX_TEXT_BYTES = 120_000
 
 const client = new LlmWikiApiClient()
+const projectBinding = new McpProjectBinding()
 
 const server = new Server(
   { name: "llm-wiki", version: VERSION },
@@ -45,6 +48,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {},
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_set_project",
+      description: "Pin this MCP process session to one LLM Wiki project. Once pinned, project tools cannot access another project until this tool changes the binding.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, exact filesystem path, or 'current'." },
+        },
+        required: ["project_id"],
         additionalProperties: false,
       },
     },
@@ -166,49 +181,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           client.health(),
           client.projects().catch(() => ({ projects: [], currentProject: null })),
         ])
-        return textResult(JSON.stringify({ ...health, ...projects }, null, 2))
+        return textResult(JSON.stringify({ ...health, ...projects, sessionProject: projectBinding.project }, null, 2))
       }
       case "llm_wiki_projects": {
         await assertMcpEnabled()
-        return textResult(JSON.stringify(await client.projects(), null, 2))
+        return textResult(JSON.stringify({ ...(await client.projects()), sessionProject: projectBinding.project }, null, 2))
+      }
+      case "llm_wiki_set_project": {
+        await assertMcpEnabled()
+        const requested = stringArg(args.project_id, "project_id")
+        const projects = await client.projects()
+        let pinned: ApiProject
+        try {
+          pinned = projectBinding.pin(requested, projects.projects, projects.currentProject)
+        } catch (error) {
+          throw new McpError(ErrorCode.InvalidParams, scopedErrorMessage(error))
+        }
+        return textResult(JSON.stringify({ activeProject: pinned, pinned: true }, null, 2))
       }
       case "llm_wiki_files": {
         await assertMcpEnabled()
-        const response = await client.files(projectId(args), {
+        const scope = await resolveProjectScope(args)
+        const response = await client.files(scope.id, {
           root: enumArg(args.root, ["wiki", "sources", "all"] as const, "wiki"),
           recursive: boolArg(args.recursive, true),
           maxFiles: numberArg(args.max_files),
         })
-        return textResult(formatFileTree(response.files, response.truncated))
+        return textResult(withActiveProject(formatFileTree(response.files, response.truncated), scope.project, scope.id))
       }
       case "llm_wiki_read_file": {
         await assertMcpEnabled()
         const relPath = stringArg(args.path, "path")
-        const { path, content } = await client.fileContent(projectId(args), relPath)
-        return textResult(`# ${path}\n\n${truncateText(content, MAX_TEXT_BYTES)}`)
+        const scope = await resolveProjectScope(args)
+        const { path, content } = await client.fileContent(scope.id, relPath)
+        return textResult(withActiveProject(`# ${path}\n\n${truncateText(content, MAX_TEXT_BYTES)}`, scope.project, scope.id))
       }
       case "llm_wiki_reviews": {
         await assertMcpEnabled()
-        const reviews = await client.reviews(projectId(args), {
+        const scope = await resolveProjectScope(args)
+        const reviews = await client.reviews(scope.id, {
           status: enumArg(args.status, ["unresolved", "resolved", "all"] as const, "unresolved"),
           type: optionalStringArg(args.type),
           limit: numberArg(args.limit),
         })
-        return textResult(formatReviews(reviews))
+        return textResult(withActiveProject(formatReviews(reviews), scope.project, scope.id))
       }
       case "llm_wiki_search": {
         await assertMcpEnabled()
         const query = stringArg(args.query, "query")
-        const search = await client.search(projectId(args), query, {
+        const scope = await resolveProjectScope(args)
+        const search = await client.search(scope.id, query, {
           topK: numberArg(args.top_k),
           includeContent: boolArg(args.include_content, false),
         })
-        return textResult(formatSearchResults(query, search))
+        return textResult(withActiveProject(formatSearchResults(query, search), scope.project, scope.id))
       }
       case "llm_wiki_chat": {
         await assertMcpEnabled()
         const message = stringArg(args.message, "message")
-        const chat = await client.chat(projectId(args), message, {
+        const scope = await resolveProjectScope(args)
+        const chat = await client.chat(scope.id, message, {
           sessionId: optionalStringArg(args.session_id),
           mode: enumArg(args.mode, ["fast", "standard", "deep", "local_first"] as const, "standard"),
           topK: numberArg(args.top_k),
@@ -219,29 +251,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           skills: stringArrayArg(args.skills),
           persistSession: optionalStringArg(args.session_id) !== undefined,
         })
-        return textResult(formatChatResponse(chat))
+        return textResult(withActiveProject(formatChatResponse(chat), scope.project, scope.id))
       }
       case "llm_wiki_graph": {
         await assertMcpEnabled()
-        const graph = await client.graph(projectId(args), {
+        const scope = await resolveProjectScope(args)
+        const graph = await client.graph(scope.id, {
           q: optionalStringArg(args.q),
           nodeType: optionalStringArg(args.node_type),
           limit: numberArg(args.limit),
         })
-        return textResult(formatGraph(graph.nodes, graph.edges))
+        return textResult(withActiveProject(formatGraph(graph.nodes, graph.edges), scope.project, scope.id))
       }
       case "llm_wiki_rescan_sources": {
         await assertMcpEnabled()
-        return textResult(JSON.stringify(await client.rescan(projectId(args)), null, 2))
+        const scope = await resolveProjectScope(args)
+        return textResult(withActiveProject(JSON.stringify(await client.rescan(scope.id), null, 2), scope.project, scope.id))
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`)
     }
   } catch (err) {
-    if (err instanceof McpError) throw err
+    if (err instanceof McpError) {
+      throw new McpError(err.code, scopedErrorMessage(err.message))
+    }
     throw new McpError(
       ErrorCode.InternalError,
-      err instanceof Error ? err.message : String(err),
+      scopedErrorMessage(err),
     )
   }
 })
@@ -267,8 +303,26 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function projectId(args: Record<string, unknown>): string {
-  return optionalStringArg(args.project_id) ?? DEFAULT_PROJECT_ID
+async function resolveProjectScope(args: Record<string, unknown>): Promise<{ id: string; project: ApiProject | null }> {
+  let id: string
+  try {
+    id = projectBinding.resolve(optionalStringArg(args.project_id) ?? undefined)
+  } catch (error) {
+    throw new McpError(ErrorCode.InvalidParams, scopedErrorMessage(error))
+  }
+  if (projectBinding.project) return { id, project: projectBinding.project }
+  const projects = await client.projects()
+  const project = id === DEFAULT_PROJECT_ID
+    ? projects.currentProject
+    : projects.projects.find((candidate) => candidate.id === id || candidate.path === id) ?? null
+  return { id, project }
+}
+
+function scopedErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const project = projectBinding.project
+  if (!project || message.includes("[activeProject:")) return message
+  return `[activeProject: ${project.name} (${project.id})] ${message}`
 }
 
 function stringArg(value: unknown, name: string): string {

@@ -1,28 +1,40 @@
 import { useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react"
+import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle, Plus, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { useWikiStore, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
-import { LLM_PRESETS, type LlmPreset } from "../llm-presets"
+import { availableLlmPresets, findLlmPreset, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
 import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
 import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
+import { projectLlmProfile, resolveProjectLlmConfig } from "@/lib/llm-task-routing"
+import { saveProjectLlmOverride } from "@/lib/project-store"
 
 export function LlmProviderSection() {
   const { t } = useTranslation()
   const providerConfigs = useWikiStore((s) => s.providerConfigs)
   const setProviderConfigs = useWikiStore((s) => s.setProviderConfigs)
+  const customLlmPresets = useWikiStore((s) => s.customLlmPresets)
+  const setCustomLlmPresets = useWikiStore((s) => s.setCustomLlmPresets)
   const activePresetId = useWikiStore((s) => s.activePresetId)
   const setActivePresetId = useWikiStore((s) => s.setActivePresetId)
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
-  const llmConfig = useWikiStore((s) => s.llmConfig)
+  const globalLlmConfig = useWikiStore((s) => s.globalLlmConfig)
+  const setGlobalLlmConfig = useWikiStore((s) => s.setGlobalLlmConfig)
+  const project = useWikiStore((s) => s.project)
+  const projectLlmOverride = useWikiStore((s) => s.projectLlmOverride)
+  const setProjectLlmOverride = useWikiStore((s) => s.setProjectLlmOverride)
+  const taskModelRouting = useWikiStore((s) => s.taskModelRouting)
+  const setTaskModelRouting = useWikiStore((s) => s.setTaskModelRouting)
 
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [savedId, setSavedId] = useState<string | null>(null)
+  const presets = useMemo(() => availableLlmPresets(customLlmPresets), [customLlmPresets])
 
   function toggleExpand(id: string) {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -35,10 +47,11 @@ export function LlmProviderSection() {
     await saveProviderConfigs(newConfigs)
     await saveActivePresetId(newActive)
     if (newActive) {
-      const preset = LLM_PRESETS.find((p) => p.id === newActive)
+      const preset = findLlmPreset(newActive, customLlmPresets)
       if (preset) {
-        const resolved = resolveConfig(preset, newConfigs[newActive], llmConfig)
-        setLlmConfig(resolved)
+        const resolved = resolveConfig(preset, newConfigs[newActive], globalLlmConfig)
+        setGlobalLlmConfig(resolved)
+        setLlmConfig(resolveProjectLlmConfig(resolved, newConfigs, projectLlmOverride, customLlmPresets))
         await saveLlmConfig(resolved)
       }
     } else {
@@ -48,30 +61,116 @@ export function LlmProviderSection() {
       // the case where the previous provider was a keyless local CLI.
       // resolveConfig() on re-enable reads from providerConfigs[], not llmConfig,
       // so the cleared values here do not affect the user's saved settings.
-      const cleared = disabledLlmConfig(llmConfig)
-      setLlmConfig(cleared)
+      const cleared = disabledLlmConfig(globalLlmConfig)
+      setGlobalLlmConfig(cleared)
+      setLlmConfig(resolveProjectLlmConfig(cleared, newConfigs, projectLlmOverride, customLlmPresets))
       await saveLlmConfig(cleared)
     }
   }
 
   function updateOverride(id: string, patch: ProviderOverride) {
-    const merged: ProviderOverride = { ...(providerConfigs[id] ?? {}), ...patch }
-    const next = { ...providerConfigs, [id]: merged }
+    const currentConfigs = useWikiStore.getState().providerConfigs
+    const merged: ProviderOverride = { ...(currentConfigs[id] ?? {}), ...patch }
+    const next = { ...currentConfigs, [id]: merged }
     setProviderConfigs(next)
     persist(next, activePresetId).catch(() => {})
     // If this preset is active, refresh the resolved LlmConfig live.
     if (id === activePresetId) {
-      const preset = LLM_PRESETS.find((p) => p.id === id)
-      if (preset) setLlmConfig(resolveConfig(preset, merged, llmConfig))
+      const preset = findLlmPreset(id, customLlmPresets)
+      if (preset) {
+        const resolved = resolveConfig(preset, merged, globalLlmConfig)
+        setGlobalLlmConfig(resolved)
+        setLlmConfig(resolveProjectLlmConfig(resolved, next, projectLlmOverride, customLlmPresets))
+      }
     }
     setSavedId(id)
     setTimeout(() => setSavedId((cur) => (cur === id ? null : cur)), 1500)
   }
 
   function toggleActive(id: string) {
-    const next = id === activePresetId ? null : id
+    const state = useWikiStore.getState()
+    const next = id === state.activePresetId ? null : id
     setActivePresetId(next)
-    persist(providerConfigs, next).catch(() => {})
+    persist(state.providerConfigs, next).catch(() => {})
+  }
+
+  async function updateTaskRouting(task: "chat" | "ingest", value: string) {
+    const next = {
+      ...taskModelRouting,
+      [task === "chat" ? "chatPresetId" : "ingestPresetId"]: value || null,
+    }
+    setTaskModelRouting(next)
+    const { saveTaskModelRouting } = await import("@/lib/project-store")
+    await saveTaskModelRouting(next)
+  }
+
+  async function addCustomPreset() {
+    const current = useWikiStore.getState().customLlmPresets
+    if (current.length >= 50) return
+    const id = `custom-${crypto.randomUUID()}`
+    const next = [...current, {
+      id,
+      label: t("settings.sections.llm.customProfiles.defaultName", {
+        number: current.length + 1,
+      }),
+    }]
+    setCustomLlmPresets(next)
+    setExpanded((current) => ({ ...current, [id]: true }))
+    const { saveCustomLlmPresets } = await import("@/lib/project-store")
+    await saveCustomLlmPresets(next)
+  }
+
+  async function renameCustomPreset(id: string, label: string) {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    const next = useWikiStore.getState().customLlmPresets
+      .map((preset) => preset.id === id ? { ...preset, label: trimmed.slice(0, 80) } : preset)
+    setCustomLlmPresets(next)
+    const { saveCustomLlmPresets } = await import("@/lib/project-store")
+    await saveCustomLlmPresets(next)
+  }
+
+  async function deleteCustomPreset(id: string) {
+    const state = useWikiStore.getState()
+    if (state.activePresetId === id) return
+    const nextPresets = state.customLlmPresets.filter((preset) => preset.id !== id)
+    const { [id]: _removed, ...nextConfigs } = state.providerConfigs
+    const nextRouting = {
+      chatPresetId: state.taskModelRouting.chatPresetId === id ? null : state.taskModelRouting.chatPresetId,
+      ingestPresetId: state.taskModelRouting.ingestPresetId === id ? null : state.taskModelRouting.ingestPresetId,
+    }
+    setCustomLlmPresets(nextPresets)
+    setProviderConfigs(nextConfigs)
+    setTaskModelRouting(nextRouting)
+    const { saveCustomLlmPresets, saveProviderConfigs, saveTaskModelRouting } = await import("@/lib/project-store")
+    await Promise.all([
+      saveCustomLlmPresets(nextPresets),
+      saveProviderConfigs(nextConfigs),
+      saveTaskModelRouting(nextRouting),
+    ])
+    if (project && state.projectLlmOverride.presetId === id) {
+      await updateProjectOverride({ enabled: false, presetId: null, model: "" })
+    }
+  }
+
+  async function updateProjectOverride(patch: Partial<typeof projectLlmOverride>) {
+    if (!project) return
+    // Read the latest snapshot synchronously. Multiple input events can arrive
+    // before React re-renders this closure; using the captured value would
+    // discard fields changed by the preceding event.
+    const state = useWikiStore.getState()
+    const current = state.projectLlmOverride
+    const draft = { ...current, ...patch }
+    const resolved = resolveProjectLlmConfig(
+      state.globalLlmConfig,
+      state.providerConfigs,
+      draft,
+      state.customLlmPresets,
+    )
+    const next = { ...draft, profile: draft.enabled ? projectLlmProfile(resolved) : undefined }
+    setProjectLlmOverride(next)
+    setLlmConfig(resolved)
+    await saveProjectLlmOverride(project.id, next)
   }
 
   return (
@@ -83,8 +182,88 @@ export function LlmProviderSection() {
         </p>
       </div>
 
+      {project && (
+        <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={projectLlmOverride.enabled}
+              onChange={(event) => void updateProjectOverride({ enabled: event.target.checked }).catch((error) => {
+                console.error("Failed to save project model override:", error)
+              })}
+            />
+            {t("settings.sections.llm.projectOverride.enabled")}
+          </label>
+          {projectLlmOverride.enabled && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <TaskModelSelect
+                id="project-llm-preset"
+                label={t("settings.sections.llm.projectOverride.provider")}
+                value={projectLlmOverride.presetId ?? ""}
+                onChange={(value) => void updateProjectOverride({ presetId: value || null }).catch((error) => {
+                  console.error("Failed to save project provider:", error)
+                })}
+                fallbackLabel={t("settings.sections.llm.projectOverride.selectProvider")}
+                presets={presets}
+              />
+              <div className="space-y-1.5">
+                <Label htmlFor="project-llm-model">{t("settings.sections.llm.projectOverride.model")}</Label>
+                <Input
+                  id="project-llm-model"
+                  value={projectLlmOverride.model}
+                  placeholder={t("settings.sections.llm.projectOverride.modelPlaceholder")}
+                  onChange={(event) => void updateProjectOverride({ model: event.target.value }).catch((error) => {
+                    console.error("Failed to save project model:", error)
+                  })}
+                />
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.llm.projectOverride.hint")}
+          </p>
+        </div>
+      )}
+
+      <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+        <TaskModelSelect
+          id="chat-task-model"
+          label={t("settings.sections.llm.taskRouting.chat")}
+          value={taskModelRouting.chatPresetId ?? ""}
+          onChange={(value) => void updateTaskRouting("chat", value).catch((error) => {
+            console.error("Failed to save chat model routing:", error)
+          })}
+          fallbackLabel={t("settings.sections.llm.taskRouting.activeDefault")}
+          presets={presets}
+        />
+        <TaskModelSelect
+          id="ingest-task-model"
+          label={t("settings.sections.llm.taskRouting.ingest")}
+          value={taskModelRouting.ingestPresetId ?? ""}
+          onChange={(value) => void updateTaskRouting("ingest", value).catch((error) => {
+            console.error("Failed to save ingest model routing:", error)
+          })}
+          fallbackLabel={t("settings.sections.llm.taskRouting.activeDefault")}
+          presets={presets}
+        />
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          {t("settings.sections.llm.taskRouting.hint")}
+        </p>
+      </div>
+
       <div className="space-y-2">
-        {LLM_PRESETS.map((preset) => (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void addCustomPreset()}
+            disabled={customLlmPresets.length >= 50}
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            {t("settings.sections.llm.customProfiles.add")}
+          </Button>
+        </div>
+        {presets.map((preset) => (
           <PresetRow
             key={preset.id}
             preset={preset}
@@ -95,9 +274,45 @@ export function LlmProviderSection() {
             onToggleActive={() => toggleActive(preset.id)}
             onToggleExpand={() => toggleExpand(preset.id)}
             onChange={(patch) => updateOverride(preset.id, patch)}
+            isUserCustom={preset.id.startsWith("custom-")}
+            onRename={(label) => void renameCustomPreset(preset.id, label)}
+            onDelete={() => void deleteCustomPreset(preset.id)}
           />
         ))}
       </div>
+    </div>
+  )
+}
+
+function TaskModelSelect({
+  id,
+  label,
+  value,
+  onChange,
+  fallbackLabel,
+  presets,
+}: {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  fallbackLabel: string
+  presets: LlmPreset[]
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+      >
+        <option value="">{fallbackLabel}</option>
+        {presets.map((preset) => (
+          <option key={preset.id} value={preset.id}>{preset.label}</option>
+        ))}
+      </select>
     </div>
   )
 }
@@ -111,6 +326,9 @@ interface PresetRowProps {
   onToggleActive: () => void
   onToggleExpand: () => void
   onChange: (patch: ProviderOverride) => void
+  isUserCustom: boolean
+  onRename: (label: string) => void
+  onDelete: () => void
 }
 
 type ProviderTestState =
@@ -127,6 +345,9 @@ function PresetRow({
   onToggleActive,
   onToggleExpand,
   onChange,
+  isUserCustom,
+  onRename,
+  onDelete,
 }: PresetRowProps) {
   const { t } = useTranslation()
   const ov = override ?? {}
@@ -140,6 +361,7 @@ function PresetRow({
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
   const localCliIsolation = ov.localCliIsolation === true
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
+  const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
@@ -152,7 +374,7 @@ function PresetRow({
     preset.provider !== "codex-cli"
 
   const resolvedConfig = useMemo(
-    () => resolveConfig(preset, ov, useWikiStore.getState().llmConfig),
+    () => resolveConfig(preset, ov, useWikiStore.getState().globalLlmConfig),
     [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
   )
 
@@ -241,6 +463,19 @@ function PresetRow({
       {/* Expanded config panel */}
       {isExpanded && (
         <div className="space-y-4 border-t bg-background/50 px-4 py-3">
+          {isUserCustom && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.customProfiles.name")}</Label>
+              <Input
+                defaultValue={preset.label}
+                maxLength={80}
+                onBlur={(event) => {
+                  if (!event.target.value.trim()) event.target.value = preset.label
+                  else onRename(event.target.value)
+                }}
+              />
+            </div>
+          )}
           {preset.provider === "custom" && (
             <div className="space-y-2">
               <Label>{t("settings.sections.llm.apiMode")}</Label>
@@ -431,6 +666,24 @@ function PresetRow({
             />
           </div>
 
+          {!isLocalCliProvider && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.requestTimeout", "Request timeout (minutes)")}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={1440}
+                value={requestTimeoutMinutes}
+                onChange={(e) => onChange({
+                  requestTimeoutMinutes: Math.max(1, Math.min(1440, Number(e.target.value) || 30)),
+                })}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.requestTimeoutHint", "Increase this for slow local CPU models. The default is 30 minutes.")}
+              </p>
+            </div>
+          )}
+
           <ReasoningControls
             value={reasoning}
             onChange={(reasoning) => onChange({ reasoning })}
@@ -478,6 +731,14 @@ function PresetRow({
               </div>
             )}
           </div>
+          {isUserCustom && (
+            <div className="flex justify-end border-t pt-3">
+              <Button variant="outline" size="sm" onClick={onDelete} disabled={isActive}>
+                <Trash2 className="mr-1 h-4 w-4" />
+                {t("settings.sections.llm.customProfiles.delete")}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -704,6 +965,7 @@ interface DetectResult {
  * already tailors the hint (macOS quarantine, missing binary, etc).
  */
 function ClaudeCliStatusPill() {
+  const { t } = useTranslation()
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
 
@@ -731,14 +993,14 @@ function ClaudeCliStatusPill() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Label className="m-0">CLI status</Label>
+        <Label className="m-0">{t("settings.sections.llm.cliStatus")}</Label>
         <button
           type="button"
           onClick={() => void detect()}
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? t("settings.sections.llm.checkingCli") : t("settings.sections.llm.recheckCli")}
         </button>
       </div>
       <div
@@ -754,12 +1016,11 @@ function ClaudeCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local claude binary…</div>}
+          {state === "loading" && <div>{t("settings.sections.llm.detectingCli", { name: "Claude" })}</div>}
           {state === "ok" && (
             <>
               <div>
-                Detected{result?.version ? ` ${result.version}` : ""}. Ready to use your local
-                subscription — no API key needed.
+                {t("settings.sections.llm.cliDetected", { version: result?.version ? ` ${result.version}` : "", login: t("settings.sections.llm.claudeSubscription") })}
               </div>
               {result?.path && (
                 <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -772,23 +1033,23 @@ function ClaudeCliStatusPill() {
                   the resulting "Unauthenticated" exit-1 as a LLM
                   Wiki bug. */}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
+                {t("settings.sections.llm.cliAuthBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   claude
                 </code>{" "}
-                in a terminal to refresh the OAuth login.
+                {" "}{t("settings.sections.llm.cliAuthAfter")}
               </div>
             </>
           )}
           {state === "err" && (
             <>
-              <div>{result?.error ?? "claude CLI not available."}</div>
+              <div>{result?.error ?? t("settings.sections.llm.cliUnavailable", { name: "Claude" })}</div>
               <div className="text-muted-foreground">
-                Install from{" "}
+                {t("settings.sections.llm.cliInstallBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   npm i -g @anthropic-ai/claude-code
                 </code>{" "}
-                then re-check.
+                {" "}{t("settings.sections.llm.cliInstallAfter")}
               </div>
             </>
           )}
@@ -799,6 +1060,7 @@ function ClaudeCliStatusPill() {
 }
 
 function CodexCliStatusPill() {
+  const { t } = useTranslation()
   const [state, setState] = useState<"loading" | "ok" | "err">("loading")
   const [result, setResult] = useState<DetectResult | null>(null)
 
@@ -826,14 +1088,14 @@ function CodexCliStatusPill() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Label className="m-0">CLI status</Label>
+        <Label className="m-0">{t("settings.sections.llm.cliStatus")}</Label>
         <button
           type="button"
           onClick={() => void detect()}
           className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           disabled={state === "loading"}
         >
-          {state === "loading" ? "Checking…" : "Re-check"}
+          {state === "loading" ? t("settings.sections.llm.checkingCli") : t("settings.sections.llm.recheckCli")}
         </button>
       </div>
       <div
@@ -849,12 +1111,11 @@ function CodexCliStatusPill() {
         {state === "ok" && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         {state === "err" && <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
         <div className="min-w-0 flex-1 space-y-0.5">
-          {state === "loading" && <div>Detecting local codex binary…</div>}
+          {state === "loading" && <div>{t("settings.sections.llm.detectingCli", { name: "Codex" })}</div>}
           {state === "ok" && (
             <>
               <div>
-                Detected{result?.version ? ` ${result.version}` : ""}. Ready to use your local
-                Codex login — no API key needed.
+                {t("settings.sections.llm.cliDetected", { version: result?.version ? ` ${result.version}` : "", login: t("settings.sections.llm.codexLogin") })}
               </div>
               {result?.path && (
                 <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -862,23 +1123,23 @@ function CodexCliStatusPill() {
                 </div>
               )}
               <div className="text-muted-foreground">
-                If chat fails with an authentication error, run{" "}
+                {t("settings.sections.llm.cliAuthBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   codex
                 </code>{" "}
-                in a terminal to refresh the login.
+                {" "}{t("settings.sections.llm.cliAuthAfter")}
               </div>
             </>
           )}
           {state === "err" && (
             <>
-              <div>{result?.error ?? "codex CLI not available."}</div>
+              <div>{result?.error ?? t("settings.sections.llm.cliUnavailable", { name: "Codex" })}</div>
               <div className="text-muted-foreground">
-                Install from{" "}
+                {t("settings.sections.llm.cliInstallBefore")}{" "}
                 <code className="rounded bg-background/60 px-1 py-0.5 font-mono text-[10px]">
                   npm install -g @openai/codex
                 </code>{" "}
-                then re-check.
+                {" "}{t("settings.sections.llm.cliInstallAfter")}
               </div>
             </>
           )}

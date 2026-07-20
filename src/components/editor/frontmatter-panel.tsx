@@ -14,15 +14,18 @@ import {
   Calendar,
   Tag as TagIcon,
 } from "lucide-react"
+import { openUrl } from "@tauri-apps/plugin-opener"
 import type { FrontmatterValue } from "@/lib/frontmatter"
 import { getWikiTypeStyle } from "@/lib/wiki-type-style"
 import {
   resolveRelatedSlug,
-  resolveSourceName,
+  resolveSourceReference,
+  type SourceReferenceResolution,
   unwrapWikilink,
 } from "@/lib/wiki-page-resolver"
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
+import { useTranslation } from "react-i18next"
 
 interface FrontmatterPanelProps {
   data: Record<string, FrontmatterValue>
@@ -40,6 +43,7 @@ const TOP_LEVEL_KEYS = new Set([
 ])
 
 export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
@@ -80,6 +84,12 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
   function handleNavigate(path: string | null) {
     if (!path) return
     openPathInPreview(path)
+  }
+
+  function handleOpenExternal(url: string) {
+    void openUrl(url).catch((err) => {
+      console.warn("[frontmatter] openUrl failed:", err)
+    })
   }
 
   return (
@@ -133,7 +143,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
 
       {origin && (
         <div className="mx-4 mt-3 rounded border-l-2 border-primary/40 bg-primary/5 px-3 py-1.5 text-xs text-foreground/80">
-          <span className="font-medium text-muted-foreground">Origin: </span>
+          <span className="font-medium text-muted-foreground">{t("editor.frontmatter.origin")}: </span>
           {origin}
         </div>
       )}
@@ -149,15 +159,24 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
           <div className="flex flex-wrap gap-2">
             {sources.map((source) => {
               const { slug, label } = unwrapWikilink(source)
-              const path = sourcesRoot
-                ? resolveSourceName(projectPathIndex, slug, sourcesRoot)
-                : null
+              const resolution = resolveSourceReference(
+                projectPathIndex,
+                slug,
+                sourcesRoot,
+              )
+              const onClick =
+                resolution.kind === "local"
+                  ? () => handleNavigate(resolution.path)
+                  : resolution.kind === "external"
+                    ? () => handleOpenExternal(resolution.url)
+                    : undefined
               return (
                 <SourceCard
                   key={source}
                   name={label}
-                  resolved={!!path}
-                  onClick={() => handleNavigate(path)}
+                  status={resolution.kind}
+                  externalUrl={resolution.kind === "external" ? resolution.url : undefined}
+                  onClick={onClick}
                 />
               )
             })}
@@ -195,7 +214,7 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
       {/* Extras (any other key/values we didn't surface above) ──── */}
       {extras.length > 0 && (
         <div className="mx-4 mt-4 rounded border border-border/40 bg-background/50 px-3 py-2 text-xs">
-          <div className="mb-1 font-medium text-muted-foreground/80">More</div>
+          <div className="mb-1 font-medium text-muted-foreground/80">{t("editor.frontmatter.more")}</div>
           <div className="space-y-0.5">
             {extras.map(([k, v]) => (
               <div key={k} className="flex gap-2">
@@ -221,28 +240,39 @@ export function FrontmatterPanel({ data }: FrontmatterPanelProps) {
 
 function SourceCard({
   name,
-  resolved,
+  status,
+  externalUrl,
   onClick,
 }: {
   name: string
-  resolved: boolean
-  onClick: () => void
+  status: SourceReferenceResolution["kind"]
+  externalUrl?: string
+  onClick?: () => void
 }) {
-  const Icon = iconForSource(name)
+  const isMissing = status === "missing"
+  const Icon = status === "external" ? ArrowUpRight : iconForSource(name)
+  const title = status === "external"
+    ? `Open external source: ${externalUrl}`
+    : status === "local"
+      ? `Open ${name}`
+      : `Source not found in raw/sources/: ${name}`
   return (
     <button
       type="button"
-      onClick={resolved ? onClick : undefined}
-      title={resolved ? `Open ${name}` : `Source not found in raw/sources/: ${name}`}
+      onClick={onClick}
+      title={title}
+      aria-label={title}
       className={`group flex min-w-0 max-w-[200px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${
-        resolved
-          ? "border-border/60 bg-background hover:border-primary/40 hover:bg-primary/5 cursor-pointer"
-          : "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
+        isMissing
+          ? "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
+          : "border-border/60 bg-background hover:border-primary/40 hover:bg-primary/5 cursor-pointer"
       }`}
     >
-      <Icon className={`h-4 w-4 shrink-0 ${resolved ? "text-foreground/70" : "text-muted-foreground/60"}`} />
+      <Icon className={`h-4 w-4 shrink-0 ${
+        isMissing ? "text-muted-foreground/60" : "text-foreground/70"
+      }`} />
       <span className="truncate">{name}</span>
-      {!resolved && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />}
+      {isMissing && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />}
     </button>
   )
 }

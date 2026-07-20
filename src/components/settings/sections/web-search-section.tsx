@@ -16,6 +16,7 @@ import {
   SEARXNG_CATEGORY_OPTIONS,
   SERPAPI_ENGINE_OPTIONS,
   resolveSearchConfig,
+  DEFAULT_FIRECRAWL_URL,
   webSearch,
 } from "@/lib/web-search"
 
@@ -51,7 +52,7 @@ const SEARCH_PROVIDERS = [
   {
     id: "firecrawl",
     label: "Firecrawl",
-    hint: "Anonymous Firecrawl Search API",
+    hint: "Anonymous or authenticated Firecrawl Search API",
     configKind: "none",
   },
   {
@@ -356,7 +357,30 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  {provider.configKind === "url" ? (
+                  {provider.id === "firecrawl" ? (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>{t("settings.apiKey")} ({t("common.optional", "optional")})</Label>
+                        <Input
+                          type="password"
+                          value={override?.apiKey ?? ""}
+                          onChange={(e) => updateProvider("firecrawl", { apiKey: e.target.value })}
+                          placeholder="fc-..."
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
+                        <Input
+                          value={override?.baseUrl ?? ""}
+                          onChange={(e) => updateProvider("firecrawl", { baseUrl: e.target.value })}
+                          placeholder={DEFAULT_FIRECRAWL_URL}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground md:col-span-2">
+                        {t("settings.sections.webSearch.firecrawlHint")}
+                      </p>
+                    </div>
+                  ) : provider.configKind === "url" ? (
                     <div className="space-y-2">
                       <Label>{t("settings.sections.webSearch.instanceUrl")}</Label>
                       <Input
@@ -368,7 +392,7 @@ export function WebSearchSection() {
                         {t("settings.sections.webSearch.searxngJsonHint")}
                       </p>
                     </div>
-                  ) : provider.configKind !== "none" ? (
+                  ) : (
                     <div className="space-y-2">
                       <Label>{t("settings.apiKey")}</Label>
                       <Input
@@ -383,10 +407,6 @@ export function WebSearchSection() {
                         </p>
                       )}
                     </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t("settings.sections.webSearch.firecrawlHint")}
-                    </p>
                   )}
 
                   {provider.id === "serpapi" && (

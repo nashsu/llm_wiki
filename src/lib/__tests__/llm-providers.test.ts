@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { buildAnthropicUrl, parseGoogleLine, parseAnthropicLine, getProviderConfig } from "../llm-providers"
+import {
+  buildAnthropicUrl,
+  deriveAnthropicMaxTokens,
+  getProviderConfig,
+  parseAnthropicLine,
+  parseGoogleLine,
+} from "../llm-providers"
 import type { LlmConfig as RealLlmConfig } from "@/stores/wiki-store"
 
 const makeConfig = (overrides: Partial<RealLlmConfig> = {}): RealLlmConfig => ({
@@ -42,10 +48,11 @@ describe("MiniMax Provider", () => {
     expect(body.stream).toBe(true)
   })
 
-  it("includes max_tokens (required by Anthropic wire)", () => {
+  it("includes max_tokens derived from context budget (required by Anthropic wire)", () => {
     const cfg = getProviderConfig(makeConfig())
     const body = cfg.buildBody([]) as Record<string, unknown>
-    expect(body.max_tokens).toBe(4096)
+    // 204 800 chars × 15% reserve ÷ 3 chars-per-token = 10 240; capped at 16 384
+    expect(body.max_tokens).toBe(10240)
   })
 
   it("carries the model in the body", () => {
@@ -68,6 +75,39 @@ describe("MiniMax Provider", () => {
       },
     ])
     expect(body.messages).toEqual([{ role: "user", content: "Hello" }])
+  })
+})
+
+describe("Anthropic output budget", () => {
+  it("derives output tokens from the character response reserve", () => {
+    expect(deriveAnthropicMaxTokens(204_800)).toBe(10_240)
+  })
+
+  it("caps large context windows at the Anthropic default limit", () => {
+    expect(deriveAnthropicMaxTokens(1_000_000)).toBe(16_384)
+  })
+
+  it("never emits a protocol-invalid zero token limit", () => {
+    expect(deriveAnthropicMaxTokens(1)).toBe(1)
+  })
+
+  it("applies the derived default to native and custom Anthropic providers", () => {
+    const native = getProviderConfig(makeConfig({ provider: "anthropic" }))
+    const custom = getProviderConfig(makeConfig({
+      provider: "custom",
+      apiMode: "anthropic_messages",
+      customEndpoint: "https://example.com/anthropic",
+    }))
+
+    expect((native.buildBody([]) as Record<string, unknown>).max_tokens).toBe(10_240)
+    expect((custom.buildBody([]) as Record<string, unknown>).max_tokens).toBe(10_240)
+  })
+
+  it("preserves an explicit caller override", () => {
+    const provider = getProviderConfig(makeConfig({ provider: "anthropic" }))
+    const body = provider.buildBody([], { max_tokens: 777 }) as Record<string, unknown>
+
+    expect(body.max_tokens).toBe(777)
   })
 })
 

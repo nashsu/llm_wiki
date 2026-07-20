@@ -77,6 +77,10 @@ describe("detectLanguage", () => {
       expect(detectLanguage("Việt Nam là một quốc gia xinh đẹp")).toBe("Vietnamese")
     })
 
+    it("detects Czech without treating its shared ó as Polish", () => {
+      expect(detectLanguage("Příliš žluťoučký kůň úpěl ďábelské ódy")).toBe("Czech")
+    })
+
     it("detects French via word patterns (no shared diacritics)", () => {
       expect(detectLanguage("le chat noir et les chiens blancs, un homme et une femme")).toBe("French")
     })

@@ -27,6 +27,8 @@ export const enrichScenarios: EnrichScenario[] = [
       "occurrence of each.",
     initialWiki: {
       "wiki/index.md": WIKI_INDEX_WITH_TRANSFORMER,
+      "wiki/attention.md": "# Attention\n",
+      "wiki/transformer.md": "# Transformer\n",
       "wiki/survey.md":
         "# Deep Learning Survey\n\n" +
         "Modern NLP relies on Transformer architectures for most tasks. " +
@@ -61,6 +63,7 @@ export const enrichScenarios: EnrichScenario[] = [
       "LLM just returns the term→target list.",
     initialWiki: {
       "wiki/index.md": WIKI_INDEX_WITH_TRANSFORMER,
+      "wiki/encoder.md": "# Encoder\n",
       "wiki/attention.md":
         "---\n" +
         "title: Attention\n" +
@@ -117,6 +120,8 @@ export const enrichScenarios: EnrichScenario[] = [
       "Byte-accurate substitution through UTF-8.",
     initialWiki: {
       "wiki/index.md": "# 索引\n\n- [[注意力机制]]\n- [[transformer]]\n",
+      "wiki/注意力机制.md": "# 注意力机制\n",
+      "wiki/transformer.md": "# Transformer\n",
       "wiki/intro.md":
         "# 简介\n\n" +
         "注意力机制是 transformer 架构的核心组件之一。" +

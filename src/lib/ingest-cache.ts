@@ -124,3 +124,22 @@ export async function removeFromIngestCache(
   delete newEntries[sourceFileName]
   await saveCache(projectPath, { entries: newEntries })
 }
+
+/** Move a cache entry when an unchanged source is renamed inside raw/sources. */
+export async function moveIngestCacheEntry(
+  projectPath: string,
+  oldSourceIdentity: string,
+  newSourceIdentity: string,
+  movedFiles: ReadonlyMap<string, string> = new Map(),
+): Promise<void> {
+  const cache = await loadCache(projectPath)
+  const entry = cache.entries[oldSourceIdentity]
+  if (!entry || oldSourceIdentity === newSourceIdentity) return
+  const migratedEntry: CacheEntry = {
+    ...entry,
+    filesWritten: entry.filesWritten.map((path) => movedFiles.get(path) ?? path),
+  }
+  const newEntries = { ...cache.entries, [newSourceIdentity]: migratedEntry }
+  delete newEntries[oldSourceIdentity]
+  await saveCache(projectPath, { entries: newEntries })
+}

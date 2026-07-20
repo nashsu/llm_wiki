@@ -78,9 +78,52 @@ describe("refreshProjectFileTree", () => {
 
     expect(mocks.listDirectory).toHaveBeenNthCalledWith(1, project.path, { maxDepth: 2 })
     expect(mocks.listDirectory).toHaveBeenNthCalledWith(2, project.path, undefined)
+    expect(mocks.listDirectory).toHaveBeenNthCalledWith(3, `${project.path}/raw/sources`, {
+      includeHidden: true,
+    })
     expect(useWikiStore.getState().fileTree).toEqual(shallowTree)
     expect(useWikiStore.getState().projectPathIndex.byPath.has("/tmp/project/wiki/entities/alpha.md")).toBe(true)
     expect(useWikiStore.getState().dataVersion).toBe(1)
+  })
+
+  it("includes raw/sources dotfolders in the resolver index via a hidden scan", async () => {
+    const rawSourcesHiddenTree: FileNode[] = [
+      {
+        name: ".claude",
+        path: "/tmp/project/raw/sources/.claude",
+        is_dir: true,
+        children: [
+          {
+            name: "memory.md",
+            path: "/tmp/project/raw/sources/.claude/memory.md",
+            is_dir: false,
+          },
+          {
+            name: "settings.json",
+            path: "/tmp/project/raw/sources/.claude/settings.json",
+            is_dir: false,
+          },
+        ],
+      },
+    ]
+    mocks.listDirectory.mockImplementation(
+      async (path: string, options?: { maxDepth?: number; includeHidden?: boolean }) => {
+        if (options?.maxDepth === 2) return shallowTree
+        if (path === "/tmp/project/raw/sources") return rawSourcesHiddenTree
+        return fullTree
+      },
+    )
+
+    await refreshProjectFileTree(project.path, {
+      projectId: project.id,
+      bumpDataVersion: true,
+    })
+    await flushMicrotasks()
+
+    const index = useWikiStore.getState().projectPathIndex
+    expect(index.byPath.has("/tmp/project/wiki/entities/alpha.md")).toBe(true)
+    expect(index.byPath.has("/tmp/project/raw/sources/.claude/memory.md")).toBe(true)
+    expect(index.byPath.has("/tmp/project/raw/sources/.claude/settings.json")).toBe(false)
   })
 
   it("does not write stale results after the active project changes", async () => {
@@ -123,9 +166,11 @@ describe("refreshProjectFileTree", () => {
       await flushMicrotasks()
 
       expect(mocks.listDirectory).toHaveBeenNthCalledWith(1, project.path, { maxDepth: 2 })
-      expect(mocks.listDirectory).toHaveBeenNthCalledWith(2, project.path, undefined)
-      expect(mocks.listDirectory).toHaveBeenNthCalledWith(3, project.path, undefined)
-      expect(mocks.listDirectory).toHaveBeenNthCalledWith(4, project.path, undefined)
+      // The full project scan retries three times before giving up.
+      const fullScanCalls = mocks.listDirectory.mock.calls.filter(
+        ([path, options]) => path === project.path && options === undefined,
+      )
+      expect(fullScanCalls).toHaveLength(3)
       expect(useWikiStore.getState().fileTree).toEqual(shallowTree)
       expect(useWikiStore.getState().projectPathIndex.byPath.has("/tmp/project/wiki/entities/alpha.md")).toBe(true)
     } finally {

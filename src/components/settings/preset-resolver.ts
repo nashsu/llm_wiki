@@ -40,6 +40,10 @@ export function resolveConfig(
     typeof ov.codexCliTimeoutMinutes === "number" && Number.isFinite(ov.codexCliTimeoutMinutes)
       ? Math.max(1, Math.min(240, Math.floor(ov.codexCliTimeoutMinutes)))
       : undefined
+  const requestTimeoutMinutes =
+    typeof ov.requestTimeoutMinutes === "number" && Number.isFinite(ov.requestTimeoutMinutes)
+      ? Math.max(1, Math.min(1440, Math.floor(ov.requestTimeoutMinutes)))
+      : fallback.requestTimeoutMinutes
 
   if (preset.provider === "custom") {
     return {
@@ -52,6 +56,7 @@ export function resolveConfig(
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
       reasoning,
       localCliIsolation: false,
+      requestTimeoutMinutes,
     }
   }
 
@@ -65,6 +70,7 @@ export function resolveConfig(
       maxContextSize,
       reasoning,
       localCliIsolation: false,
+      requestTimeoutMinutes,
     }
   }
 
@@ -80,6 +86,7 @@ export function resolveConfig(
       maxContextSize,
       reasoning,
       localCliIsolation: false,
+      requestTimeoutMinutes,
     }
   }
 
@@ -96,6 +103,7 @@ export function resolveConfig(
       reasoning,
       localCliIsolation,
       codexCliTimeoutMinutes: preset.provider === "codex-cli" ? codexCliTimeoutMinutes : undefined,
+      requestTimeoutMinutes,
     }
   }
 
@@ -111,5 +119,6 @@ export function resolveConfig(
     maxContextSize,
     reasoning,
     localCliIsolation: false,
+    requestTimeoutMinutes,
   }
 }

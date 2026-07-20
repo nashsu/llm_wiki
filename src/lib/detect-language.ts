@@ -248,8 +248,11 @@ function detectLatinLanguage(text: string): string | null {
     return "Turkish"
   }
 
-  // Polish — distinctive characters
-  if (/[ąćęłńóśźż]/.test(lower)) {
+  // Polish — use characters that distinguish it from neighboring
+  // Latin-script languages. `ó` is intentionally excluded because
+  // Czech also uses it; treating `ó` alone as Polish prevented common
+  // Czech text from ever reaching the Czech detector below.
+  if (/[ąćęłńśźż]/.test(lower)) {
     return "Polish"
   }
 

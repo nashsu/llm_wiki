@@ -158,6 +158,41 @@ export async function restoreFileHistory(projectPath: string, filePath: string, 
   return invoke<string>("restore_file_history", { projectPath, filePath, entryId })
 }
 
+export async function applyTextSelectionEdit(input: {
+  projectPath: string
+  filePath: string
+  prefix: string
+  selectedText: string
+  suffix: string
+  replacement: string
+}): Promise<string> {
+  return invoke<string>("apply_text_selection_edit", input)
+}
+
+export interface PageLinkEntry {
+  title: string
+  path?: string
+  snippet?: string
+}
+
+export interface PageLinksResponse {
+  outgoing: PageLinkEntry[]
+  backlinks: PageLinkEntry[]
+  missing: PageLinkEntry[]
+}
+
+export async function getPageLinks(projectPath: string, filePath: string): Promise<PageLinksResponse> {
+  return invoke<PageLinksResponse>("get_page_links", { projectPath, filePath })
+}
+
+export async function createMissingWikiPage(
+  projectPath: string,
+  title: string,
+  content?: string,
+): Promise<string> {
+  return invoke<string>("create_missing_wiki_page", { projectPath, title, content })
+}
+
 function assertAbsoluteFsPath(operation: string, path: string): void {
   if (!isAbsolutePath(path)) {
     throw new Error(`${operation} requires an absolute path: ${path}`)

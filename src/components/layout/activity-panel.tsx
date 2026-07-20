@@ -54,20 +54,20 @@ const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
   overview: "overview",
 }
 
-function getFileTypeInfo(path: string): { icon: typeof FileText; type: string } {
+function getFileTypeInfo(path: string): { icon: typeof FileText; typeKey: string } {
   const inferred = inferWikiTypeFromPath(path)
   if (inferred) {
     const directoryIcon = FILE_TYPE_ICONS[WIKI_TYPE_ICON_KEYS[inferred]]
-    return { icon: directoryIcon ?? FileText, type: wikiTypeLabel(inferred) }
+    return { icon: directoryIcon ?? FileText, typeKey: inferred }
   }
   for (const [dir, icon] of Object.entries(FILE_TYPE_ICONS)) {
     if (path.includes(`/${dir}/`) || path.startsWith(`wiki/${dir}/`)) {
-      return { icon, type: dir.charAt(0).toUpperCase() + dir.slice(1, -1) }
+      return { icon, typeKey: dir.replace(/s$/, "") }
     }
   }
-  if (path.includes("index.md")) return { icon: Layout, type: "Index" }
-  if (path.includes("log.md")) return { icon: FileText, type: "Log" }
-  return { icon: FileText, type: "File" }
+  if (path.includes("index.md")) return { icon: Layout, typeKey: "index" }
+  if (path.includes("log.md")) return { icon: FileText, typeKey: "log" }
+  return { icon: FileText, typeKey: "file" }
 }
 
 export function ActivityPanel() {
@@ -238,13 +238,13 @@ export function ActivityPanel() {
           {hasFileSync && (
             <div className="border-b border-border/50 px-3 py-1.5">
               <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                <span>File Sync</span>
+                <span>{t("activity.fileSync")}</span>
                 <button
                   onClick={handleFileSyncRescan}
                   className="rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
-                  title="Scan project files for external changes"
+                  title={t("activity.rescanTitle")}
                 >
-                  Rescan
+                  {t("activity.rescan")}
                 </button>
               </div>
               {fileSyncError && (
@@ -370,7 +370,7 @@ export function ActivityPanel() {
               onClick={clearDone}
               className="w-full px-3 py-1 text-center text-[10px] text-muted-foreground hover:underline"
             >
-              Clear completed
+              {t("activity.clearCompleted")}
             </button>
           )}
         </div>
@@ -380,6 +380,7 @@ export function ActivityPanel() {
 }
 
 function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id: string) => void; onCancel: (id: string) => void }) {
+  const { t } = useTranslation()
   const fileName = getFileName(task.sourcePath)
 
   return (
@@ -404,7 +405,7 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
             <button
               onClick={() => onRetry(task.id)}
               className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              title="Retry"
+              title={t("common.retry")}
             >
               <RotateCcw className="h-3 w-3" />
             </button>
@@ -413,7 +414,7 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
             <button
               onClick={() => onCancel(task.id)}
               className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-              title="Cancel"
+              title={t("common.cancel")}
             >
               <X className="h-3 w-3" />
             </button>
@@ -425,8 +426,9 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
 }
 
 function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetry: (id: string) => void; onIgnore: (id: string) => void }) {
+  const { t } = useTranslation()
   const fileName = getFileName(task.path)
-  const kindLabel = task.kind.charAt(0).toUpperCase() + task.kind.slice(1)
+  const kindLabel = t(`activity.changeKinds.${task.kind}`, { defaultValue: task.kind })
 
   return (
     <div className="py-1.5 text-xs">
@@ -448,14 +450,14 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
             <button
               onClick={() => onRetry(task.id)}
               className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Retry"
+              title={t("common.retry")}
             >
               <RotateCcw className="h-3 w-3" />
             </button>
             <button
               onClick={() => onIgnore(task.id)}
               className="rounded p-0.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-              title="Ignore"
+              title={t("common.ignore")}
             >
               <X className="h-3 w-3" />
             </button>
@@ -467,6 +469,7 @@ function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetr
 }
 
 function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => void }) {
+  const { t } = useTranslation()
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
   const project = useWikiStore((s) => s.project)
 
@@ -495,7 +498,7 @@ function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => 
           <button
             onClick={onCancel}
             className="shrink-0 p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-            title="Cancel"
+            title={t("common.cancel")}
           >
             <X className="h-3 w-3" />
           </button>
@@ -506,7 +509,7 @@ function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => 
       {item.filesWritten.length > 0 && item.status === "done" && (
         <div className="mt-1.5 ml-5 flex flex-col gap-0.5">
           {item.filesWritten.map((filePath) => {
-            const { icon: Icon, type } = getFileTypeInfo(filePath)
+            const { icon: Icon, typeKey } = getFileTypeInfo(filePath)
             const fileName = getFileName(filePath)
             return (
               <button
@@ -516,7 +519,9 @@ function ActivityRow({ item, onCancel }: { item: ActivityItem; onCancel?: () => 
                 className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
               >
                 <Icon className="h-3 w-3 shrink-0" />
-                <span className="text-[10px] font-medium text-muted-foreground/70 w-14 shrink-0">{type}</span>
+                <span className="text-[10px] font-medium text-muted-foreground/70 w-14 shrink-0">
+                  {t(`activity.fileTypes.${typeKey}`, { defaultValue: wikiTypeLabel(typeKey) })}
+                </span>
                 <span className="truncate">{fileName}</span>
               </button>
             )

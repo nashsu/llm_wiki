@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -44,6 +44,11 @@ export async function addToRecentProjects(
 const LLM_CONFIG_KEY = "llmConfig"
 const PROVIDER_CONFIGS_KEY = "providerConfigs"
 const ACTIVE_PRESET_KEY = "activePresetId"
+const TASK_MODEL_ROUTING_KEY = "taskModelRouting"
+const PROJECT_LLM_OVERRIDES_KEY = "projectLlmOverrides"
+const CUSTOM_LLM_PRESETS_KEY = "customLlmPresets"
+let projectLlmOverrideWrite = Promise.resolve()
+let customLlmPresetWrite = Promise.resolve()
 
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
   const store = await getStore()
@@ -65,6 +70,38 @@ export async function loadProviderConfigs(): Promise<ProviderConfigs | null> {
   return (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? null
 }
 
+export async function saveCustomLlmPresets(presets: CustomLlmPreset[]): Promise<void> {
+  const normalized = normalizeCustomLlmPresets(presets)
+  const write = customLlmPresetWrite.then(async () => {
+    const store = await getStore()
+    await store.set(CUSTOM_LLM_PRESETS_KEY, normalized)
+  })
+  customLlmPresetWrite = write.catch(() => {})
+  await write
+}
+
+export async function loadCustomLlmPresets(): Promise<CustomLlmPreset[]> {
+  const store = await getStore()
+  return normalizeCustomLlmPresets(await store.get<unknown>(CUSTOM_LLM_PRESETS_KEY))
+}
+
+function normalizeCustomLlmPresets(value: unknown): CustomLlmPreset[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const normalized: CustomLlmPreset[] = []
+  for (const entry of value) {
+    if (normalized.length >= 50) break
+    const candidate = entry as Partial<CustomLlmPreset> | null
+    if (!candidate || typeof candidate !== "object") continue
+    if (typeof candidate.id !== "string" || !/^custom-[A-Za-z0-9-]{1,80}$/.test(candidate.id)) continue
+    const label = typeof candidate.label === "string" ? candidate.label.trim().slice(0, 80) : ""
+    if (!label || seen.has(candidate.id)) continue
+    seen.add(candidate.id)
+    normalized.push({ id: candidate.id, label })
+  }
+  return normalized
+}
+
 export async function saveActivePresetId(id: string | null): Promise<void> {
   const store = await getStore()
   await store.set(ACTIVE_PRESET_KEY, id)
@@ -73,6 +110,49 @@ export async function saveActivePresetId(id: string | null): Promise<void> {
 export async function loadActivePresetId(): Promise<string | null> {
   const store = await getStore()
   return (await store.get<string | null>(ACTIVE_PRESET_KEY)) ?? null
+}
+
+export async function saveTaskModelRouting(config: TaskModelRoutingConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(TASK_MODEL_ROUTING_KEY, config)
+}
+
+export async function loadTaskModelRouting(): Promise<TaskModelRoutingConfig | null> {
+  const store = await getStore()
+  const saved = await store.get<Partial<TaskModelRoutingConfig>>(TASK_MODEL_ROUTING_KEY)
+  if (!saved) return null
+  return {
+    chatPresetId: typeof saved.chatPresetId === "string" ? saved.chatPresetId : null,
+    ingestPresetId: typeof saved.ingestPresetId === "string" ? saved.ingestPresetId : null,
+  }
+}
+
+export async function saveProjectLlmOverride(
+  projectId: string,
+  config: ProjectLlmOverride,
+): Promise<void> {
+  // Store updates are read-modify-write. Serialize them so rapid model input
+  // or concurrent project edits cannot let an older write overwrite a newer
+  // snapshot (or drop another project's entry).
+  const write = projectLlmOverrideWrite.then(async () => {
+    const store = await getStore()
+    const existing = (await store.get<Record<string, ProjectLlmOverride>>(PROJECT_LLM_OVERRIDES_KEY)) ?? {}
+    await store.set(PROJECT_LLM_OVERRIDES_KEY, { ...existing, [projectId]: config })
+  })
+  projectLlmOverrideWrite = write.catch(() => {})
+  await write
+}
+
+export async function loadProjectLlmOverride(projectId: string): Promise<ProjectLlmOverride> {
+  const store = await getStore()
+  const existing = await store.get<Record<string, Partial<ProjectLlmOverride>>>(PROJECT_LLM_OVERRIDES_KEY)
+  const saved = existing?.[projectId]
+  return {
+    enabled: saved?.enabled === true,
+    presetId: typeof saved?.presetId === "string" ? saved.presetId : null,
+    model: typeof saved?.model === "string" ? saved.model : "",
+    profile: saved?.profile,
+  }
 }
 
 const SEARCH_API_KEY = "searchApiConfig"
@@ -112,10 +192,40 @@ export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
 }
 
 const MINERU_KEY = "mineruConfig"
+const DEFAULT_LOCAL_MINERU_ENDPOINT = "http://127.0.0.1:8000"
+const LOCAL_MINERU_BACKENDS = new Set([
+  "pipeline",
+  "vlm-engine",
+  "hybrid-engine",
+  "vlm-http-client",
+  "hybrid-http-client",
+])
 
 function normalizeMineruConfig(config: MineruConfig): MineruConfig {
   return {
     enabled: config.enabled === true,
+    backend: config.backend === "local" ? "local" : "cloud",
+    localEndpoint:
+      typeof config.localEndpoint === "string" && config.localEndpoint.trim()
+        ? config.localEndpoint.trim()
+        : DEFAULT_LOCAL_MINERU_ENDPOINT,
+    localBackend: LOCAL_MINERU_BACKENDS.has(config.localBackend ?? "")
+      ? config.localBackend
+      : "hybrid-engine",
+    localEffort: config.localEffort === "high" ? "high" : "medium",
+    localParseMethod:
+      config.localParseMethod === "txt" || config.localParseMethod === "ocr"
+        ? config.localParseMethod
+        : "auto",
+    localLanguage:
+      typeof config.localLanguage === "string" && config.localLanguage.trim()
+        ? config.localLanguage.trim()
+        : "ch",
+    localFormulaEnabled: config.localFormulaEnabled !== false,
+    localTableEnabled: config.localTableEnabled !== false,
+    localImageAnalysis: config.localImageAnalysis !== false,
+    localServerUrl:
+      typeof config.localServerUrl === "string" ? config.localServerUrl.trim() : "",
     token: typeof config.token === "string" ? config.token : "",
     modelVersion: config.modelVersion === "pipeline" ? "pipeline" : "vlm",
   }
@@ -130,6 +240,7 @@ function normalizeZoomLevel(level: unknown): number {
 export const __projectStoreTest = {
   normalizeMineruConfig,
   normalizeZoomLevel,
+  normalizeCustomLlmPresets,
 }
 
 export async function saveMineruConfig(config: MineruConfig): Promise<void> {

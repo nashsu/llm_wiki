@@ -79,11 +79,13 @@ const mocks = vi.hoisted(() => {
     }>),
     readFile: vi.fn(async (_path?: string) => ""),
     getFileSize: vi.fn(async (_path?: string) => 1024),
+    fileExists: vi.fn(async (_path?: string) => false),
     writeFile: vi.fn(async () => undefined),
     deleteFile: vi.fn(async () => undefined),
     findRelatedWikiPages: vi.fn(async () => []),
     enqueueBatch: vi.fn(async () => []),
     removeFromIngestCache: vi.fn(async () => undefined),
+    moveIngestCacheEntry: vi.fn(async () => undefined),
     removePageEmbedding: vi.fn(async () => undefined),
     cascadeDeleteWikiPagesWithRefs: vi.fn(async () => ({
       deletedPaths: [] as string[],
@@ -106,6 +108,7 @@ vi.mock("@/commands/fs", () => ({
   listDirectory: mocks.listDirectory,
   readFile: mocks.readFile,
   getFileSize: mocks.getFileSize,
+  fileExists: mocks.fileExists,
   writeFile: mocks.writeFile,
   deleteFile: mocks.deleteFile,
   findRelatedWikiPages: mocks.findRelatedWikiPages,
@@ -117,6 +120,7 @@ vi.mock("@/lib/ingest-queue", () => ({
 
 vi.mock("@/lib/ingest-cache", () => ({
   removeFromIngestCache: mocks.removeFromIngestCache,
+  moveIngestCacheEntry: mocks.moveIngestCacheEntry,
 }))
 
 vi.mock("@/lib/embedding", () => ({
@@ -145,11 +149,13 @@ describe("project file sync", () => {
     mocks.listDirectory.mockImplementation(async (_path?: string) => [])
     mocks.readFile.mockImplementation(async (_path?: string) => "")
     mocks.getFileSize.mockImplementation(async (_path?: string) => 1024)
+    mocks.fileExists.mockImplementation(async (_path?: string) => false)
     mocks.writeFile.mockImplementation(async () => undefined)
     mocks.deleteFile.mockImplementation(async () => undefined)
     mocks.findRelatedWikiPages.mockImplementation(async () => [])
     mocks.enqueueBatch.mockImplementation(async () => [])
     mocks.removeFromIngestCache.mockImplementation(async () => undefined)
+    mocks.moveIngestCacheEntry.mockImplementation(async () => undefined)
     mocks.removePageEmbedding.mockImplementation(async () => undefined)
     mocks.cascadeDeleteWikiPagesWithRefs.mockImplementation(async () => ({
       deletedPaths: [] as string[],
@@ -248,6 +254,116 @@ describe("project file sync", () => {
     expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
       { sourcePath: "raw/sources/report.pdf", folderContext: "" },
     ])
+  })
+
+  it("migrates an unchanged source move without deleting or re-ingesting it", async () => {
+    vi.useFakeTimers()
+    const { startProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    mocks.listDirectory.mockResolvedValue([
+      { name: "topic.md", path: "/tmp/a/wiki/topic.md", is_dir: false },
+    ])
+    mocks.readFile.mockResolvedValue("---\nsources: [old/report.md]\n---\n# Topic")
+    void startProjectFileSync(project)
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+
+    mocks.emit("file-sync://changed", {
+      projectId: "A",
+      tasks: [
+        { id: "d", projectId: "A", path: "raw/sources/old/report.md", kind: "deleted", status: "done", hashBefore: "same", size: 100, createdAt: 1, updatedAt: 1, retryCount: 0, needsRerun: false },
+        { id: "c", projectId: "A", path: "raw/sources/new/report.md", kind: "created", status: "done", hashAfter: "same", size: 100, createdAt: 1, updatedAt: 1, retryCount: 0, needsRerun: false },
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(mocks.writeFile).toHaveBeenCalledWith(
+      "/tmp/a/wiki/topic.md",
+      expect.stringContaining('sources: ["new/report.md"]'),
+    )
+    expect(mocks.moveIngestCacheEntry).toHaveBeenCalledWith(
+      "/tmp/a",
+      "old/report.md",
+      "new/report.md",
+      expect.any(Map),
+    )
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.deleteFile).not.toHaveBeenCalled()
+  })
+
+  it("does not infer a move when either hash side is ambiguous", async () => {
+    vi.useFakeTimers()
+    const { startProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    void startProjectFileSync(project)
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+
+    const base = { projectId: "A", status: "done", size: 100, createdAt: 1, updatedAt: 1, retryCount: 0, needsRerun: false } as const
+    mocks.emit("file-sync://changed", {
+      projectId: "A",
+      tasks: [
+        { ...base, id: "d1", path: "raw/sources/a.md", kind: "deleted", hashBefore: "same" },
+        { ...base, id: "d2", path: "raw/sources/b.md", kind: "deleted", hashBefore: "same" },
+        { ...base, id: "c", path: "raw/sources/c.md", kind: "created", hashAfter: "same" },
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(mocks.moveIngestCacheEntry).not.toHaveBeenCalled()
+    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
+      { sourcePath: "raw/sources/c.md", folderContext: "" },
+    ])
+  })
+
+  it("does not infer moves for tiny identical files", async () => {
+    vi.useFakeTimers()
+    const { startProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    void startProjectFileSync(project)
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+    const base = { projectId: "A", status: "done", size: 0, createdAt: 1, updatedAt: 1, retryCount: 0, needsRerun: false } as const
+    mocks.emit("file-sync://changed", {
+      projectId: "A",
+      tasks: [
+        { ...base, id: "d", path: "raw/sources/empty-a.md", kind: "deleted", hashBefore: "empty" },
+        { ...base, id: "c", path: "raw/sources/empty-b.md", kind: "created", hashAfter: "empty" },
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mocks.moveIngestCacheEntry).not.toHaveBeenCalled()
+  })
+
+  it("consumes a proven move even when one wiki reference cannot be rewritten", async () => {
+    vi.useFakeTimers()
+    const { startProjectFileSync } = await import("@/lib/project-file-sync")
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const project = { id: "A", name: "A", path: "/tmp/a" }
+    useWikiStore.getState().setProject(project)
+    mocks.listDirectory.mockResolvedValue([
+      { name: "locked.md", path: "/tmp/a/wiki/locked.md", is_dir: false },
+    ])
+    mocks.readFile.mockResolvedValue("---\nsources: [old.md]\n---\n# Locked")
+    mocks.writeFile.mockRejectedValueOnce(new Error("permission denied"))
+    void startProjectFileSync(project)
+    await vi.waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+    const base = { projectId: "A", status: "done", size: 100, createdAt: 1, updatedAt: 1, retryCount: 0, needsRerun: false } as const
+    mocks.emit("file-sync://changed", {
+      projectId: "A",
+      tasks: [
+        { ...base, id: "d", path: "raw/sources/old.md", kind: "deleted", hashBefore: "same" },
+        { ...base, id: "c", path: "raw/sources/new.md", kind: "created", hashAfter: "same" },
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(mocks.moveIngestCacheEntry).not.toHaveBeenCalled()
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.deleteFile).not.toHaveBeenCalled()
   })
 
   it("does not ingest preprocessed cache files from raw/sources/.cache", async () => {

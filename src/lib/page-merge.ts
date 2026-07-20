@@ -84,6 +84,11 @@ export interface MergePageOptions {
   /** Date provider for the `updated` field. Injectable for
    *  deterministic tests. Defaults to today's UTC date. */
   today?: () => string
+  /**
+   * Replace the old body after a corrected source is regenerated, while
+   * retaining union fields, locked metadata, and a recovery backup.
+   */
+  replaceExistingBody?: boolean
 }
 
 export async function mergePageContent(
@@ -111,6 +116,21 @@ export async function mergePageContent(
   // skip the LLM.
   const oldParsed = parseFrontmatter(existingContent)
   const arrayMergedParsed = parseFrontmatter(arrayMerged)
+  if (opts.replaceExistingBody) {
+    await tryBackup(opts, existingContent)
+    let replacement = arrayMerged
+    for (const field of LOCKED_FIELDS) {
+      const existingValue = oldParsed.frontmatter?.[field]
+      if (typeof existingValue === "string" && existingValue !== "") {
+        replacement = setFrontmatterScalar(replacement, field, existingValue)
+      }
+    }
+    return setFrontmatterScalar(
+      replacement,
+      "updated",
+      (opts.today ?? defaultToday)(),
+    )
+  }
   if (oldParsed.body.trim() === arrayMergedParsed.body.trim()) {
     return arrayMerged
   }

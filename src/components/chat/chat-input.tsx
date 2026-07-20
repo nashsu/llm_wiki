@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { FileSearch, FileText, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
+import { BrainCircuit, FileSearch, FileText, Globe2, ImagePlus, Send, Sparkles, Square, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import type { MessageImage } from "@/stores/chat-store"
-import type { ChatAgentMode } from "@/lib/chat-agent-types"
+import type { ChatAgentMode, ChatRetrievalMode } from "@/lib/chat-agent-types"
 import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_MB,
@@ -19,6 +19,7 @@ export interface ChatSendOptions {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   skills: string[]
   contextFiles: string[]
   skillMode?: "auto" | "explicit"
@@ -27,6 +28,7 @@ export interface ChatSendOptions {
 }
 
 const AGENT_MODE_OPTIONS: ChatAgentMode[] = ["fast", "standard", "deep", "local_first"]
+const RETRIEVAL_MODE_OPTIONS: ChatRetrievalMode[] = ["standard", "smart"]
 
 export interface ChatSkillOption {
   id: string
@@ -134,6 +136,7 @@ interface ChatInputProps {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
   agentMode: ChatAgentMode
+  retrievalMode: ChatRetrievalMode
   availableSkills: ChatSkillOption[]
   selectedSkills: string[]
   availableContextFiles: string[]
@@ -141,6 +144,7 @@ interface ChatInputProps {
   onUseWebSearchChange: (enabled: boolean) => void
   onUseAnyTxtSearchChange: (enabled: boolean) => void
   onAgentModeChange: (mode: ChatAgentMode) => void
+  onRetrievalModeChange: (mode: ChatRetrievalMode) => void
   onSelectedSkillsChange: (skills: string[]) => void
   onSelectedContextFilesChange: (paths: string[]) => void
   anyTxtAvailable?: boolean
@@ -155,6 +159,7 @@ export function ChatInput({
   useWebSearch,
   useAnyTxtSearch,
   agentMode,
+  retrievalMode,
   availableSkills,
   selectedSkills,
   availableContextFiles,
@@ -162,6 +167,7 @@ export function ChatInput({
   onUseWebSearchChange,
   onUseAnyTxtSearchChange,
   onAgentModeChange,
+  onRetrievalModeChange,
   onSelectedSkillsChange,
   onSelectedContextFilesChange,
   anyTxtAvailable = true,
@@ -369,6 +375,7 @@ export function ChatInput({
       useWebSearch,
       useAnyTxtSearch,
       agentMode,
+      retrievalMode,
       skills: selectedSkills,
       contextFiles: selectedContextFiles,
       skillMode: selectedSkills.length > 0 ? "explicit" : "auto",
@@ -380,7 +387,7 @@ export function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
     }
-  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, selectedContextFiles, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
+  }, [agentMode, imageInputAvailable, images, isStreaming, onSend, retrievalMode, selectedContextFiles, selectedSkills, t, useAnyTxtSearch, useWebSearch, value])
 
   const applySlashSkill = useCallback(
     (skill: ChatSkillOption) => {
@@ -803,6 +810,36 @@ export function ChatInput({
                   </div>
                 </div>
               )}
+            </div>
+            <div
+              className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"
+              role="radiogroup"
+              aria-label={t("chat.retrievalMode")}
+              title={t("chat.retrievalModeHint")}
+            >
+              <BrainCircuit className="mx-1 h-3.5 w-3.5 text-muted-foreground" />
+              {RETRIEVAL_MODE_OPTIONS.map((retrieval) => {
+                const active = retrievalMode === retrieval
+                return (
+                  <button
+                    key={retrieval}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={isStreaming}
+                    onClick={() => onRetrievalModeChange(retrieval)}
+                    className={`h-6 rounded px-2 text-xs font-medium transition-colors ${
+                      active
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    } disabled:pointer-events-none disabled:opacity-50`}
+                  >
+                    {retrieval === "smart"
+                      ? t("chat.retrievalModes.smart")
+                      : t("chat.retrievalModes.standard")}
+                  </button>
+                )
+              })}
             </div>
             <div
               className="inline-flex h-7 items-center rounded-md border border-border/70 bg-muted/30 p-0.5"

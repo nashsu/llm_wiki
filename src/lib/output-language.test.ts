@@ -29,6 +29,14 @@ describe("getOutputLanguage", () => {
     expect(getOutputLanguage("پردازش زبان طبیعی در فارسی کاربردهای زیادی دارد")).toBe("Persian")
   })
 
+  it("supports Czech as both an explicit and auto-detected output language", () => {
+    useWikiStore.getState().setOutputLanguage("Czech")
+    expect(getOutputLanguage("English fallback text")).toBe("Czech")
+
+    useWikiStore.getState().setOutputLanguage("auto")
+    expect(getOutputLanguage("Příliš žluťoučký kůň úpěl ďábelské ódy")).toBe("Czech")
+  })
+
   it("auto mode with empty fallback defaults to English", () => {
     useWikiStore.getState().setOutputLanguage("auto")
     expect(getOutputLanguage("")).toBe("English")
@@ -80,6 +88,11 @@ describe("buildLanguageDirective", () => {
     useWikiStore.getState().setOutputLanguage("Persian")
     const directive = buildLanguageDirective()
     expect(directive).toContain("MANDATORY OUTPUT LANGUAGE: Persian (Farsi / فارسی)")
+  })
+
+  it("uses the explicit Czech prompt name", () => {
+    useWikiStore.getState().setOutputLanguage("Czech")
+    expect(buildLanguageDirective()).toContain("MANDATORY OUTPUT LANGUAGE: Czech / čeština")
   })
 
   it("uses the source as evidence without translating proper nouns", () => {
