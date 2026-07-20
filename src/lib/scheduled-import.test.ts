@@ -81,6 +81,21 @@ describe("scheduled import path handling", () => {
     )
   })
 
+  it("preserves nested relative paths when the import root differs only in case (Windows)", () => {
+    const dest = scheduledImportDestinationForFile(
+      "C:/Users/Me/Wiki",
+      "C:/Users/Me/Inbox",
+      {
+        name: "report.pdf",
+        path: "c:/users/me/inbox/sub/report.pdf",
+      },
+    )
+
+    expect(dest).toBe(
+      "C:/Users/Me/Wiki/raw/sources/scheduled-import/sub/report.pdf",
+    )
+  })
+
   it("does not copy files that are already under raw/sources", () => {
     const dest = scheduledImportDestinationForFile(
       projectPath,
