@@ -34,6 +34,7 @@ interface LlmConfig {
   azureModelFamily?: AzureModelFamily
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
+  customHeaders?: Record<string, string>
   reasoning?: ReasoningConfig
   /**
    * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
@@ -322,6 +323,7 @@ export interface ProviderOverride {
   azureApiVersion?: string
   azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
+  customHeaders?: Record<string, string>
   maxContextSize?: number
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean

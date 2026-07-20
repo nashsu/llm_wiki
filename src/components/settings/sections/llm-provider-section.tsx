@@ -12,6 +12,7 @@ import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
 import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
+<<<<<<< HEAD
 import { projectLlmProfile, resolveProjectLlmConfig } from "@/lib/llm-task-routing"
 import { saveProjectLlmOverride } from "@/lib/project-store"
 
@@ -34,6 +35,9 @@ export function parseLlmHeadersText(text: string): Record<string, string> {
   }
   return headers
 }
+=======
+import { headersToText, parseHeadersText } from "@/lib/http-headers"
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
 
 export function LlmProviderSection() {
   const { t } = useTranslation()
@@ -386,8 +390,13 @@ function PresetRow({
   const [headersText, setHeadersText] = useState(() => llmHeadersToText(ov.customHeaders))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
+<<<<<<< HEAD
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
     || Object.keys(ov.customHeaders ?? {}).length > 0 || ov.streamingEnabled === false
+=======
+  const [headersText, setHeadersText] = useState<string>(() => headersToText(ov.customHeaders ?? preset.customHeaders ?? {}))
+  const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily || !!ov.customHeaders
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
   // Local CLI providers authenticate via their own existing login state
   // (inherited by the spawned subprocess), so no API key field is shown.
   // Ollama ditto for its local-only model.
@@ -397,8 +406,13 @@ function PresetRow({
     preset.provider !== "codex-cli"
 
   const resolvedConfig = useMemo(
+<<<<<<< HEAD
     () => resolveConfig(preset, ov, useWikiStore.getState().globalLlmConfig),
     [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov],
+=======
+    () => resolveConfig(preset, ov, useWikiStore.getState().llmConfig),
+    [apiKey, apiMode, azureApiVersion, azureModelFamily, baseUrl, context, model, preset, reasoning, ov.customHeaders, ov],
+>>>>>>> 145742489df5edc34b71069b624f0f13233e026a
   )
 
   async function runProviderTest(kind: "connection" | "function") {
@@ -536,6 +550,27 @@ function PresetRow({
                   )
                 })}
               </div>
+            </div>
+          )}
+
+          {preset.provider === "custom" && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
+              <textarea
+                value={headersText}
+onChange={(e) => {
+  const text = e.target.value
+  setHeadersText(text)
+  const parsed = parseHeadersText(text)
+  onChange({ customHeaders: Object.keys(parsed).length ? parsed : undefined })
+}}
+                placeholder={"X-Model-Provider-Id: siliconflow\nX-Custom-Header: value"}
+                rows={3}
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.embedding.extraHeadersHint")}
+              </p>
             </div>
           )}
 

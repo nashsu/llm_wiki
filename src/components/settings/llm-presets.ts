@@ -55,6 +55,7 @@ export interface LlmPreset {
   suggestedModels?: string[]
   /** Custom providers only: which wire protocol to speak. */
   apiMode?: CustomApiMode
+  customHeaders?: Record<string, string>
   /** Suggested context window; user can override. */
   suggestedContextSize?: number
 }
