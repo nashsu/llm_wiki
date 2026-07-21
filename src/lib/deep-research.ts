@@ -89,6 +89,7 @@ export async function collectResearchSources(
   options: CollectResearchSourceOptions = {},
 ): Promise<ResearchSourceCollection> {
   const resolvedSearchConfig = resolveSearchConfig(searchConfig)
+  const maxSources = resolvedSearchConfig.deepResearchMaxSources ?? MAX_RESEARCH_SOURCES
   const sourceMode = resolvedSearchConfig.deepResearchSource ?? "web"
   const useWeb = sourceMode === "web" || sourceMode === "both"
   const useAnyTxt = hasAnyTxtSource(resolvedSearchConfig) && hasConfiguredAnyTxt(resolvedSearchConfig.anyTxt)
@@ -100,9 +101,9 @@ export async function collectResearchSources(
 
   function addResults(results: import("./web-search").WebSearchResult[]) {
     for (const r of results) {
-      if (allResults.length >= MAX_RESEARCH_SOURCES) {
+      if (allResults.length >= maxSources) {
         if (!cappedWarned) {
-          console.info(`[DeepResearch] capped at ${MAX_RESEARCH_SOURCES} research sources; later results were truncated.`)
+          console.info(`[DeepResearch] capped at ${maxSources} research sources; later results were truncated.`)
           cappedWarned = true
         }
         return
@@ -171,7 +172,9 @@ function processQueue(
 ) {
   const store = useResearchStore.getState()
   const running = store.getRunningCount()
-  const available = store.maxConcurrent - running
+  const resolved = resolveSearchConfig(searchConfig)
+  const concurrencyLimit = resolved.deepResearchConcurrency ?? store.maxConcurrent
+  const available = concurrencyLimit - running
 
   for (let i = 0; i < available; i++) {
     const next = useResearchStore.getState().getNextQueued()
