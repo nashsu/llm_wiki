@@ -170,7 +170,7 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
       "---FILE: wiki/concepts/moe.md---",
       "# Mixture of Exp", // stream cut here
     ].join("\n")
-    const { blocks, warnings } = parseFileBlocks(text)
+    const { blocks, warnings, truncatedPaths } = parseFileBlocks(text)
     // Completed block makes it through.
     expect(blocks).toHaveLength(1)
     expect(blocks[0].path).toBe("wiki/entities/qwen.md")
@@ -178,6 +178,7 @@ describe("parseFileBlocks — H2: truncated streams (surface, don't hide)", () =
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toMatch(/wiki\/concepts\/moe\.md/)
     expect(warnings[0]).toMatch(/not closed/i)
+    expect(truncatedPaths).toEqual(["wiki/concepts/moe.md"])
   })
 
   it("warns when the only block is unclosed", () => {
