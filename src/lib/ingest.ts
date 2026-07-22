@@ -350,6 +350,7 @@ export interface ParseFileBlocksResult {
    *  one is also console.warn'd. UI can surface these so users see that
    *  something was skipped instead of silently getting fewer pages. */
   warnings: string[]
+  truncatedPaths: string[]
 }
 
 // Line-level openers / closers. Both are case-insensitive, tolerant of
@@ -460,6 +461,7 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
 
   const blocks: ParsedFileBlock[] = []
   const warnings: string[] = []
+  const truncatedPaths: string[] = []
 
   let i = 0
   while (i < lines.length) {
@@ -520,6 +522,7 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
       const msg = `FILE block "${pathLabel}" was not closed before end of stream — likely truncation (model hit max_tokens, timeout, or connection dropped). Block dropped.`
       console.warn(`[ingest] ${msg}`)
       warnings.push(msg)
+      if (isSafeIngestPath(path)) truncatedPaths.push(path)
       continue
     }
 
@@ -543,7 +546,7 @@ export function parseFileBlocks(text: string): ParseFileBlocksResult {
     blocks.push({ path, content: contentLines.join("\n") })
   }
 
-  return { blocks, warnings }
+  return { blocks, warnings, truncatedPaths }
 }
 
 /**
@@ -1122,6 +1125,99 @@ async function autoIngestImpl(
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
   const hardFailures = writeResult.hardFailures
+  let unrecoveredTruncatedPaths = writeResult.truncatedPaths.filter((path) =>
+    !writtenPaths.some((writtenPath) => normalizePath(writtenPath) === normalizePath(path))
+  )
+
+  if (unrecoveredTruncatedPaths.length > 0 && !signal?.aborted) {
+    activity.updateItem(activityId, {
+      detail: `Retrying truncated wiki files: ${unrecoveredTruncatedPaths.join(", ")}`,
+    })
+    let repairOutput = ""
+    let repairFailed = false
+    try {
+      await streamChat(
+        llmConfig,
+        [
+          {
+            role: "system",
+            content: buildTruncatedFileRepairPrompt(
+              unrecoveredTruncatedPaths,
+              sourceIdentity,
+              {
+                schema,
+                purpose,
+                analysis,
+                sourceContext,
+                maxContextSize: llmConfig.maxContextSize,
+              },
+            ),
+          },
+          {
+            role: "user",
+            content: "Regenerate the requested FILE blocks now. Start immediately with `---FILE:`.",
+          },
+        ],
+        {
+          onToken: (token) => { repairOutput += token },
+          onDone: () => {},
+          onError: (err) => {
+            repairFailed = true
+            writeWarnings.push(`Truncated FILE repair failed: ${err.message}`)
+          },
+        },
+        signal,
+        {
+          temperature: 0.1,
+          reasoning: { mode: "off" },
+          max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
+        },
+      )
+      throwIfIngestAborted(signal, activityId)
+
+      if (!repairFailed && repairOutput.trim()) {
+        const filteredRepair = filterTruncatedFileRepairOutput(
+          repairOutput,
+          unrecoveredTruncatedPaths,
+        )
+        writeWarnings.push(...filteredRepair.warnings)
+        const repairResult = await writeFileBlocks(
+          pp,
+          filteredRepair.text,
+          llmConfig,
+          sourceIdentity,
+          sourceSummaryPath,
+          signal,
+          activityId,
+          onFileWritten,
+        )
+        const recoveredPaths = repairResult.writtenPaths.length === filteredRepair.paths.length
+          ? filteredRepair.paths
+          : []
+        for (const path of repairResult.writtenPaths) {
+          if (!writtenPaths.some((writtenPath) => normalizePath(writtenPath) === normalizePath(path))) {
+            writtenPaths.push(path)
+          }
+        }
+        for (const path of recoveredPaths) {
+          const warningPrefix = `FILE block "${path}" was not closed before end of stream`
+          for (let i = writeWarnings.length - 1; i >= 0; i--) {
+            if (writeWarnings[i].startsWith(warningPrefix)) writeWarnings.splice(i, 1)
+          }
+        }
+        writeWarnings.push(...repairResult.warnings)
+        hardFailures.push(...repairResult.hardFailures)
+        unrecoveredTruncatedPaths = unrecoveredTruncatedPaths.filter((path) =>
+          !recoveredPaths.includes(path)
+        )
+      }
+    } catch (err) {
+      throwIfIngestAborted(signal, activityId)
+      writeWarnings.push(
+        `Truncated FILE repair failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
 
   try {
     if (await updateWikiIndexDeterministically(pp, writtenPaths)) {
@@ -1215,22 +1311,20 @@ async function autoIngestImpl(
   }
 
   // ── Step 5: Save to cache ───────────────────────────────────
-  // Skip cache when ANY block hit a hard FS failure: we'd otherwise
-  // freeze the partial-write result into the cache and a future
-  // re-ingest of the same source would silently replay only the
-  // pages that succeeded the first time, never giving the user a
-  // chance to recover the failed ones. Soft drops (language
-  // mismatch, path-traversal rejection, empty-path) are NOT failures
-  // — they represent deterministic decisions and caching them is
-  // safe.
-  if (writtenPaths.length > 0 && hardFailures.length === 0) {
+  // Skip cache when a write fails or a truncated path remains unrecovered;
+  // otherwise the partial result would be replayed without another LLM turn.
+  if (
+    writtenPaths.length > 0 &&
+    hardFailures.length === 0 &&
+    unrecoveredTruncatedPaths.length === 0
+  ) {
     await saveIngestCache(pp, sourceIdentity, sourceContent, writtenPaths)
     if (longSourceCheckpointPath) {
       await clearLongSourceCheckpoint(longSourceCheckpointPath)
     }
-  } else if (hardFailures.length > 0) {
+  } else if (hardFailures.length > 0 || unrecoveredTruncatedPaths.length > 0) {
     console.warn(
-      `[ingest] Skipping cache save for "${sourceIdentity}" — ${hardFailures.length} block(s) failed to write: ${hardFailures.join(", ")}`,
+      `[ingest] Skipping cache save for "${sourceIdentity}" — ${hardFailures.length} write failure(s), ${unrecoveredTruncatedPaths.length} truncated FILE block(s) still missing.`,
     )
   }
 
@@ -1688,8 +1782,8 @@ async function writeFileBlocks(
   signal?: AbortSignal,
   activityId?: string,
   onFileWritten?: (relativePath: string) => void,
-): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[] }> {
-  const { blocks, warnings: parseWarnings } = parseFileBlocks(text)
+): Promise<{ writtenPaths: string[]; warnings: string[]; hardFailures: string[]; truncatedPaths: string[] }> {
+  const { blocks, warnings: parseWarnings, truncatedPaths } = parseFileBlocks(text)
   const warnings = [...parseWarnings]
   const writtenPaths: string[] = []
   // "Hard failures" = blocks we INTENDED to write but the FS rejected
@@ -1851,7 +1945,7 @@ async function writeFileBlocks(
     }
   }
 
-  return { writtenPaths, warnings, hardFailures }
+  return { writtenPaths, warnings, hardFailures, truncatedPaths }
 }
 
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
@@ -2229,6 +2323,63 @@ function buildReviewSuggestionPrompt(
     "## Generated Wiki Output",
     trimLongText(generation, sectionCap),
   ].filter(Boolean).join("\n")
+}
+
+type TruncatedFileRepairContext = {
+  readonly schema: string
+  readonly purpose: string
+  readonly analysis: string
+  readonly sourceContext: string
+  readonly maxContextSize: number | undefined
+}
+
+function buildTruncatedFileRepairPrompt(
+  paths: readonly string[],
+  sourceIdentity: string,
+  context: TruncatedFileRepairContext,
+): string {
+  const { schema, purpose, analysis, sourceContext, maxContextSize } = context
+  const { maxCtx } = computeContextBudget(maxContextSize)
+  const sectionCap = Math.max(4_000, Math.floor(maxCtx * 0.12))
+  return [
+    "You are repairing truncated wiki FILE blocks from an earlier generation.",
+    "Return exactly one complete FILE block for each requested path and no other files.",
+    "Every block must end with `---END FILE---`. Do not output a preamble, REVIEW blocks, or trailing commentary.",
+    "Preserve the requested paths exactly and include the source identity in each page's frontmatter `sources` field.",
+    "",
+    languageRule(sourceContext),
+    "",
+    "## Requested paths",
+    ...paths.map((path) => `- ${path}`),
+    "",
+    `## Source identity\n${sourceIdentity}`,
+    schema ? `## Project schema\n${trimLongText(schema, sectionCap)}` : "",
+    purpose ? `## Wiki purpose\n${trimLongText(purpose, sectionCap)}` : "",
+    `## Stage 1 analysis\n${trimLongText(analysis, sectionCap)}`,
+    `## Source context\n${trimLongText(sourceContext, sectionCap)}`,
+  ].filter(Boolean).join("\n")
+}
+
+function filterTruncatedFileRepairOutput(
+  text: string,
+  allowedPaths: readonly string[],
+): { text: string; paths: string[]; warnings: string[] } {
+  const allowed = new Set(allowedPaths.map(normalizePath))
+  const { blocks, warnings } = parseFileBlocks(text)
+  const kept = blocks.filter((block) => allowed.has(normalizePath(block.path)))
+  const dropped = blocks.filter((block) => !allowed.has(normalizePath(block.path)))
+  if (dropped.length > 0) {
+    warnings.push(
+      `Dropped ${dropped.length} unrequested FILE block(s) from truncated repair output: ${dropped.map((block) => block.path).join(", ")}`,
+    )
+  }
+  return {
+    text: kept
+      .map((block) => `---FILE: ${block.path}---\n${block.content.trimEnd()}\n---END FILE---`)
+      .join("\n\n"),
+    paths: kept.map((block) => block.path),
+    warnings,
+  }
 }
 
 function getStore() {
