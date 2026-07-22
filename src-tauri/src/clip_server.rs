@@ -20,6 +20,15 @@ const MAX_RESTART_RETRIES: u32 = 10;
 const BIND_RETRY_DELAY_SECS: u64 = 2;
 const RESTART_DELAY_SECS: u64 = 5;
 
+const fn next_restart_count(current: u32) -> Option<u32> {
+    let next = current.saturating_add(1);
+    if next >= MAX_RESTART_RETRIES {
+        None
+    } else {
+        Some(next)
+    }
+}
+
 /// Get current daemon status as a string
 pub fn get_daemon_status() -> &'static str {
     match DAEMON_STATUS.load(Ordering::Relaxed) {
@@ -89,7 +98,6 @@ pub fn start_clip_server(app: AppHandle) {
             };
 
             DAEMON_STATUS.store(1, Ordering::Relaxed); // running
-            restart_count = 0; // Reset on successful bind
             println!("[Clip Server] Listening on http://{}", addr);
 
             for mut request in server.incoming_requests() {
@@ -293,15 +301,16 @@ pub fn start_clip_server(app: AppHandle) {
 
             // Server loop exited (shouldn't happen normally)
             DAEMON_STATUS.store(3, Ordering::Relaxed); // error
-            restart_count += 1;
-
-            if restart_count >= MAX_RESTART_RETRIES {
-                eprintln!(
-                    "[Clip Server] Exceeded max restarts ({}). Giving up.",
-                    MAX_RESTART_RETRIES
-                );
-                return;
-            }
+            restart_count = match next_restart_count(restart_count) {
+                Some(next) => next,
+                None => {
+                    eprintln!(
+                        "[Clip Server] Exceeded max restarts ({}). Giving up.",
+                        MAX_RESTART_RETRIES
+                    );
+                    return;
+                }
+            };
 
             eprintln!(
                 "[Clip Server] Crashed. Restarting in {}s (attempt {}/{})",
@@ -342,7 +351,7 @@ fn request_is_authorized(app: &AppHandle, request: &tiny_http::Request) -> bool 
 
 #[cfg(test)]
 mod lan_auth_tests {
-    use super::address_is_loopback;
+    use super::{address_is_loopback, next_restart_count, MAX_RESTART_RETRIES};
     use std::net::SocketAddr;
 
     #[test]
@@ -354,6 +363,16 @@ mod lan_auth_tests {
         assert!(address_is_loopback(Some(&ipv6)));
         assert!(!address_is_loopback(Some(&lan)));
         assert!(!address_is_loopback(None));
+    }
+
+    #[test]
+    fn restart_counter_stops_at_the_configured_limit() {
+        let mut count = 0;
+        for expected in 1..MAX_RESTART_RETRIES {
+            count = next_restart_count(count).unwrap();
+            assert_eq!(count, expected);
+        }
+        assert_eq!(next_restart_count(count), None);
     }
 }
 
