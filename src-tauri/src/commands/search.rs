@@ -24,6 +24,8 @@ const MAX_SEARCH_FILES: usize = 10_000;
 const MIN_GRAPH_RESULT_RATIO: f64 = 0.15;
 const MAX_GRAPH_RESULT_RATIO: f64 = 0.30;
 const MAX_GRAPH_SEEDS: usize = 20;
+// The Jaccard threshold for considering two pages as related by source overlap.
+const SOURCE_JACCARD_THRESHOLD: f64 = 0.3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +67,7 @@ struct GraphPage {
     title: String,
     content: String,
     links: Vec<String>,
+    sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,6 +204,7 @@ fn get_page_links_inner(project_path: &str, file_path: &str) -> Result<PageLinks
                 path,
                 title,
                 links: extract_wikilinks(&content),
+                sources: extract_sources(&content),
                 content,
             },
         );
@@ -398,6 +402,7 @@ pub async fn search_project_inner(
                     path: relative_path,
                     title,
                     links: extract_wikilinks(&content),
+                    sources: extract_sources(&content),
                     content,
                 },
             );
@@ -560,6 +565,76 @@ fn blend_graph_results(
         }
     }
 
+    // Source overlap: two pages that share a common source (from frontmatter
+    // `sources:`) are treated as graph neighbors. This complements wikilinks
+    // by surfacing pages that draw from the same reference material even when
+    // they don't explicitly link to each other.
+    //
+    // Neighbor edges are only created when the Jaccard similarity of the two
+    // source sets exceeds SOURCE_JACCARD_THRESHOLD (0.3). This prevents weak,
+    // accidental connections — two pages that each cite 10 sources but only
+    // share 1 would have Jaccard ≈ 0.05 and are rightfully excluded.
+    let mut page_sources: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (path, page) in pages {
+        let source_set: BTreeSet<String> = page
+            .sources
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| normalize_graph_alias(s))
+            .collect();
+        page_sources.insert(path.clone(), source_set);
+    }
+
+    let mut source_to_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (path, sources) in &page_sources {
+        for src in sources {
+            source_to_pages
+                .entry(src.clone())
+                .or_default()
+                .insert(path.clone());
+        }
+    }
+
+    let mut seen_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for page_set in source_to_pages.values() {
+        if page_set.len() < 2 {
+            continue;
+        }
+        for a in page_set {
+            for b in page_set {
+                if a == b {
+                    continue;
+                }
+                let key = if a < b {
+                    (a.clone(), b.clone())
+                } else {
+                    (b.clone(), a.clone())
+                };
+                if seen_pairs.contains(&key) {
+                    continue;
+                }
+                seen_pairs.insert(key.clone());
+
+                let sources_a = page_sources.get(key.0.as_str()).unwrap();
+                let sources_b = page_sources.get(key.1.as_str()).unwrap();
+                let intersection = sources_a.intersection(sources_b).count();
+                let union = sources_a.union(sources_b).count();
+                let jaccard = intersection as f64 / union as f64;
+
+                if jaccard > SOURCE_JACCARD_THRESHOLD {
+                    adjacency
+                        .entry(key.0.clone())
+                        .or_default()
+                        .insert(key.1.clone());
+                    adjacency
+                        .entry(key.1)
+                        .or_default()
+                        .insert(key.0);
+                }
+            }
+        }
+    }
+
     let seed_paths: Vec<String> = ranked_results
         .iter()
         .take(limit.min(MAX_GRAPH_SEEDS))
@@ -681,6 +756,81 @@ fn extract_wikilinks(content: &str) -> Vec<String> {
         rest = &rest[end + 2..];
     }
     links
+}
+
+/// Extract `sources` from YAML frontmatter. Supports two shapes:
+///
+///   sources: ["a.pdf", "b.pdf"]
+///   sources:
+///     - "a.pdf"
+///     - "b.pdf"
+///
+/// Returns an empty vec when there is no frontmatter or no sources key.
+fn extract_sources(content: &str) -> Vec<String> {
+    let fm = match frontmatter_block(content) {
+        Some(fm) => fm,
+        None => return Vec::new(),
+    };
+
+    // Single-line inline array: sources: ["a.pdf", "b.pdf"] or sources: [a.pdf]
+    if let Some(caps) = fm_match(&fm, "sources:") {
+        let rest = caps.trim();
+        if rest.starts_with('[') {
+            return rest
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+
+    // Multi-line YAML list:
+    //   sources:
+    //     - "a.pdf"
+    //     - "b.pdf"
+    let mut sources = Vec::new();
+    let mut in_sources = false;
+    for line in fm.lines() {
+        let trimmed = line.trim();
+        if trimmed == "sources:" {
+            in_sources = true;
+            continue;
+        }
+        if in_sources {
+            if let Some(item) = trimmed.strip_prefix("- ") {
+                let cleaned = item.trim().trim_matches('"').trim_matches('\'').to_string();
+                if !cleaned.is_empty() {
+                    sources.push(cleaned);
+                }
+                continue;
+            }
+            // Exit the sources block when we hit another key or empty line
+            if trimmed.is_empty() || trimmed.contains(':') {
+                break;
+            }
+        }
+    }
+    sources
+}
+
+/// Return the YAML payload between the first `---...---` block, if any.
+fn frontmatter_block(content: &str) -> Option<&str> {
+    let rest = content.strip_prefix("---")?;
+    let end = rest.find("\n---")?;
+    Some(&rest[..end])
+}
+
+/// Find the value after a key in frontmatter text. Returns the portion of the
+/// line after `key`, or None when the key isn't found.
+fn fm_match<'a>(fm: &'a str, key: &str) -> Option<&'a str> {
+    for line in fm.lines() {
+        if let Some(rest) = line.trim().strip_prefix(key) {
+            return Some(rest);
+        }
+    }
+    None
 }
 
 fn search_mode(token_rank_empty: bool, vector_hits: usize, graph_hits: usize) -> &'static str {
@@ -2079,6 +2229,139 @@ mod tests {
                 && result.graph_related_to == vec!["Agent Runtime"]
         }));
         assert!(!out.results.iter().any(|result| result.title == "Unrelated"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extract_sources_parses_inline_and_multiline_yaml() {
+        // Inline JSON-style array
+        let sources = extract_sources("---\ntitle: Test\nsources: [\"a.pdf\", \"b.pdf\"]\n---\n\n# Body");
+        assert_eq!(sources, vec!["a.pdf", "b.pdf"]);
+
+        // Inline unquoted array
+        let sources = extract_sources("---\nsources: [doc-A.pdf, doc-B.pdf]\n---\n\n# Body");
+        assert_eq!(sources, vec!["doc-A.pdf", "doc-B.pdf"]);
+
+        // Multi-line YAML list
+        let sources = extract_sources(
+            "---\ntitle: Test\nsources:\n  - \"a.pdf\"\n  - \"b.pdf\"\n---\n\n# Body",
+        );
+        assert_eq!(sources, vec!["a.pdf", "b.pdf"]);
+
+        // Empty sources list
+        let sources = extract_sources("---\nsources: []\n---\n\n# Body");
+        assert!(sources.is_empty());
+
+        // No sources key
+        let sources = extract_sources("---\ntitle: Only\n---\n\n# Body");
+        assert!(sources.is_empty());
+
+        // No frontmatter at all
+        let sources = extract_sources("# Just a heading");
+        assert!(sources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn graph_search_blends_source_overlap_neighbors() {
+        let root = tmp_project();
+        // Page A cites doc-X.pdf and doc-Y.pdf. Its body carries a unique
+        // keyword so it is the sole keyword hit — the other pages can only
+        // surface through graph expansion.
+        write_page(
+            &root,
+            "wiki/concepts/page-a.md",
+            "---\ntitle: Page A\nsources:\n  - \"doc-X.pdf\"\n  - \"doc-Y.pdf\"\n---\n\n# Page A\n\nZirconiumKeyword content about A.",
+        );
+        // Page B cites doc-X.pdf (shares one source with Page A =>
+        // Jaccard = 1/2 = 0.5 > 0.3)
+        write_page(
+            &root,
+            "wiki/concepts/page-b.md",
+            "---\ntitle: Page B\nsources: [\"doc-X.pdf\"]\n---\n\n# Page B\n\nContent about B.",
+        );
+        // Page C cites doc-Y.pdf (shares one source with Page A =>
+        // Jaccard = 1/2 = 0.5 > 0.3)
+        write_page(
+            &root,
+            "wiki/concepts/page-c.md",
+            "---\ntitle: Page C\nsources: [\"doc-Y.pdf\"]\n---\n\n# Page C\n\nContent about C.",
+        );
+        // Page D has no sources and no wikilinks — completely isolated
+        write_page(
+            &root,
+            "wiki/concepts/page-d.md",
+            "---\ntitle: Page D\n---\n\n# Page D\n\nIsolated page.",
+        );
+
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "ZirconiumKeyword".into(),
+            10,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Page A should be the only keyword hit
+        assert!(out.results.iter().any(|r| r.title == "Page A"));
+        // Page B and Page C should appear as graph neighbors via source overlap
+        assert!(out.results.iter().any(|r| {
+            r.title == "Page B"
+                && r.graph_related_to.contains(&"Page A".to_string())
+        }));
+        assert!(out.results.iter().any(|r| {
+            r.title == "Page C"
+                && r.graph_related_to.contains(&"Page A".to_string())
+        }));
+        // Page D should NOT appear (no connection)
+        assert!(!out.results.iter().any(|r| r.title == "Page D"));
+        assert_eq!(out.mode, "hybrid");
+        assert!(out.graph_hits > 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn source_overlap_and_wikilinks_combine_in_graph() {
+        let root = tmp_project();
+        // Two pages share a source AND have a wikilink — edges from both
+        // mechanisms should merge (no duplicate edges). Beta's content
+        // deliberately avoids the query word so it can only appear as a
+        // graph neighbor.
+        write_page(
+            &root,
+            "wiki/concepts/alpha.md",
+            "---\ntitle: Alpha\nsources: [\"shared.pdf\"]\n---\n\n# Alpha\n\nSee [[Beta]]. UniqueQueryTerm here.",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/beta.md",
+            "---\ntitle: Beta\nsources: [\"shared.pdf\"]\n---\n\n# Beta\n\nLinked from elsewhere.",
+        );
+
+        let out = search_project_inner(
+            root.to_string_lossy().to_string(),
+            "UniqueQueryTerm".into(),
+            10,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Beta should appear exactly once as a graph neighbor (via both
+        // wikilink and source overlap, deduplicated by BTreeSet)
+        let beta_results: Vec<_> = out
+            .results
+            .iter()
+            .filter(|r| r.title == "Beta")
+            .collect();
+        assert_eq!(beta_results.len(), 1);
+        assert!(beta_results[0]
+            .graph_related_to
+            .contains(&"Alpha".to_string()));
+
         let _ = fs::remove_dir_all(root);
     }
 
