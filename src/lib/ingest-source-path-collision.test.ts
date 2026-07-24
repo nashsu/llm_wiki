@@ -625,6 +625,38 @@ describe("autoIngest source summary paths", () => {
     expect(reviews[0].description).not.toContain("Truncated Orphan")
   })
 
+  it("rejects malformed review headers without swallowing later blocks and bounds titles", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = `${"\n"}${"X".repeat(10_500)}`
+    const longTitle = "Long follow-up title ".repeat(12)
+    extraReviewResponse = [
+      "---REVIEW: missing-page | Missing closing header delimiter",
+      "This malformed block must not consume the next valid review.",
+      "---END REVIEW---",
+      "",
+      `---REVIEW: suggestion | ${longTitle}---`,
+      "The full explanation remains in the description.",
+      "OPTIONS: Create Page | Skip",
+      "---END REVIEW---",
+    ].join("\n")
+
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      { ...useWikiStore.getState().llmConfig, maxContextSize: 128_000 },
+      undefined,
+      "project-a",
+    )
+
+    const reviews = useReviewStore.getState().items
+    expect(reviews).toHaveLength(1)
+    expect(reviews[0].title.length).toBeLessThanOrEqual(120)
+    expect(reviews[0].title.length).toBeGreaterThan(100)
+    expect(reviews[0].title).not.toContain("malformed block")
+    expect(reviews[0].description).toBe("The full explanation remains in the description.")
+  })
+
   it("propagates cancellation that happens during the dedicated review stage", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
