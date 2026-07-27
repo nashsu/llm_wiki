@@ -177,6 +177,7 @@ function hasBalancedInterpolationBraces(value: string): boolean {
   let cursor = 0
   while (cursor < value.length) {
     if (value.startsWith("{{{", cursor)) return false
+    if (value.startsWith("}}", cursor)) return false
     if (value.startsWith("{{", cursor)) {
       const end = parseInterpolation(cursor, false)
       if (end === null) return false
@@ -304,6 +305,8 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     expect(hasBalancedInterpolationBraces("Use a single { literal brace")).toBe(true)
     expect(hasBalancedInterpolationBraces("Use a single } literal brace")).toBe(true)
     expect(hasBalancedInterpolationBraces("JSON body: { resolved?, action? }")).toBe(true)
+    expect(hasBalancedInterpolationBraces("Hello }}")).toBe(false)
+    expect(hasBalancedInterpolationBraces("Hello {{name}} then }}")).toBe(false)
     expect(
       hasBalancedInterpolationBraces(
         "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
@@ -370,6 +373,7 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     expect(ko.nav.review).toBe("검토")
     expect(ko.review.title).toBe("검토")
     for (const translation of [
+      ko.chat.selectionEdit.reviewHint,
       ko.research.emptyHint,
       ko.lint.sendSelectedToReview,
       ko.review.refreshHint,
@@ -392,7 +396,9 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     }
 
     for (const translation of [
+      ko.sidebar.noWikiPages,
       ko.sources.import,
+      ko.sources.importHint,
       ko.sources.importing,
       ko.sources.importFiles,
       ko.sources.importSourceFiles,
@@ -402,6 +408,7 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
       ko.sources.urlImport.imported,
       ko.settings.categories.scheduledImport,
       ko.settings.sections.scheduledImport.title,
+      ko.settings.sections.scheduledImport.description,
       ko.settings.sections.scheduledImport.enable,
       ko.settings.sections.maintenance.projectData.import,
       ko.settings.sections.maintenance.projectData.imported,
