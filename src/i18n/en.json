@@ -97,7 +97,7 @@
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
-    "activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
+    "activeBadge": "{{running}} active, {{queued}} queued",
     "inputPlaceholder": "Enter a research topic...",
     "emptyTitle": "No research tasks yet",
     "emptyHint": "Enter a topic above or click Deep Research in Review",
@@ -193,8 +193,8 @@
     "deleteFileConfirm": "Click again to delete {{name}}",
     "confirm": "Confirm",
     "loadingMore": "Loading more sources...",
-    "sourceCount": "{{count}} source",
-    "sourceCount_plural": "{{count}} sources"
+    "sourceCount_one": "{{count}} source",
+    "sourceCount_other": "{{count}} sources"
   },
   "chat": {
     "selectionEdit": {
@@ -294,8 +294,8 @@
     "generatedOutputs": "Generated outputs",
     "generatedOutput": "Output",
     "openGeneratedOutputFolder": "Open output folder",
-    "generatedOutputCount": "{{count}} file",
-    "generatedOutputCount_plural": "{{count}} files",
+    "generatedOutputCount_one": "{{count}} file",
+    "generatedOutputCount_other": "{{count}} files",
     "closeGeneratedOutputs": "Close generated outputs",
     "closeGeneratedOutputPreview": "Close generated output preview",
     "closeReferencePreview": "Close reference preview",
@@ -381,8 +381,8 @@
       "no-outlinks": "No Outbound Links",
       "semantic": "Semantic Issue"
     },
-    "issues": "{{count}} issue",
-    "issues_plural": "{{count}} issues"
+    "issues_one": "{{count}} issue",
+    "issues_other": "{{count}} issues"
   },
   "review": {
     "title": "Review",
@@ -677,8 +677,8 @@
         "customSerpApiHint": "Custom engine will be sent as the SerpApi `engine` parameter.",
         "testProvider": "Test search",
         "testRunning": "Testing...",
-        "testSuccess": "Search test succeeded ({{count}} result).",
-        "testSuccess_plural": "Search test succeeded ({{count}} results).",
+        "testSuccess_one": "Search test succeeded ({{count}} result).",
+        "testSuccess_other": "Search test succeeded ({{count}} results).",
         "testNoResults": "Connection worked, but this test query returned no results.",
         "testFailed": "Search test failed: {{message}}",
         "firecrawlIpBlocked": "Firecrawl anonymous search is blocked for this IP. Choose another Web Search provider or try a different network.",

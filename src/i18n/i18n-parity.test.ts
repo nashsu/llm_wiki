@@ -261,7 +261,7 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     const check = (bundle: unknown, label: string) => {
       for (const [path, value] of leafEntries(bundle)) {
         expect(typeof value, `${label}: ${path} is not a string`).toBe("string")
-        expect((value as string).length, `${label}: ${path} is empty`).toBeGreaterThan(0)
+        expect((value as string).trim().length, `${label}: ${path} is empty`).toBeGreaterThan(0)
       }
     }
     check(en, "en.json")
@@ -269,18 +269,24 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     check(ko, "ko.json")
   })
 
-  it("pluralization variants have a matching base key", () => {
+  it("uses i18next v4 one/other plural keys for every pluralized message", () => {
+    const pluralBases = [
+      "sources.sourceCount",
+      "chat.generatedOutputCount",
+      "lint.issues",
+      "settings.sections.webSearch.testSuccess",
+    ]
+
     const check = (bundle: unknown, label: string) => {
       const keys = new Set(flattenKeys(bundle))
-      for (const key of keys) {
-        const suffix = key.match(/_(?:zero|one|two|few|many|other|plural)$/)?.[0]
-        if (suffix) {
-          const singular = key.slice(0, -suffix.length)
-          expect(
-            keys.has(singular),
-            `${label}: found ${key} but no matching ${singular}`,
-          ).toBe(true)
-        }
+      expect(
+        [...keys].filter((key) => key.endsWith("_plural")),
+        `${label}: legacy _plural keys are ignored by i18next v4`,
+      ).toEqual([])
+      for (const base of pluralBases) {
+        expect(keys.has(base), `${label}: stale non-plural base ${base}`).toBe(false)
+        expect(keys.has(`${base}_one`), `${label}: missing ${base}_one`).toBe(true)
+        expect(keys.has(`${base}_other`), `${label}: missing ${base}_other`).toBe(true)
       }
     }
     check(en, "en.json")
@@ -320,11 +326,6 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     expect(hasBalancedInterpolationBraces('JSON: {"outer":{"inner":1}}')).toBe(true)
     expect(hasBalancedInterpolationBraces("Hello }}")).toBe(false)
     expect(hasBalancedInterpolationBraces("Hello {{name}} then }}")).toBe(false)
-    expect(
-      hasBalancedInterpolationBraces(
-        "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
-      ),
-    ).toBe(true)
     expect(hasBalancedInterpolationBraces("Hello {{- html}}")).toBe(true)
     expect(hasBalancedInterpolationBraces("Hello {{name}}}")).toBe(false)
     expect(hasBalancedInterpolationBraces("Hello {{{name}}}")).toBe(false)
@@ -355,7 +356,10 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         const path = join(directory, entry.name)
         if (entry.isDirectory()) visit(path)
-        else if (/\.(?:ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".test.ts")) {
+        else if (
+          /\.(?:ts|tsx)$/.test(entry.name) &&
+          !/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name)
+        ) {
           sourceFiles.push(path)
         }
       }
@@ -367,7 +371,11 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     for (const file of sourceFiles) {
       const source = readFileSync(file, "utf8")
       for (const match of source.matchAll(literalKey)) {
-        if (!enKeys.has(match[1])) missing.add(match[1])
+        const key = match[1]
+        const exists =
+          enKeys.has(key) ||
+          (enKeys.has(`${key}_one`) && enKeys.has(`${key}_other`))
+        if (!exists) missing.add(key)
       }
     }
 
@@ -506,6 +514,40 @@ describe("i18next runtime resources", () => {
       expect(i18n.t("nav.chat")).toBe(expected)
       expect(useWikiStore.getState().outputLanguage).toBe("Japanese")
       expect(getOutputLanguage("English source")).toBe(effectiveOutputLanguage)
+    }
+  })
+
+  it("renders research queue badges exactly without unsupported ICU syntax", async () => {
+    for (const [language, withoutQueue, withQueue] of [
+      ["en", "1 active, 0 queued", "1 active, 2 queued"],
+      ["zh", "1 个运行中，0 个排队中", "1 个运行中，2 个排队中"],
+      ["ko", "1개 실행 중, 0개 대기 중", "1개 실행 중, 2개 대기 중"],
+    ] as const) {
+      await i18n.changeLanguage(language)
+      expect(i18n.t("research.activeBadge", { running: 1, queued: 0 })).toBe(withoutQueue)
+      expect(i18n.t("research.activeBadge", { running: 1, queued: 2 })).toBe(withQueue)
+    }
+  })
+
+  it("renders i18next v4 plural variants for representative counts", async () => {
+    const cases = [
+      ["en", "sources.sourceCount", "1 source", "2 sources"],
+      ["en", "chat.generatedOutputCount", "1 file", "2 files"],
+      ["en", "lint.issues", "1 issue", "2 issues"],
+      [
+        "en",
+        "settings.sections.webSearch.testSuccess",
+        "Search test succeeded (1 result).",
+        "Search test succeeded (2 results).",
+      ],
+      ["zh", "sources.sourceCount", "1 个资料", "2 个资料"],
+      ["ko", "sources.sourceCount", "소스 1개", "소스 2개"],
+    ] as const
+
+    for (const [language, key, one, other] of cases) {
+      await i18n.changeLanguage(language)
+      expect(i18n.t(key, { count: 1 })).toBe(one)
+      expect(i18n.t(key, { count: 2 })).toBe(other)
     }
   })
 })
