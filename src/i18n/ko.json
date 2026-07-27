@@ -1,7 +1,30 @@
 {
   "app": {
     "title": "LLM Wiki",
-    "subtitle": "LLM로 나만의 지식 베이스를 구축하고 관리하세요"
+    "subtitle": "LLM으로 나만의 지식 베이스를 구축하고 관리하세요"
+  },
+  "common": {
+    "retry": "재시도",
+    "cancel": "취소",
+    "ignore": "무시",
+    "close": "닫기",
+    "dismiss": "닫기",
+    "loading": "불러오는 중...",
+    "optional": "선택 사항"
+  },
+  "layout": {
+    "showSidebar": "사이드바 표시",
+    "hideSidebar": "사이드바 숨기기"
+  },
+  "errors": {
+    "generic": "문제가 발생했습니다"
+  },
+  "mermaid": {
+    "renderFailed": "Mermaid 다이어그램을 렌더링할 수 없습니다",
+    "showDetails": "파서 세부 정보 표시",
+    "enlarge": "다이어그램 확대",
+    "rendering": "다이어그램 렌더링 중...",
+    "diagram": "다이어그램"
   },
   "nav": {
     "chat": "채팅",
@@ -29,7 +52,66 @@
   },
   "sidebar": {
     "knowledge": "지식",
-    "files": "파일"
+    "files": "파일",
+    "rawSources": "원본 소스",
+    "noWikiPages": "아직 위키 페이지가 없습니다. 소스를 가져와 시작하세요.",
+    "typeLabels": {
+      "overview": "개요",
+      "entity": "엔터티",
+      "concept": "개념",
+      "source": "소스",
+      "synthesis": "종합",
+      "finding": "발견 사항",
+      "thesis": "논제",
+      "methodology": "방법론",
+      "comparison": "비교",
+      "query": "쿼리"
+    }
+  },
+  "editor": {
+    "edit": "편집",
+    "done": "완료",
+    "editRaw": "원본 Markdown 편집",
+    "doneEditing": "편집 완료",
+    "selection": {
+      "askAgent": "선택 영역에 대해 에이전트에게 질문",
+      "placeholder": "설명, 다시 쓰기, 줄이기...",
+      "send": "보내기",
+      "ask": "질문",
+      "edit": "편집",
+      "generating": "생성 중...",
+      "stop": "중지",
+      "askAgain": "다시 질문",
+      "askOnlyHint": "렌더링된 선택 영역을 하나의 정확한 Markdown 원본 범위에 대응시킬 수 없습니다. 선택 영역에 대해 질문할 수는 있지만, 잘못된 텍스트가 변경되지 않도록 편집은 비활성화됩니다.",
+      "wordDiff": "단어 단위 변경 사항",
+      "regenerate": "다시 생성",
+      "closeReference": "닫기",
+      "requestFailed": "선택 영역 도우미가 요청을 완료하지 못했습니다.",
+      "applyFailed": "선택한 텍스트를 업데이트하지 못했습니다.",
+      "sourceChanged": "이 텍스트를 선택한 뒤 파일이 변경되었습니다. 편집 내용을 적용하기 전에 텍스트를 다시 선택하세요.",
+      "referenceFailed": "참조한 페이지를 열 수 없습니다.",
+      "emptyResponse": "모델이 답변을 반환하지 않았습니다. 다시 시도하세요."
+    },
+    "pageLinks": {
+      "button": "링크",
+      "title": "페이지 링크",
+      "outgoing": "나가는 링크",
+      "backlinks": "백링크",
+      "missing": "누락된 링크",
+      "noOutgoing": "이 페이지에는 나가는 위키 링크가 없습니다.",
+      "noBacklinks": "아직 이 페이지로 연결되는 다른 페이지가 없습니다.",
+      "noMissing": "모든 위키 링크가 기존 페이지로 연결됩니다.",
+      "create": "생성",
+      "draft": "에이전트 초안",
+      "loadFailed": "페이지 링크를 불러올 수 없습니다.",
+      "createFailed": "누락된 페이지를 생성할 수 없습니다.",
+      "emptyDraftError": "모델이 빈 초안을 반환했습니다."
+    },
+    "frontmatter": {
+      "origin": "출처",
+      "more": "더 보기"
+    },
+    "rawMarkdownEditor": "원본 Markdown 편집기"
   },
   "research": {
     "title": "심층 리서치",
@@ -51,7 +133,9 @@
       "saved": "저장됨",
       "done": "완료",
       "failed": "실패"
-    }
+    },
+    "synthesis": "종합",
+    "thinking": "생각 중"
   },
   "project": {
     "createTitle": "새 위키 프로젝트 만들기",
@@ -120,7 +204,16 @@
     "confirm": "확인",
     "loadingMore": "소스를 더 불러오는 중...",
     "sourceCount": "소스 {{count}}개",
-    "sourceCount_plural": "소스 {{count}}개"
+    "sourceCount_plural": "소스 {{count}}개",
+    "importUrls": "URL",
+    "urlImport": {
+      "title": "웹페이지 가져오기",
+      "description": "한 줄에 HTTP(S) URL 하나를 입력하세요. 각 페이지는 소스로 저장되어 수집 대기열에 추가되며, 일부 URL이 실패해도 나머지 일괄 작업은 계속됩니다.",
+      "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
+      "submit": "URL 가져오기",
+      "empty": "URL을 하나 이상 입력하세요.",
+      "imported": "가져옴"
+    }
   },
   "chat": {
     "placeholder": "위키에 대해 질문하세요...",
@@ -130,6 +223,51 @@
     "saved": "저장되었습니다!",
     "writeToWiki": "위키에 작성",
     "emptyHint": "질문을 하거나 가져오기를 시작해보세요.",
+    "selectionEdit": {
+      "title": "선택 영역 편집 제안",
+      "reviewHint": "작성하기 전에 검토하세요",
+      "original": "원본",
+      "replacement": "대체 내용",
+      "accept": "수락",
+      "reject": "거부",
+      "applying": "적용 중..."
+    },
+    "agentChanges": {
+      "title": "에이전트 파일 변경 사항",
+      "taskTitle": "에이전트 활동",
+      "fileCount": "파일 {{count}}개",
+      "fileCount_other": "파일 {{count}}개",
+      "editCount": "편집 {{count}}건",
+      "editCount_other": "편집 {{count}}건",
+      "editNumber": "편집 {{number}}",
+      "expandDiff": "파일 차이 펼치기",
+      "collapseDiff": "파일 차이 접기",
+      "undo": "이 에이전트 변경 사항 실행 취소",
+      "undoUnavailable": "앱을 다시 시작한 후에는 실행 취소할 수 없습니다",
+      "diffUnavailable": "이전 파일이 너무 커서 안전하게 스냅샷을 만들 수 없으므로 차이를 표시할 수 없습니다.",
+      "shellSnapshotUnavailable": "이 파일은 셸 명령으로 변경되었습니다. 쓰기 전 상태의 안전한 스냅샷이 없습니다.",
+      "undoConflict": "에이전트가 파일을 작성한 후 파일이 변경되어 실행 취소가 중단되었습니다."
+    },
+    "contextFileHint": "프로젝트 파일을 이 대화에 추가",
+    "removeContextFile": "컨텍스트에서 {{name}} 제거",
+    "regenerate": "다시 생성",
+    "regenerateResponse": "이 답변 다시 생성",
+    "copy": "복사",
+    "copied": "복사됨!",
+    "copyToClipboard": "클립보드에 복사",
+    "thinking": "생각 중...",
+    "lineCount": "{{count}}줄",
+    "lineCount_other": "{{count}}줄",
+    "thoughtLineCount": "{{count}}줄 동안 생각함",
+    "thoughtLineCount_other": "{{count}}줄 동안 생각함",
+    "retrievalMode": "검색 모드",
+    "retrievalModeHint": "표준은 기존 동작을 유지합니다. 스마트는 증거의 빈틈을 반복적으로 보완합니다. 원본 소스만은 원본 소스의 발췌문만 사용해 답변합니다.",
+    "retrievalModes": {
+      "standard": "표준 검색",
+      "smart": "스마트 검색",
+      "faithful": "원본 소스만"
+    },
+    "openGeneratedOutputFolder": "결과물 폴더 열기",
     "sources": "소스",
     "newChat": "새 채팅",
     "newConversation": "새 대화",
@@ -182,7 +320,7 @@
     "closeReferencePreview": "참조 미리보기 닫기",
     "resizeReferencePreview": "참조 미리보기 크기 조절",
     "noReferencePreviewFragment": "미리 볼 수 있는 조각이 반환되지 않았습니다.",
-    "userInputRequiredDescription": "계속하려면 요청된 정보를 입력해주세요.",
+    "userInputRequiredDescription": "계속하려면 요청된 정보를 입력해 주세요.",
     "userInputSubmit": "제출하고 계속",
     "userInputSubmitted": "제출됨",
     "userInputRecommended": "권장",
@@ -205,7 +343,22 @@
     "title": "검색",
     "placeholder": "위키 페이지 검색...",
     "noResults": "결과가 없습니다",
-    "startSearching": "위키 페이지를 검색하려면 입력하세요"
+    "startSearching": "위키 페이지를 검색하려면 입력하세요",
+    "placeholderWithShortcut": "위키 페이지 검색... (Enter 키로 검색)",
+    "searching": "검색 중...",
+    "pressEnter": "Enter 키를 눌러 검색",
+    "pageCount": "페이지 {{count}}개",
+    "pageCount_other": "페이지 {{count}}개",
+    "imageMatchCount": "일치하는 이미지 {{count}}개",
+    "imageMatchCount_other": "일치하는 이미지 {{count}}개",
+    "supportingImageCount": "일치하는 페이지에서 +{{count}}개",
+    "images": "이미지",
+    "pages": "페이지",
+    "hideSupporting": "관련 항목 숨기기",
+    "showAllSupporting": "모두 표시 (+{{count}})",
+    "noCaption": "캡션 없음",
+    "fromSource": "출처: {{source}}",
+    "jumpToSource": "원본 문서로 이동"
   },
   "lint": {
     "title": "위키 린트",
@@ -235,7 +388,7 @@
     "deletePage": "페이지 삭제",
     "fixBrokenLink": "{{page}}의 깨진 링크 수정",
     "addCrossRefs": "{{page}}에 상호 참조 추가",
-    "addCrossRefsDescription": "이 페이지에는 나가는 [[위키링크]]가 없습니다. 관련 엔티티나 개념으로의 상호 참조를 추가하는 것이 좋습니다.",
+    "addCrossRefsDescription": "이 페이지에는 나가는 [[위키링크]]가 없습니다. 관련 엔터티나 개념으로의 상호 참조를 추가하는 것이 좋습니다.",
     "suggestedTarget": "제안된 대상: {{page}}",
     "suggestedSource": "제안된 소스: {{page}}",
     "deleteOrphanConfirm": "고립된 페이지 \"{{page}}\"를 삭제할까요?",
@@ -246,7 +399,9 @@
       "semantic": "시맨틱 문제"
     },
     "issues": "문제 {{count}}건",
-    "issues_plural": "문제 {{count}}건"
+    "issues_plural": "문제 {{count}}건",
+    "cancel": "검사 취소",
+    "cancelProgress": "취소 {{completed}}/{{total}}"
   },
   "review": {
     "title": "리뷰",
@@ -259,7 +414,8 @@
     "markSelectedResolved": "선택 항목을 해결됨으로 표시",
     "dismissSelected": "선택 항목 무시",
     "allClear": "이상 없음 — 리뷰할 항목이 없습니다",
-    "resolvedDivider": "— 해결됨 —"
+    "resolvedDivider": "— 해결됨 —",
+    "affectedPages": "페이지"
   },
   "settings": {
     "title": "설정",
@@ -330,7 +486,27 @@
       },
       "llm": {
         "title": "LLM 모델",
-        "description": "공급자마다 한 줄씩 표시됩니다. 하나를 켜면 다른 공급자는 자동으로 꺼집니다. 변경 사항은 즉시 저장되며, 각 공급자의 API 키는 독립적으로 저장되므로 전환해도 데이터가 사라지지 않습니다.",
+        "description": "기본 제공 공급자를 설정하거나 사용자 지정 엔드포인트를 여러 개 추가할 수 있습니다. 하나를 활성화하면 다른 공급자는 자동으로 비활성화되며, 각 공급자의 인증 정보와 모델 설정은 그대로 유지됩니다.",
+        "taskRouting": {
+          "chat": "채팅 모델",
+          "ingest": "문서 수집 모델",
+          "activeDefault": "활성 모델 사용",
+          "hint": "대화형 채팅과 문서 수집에 사용할 모델을 각각 선택하세요. 활성 모델은 계속 기본 모델로 사용됩니다."
+        },
+        "projectOverride": {
+          "enabled": "프로젝트별 모델 사용",
+          "provider": "프로젝트 공급자",
+          "selectProvider": "공급자 선택",
+          "model": "프로젝트 모델",
+          "modelPlaceholder": "공급자에 설정된 모델 사용",
+          "hint": "활성화하면 이 프로젝트는 채팅과 문서 수집 모두에 선택한 공급자와 모델을 사용합니다. 인증 정보는 전역 공급자 설정에 그대로 유지됩니다."
+        },
+        "customProfiles": {
+          "add": "사용자 지정 공급자 추가",
+          "defaultName": "사용자 지정 공급자 {{number}}",
+          "name": "공급자 이름",
+          "delete": "사용자 지정 공급자 삭제"
+        },
         "expand": "설정 펼치기",
         "collapse": "접기",
         "toggleOff": "클릭하여 비활성화",
@@ -362,6 +538,26 @@
         "codexCliTimeout": "Codex CLI 타임아웃",
         "codexCliTimeoutUnit": "분",
         "codexCliTimeoutHint": "Codex CLI 요청 한 건에 대한 전체 타임아웃입니다. 긴 PDF 가져오기나 느린 로컬/네트워크 세션에서는 값을 늘리세요.",
+        "requestTimeout": "요청 시간 제한(분)",
+        "requestTimeoutHint": "느린 로컬 CPU 모델을 사용한다면 이 값을 늘리세요. 기본값은 30분입니다.",
+        "streamingOutput": "응답 스트리밍",
+        "streamingOutputHint": "비활성화하면 HTTP 공급자는 전체 응답을 받은 뒤 표시합니다. CLI 공급자는 자체 프로토콜을 계속 사용하지만, 완료될 때까지 표시할 출력을 버퍼링합니다.",
+        "streamingOutputOn": "스트리밍 켜짐: 응답 텍스트가 생성되는 대로 표시됩니다.",
+        "streamingOutputOff": "스트리밍 꺼짐: 생성이 완료된 후 응답 텍스트가 표시됩니다.",
+        "customHeaders": "사용자 지정 요청 헤더",
+        "customHeadersHint": "선택 사항입니다. 한 줄에 `Header-Name: value` 하나씩 입력하세요. Content-Type과 설정된 API 키 헤더가 우선 적용됩니다.",
+        "cliStatus": "CLI 상태",
+        "checkingCli": "확인 중…",
+        "recheckCli": "다시 확인",
+        "detectingCli": "로컬 {{name}} 바이너리 감지 중…",
+        "cliDetected": "{{version}} 버전을 감지했습니다. API 키 없이 로컬 {{login}}을 사용할 수 있습니다.",
+        "claudeSubscription": "구독",
+        "codexLogin": "Codex 로그인",
+        "cliAuthBefore": "채팅이 인증 오류로 실패하면 터미널에서",
+        "cliAuthAfter": "명령을 실행해 로그인을 갱신하세요.",
+        "cliUnavailable": "{{name}} CLI를 사용할 수 없습니다.",
+        "cliInstallBefore": "다음 명령으로 설치:",
+        "cliInstallAfter": "설치 후 다시 확인하세요.",
         "testConnection": "연결 테스트",
         "testFunction": "기능 테스트",
         "testingConnection": "연결 테스트 중…",
@@ -406,6 +602,10 @@
         "maxChunkCharsHint": "각 청크의 목표 크기입니다. 엔드포인트의 컨텍스트가 작다면(llama.cpp n_ctx=512, mxbai-embed-large 등) 이 값을 낮추세요(예: 500).",
         "overlapChunkChars": "겹침(문자 수)",
         "overlapChunkCharsHint": "인접한 청크 사이의 겹치는 문자 수로, 경계에서 내용이 잘리지 않도록 합니다.",
+        "concurrency": "동시 요청 수",
+        "concurrencyHint": "동시에 처리할 수 있는 임베딩 요청의 최대 개수입니다(1–32). 엔드포인트 용량에 맞춰 점진적으로 늘리세요.",
+        "batchSize": "요청당 입력 수",
+        "batchSizeHint": "OpenAI 호환 엔드포인트 전용입니다(1–64). 지원하지 않는 공급자는 자동으로 입력을 하나씩 요청합니다.",
         "providerTests": "공급자 테스트",
         "providerTestsHint": "연결 테스트는 짧은 임베딩 요청 하나를 보냅니다. 기능 테스트는 안정적이고 유한한 벡터인지 확인하고 반환된 차원을 표시합니다.",
         "testConnection": "연결 테스트",
@@ -486,7 +686,8 @@
         "savedBadge": "저장됨",
         "instanceUrl": "인스턴스 URL",
         "ollamaHint": "공식 Ollama Web Search API(`https://ollama.com/api/web_search`)를 사용합니다. Ollama API 키가 필요합니다.",
-        "firecrawlHint": "Firecrawl의 익명 검색 API(`https://api.firecrawl.dev/v2/search`)를 사용합니다. 여기서는 API 키가 필요 없지만, Firecrawl이 의심스러운 IP를 차단할 수 있습니다.",
+        "bochaHint": "공식 Bocha Web Search API를 사용합니다. open.bocha.cn에서 API 키를 만들고 관리하세요.",
+        "firecrawlHint": "익명 검색에는 API 키를 비워 두고, 인증된 할당량을 사용하려면 Firecrawl API 키를 추가하세요. 기본 URL에는 호환되는 자체 호스팅 엔드포인트를 사용할 수 있습니다.",
         "searxngJsonHint": "인스턴스가 JSON 검색 응답(`format=json`)을 허용해야 합니다.",
         "searchCategories": "검색 카테고리",
         "searxngCategoriesHint": "카테고리는 SearXNG의 `categories` 매개변수로 전송됩니다.",
@@ -644,12 +845,22 @@
       },
       "maintenance": {
         "title": "유지 관리",
-        "description": "위키를 정리하는 도구입니다 — 재가져오기 과정에서 LLM이 서로 다른 이름으로 만든 중복 엔티티/개념을 찾아 병합합니다.",
+        "description": "위키를 정리하는 도구입니다 — 재가져오기 과정에서 LLM이 서로 다른 이름으로 만든 중복 엔터티/개념을 찾아 병합합니다.",
         "noProject": "먼저 프로젝트를 여세요.",
         "noLlm": "먼저 LLM 공급자를 설정하세요.",
+        "projectData": {
+          "title": "프로젝트 데이터",
+          "description": "기존 페이지에서 탐색 구조를 다시 빌드하거나, 숨겨진 처리 상태를 포함한 전체 프로젝트를 옮깁니다.",
+          "rebuild": "인덱스 다시 빌드",
+          "export": "프로젝트 내보내기",
+          "import": "프로젝트 가져오기",
+          "rebuilt": "{{groups}}개 그룹의 {{pages}}개 페이지로 인덱스를 다시 빌드했습니다.",
+          "exported": "프로젝트를 {{path}}에 내보냈습니다",
+          "imported": "{{name}}을(를) 가져왔습니다. 열려면 프로젝트를 전환하세요."
+        },
         "dedup": {
-          "title": "중복 엔티티 / 개념 감지",
-          "description": "LLM에게 모든 엔티티/개념 페이지를 스캔하여 이름은 다르지만 같은 주제를 가리킬 가능성이 있는 항목(영어 대 중국어, 복수형 대 단수형, 약어 대 전체 표기 등)을 그룹화하도록 요청합니다. 병합 전에 각 그룹을 직접 확인합니다. 병합은 대기열에 들어가 한 번에 하나씩 실행되어 상호 참조가 일관되게 유지됩니다.",
+          "title": "중복 엔터티 / 개념 감지",
+          "description": "LLM에게 모든 엔터티/개념 페이지를 스캔하여 이름은 다르지만 같은 주제를 가리킬 가능성이 있는 항목(영어 대 중국어, 복수형 대 단수형, 약어 대 전체 표기 등)을 그룹화하도록 요청합니다. 병합 전에 각 그룹을 직접 확인합니다. 병합은 대기열에 들어가 한 번에 하나씩 실행되어 상호 참조가 일관되게 유지됩니다.",
           "scanButton": "중복 항목 스캔",
           "scanning": "스캔 중…",
           "noneFound": "중복 그룹이 발견되지 않았습니다. 위키가 깨끗합니다.",
@@ -665,6 +876,8 @@
           "delete": "삭제",
           "queueTitle": "진행 중인 병합",
           "queueDescription": "지난 스캔 이후 대기열에 들어갔지만 아직 끝나지 않은 작업입니다. 병합은 한 번에 하나씩 실행됩니다.",
+          "restoredBacklog": "이 병합 작업은 이전 세션에서 복원되었으며, 예기치 않은 LLM 사용을 방지하기 위해 일시 중지되어 있습니다.",
+          "resumeRestored": "병합 재개",
           "notDuplicates": "중복 아님",
           "merged": "병합됨",
           "skipped": "중복 아님으로 표시됨"
@@ -698,9 +911,32 @@
       },
       "mineru": {
         "title": "MinerU PDF 파서",
-        "description": "표, 수식, 복잡한 레이아웃을 더 높은 품질로 파싱하려면 MinerU 클라우드 API를 사용하세요. 기본값은 내장된 pdfium 추출을 사용합니다.",
+        "description": "표, 수식, 복잡한 레이아웃을 더 높은 품질로 파싱하려면 MinerU 클라우드 또는 자체 호스팅 로컬 서비스를 사용하세요. 기본값은 내장된 pdfium 추출을 사용합니다.",
         "privacyNotice": "활성화하면 PDF 내용이 파싱을 위해 MinerU 클라우드로 업로드됩니다. 이를 받아들일 수 없다면 민감한 문서에는 사용하지 마세요.",
         "enabled": "MinerU 활성화",
+        "backend": "백엔드",
+        "cloudBackend": "클라우드(mineru.net) - 토큰 필요, 더 높은 품질",
+        "localBackend": "공식 자체 호스팅 mineru-api - 비공개, 오프라인",
+        "localEndpoint": "로컬 서비스 엔드포인트",
+        "localInfo": "공식 mineru-api 또는 mineru-router 서비스의 기본 URL입니다.",
+        "parsingBackend": "파싱 백엔드",
+        "backendHybrid": "하이브리드 엔진(권장)",
+        "backendPipeline": "Pipeline",
+        "backendVlm": "VLM 엔진",
+        "backendHybridHttp": "하이브리드 HTTP 클라이언트",
+        "backendVlmHttp": "VLM HTTP 클라이언트",
+        "effort": "하이브리드 처리 수준",
+        "effortMedium": "중간(더 빠름)",
+        "effortHigh": "높음(이미지 분석 및 최고 정확도)",
+        "ocrLanguage": "OCR 언어",
+        "parseMethod": "파싱 방식",
+        "parseAuto": "자동",
+        "parseText": "텍스트 추출",
+        "parseOcr": "OCR 강제 적용",
+        "serverUrl": "OpenAI 호환 모델 서버 URL",
+        "formulaParsing": "수식 파싱",
+        "tableParsing": "표 파싱",
+        "imageAnalysis": "이미지 분석",
         "token": "API 토큰",
         "tokenHint": "mineru.net에서 토큰을 발급받으세요",
         "model": "모델 버전",
@@ -717,9 +953,49 @@
   },
   "preview": {
     "selectFile": "미리 볼 파일을 선택하세요",
-    "notAvailable": "이 파일 형식은 미리보기를 지원하지 않습니다"
+    "notAvailable": "이 파일 형식은 미리보기를 지원하지 않습니다",
+    "viewAsText": "텍스트로 보기",
+    "loadingText": "텍스트 불러오는 중...",
+    "openWithSystem": "시스템 앱으로 열기",
+    "showSource": "원본 표시",
+    "showRendered": "렌더링된 미리보기 표시",
+    "reload": "미리보기 새로고침",
+    "history": "파일 기록",
+    "historyLoading": "불러오는 중...",
+    "historyEmpty": "아직 기록된 버전이 없습니다.",
+    "historySelect": "비교할 버전을 선택하세요.",
+    "historyRestore": "이 버전 복원",
+    "pdfText": "텍스트",
+    "pdfDocument": "PDF",
+    "pdfPage": "페이지",
+    "pdfLoading": "PDF 불러오는 중...",
+    "pdfLoadError": "PDF를 렌더링할 수 없습니다. 다시 시도하거나 시스템 앱으로 열 수 있습니다.",
+    "pdfTooLarge": "이 PDF는 앱 내 미리보기로 열기에는 너무 큽니다. 시스템 앱으로 여세요."
   },
   "activity": {
+    "fileSync": "파일 동기화",
+    "rescan": "다시 스캔",
+    "rescanTitle": "외부 변경 사항이 있는지 프로젝트 파일 스캔",
+    "changeKinds": {
+      "created": "생성됨",
+      "modified": "수정됨",
+      "deleted": "삭제됨"
+    },
+    "fileTypes": {
+      "entity": "엔터티",
+      "concept": "개념",
+      "source": "소스",
+      "query": "쿼리",
+      "synthesis": "종합",
+      "comparison": "비교",
+      "finding": "발견 사항",
+      "thesis": "논제",
+      "methodology": "방법론",
+      "overview": "개요",
+      "index": "인덱스",
+      "log": "로그",
+      "file": "파일"
+    },
     "processing": "처리 중: {{title}}",
     "done": "완료: {{title}}",
     "clearCompleted": "완료 항목 지우기",
@@ -738,7 +1014,9 @@
     "retryFailedTitle": "실패한 모든 가져오기 작업을 재시도합니다"
   },
   "fileTree": {
-    "noProject": "열려 있는 프로젝트가 없습니다"
+    "noProject": "열려 있는 프로젝트가 없습니다",
+    "openProjectFolder": "프로젝트 폴더 열기",
+    "openProjectFolderFailed": "프로젝트 폴더를 열지 못했습니다."
   },
   "graph": {
     "openProject": "그래프를 보려면 프로젝트를 여세요",
@@ -756,6 +1034,12 @@
     "closeSearch": "그래프 검색 닫기",
     "noSearchResults": "일치하는 노드가 없습니다",
     "noVisibleNodes": "표시할 노드가 없습니다",
+    "resetFilters": "그래프 필터 초기화",
+    "any": "전체",
+    "showAllTypes": "모든 유형 표시",
+    "doubleClickToggle": "두 번 클릭하여 표시 여부 전환",
+    "expandLegend": "범례 펼치기",
+    "collapseLegend": "범례 접기",
     "filter": "필터",
     "reset": "초기화",
     "type": "유형",
@@ -792,15 +1076,15 @@
     "cancel": "취소",
     "startResearch": "리서치 시작",
     "nodeTypeLabels": {
-      "entity": "엔티티",
+      "entity": "엔터티",
       "concept": "개념",
       "source": "소스",
       "query": "쿼리",
       "synthesis": "종합",
       "overview": "개요",
       "comparison": "비교",
-      "finding": "발견",
-      "thesis": "논지",
+      "finding": "발견 사항",
+      "thesis": "논제",
       "methodology": "방법론",
       "other": "기타"
     }
