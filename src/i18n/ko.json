@@ -32,8 +32,8 @@
     "sources": "소스",
     "search": "검색",
     "graph": "그래프",
-    "lint": "린트",
-    "review": "리뷰",
+    "lint": "위키 점검",
+    "review": "검토",
     "skills": "스킬",
     "settings": "설정",
     "switchProject": "프로젝트 전환",
@@ -53,7 +53,7 @@
   "sidebar": {
     "knowledge": "지식",
     "files": "파일",
-    "rawSources": "원본 소스",
+    "rawSources": "원본 자료",
     "noWikiPages": "아직 위키 페이지가 없습니다. 소스를 가져와 시작하세요.",
     "typeLabels": {
       "overview": "개요",
@@ -119,7 +119,7 @@
     "activeBadge": "{{running}}개 실행 중{{queued, plural, =0 {} other {, {{queued}}개 대기 중}}}",
     "inputPlaceholder": "리서치 주제를 입력하세요...",
     "emptyTitle": "아직 리서치 작업이 없습니다",
-    "emptyHint": "위에 주제를 입력하거나 리뷰에서 심층 리서치를 클릭하세요",
+    "emptyHint": "위에 주제를 입력하거나 검토에서 심층 리서치를 클릭하세요",
     "sourcesCount": "소스 ({{count}})",
     "anyTxtSource": "AnyTXT 소스",
     "webSource": "웹 소스",
@@ -179,7 +179,7 @@
     }
   },
   "sources": {
-    "title": "원본 소스",
+    "title": "원본 자료",
     "import": "가져오기",
     "importing": "가져오는 중...",
     "noSources": "아직 소스가 없습니다",
@@ -192,7 +192,7 @@
     "refreshFolder": "폴더 새로고침",
     "refreshingFolder": "새로고침 중...",
     "refreshFolderHint": "소스 폴더를 다시 스캔하고 새로 추가되거나 변경, 삭제된 파일을 처리합니다.",
-    "refreshFolderTooltip": "자동 모니터링과 동일한 규칙으로 프로젝트 소스 폴더를 다시 스캔합니다. 새로 추가되거나 수정된 허용 파일은 가져오기 대기열에 추가되고, 삭제된 소스는 일반적인 위키·인덱스 정리 절차를 거치며, 이후 파일 트리가 다시 빌드됩니다.",
+    "refreshFolderTooltip": "자동 모니터링과 동일한 규칙으로 프로젝트 소스 폴더를 다시 스캔합니다. 새로 추가되거나 수정된 허용 파일은 위키 반영 대기열에 추가되고, 삭제된 소스는 일반적인 위키·인덱스 정리 절차를 거치며, 이후 파일 트리가 다시 빌드됩니다.",
     "refreshFailed": "소스 새로고침 실패: {{error}}",
     "ingest": "위키 반영",
     "delete": "소스 및 관련 위키 페이지 삭제",
@@ -208,7 +208,7 @@
     "importUrls": "URL",
     "urlImport": {
       "title": "웹페이지 가져오기",
-      "description": "한 줄에 HTTP(S) URL 하나를 입력하세요. 각 페이지는 소스로 저장되어 수집 대기열에 추가되며, 일부 URL이 실패해도 나머지 일괄 작업은 계속됩니다.",
+      "description": "한 줄에 HTTP(S) URL 하나를 입력하세요. 각 페이지는 소스로 저장되어 위키 반영 대기열에 추가되며, 일부 URL이 실패해도 나머지 일괄 작업은 계속됩니다.",
       "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
       "submit": "URL 가져오기",
       "empty": "URL을 하나 이상 입력하세요.",
@@ -222,7 +222,7 @@
     "saving": "저장 중...",
     "saved": "저장되었습니다!",
     "writeToWiki": "위키에 작성",
-    "emptyHint": "질문을 하거나 가져오기를 시작해보세요.",
+    "emptyHint": "질문을 하거나 위키 반영을 시작해보세요.",
     "selectionEdit": {
       "title": "선택 영역 편집 제안",
       "reviewHint": "작성하기 전에 검토하세요",
@@ -261,11 +261,11 @@
     "thoughtLineCount": "{{count}}줄 동안 생각함",
     "thoughtLineCount_other": "{{count}}줄 동안 생각함",
     "retrievalMode": "검색 모드",
-    "retrievalModeHint": "표준은 기존 동작을 유지합니다. 스마트는 증거의 빈틈을 반복적으로 보완합니다. 원본 소스만은 원본 소스의 발췌문만 사용해 답변합니다.",
+    "retrievalModeHint": "표준은 기존 동작을 유지합니다. 스마트는 증거의 빈틈을 반복적으로 보완합니다. 원본 자료만은 원본 자료의 발췌문만 사용해 답변합니다.",
     "retrievalModes": {
       "standard": "표준 검색",
       "smart": "스마트 검색",
-      "faithful": "원본 소스만"
+      "faithful": "원본 자료만"
     },
     "openGeneratedOutputFolder": "결과물 폴더 열기",
     "sources": "소스",
@@ -361,11 +361,11 @@
     "jumpToSource": "원본 문서로 이동"
   },
   "lint": {
-    "title": "위키 린트",
+    "title": "위키 점검",
     "semantic": "시맨틱 검사 (LLM)",
     "running": "실행 중...",
-    "runLint": "린트 실행",
-    "runLintHint": "린트를 실행해 위키 상태를 점검하세요",
+    "runLint": "위키 점검 실행",
+    "runLintHint": "위키 점검을 실행해 위키 상태를 확인하세요",
     "runLintDescription": "고립된 페이지, 깨진 링크 등을 검사합니다",
     "allClear": "이상 없음!",
     "noIssues": "발견된 문제가 없습니다.",
@@ -381,14 +381,14 @@
     "selectItem": "{{page}} 선택",
     "selectedCount": "{{count}}개 선택됨",
     "fixSelected": "선택 항목 수정",
-    "sendSelectedToReview": "선택 항목을 리뷰로 보내기",
+    "sendSelectedToReview": "선택 항목을 검토로 보내기",
     "ignoreSelected": "선택 항목 무시",
     "openEdit": "열어서 편집",
     "skip": "건너뛰기",
     "deletePage": "페이지 삭제",
     "fixBrokenLink": "{{page}}의 깨진 링크 수정",
     "addCrossRefs": "{{page}}에 상호 참조 추가",
-    "addCrossRefsDescription": "이 페이지에는 나가는 [[위키링크]]가 없습니다. 관련 엔터티나 개념으로의 상호 참조를 추가하는 것이 좋습니다.",
+    "addCrossRefsDescription": "이 페이지에는 나가는 [[wikilinks]]가 없습니다. 관련 엔터티나 개념으로의 상호 참조를 추가하는 것이 좋습니다.",
     "suggestedTarget": "제안된 대상: {{page}}",
     "suggestedSource": "제안된 소스: {{page}}",
     "deleteOrphanConfirm": "고립된 페이지 \"{{page}}\"를 삭제할까요?",
@@ -404,16 +404,16 @@
     "cancelProgress": "취소 {{completed}}/{{total}}"
   },
   "review": {
-    "title": "리뷰",
+    "title": "검토",
     "clearResolved": "해결됨 지우기",
     "refresh": "새로고침",
-    "refreshHint": "디스크에서 리뷰 항목을 다시 불러옵니다",
+    "refreshHint": "디스크에서 검토 항목을 다시 불러옵니다",
     "selectPending": "대기 중 항목 선택",
     "selectItem": "{{title}} 선택",
     "selectedCount": "{{count}}개 선택됨",
     "markSelectedResolved": "선택 항목을 해결됨으로 표시",
     "dismissSelected": "선택 항목 무시",
-    "allClear": "이상 없음 — 리뷰할 항목이 없습니다",
+    "allClear": "이상 없음 — 검토할 항목이 없습니다",
     "resolvedDivider": "— 해결됨 —",
     "affectedPages": "페이지"
   },
@@ -489,9 +489,9 @@
         "description": "기본 제공 공급자를 설정하거나 사용자 지정 엔드포인트를 여러 개 추가할 수 있습니다. 하나를 활성화하면 다른 공급자는 자동으로 비활성화되며, 각 공급자의 인증 정보와 모델 설정은 그대로 유지됩니다.",
         "taskRouting": {
           "chat": "채팅 모델",
-          "ingest": "문서 수집 모델",
+          "ingest": "위키 반영 모델",
           "activeDefault": "활성 모델 사용",
-          "hint": "대화형 채팅과 문서 수집에 사용할 모델을 각각 선택하세요. 활성 모델은 계속 기본 모델로 사용됩니다."
+          "hint": "대화형 채팅과 문서의 위키 반영에 사용할 모델을 각각 선택하세요. 활성 모델은 계속 기본 모델로 사용됩니다."
         },
         "projectOverride": {
           "enabled": "프로젝트별 모델 사용",
@@ -499,7 +499,7 @@
           "selectProvider": "공급자 선택",
           "model": "프로젝트 모델",
           "modelPlaceholder": "공급자에 설정된 모델 사용",
-          "hint": "활성화하면 이 프로젝트는 채팅과 문서 수집 모두에 선택한 공급자와 모델을 사용합니다. 인증 정보는 전역 공급자 설정에 그대로 유지됩니다."
+          "hint": "활성화하면 이 프로젝트는 채팅과 위키 반영 모두에 선택한 공급자와 모델을 사용합니다. 인증 정보는 전역 공급자 설정에 그대로 유지됩니다."
         },
         "customProfiles": {
           "add": "사용자 지정 공급자 추가",
@@ -537,7 +537,7 @@
         "localCliIsolationOff": "격리 꺼짐: 이 공급자는 평소 사용하는 로컬 CLI 설정을 그대로 사용할 수 있습니다.",
         "codexCliTimeout": "Codex CLI 타임아웃",
         "codexCliTimeoutUnit": "분",
-        "codexCliTimeoutHint": "Codex CLI 요청 한 건에 대한 전체 타임아웃입니다. 긴 PDF 가져오기나 느린 로컬/네트워크 세션에서는 값을 늘리세요.",
+        "codexCliTimeoutHint": "Codex CLI 요청 한 건에 대한 전체 타임아웃입니다. 긴 PDF의 위키 반영이나 느린 로컬/네트워크 세션에서는 값을 늘리세요.",
         "requestTimeout": "요청 시간 제한(분)",
         "requestTimeoutHint": "느린 로컬 CPU 모델을 사용한다면 이 값을 늘리세요. 기본값은 30분입니다.",
         "streamingOutput": "응답 스트리밍",
@@ -545,7 +545,7 @@
         "streamingOutputOn": "스트리밍 켜짐: 응답 텍스트가 생성되는 대로 표시됩니다.",
         "streamingOutputOff": "스트리밍 꺼짐: 생성이 완료된 후 응답 텍스트가 표시됩니다.",
         "customHeaders": "사용자 지정 요청 헤더",
-        "customHeadersHint": "선택 사항입니다. 한 줄에 `Header-Name: value` 하나씩 입력하세요. Content-Type과 설정된 API 키 헤더가 우선 적용됩니다.",
+        "customHeadersHint": "선택 사항입니다. 한 줄에 Header-Name: value 하나씩 입력하세요. Content-Type과 설정된 API 키 헤더가 우선 적용됩니다.",
         "cliStatus": "CLI 상태",
         "checkingCli": "확인 중…",
         "recheckCli": "다시 확인",
@@ -579,7 +579,7 @@
           "max": "최대",
           "custom": "커스텀",
           "budgetTokens": "사고 과정 토큰 예산",
-          "hint": "가져오기 같은 정형화된 작업에서는 추론만 있고 본문이 없는 응답을 피하기 위해 이 설정을 자동으로 끄기로 전환할 수 있습니다."
+          "hint": "위키 반영 같은 정형화된 작업에서는 추론만 있고 본문이 없는 응답을 피하기 위해 이 설정을 자동으로 끄기로 전환할 수 있습니다."
         }
       },
       "embedding": {
@@ -626,9 +626,9 @@
       },
       "multimodal": {
         "title": "이미지 캡션",
-        "description": "가져오기 중 PDF/DOCX/PPTX에서 추출된 이미지에 대한 사실 기반 캡션을 생성합니다. 캡션은 소스 마크다운 안에 alt 텍스트로 삽입되며, 이미지 콘텐츠를 검색할 때 시맨틱 검색이 매칭하는 대상이 됩니다. 이미지 해시 기준으로 캐시되므로 중복된 로고나 차트는 LLM을 한 번만 호출합니다.",
-        "enableLabel": "가져오기 시 캡션 생성 활성화",
-        "enableHint": "꺼짐: 가져온 콘텐츠에서 이미지 참조가 제거됩니다 — 위키 페이지에 이미지가 표시되지 않고 검색 결과에도 나오지 않습니다.(원본 파일은 원본 소스 미리보기를 위해 wiki/media/에 그대로 추출됩니다.) 켜짐: 새 이미지마다 비전 LLM이 사실 기반 캡션을 생성하며(해시로 캐시됨), 위키 페이지의 alt 텍스트에 반영됩니다.",
+        "description": "위키 반영 중 PDF/DOCX/PPTX에서 추출된 이미지에 대한 사실 기반 캡션을 생성합니다. 캡션은 소스 마크다운 안에 alt 텍스트로 삽입되며, 이미지 콘텐츠를 검색할 때 시맨틱 검색이 매칭하는 대상이 됩니다. 이미지 해시 기준으로 캐시되므로 중복된 로고나 차트는 LLM을 한 번만 호출합니다.",
+        "enableLabel": "위키 반영 시 캡션 생성 활성화",
+        "enableHint": "꺼짐: 위키에 반영된 콘텐츠에서 이미지 참조가 제거됩니다 — 위키 페이지에 이미지가 표시되지 않고 검색 결과에도 나오지 않습니다. (원본 파일은 원본 자료 미리보기를 위해 wiki/media/에 그대로 추출됩니다.) 켜짐: 새 이미지마다 비전 LLM이 사실 기반 캡션을 생성하며(해시로 캐시됨), 위키 페이지의 alt 텍스트에 반영됩니다.",
         "stateOn": "켜짐",
         "stateOff": "꺼짐",
         "useMainLabel": "캡션 생성에 메인 LLM 사용",
@@ -650,14 +650,14 @@
         "apiKey": "API 키",
         "apiKeyPlaceholder": "로컬 / 인증이 필요 없는 엔드포인트는 비워두세요",
         "model": "모델",
-        "modelHint": "비전 기능을 지원하는 모델이어야 합니다. 텍스트 전용 모델은 첫 가져오기 시 400 / image-not-supported 오류로 실패합니다.",
+        "modelHint": "비전 기능을 지원하는 모델이어야 합니다. 텍스트 전용 모델은 처음 위키에 반영할 때 400 / image-not-supported 오류로 실패합니다.",
         "concurrency": "동시 캡션 요청 수",
         "concurrencyHint": "캡션 요청을 몇 개까지 병렬로 실행할지 설정합니다. 1 = 완전히 순차 처리. 대부분의 환경에서는 4가 적당하며, 고성능 GPU나 호스팅 엔드포인트에서만 8 이상으로 올리세요.",
         "costHeading": "비용 가드레일",
         "costPoint1": "새 이미지마다 비전 LLM 호출이 한 번 발생합니다(모델과 사고 모드에 따라 약 500~2000 토큰).",
         "costPoint2": "캡션은 이미지 바이트의 SHA-256으로 캐시됩니다. 문서 전반에서 중복되는 로고나 공용 차트 템플릿은 단 한 번만 호출됩니다.",
         "costPoint3": "Rust 쪽 필터가 100×100px보다 작은 이미지를 제외하고 소스당 최대 500장으로 제한하므로, 비정상적인 PDF가 비용을 폭증시킬 수 없습니다.",
-        "costPoint4": "대량 가져오기에는 로컬 비전 모델(LM Studio/Ollama의 Qwen2.5-VL)을 권장하며, 호스팅 비전 API는 중요도가 높은 개별 문서에만 사용하세요."
+        "costPoint4": "대량 위키 반영에는 로컬 비전 모델(LM Studio/Ollama의 Qwen2.5-VL)을 권장하며, 호스팅 비전 API는 중요도가 높은 개별 문서에만 사용하세요."
       },
       "webSearch": {
         "title": "외부 정보 소스",
@@ -716,16 +716,16 @@
       },
       "sourceWatch": {
         "title": "소스 폴더 자동 감시",
-        "description": "raw/sources의 외부 변경 사항을 모니터링하고, 어떤 파일을 자동 가져오기에 허용할지 선택합니다.",
+        "description": "raw/sources의 외부 변경 사항을 모니터링하고, 어떤 파일을 자동 위키 반영에 허용할지 선택합니다.",
         "enable": "프로젝트 소스 폴더 모니터링",
         "enableDescription": "raw/sources 아래에서 허용된 새 파일이나 수정된 파일에 대해 소스 뷰를 새로고침하고 색인합니다.",
-        "autoIngest": "허용된 소스 파일 자동 가져오기",
-        "autoIngestDescription": "비활성화하면 외부 변경 사항으로 파일 트리는 새로고침되지만 가져오기 작업은 생성되지 않습니다.",
+        "autoIngest": "허용된 소스 파일 자동 위키 반영",
+        "autoIngestDescription": "비활성화하면 외부 변경 사항으로 파일 트리는 새로고침되지만 위키 반영 작업은 생성되지 않습니다.",
         "noProject": "이 프로젝트 수준 설정을 변경하려면 프로젝트를 열어야 합니다.",
         "fileTypes": "허용된 파일 형식",
         "fileTypesDescription": "문서 형식은 기본적으로 활성화되어 있습니다. 미디어, 바이너리, 소스 코드, 설정류 형식은 선택하기 전까지 꺼져 있습니다.",
         "exclusions": "제외 항목 및 제한",
-        "maxSize": "자동 가져오기 최대 파일 크기(MB)",
+        "maxSize": "자동 위키 반영 최대 파일 크기(MB)",
         "excludeDirs": "제외할 폴더",
         "excludeDirsPlaceholder": ".git, node_modules, drafts, subdir/drafts",
         "excludeDirsHint": "폴더 이름은 경로의 어떤 세그먼트와도 일치합니다. subdir/drafts 같은 경로는 해당 중첩 폴더와 일치합니다.",
@@ -752,7 +752,7 @@
         "directory": "모니터링 디렉터리",
         "directoryHelp": "현재 LLM Wiki 프로젝트 외부의 폴더를 선택하세요. raw, raw/sources, wiki, .llm-wiki 같은 프로젝트 내부 폴더는 소스 폴더 모니터링에서 이미 처리하므로 건너뜁니다.",
         "managedPathWarning": "이 경로는 현재 LLM Wiki 프로젝트 내부에 있으며 이미 소스 폴더 모니터링이 관리하고 있습니다. 중복 스캔을 피하려면 외부 폴더를 선택하세요.",
-        "privacyNotice": "선택한 디렉터리의 파일은 이 프로젝트로 복사되어 가져오기 중 설정된 LLM으로 전송될 수 있습니다. 원본에서 파일을 삭제해도 프로젝트에서 자동으로 삭제되지는 않습니다.",
+        "privacyNotice": "선택한 디렉터리의 파일은 이 프로젝트로 복사되어 위키 반영 중 설정된 LLM으로 전송될 수 있습니다. 원본에서 파일을 삭제해도 프로젝트에서 자동으로 삭제되지는 않습니다.",
         "browse": "찾아보기",
         "selectDirectory": "모니터링할 디렉터리 선택",
         "interval": "스캔 간격(분)",
@@ -811,9 +811,9 @@
         "endpointProjectsNote": "알려진 프로젝트와 그 ID, 경로를 나열합니다.",
         "endpointFilesNote": "?root=wiki|sources|all; ?recursive=false; ?maxFiles=N (≤10000).",
         "endpointContentNote": "?path=wiki/index.md — 텍스트 파일만 가능, 최대 2MB.",
-        "endpointReviewsNote": "?status=unresolved|resolved|all; ?type=missing-page; ?limit=N. 기본값은 미해결 리뷰 항목입니다.",
-        "endpointPatchReviewNote": "리뷰 항목 하나를 업데이트합니다. JSON 본문: { resolved?, action? } (resolved 기본값은 true이며, false를 전달하면 다시 엽니다). 다시 읽으려면 리뷰 탭의 새로고침 버튼을 사용하세요.",
-        "endpointBulkResolveNote": "리뷰 항목을 일괄 해결합니다. JSON 본문: { ids, action? }. { resolved, notFound, count }를 반환합니다.",
+        "endpointReviewsNote": "?status=unresolved|resolved|all; ?type=missing-page; ?limit=N. 기본값은 미해결 검토 항목입니다.",
+        "endpointPatchReviewNote": "검토 항목 하나를 업데이트합니다. JSON 본문: { resolved?, action? } (resolved 기본값은 true이며, false를 전달하면 다시 엽니다). 다시 읽으려면 검토 탭의 새로고침 버튼을 사용하세요.",
+        "endpointBulkResolveNote": "검토 항목을 일괄 해결합니다. JSON 본문: { ids, action? }. { resolved, notFound, count }를 반환합니다.",
         "endpointSearchNote": "JSON 본문: { query, topK?, includeContent?, queryEmbedding? }. 임베딩이 설정되어 있으면 공유 키워드 + 벡터 검색을 사용합니다.",
         "endpointGraphNote": "?q=…&nodeType=…&limit=N — wiki/*.md에서 도출된 위키링크 그래프입니다.",
         "endpointRescanNote": "소스 감시 설정을 사용해 백엔드 재스캔을 실행합니다.",
@@ -823,7 +823,7 @@
         "title": "출력 환경설정",
         "description": "생성되는 콘텐츠의 언어, 대화 기록 길이 등을 제어합니다.",
         "aiLanguage": "AI 출력 언어",
-        "aiLanguageHint": "AI가 생성하는 콘텐츠(채팅 답변, 위키 페이지, 리서치 결과, 린트 보고서)에 선택한 언어를 강제 적용합니다. AI가 사용자 입력이나 소스 문서의 언어를 따르게 하려면 \"자동\"을 선택하세요.",
+        "aiLanguageHint": "AI가 생성하는 콘텐츠(채팅 답변, 위키 페이지, 리서치 결과, 위키 점검 보고서)에 선택한 언어를 강제 적용합니다. AI가 사용자 입력이나 소스 문서의 언어를 따르게 하려면 \"자동\"을 선택하세요.",
         "historyLength": "대화 기록 길이",
         "historyHint": "매 요청마다 AI에게 전달되는 이전 메시지 수입니다. 많을수록 맥락은 풍부해지지만 토큰을 더 소모합니다.",
         "historyCurrent": "현재 {{count}}개 메시지(약 {{turns}}턴)"
@@ -845,7 +845,7 @@
       },
       "maintenance": {
         "title": "유지 관리",
-        "description": "위키를 정리하는 도구입니다 — 재가져오기 과정에서 LLM이 서로 다른 이름으로 만든 중복 엔터티/개념을 찾아 병합합니다.",
+        "description": "위키를 정리하는 도구입니다 — 재반영 과정에서 LLM이 서로 다른 이름으로 만든 중복 엔터티/개념을 찾아 병합합니다.",
         "noProject": "먼저 프로젝트를 여세요.",
         "noLlm": "먼저 LLM 공급자를 설정하세요.",
         "projectData": {
@@ -999,19 +999,19 @@
     "processing": "처리 중: {{title}}",
     "done": "완료: {{title}}",
     "clearCompleted": "완료 항목 지우기",
-    "ingestQueue": "가져오기 대기열",
-    "ingestQueuePaused": "가져오기 대기열(일시 중지됨)",
+    "ingestQueue": "위키 반영 대기열",
+    "ingestQueuePaused": "위키 반영 대기열(일시 중지됨)",
     "pauseQueue": "일시 중지",
     "resumeQueue": "재개",
-    "pauseQueueTitle": "현재 작업이 끝나면 일시 중지합니다. 새 가져오기 작업은 시작되지 않습니다.",
-    "resumeQueueTitle": "대기 중인 가져오기 작업 처리를 재개합니다",
+    "pauseQueueTitle": "현재 작업이 끝나면 일시 중지합니다. 새 위키 반영 작업은 시작되지 않습니다.",
+    "resumeQueueTitle": "대기 중인 위키 반영 작업 처리를 재개합니다",
     "queueCompleteCount": "{{done}}/{{total}} 완료",
     "failedCount": "{{count}}개 실패",
     "cancelAll": "모두 취소",
     "cancelAllTitle": "대기 중이거나 처리 중인 모든 작업을 취소합니다",
-    "cancelAllConfirm": "대기/처리 중인 가져오기 작업 {{count}}개를 모두 취소할까요? 진행 중이던 작업의 일부 파일은 제거됩니다. 실패한 작업은 나중에 재시도할 수 있도록 남겨둡니다.",
+    "cancelAllConfirm": "대기/처리 중인 위키 반영 작업 {{count}}개를 모두 취소할까요? 진행 중이던 작업의 일부 파일은 제거됩니다. 실패한 작업은 나중에 재시도할 수 있도록 남겨둡니다.",
     "retryFailed": "실패 항목 재시도",
-    "retryFailedTitle": "실패한 모든 가져오기 작업을 재시도합니다"
+    "retryFailedTitle": "실패한 모든 위키 반영 작업을 재시도합니다"
   },
   "fileTree": {
     "noProject": "열려 있는 프로젝트가 없습니다",

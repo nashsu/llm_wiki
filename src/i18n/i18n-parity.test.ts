@@ -4,7 +4,7 @@
  * These checks fail on bundle contents before missing, malformed, or
  * incorrectly registered translations can surface as raw keys in the UI.
  */
-import { describe, it, expect } from "vitest"
+import { afterEach, beforeEach, describe, it, expect } from "vitest"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { readFileSync, readdirSync } from "node:fs"
@@ -12,6 +12,8 @@ import en from "./en.json"
 import zh from "./zh.json"
 import ko from "./ko.json"
 import i18n from "./index"
+import { useWikiStore } from "@/stores/wiki-store"
+import { getOutputLanguage } from "@/lib/output-language"
 
 /** Flattens a nested translation object to "a.b.c" dot-path keys. */
 function flattenKeys(obj: unknown, prefix = ""): string[] {
@@ -129,6 +131,10 @@ function interpolationVariables(value: string): string[] {
     if (value.slice(index, index + 2) !== "{{") continue
     let end = index + 2
     while (/\s/.test(value[end] ?? "")) end += 1
+    if (value[end] === "-") {
+      end += 1
+      while (/\s/.test(value[end] ?? "")) end += 1
+    }
     const start = end
     while (end < value.length && !/[\s,{}]/.test(value[end])) end += 1
     if (end > start) variables.push(value.slice(start, end))
@@ -137,15 +143,13 @@ function interpolationVariables(value: string): string[] {
 }
 
 function hasBalancedInterpolationBraces(value: string): boolean {
+  if (value.includes("{{{")) return false
   let balance = 0
-  for (let index = 0; index < value.length - 1; index += 1) {
-    const pair = value.slice(index, index + 2)
-    if (pair === "{{") {
+  for (const character of value) {
+    if (character === "{") {
       balance += 1
-      index += 1
-    } else if (pair === "}}") {
+    } else if (character === "}") {
       balance -= 1
-      index += 1
       if (balance < 0) return false
     }
   }
@@ -157,6 +161,17 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
   const enKeys = new Set(flattenKeys(en))
   const zhKeys = new Set(flattenKeys(zh))
   const koKeys = new Set(flattenKeys(ko))
+
+  it("keeps every shipped bundle at exactly 956 string leaves", () => {
+    expect(flattenKeys(en)).toHaveLength(956)
+    expect(flattenKeys(zh)).toHaveLength(956)
+    expect(flattenKeys(ko)).toHaveLength(956)
+  })
+
+  it("detects duplicate keys in nested objects and objects inside arrays", () => {
+    expect(findDuplicateJsonKeys('{"outer":{"same":1,"same":2}}')).toEqual(["outer.same"])
+    expect(findDuplicateJsonKeys('{"items":[{"same":1,"same":2}]}')).toEqual(["items.0.same"])
+  })
 
   it("does not contain duplicate JSON keys at any object depth", () => {
     for (const fileName of ["en.json", "zh.json", "ko.json"]) {
@@ -244,6 +259,26 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     }
   })
 
+  it("parses escaped and unescaped i18next interpolation variables", () => {
+    expect(interpolationVariables("{{name}} / {{- html}} / {{name}}")).toEqual([
+      "html",
+      "name",
+      "name",
+    ])
+  })
+
+  it("accepts valid interpolation and rejects stray or triple braces", () => {
+    expect(hasBalancedInterpolationBraces("Hello {{name}}")).toBe(true)
+    expect(
+      hasBalancedInterpolationBraces(
+        "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
+      ),
+    ).toBe(true)
+    expect(hasBalancedInterpolationBraces("Hello {{- html}}")).toBe(true)
+    expect(hasBalancedInterpolationBraces("Hello {{name}}}")).toBe(false)
+    expect(hasBalancedInterpolationBraces("Hello {{{name}}}")).toBe(false)
+  })
+
   it("every translation has balanced interpolation braces", () => {
     for (const [label, bundle] of [
       ["en.json", en],
@@ -288,10 +323,55 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
       "Literal i18n keys used by frontend code but missing from the bundles",
     ).toEqual([])
   })
+
+  it("preserves approved Korean UI terminology and technical literals", () => {
+    const koreanStrings = leafEntries(ko).map(([, value]) => value as string)
+    expect(koreanStrings.filter((value) => /원본 소스|리뷰|린트/.test(value))).toEqual([])
+
+    const enValues = new Map(leafEntries(en))
+    const staleIngestTerms = leafEntries(ko)
+      .filter(([path, value]) => {
+        const english = enValues.get(path)
+        return (
+          typeof english === "string" &&
+          /ingest/i.test(`${path} ${english}`) &&
+          typeof value === "string" &&
+          /가져오기|수집/.test(value)
+        )
+      })
+      .map(([path]) => path)
+    expect(staleIngestTerms).toEqual([])
+
+    expect(ko.sidebar.rawSources).toBe("원본 자료")
+    expect(ko.nav.review).toBe("검토")
+    expect(ko.nav.lint).toBe("위키 점검")
+    expect(ko.sources.ingest).toBe("위키 반영")
+    expect(ko.settings.sections.llm.taskRouting.ingest).toBe("위키 반영 모델")
+    expect(ko.activity.ingestQueue).toBe("위키 반영 대기열")
+    expect(ko.lint.addCrossRefsDescription).toContain("[[wikilinks]]")
+    expect(ko.settings.sections.llm.customHeadersHint).toContain("Header-Name: value")
+    expect(ko.settings.sections.llm.customHeadersHint).not.toContain("`Header-Name: value`")
+  })
 })
 
 describe("i18next runtime resources", () => {
-  it("switches among the registered English, Chinese, and Korean resources", async () => {
+  let originalLanguage: string
+  let originalOutputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"]
+
+  beforeEach(() => {
+    originalLanguage = i18n.language
+    originalOutputLanguage = useWikiStore.getState().outputLanguage
+  })
+
+  afterEach(async () => {
+    useWikiStore.getState().setOutputLanguage(originalOutputLanguage)
+    await i18n.changeLanguage(originalLanguage)
+  })
+
+  it("switches UI resources without changing AI output language", async () => {
+    useWikiStore.getState().setOutputLanguage("Japanese")
+    const effectiveOutputLanguage = getOutputLanguage("English source")
+
     for (const [language, expected] of [
       ["en", en.nav.chat],
       ["zh", zh.nav.chat],
@@ -300,6 +380,8 @@ describe("i18next runtime resources", () => {
       await i18n.changeLanguage(language)
       expect(i18n.resolvedLanguage).toBe(language)
       expect(i18n.t("nav.chat")).toBe(expected)
+      expect(useWikiStore.getState().outputLanguage).toBe("Japanese")
+      expect(getOutputLanguage("English source")).toBe(effectiveOutputLanguage)
     }
   })
 })
