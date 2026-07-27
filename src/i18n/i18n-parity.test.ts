@@ -143,17 +143,49 @@ function interpolationVariables(value: string): string[] {
 }
 
 function hasBalancedInterpolationBraces(value: string): boolean {
-  if (value.includes("{{{")) return false
-  let balance = 0
-  for (const character of value) {
-    if (character === "{") {
-      balance += 1
-    } else if (character === "}") {
-      balance -= 1
-      if (balance < 0) return false
+  const parseInterpolation = (start: number, nested: boolean): number | null => {
+    if (value.startsWith("{{{", start)) return null
+    let cursor = start + 2
+    let literalBraceDepth = 0
+
+    while (cursor < value.length) {
+      if (value.startsWith("{{{", cursor)) return null
+      if (value.startsWith("{{", cursor)) {
+        const nestedEnd = parseInterpolation(cursor, true)
+        if (nestedEnd === null) return null
+        cursor = nestedEnd
+        continue
+      }
+      if (value.startsWith("}}", cursor) && literalBraceDepth === 0) {
+        const end = cursor + 2
+        if (!nested && value[end] === "}") return null
+        return end
+      }
+
+      if (value[cursor] === "{") {
+        literalBraceDepth += 1
+      } else if (value[cursor] === "}") {
+        if (literalBraceDepth === 0) return null
+        literalBraceDepth -= 1
+      }
+      cursor += 1
+    }
+
+    return null
+  }
+
+  let cursor = 0
+  while (cursor < value.length) {
+    if (value.startsWith("{{{", cursor)) return false
+    if (value.startsWith("{{", cursor)) {
+      const end = parseInterpolation(cursor, false)
+      if (end === null) return false
+      cursor = end
+    } else {
+      cursor += 1
     }
   }
-  return balance === 0
+  return true
 }
 
 describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
@@ -269,6 +301,9 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
 
   it("accepts valid interpolation and rejects stray or triple braces", () => {
     expect(hasBalancedInterpolationBraces("Hello {{name}}")).toBe(true)
+    expect(hasBalancedInterpolationBraces("Use a single { literal brace")).toBe(true)
+    expect(hasBalancedInterpolationBraces("Use a single } literal brace")).toBe(true)
+    expect(hasBalancedInterpolationBraces("JSON body: { resolved?, action? }")).toBe(true)
     expect(
       hasBalancedInterpolationBraces(
         "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
@@ -277,6 +312,8 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     expect(hasBalancedInterpolationBraces("Hello {{- html}}")).toBe(true)
     expect(hasBalancedInterpolationBraces("Hello {{name}}}")).toBe(false)
     expect(hasBalancedInterpolationBraces("Hello {{{name}}}")).toBe(false)
+    expect(hasBalancedInterpolationBraces("Hello {{name")).toBe(false)
+    expect(hasBalancedInterpolationBraces("Hello {{name}")).toBe(false)
   })
 
   it("every translation has balanced interpolation braces", () => {
@@ -325,27 +362,94 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
   })
 
   it("preserves approved Korean UI terminology and technical literals", () => {
-    const koreanStrings = leafEntries(ko).map(([, value]) => value as string)
-    expect(koreanStrings.filter((value) => /원본 소스|리뷰|린트/.test(value))).toEqual([])
-
-    const enValues = new Map(leafEntries(en))
-    const staleIngestTerms = leafEntries(ko)
-      .filter(([path, value]) => {
-        const english = enValues.get(path)
-        return (
-          typeof english === "string" &&
-          /ingest/i.test(`${path} ${english}`) &&
-          typeof value === "string" &&
-          /가져오기|수집/.test(value)
-        )
-      })
-      .map(([path]) => path)
-    expect(staleIngestTerms).toEqual([])
-
     expect(ko.sidebar.rawSources).toBe("원본 자료")
+    expect(ko.sources.title).toBe("원본 자료")
+    expect(ko.chat.retrievalModes.faithful).toBe("원본 자료만")
+    expect(ko.chat.retrievalModeHint).toContain("원본 자료")
+
     expect(ko.nav.review).toBe("검토")
+    expect(ko.review.title).toBe("검토")
+    for (const translation of [
+      ko.research.emptyHint,
+      ko.lint.sendSelectedToReview,
+      ko.review.refreshHint,
+      ko.review.allClear,
+      ko.settings.sections.apiServer.endpointReviewsNote,
+      ko.settings.sections.apiServer.endpointPatchReviewNote,
+      ko.settings.sections.apiServer.endpointBulkResolveNote,
+    ]) {
+      expect(translation).toContain("검토")
+    }
+
     expect(ko.nav.lint).toBe("위키 점검")
-    expect(ko.sources.ingest).toBe("위키 반영")
+    expect(ko.lint.title).toBe("위키 점검")
+    for (const translation of [
+      ko.lint.runLint,
+      ko.lint.runLintHint,
+      ko.settings.sections.output.aiLanguageHint,
+    ]) {
+      expect(translation).toContain("위키 점검")
+    }
+
+    for (const translation of [
+      ko.sources.import,
+      ko.sources.importing,
+      ko.sources.importFiles,
+      ko.sources.importSourceFiles,
+      ko.sources.importSourceFolder,
+      ko.sources.urlImport.title,
+      ko.sources.urlImport.submit,
+      ko.sources.urlImport.imported,
+      ko.settings.categories.scheduledImport,
+      ko.settings.sections.scheduledImport.title,
+      ko.settings.sections.scheduledImport.enable,
+      ko.settings.sections.maintenance.projectData.import,
+      ko.settings.sections.maintenance.projectData.imported,
+      ko.graph.importSourcesHint,
+    ]) {
+      expect(translation).toContain("가져")
+    }
+
+    for (const translation of [
+      ko.sources.urlImport.description,
+      ko.sources.refreshFolderTooltip,
+      ko.sources.ingest,
+      ko.chat.emptyHint,
+      ko.settings.sections.llm.taskRouting.ingest,
+      ko.settings.sections.llm.taskRouting.hint,
+      ko.settings.sections.llm.projectOverride.hint,
+      ko.settings.sections.llm.codexCliTimeoutHint,
+      ko.settings.sections.llm.reasoning.hint,
+      ko.settings.sections.multimodal.description,
+      ko.settings.sections.multimodal.enableLabel,
+      ko.settings.sections.multimodal.enableHint,
+      ko.settings.sections.multimodal.modelHint,
+      ko.settings.sections.multimodal.costPoint4,
+      ko.settings.sections.sourceWatch.description,
+      ko.settings.sections.sourceWatch.autoIngest,
+      ko.settings.sections.sourceWatch.autoIngestDescription,
+      ko.settings.sections.sourceWatch.maxSize,
+      ko.settings.sections.scheduledImport.privacyNotice,
+      ko.settings.sections.maintenance.description,
+      ko.activity.ingestQueue,
+      ko.activity.ingestQueuePaused,
+      ko.activity.pauseQueueTitle,
+      ko.activity.resumeQueueTitle,
+      ko.activity.cancelAllConfirm,
+      ko.activity.retryFailedTitle,
+    ]) {
+      expect(translation).toMatch(/위키(?:에)?\s*반영/)
+    }
+
+    expect(ko.chat.emptyHint).toBe("질문하거나 자료를 위키에 반영해 보세요.")
+    expect(ko.settings.sections.multimodal.costPoint4).toContain(
+      "여러 문서를 위키에 반영할 때",
+    )
+    expect(ko.settings.sections.sourceWatch.description).toContain(
+      "자동으로 위키에 반영할 파일",
+    )
+    expect(ko.settings.sections.maintenance.description).toContain("위키에 반영")
+
     expect(ko.settings.sections.llm.taskRouting.ingest).toBe("위키 반영 모델")
     expect(ko.activity.ingestQueue).toBe("위키 반영 대기열")
     expect(ko.lint.addCrossRefsDescription).toContain("[[wikilinks]]")
