@@ -1863,7 +1863,13 @@ function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
   )
 }
 
-const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
+const MAX_REVIEW_TITLE_LENGTH = 120
+const REVIEW_BLOCK_REGEX = /^[ \t]*---REVIEW:[ \t]*(\w[\w-]*)[ \t]*\|[ \t]*([^\r\n]*?)[ \t]*---[ \t]*\r?\n([\s\S]*?)^[ \t]*---END REVIEW---[ \t]*\r?$/gm
+
+function normalizeReviewTitle(value: string): string {
+  const title = value.replace(/\s+/g, " ").trim().slice(0, MAX_REVIEW_TITLE_LENGTH).replace(/[ |\-:：]+$/u, "")
+  return title || "Review item"
+}
 
 function parseReviewBlocks(
   text: string,
@@ -1874,7 +1880,7 @@ function parseReviewBlocks(
 
   for (const match of matches) {
     const rawType = match[1].trim().toLowerCase()
-    const title = match[2].trim()
+    const title = normalizeReviewTitle(match[2])
     const body = match[3].trim()
 
     const type = (
@@ -2200,6 +2206,7 @@ function buildReviewSuggestionPrompt(
     "- duplicate: likely duplicate pages/names that need user review",
     "",
     "Prefer 1-5 high-signal reviews. If there is nothing worth reviewing, output nothing.",
+    "Keep every REVIEW title on one line and within 60 Chinese characters or 120 total characters.",
     "For suggestion and missing-page reviews, include a SEARCH line with 2-3 keyword-rich web search queries separated by ` | `.",
     "Use only these options: OPTIONS: Create Page | Skip",
     "",
