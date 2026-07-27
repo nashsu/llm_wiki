@@ -175,16 +175,28 @@ function hasBalancedInterpolationBraces(value: string): boolean {
   }
 
   let cursor = 0
+  let literalBraceDepth = 0
   while (cursor < value.length) {
     if (value.startsWith("{{{", cursor)) return false
-    if (value.startsWith("}}", cursor)) return false
     if (value.startsWith("{{", cursor)) {
       const end = parseInterpolation(cursor, false)
       if (end === null) return false
       cursor = end
-    } else {
-      cursor += 1
+      continue
     }
+    if (value.startsWith("}}", cursor)) {
+      if (literalBraceDepth < 2) return false
+      literalBraceDepth -= 2
+      cursor += 2
+      continue
+    }
+
+    if (value[cursor] === "{") {
+      literalBraceDepth += 1
+    } else if (value[cursor] === "}" && literalBraceDepth > 0) {
+      literalBraceDepth -= 1
+    }
+    cursor += 1
   }
   return true
 }
@@ -305,6 +317,7 @@ describe("i18n bundle parity (en.json, zh.json, ko.json)", () => {
     expect(hasBalancedInterpolationBraces("Use a single { literal brace")).toBe(true)
     expect(hasBalancedInterpolationBraces("Use a single } literal brace")).toBe(true)
     expect(hasBalancedInterpolationBraces("JSON body: { resolved?, action? }")).toBe(true)
+    expect(hasBalancedInterpolationBraces('JSON: {"outer":{"inner":1}}')).toBe(true)
     expect(hasBalancedInterpolationBraces("Hello }}")).toBe(false)
     expect(hasBalancedInterpolationBraces("Hello {{name}} then }}")).toBe(false)
     expect(
