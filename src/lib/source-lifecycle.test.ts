@@ -60,6 +60,21 @@ describe("source-lifecycle path helpers", () => {
     expect(isIngestableSourcePath("C:\\project\\raw\\sources\\book.MOBI")).toBe(true)
   })
 
+  it("accepts code file extensions and handles case insensitivity", () => {
+    // lower-case code extensions
+    expect(isIngestableSourcePath("raw/sources/app.ts")).toBe(true)
+    expect(isIngestableSourcePath("raw/sources/app.tsx")).toBe(true)
+    expect(isIngestableSourcePath("raw/sources/lib.py")).toBe(true)
+    // mixed-case code extensions
+    expect(isIngestableSourcePath("raw/sources/MyClass.JAVA")).toBe(true)
+    expect(isIngestableSourcePath("C:\\project\\raw\\sources\\utils.CS")).toBe(true)
+    expect(isIngestableSourcePath("raw/sources/Component.Tsx")).toBe(true)
+    // still rejects unknown extensions
+    expect(isIngestableSourcePath("raw/sources/notes.xyz")).toBe(false)
+    // still rejects dotfiles even with valid code extensions
+    expect(isIngestableSourcePath("raw/sources/.eslintrc.json")).toBe(false)
+  })
+
   it("derives folder context from absolute raw/sources paths without leaking the project prefix", () => {
     expect(
       folderContextForSourcePath("/tmp/project/raw/sources/reports/2026/report.pdf"),
