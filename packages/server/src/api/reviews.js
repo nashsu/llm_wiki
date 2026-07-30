@@ -9,7 +9,6 @@ import fs from "node:fs"
 import path from "node:path"
 import { validate } from "../middleware/validate.js"
 import { ReviewQuerySchema } from "../schemas/reviews.js"
-import { resolveProjectRoot } from "../store/project-paths.js"
 
 const router = Router({ mergeParams: true })
 
@@ -50,11 +49,10 @@ function loadReviews(projectPath, { status, type, limit }) {
 // GET /api/v2/projects/:id/reviews?status=&type=&limit=
 router.get("/", validate({ query: ReviewQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const projectPath = resolveProjectRoot(projectId)
+    const projectPath = req.projectRoot
     const { status, type, limit } = req.validated.query
     const { status: st, reviews } = loadReviews(projectPath, { status, type, limit })
-    res.json({ projectId, status: st, count: reviews.length, reviews })
+    res.json({ projectId: req.projectId, status: st, count: reviews.length, reviews })
   } catch (err) {
     next(err)
   }
