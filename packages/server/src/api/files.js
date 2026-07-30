@@ -1,5 +1,7 @@
 // Files API router (Phase 2.3.4)
 // Bridges v2 API to existing fs commands with project-relative paths.
+// req.projectId, req.projectRoot, and req.project are attached by the
+// projectLookup middleware (middleware/project-lookup.js).
 
 import { Router } from "express"
 import { validate } from "../middleware/validate.js"
@@ -10,7 +12,7 @@ import {
   FileDownloadQuerySchema,
   FileRawQuerySchema,
 } from "../schemas/files.js"
-import { resolveProjectRoot, safeJoin } from "../store/project-paths.js"
+import { safeJoin } from "../store/project-paths.js"
 import { dispatch } from "../invoke.js"
 import { ApiError, ErrorCode } from "../errors.js"
 
@@ -33,10 +35,8 @@ function mapFsError(err) {
 // GET /api/v2/projects/:id/files/tree?path=&includeHidden=&maxDepth=
 router.get("/tree", validate({ query: FileTreeQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const root = resolveProjectRoot(projectId)
     const { path: relPath, includeHidden, maxDepth } = req.validated.query
-    const absPath = safeJoin(root, relPath)
+    const absPath = safeJoin(req.projectRoot, relPath)
     const tree = await dispatch("list_directory", { path: absPath, includeHidden, maxDepth })
     res.json({ tree })
   } catch (err) {
@@ -47,9 +47,7 @@ router.get("/tree", validate({ query: FileTreeQuerySchema }), async (req, res, n
 // GET /api/v2/projects/:id/files/content?path=
 router.get("/content", validate({ query: FileContentQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const root = resolveProjectRoot(projectId)
-    const absPath = safeJoin(root, req.validated.query.path)
+    const absPath = safeJoin(req.projectRoot, req.validated.query.path)
     const content = await dispatch("read_file", { path: absPath })
     res.json({ content })
   } catch (err) {
@@ -60,10 +58,8 @@ router.get("/content", validate({ query: FileContentQuerySchema }), async (req, 
 // POST /api/v2/projects/:id/files/upload
 router.post("/upload", validate({ body: FileUploadBodySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const root = resolveProjectRoot(projectId)
     const { path: relPath, content, encoding } = req.validated.body
-    const absPath = safeJoin(root, relPath)
+    const absPath = safeJoin(req.projectRoot, relPath)
     if (encoding === "base64") {
       await dispatch("write_file_base64", { path: absPath, base64: content })
     } else {
@@ -78,9 +74,7 @@ router.post("/upload", validate({ body: FileUploadBodySchema }), async (req, res
 // GET /api/v2/projects/:id/files/download?path=
 router.get("/download", validate({ query: FileDownloadQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const root = resolveProjectRoot(projectId)
-    const absPath = safeJoin(root, req.validated.query.path)
+    const absPath = safeJoin(req.projectRoot, req.validated.query.path)
     const content = await dispatch("read_file", { path: absPath })
     const filename = req.validated.query.path.split("/").pop()
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`)
@@ -94,9 +88,7 @@ router.get("/download", validate({ query: FileDownloadQuerySchema }), async (req
 // GET /api/v2/projects/:id/files/raw?path=
 router.get("/raw", validate({ query: FileRawQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const root = resolveProjectRoot(projectId)
-    const absPath = safeJoin(root, req.validated.query.path)
+    const absPath = safeJoin(req.projectRoot, req.validated.query.path)
     const content = await dispatch("read_file", { path: absPath })
     res.setHeader("Content-Type", "text/plain; charset=utf-8")
     res.send(content)

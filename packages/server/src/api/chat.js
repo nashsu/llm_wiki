@@ -2,21 +2,14 @@ import { Router } from "express"
 import crypto from "node:crypto"
 import { validate } from "../middleware/validate.js"
 import { ChatRequestSchema, ChatCancelParamsSchema, ChatSessionParamsSchema } from "../schemas/chat.js"
-import { getProject } from "../store/projects.js"
 import { agentStartTurnStream, agentCancelTurn, agentGetSession } from "../agent.js"
-import { ApiError } from "../errors.js"
+import { ApiError, ErrorCode } from "../errors.js"
 
 const router = Router()
 
 // POST /api/v2/projects/:id/chat - start a chat turn (streaming)
 router.post("/:id/chat", validate({ body: ChatRequestSchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const project = getProject(projectId)
-    if (!project) {
-      throw new ApiError("PROJECT_NOT_FOUND", `Project ${projectId} not found`, 404)
-    }
-
     const { message, sessionId, mode, tools, topK, includeContent, skills, history } = req.validated.body
     const request = {
       message,
@@ -31,7 +24,7 @@ router.post("/:id/chat", validate({ body: ChatRequestSchema }), async (req, res,
       history,
     }
 
-    const runId = await agentStartTurnStream({ projectId: project.id, request })
+    const runId = await agentStartTurnStream({ projectId: req.project.id, request })
 
     res.json({
       runId,
@@ -59,7 +52,7 @@ router.get("/:id/chat/sessions/:sessionId", validate({ params: ChatSessionParams
     const { sessionId } = req.validated.params
     const session = await agentGetSession({ sessionId })
     if (!session) {
-      throw new ApiError("SESSION_NOT_FOUND", `Session ${sessionId} not found`, 404)
+      throw new ApiError(ErrorCode.NOT_FOUND, `Session ${sessionId} not found`)
     }
     res.json(session)
   } catch (err) {

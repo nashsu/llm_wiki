@@ -87,8 +87,25 @@ function handleSettingsChanged(): void {
   void getSettings().catch(() => {})
 }
 
+/** Legacy Tauri-style event names → v2 names (events.js bridge). */
+const LEGACY_EVENT_MAP: Record<string, string> = {
+  "project://files-changed": "file:modified",
+  "file-sync://changed": "file:modified",
+  "file-sync://ingest-progress": "ingest:progress",
+  "file-sync://ingest-complete": "ingest:complete",
+  "file-sync://ingest-error": "ingest:error",
+  "chat://token": "chat:delta",
+  "chat://done": "chat:done",
+  "graph://updated": "graph:updated",
+  "settings://changed": "settings:changed",
+}
+
 function dispatch(evt: ServerEvent): void {
-  switch (evt.event) {
+  // Resolve legacy Tauri-style event names (emitted by the legacy events.js
+  // bridge on the v2 bus) to v2 names before dispatching, so events from both
+  // producer generations reach the stores.
+  const name = LEGACY_EVENT_MAP[evt.event] || evt.event
+  switch (name) {
     case "file:created":
     case "file:modified":
     case "file:deleted":

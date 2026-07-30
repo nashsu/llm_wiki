@@ -5,20 +5,25 @@
 // LLM_WIKI_API_TOKEN env var is enforced identically here. Accepted via
 // `?token=`, header `x-llm-wiki-token`, or `Authorization: Bearer <token>`.
 //
-// No auth by default: when no token is configured and allowUnauthenticated is
-// not explicitly false, requests pass through (zero-friction local mode).
+// Auth mode (GOAL.md §14):
+//   AUTH_MODE=none   → server is always open (no auth required)
+//   AUTH_MODE=token  → token required on all non-public routes
+//   unset/empty      → heuristic: open when no token configured, required when
+//                       a token is set (backward-compatible default)
+//
+// When AUTH_MODE=token but no token is configured (env or store), the server
+// is effectively closed — every non-public route returns 401.
 
-import crypto from "node:crypto"
+import { constantTimeEq } from "../lib/crypto-utils.js"
 import { readStore } from "../store.js"
 import { SHARED_STORE_NAME } from "../config.js"
 
-function constantTimeEq(a, b) {
-  const A = Buffer.from(String(a))
-  const B = Buffer.from(String(b))
-  if (A.length !== B.length) return false
-  let d = 0
-  for (let i = 0; i < A.length; i++) d |= A[i] ^ B[i]
-  return d === 0
+/** Read the explicit auth mode from AUTH_MODE env var. */
+function getAuthMode() {
+  const raw = (process.env.AUTH_MODE || "").trim().toLowerCase()
+  if (raw === "none") return "none"
+  if (raw === "token") return "token"
+  return "auto"
 }
 
 /** Resolve the effective auth config from env + the shared store. */
@@ -30,28 +35,33 @@ export function resolveAuth() {
   const token = envT || storeT
   const source = envT ? "env" : storeT ? "store" : "none"
   const allowUnauth = cfg.allowUnauthenticated === true
-  return {
-    token,
-    source,
-    allowUnauth,
-    authRequired: !allowUnauth,
-    authConfigured: !!token,
-  }
+  const mode = getAuthMode()
+  const authRequired =
+    mode === "token"
+      ? true // explicitly required regardless of allowUnauth
+      : mode === "none"
+        ? false // explicitly open
+        : !allowUnauth // heuristic: require if not explicitly opened
+  const authConfigured = !!token || mode === "token"
+  return { token, source, mode, allowUnauth, authRequired, authConfigured }
 }
 
 /**
  * Check whether an incoming request is authorized.
  *
- * "No auth by default" (decision #14): when no token is configured the server
- * is open (zero-friction local mode). A token only becomes required once one is
- * actually set (env or shared store), unless allowUnauthenticated re-opens it.
+ * Auth model (decision #14):
+ *   AUTH_MODE=none  → always open (zero-friction local mode)
+ *   AUTH_MODE=token → token required on every non-public route
+ *   unset/empty     → open when no token is configured, required when a token
+ *                      is set (heuristic: backward-compatible default)
  * @param {import("express").Request} req
  * @returns {boolean}
  */
 export function isAuthorized(req) {
   const a = resolveAuth()
-  if (!a.authConfigured) return true // no token set → open
-  if (a.allowUnauth) return true // explicitly opened despite a token
+  if (!a.authRequired) return true // AUTH_MODE=none or open heuristic
+  if (!a.token) return false // AUTH_MODE=token but nothing to validate against
+  if (a.allowUnauth && a.mode !== "token") return true // explicitly re-opened in heuristic mode
   const qtok = req.query.token
   if (typeof qtok === "string" && constantTimeEq(qtok, a.token)) return true
   const x = req.headers["x-llm-wiki-token"]

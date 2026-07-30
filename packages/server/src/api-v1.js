@@ -19,6 +19,8 @@ import { agentStartTurn, agentCancelTurn } from "./agent.js"
 // LLM_WIKI_API_TOKEN, so a token set in the desktop's Settings is enforced here
 // too. Accepted via ?token=, header x-llm-wiki-token, or Authorization: Bearer.
 
+import { constantTimeEq } from "./lib/crypto-utils.js"
+
 const fwd = (p) => p.split(path.sep).join("/")
 const normPath = (p) => fwd(p).replace(/\\/g, "/")
 function fmType(content) {
@@ -29,13 +31,6 @@ function fmType(content) {
 }
 
 // ── auth (mirror api_server.rs) ───────────────────────────────────────────
-function constantTimeEq(a, b) {
-  const A = Buffer.from(String(a)), B = Buffer.from(String(b))
-  if (A.length !== B.length) return false
-  let d = 0
-  for (let i = 0; i < A.length; i++) d |= A[i] ^ B[i]
-  return d === 0
-}
 function apiAuth(store) {
   const envT = (process.env.LLM_WIKI_API_TOKEN || "").trim()
   const cfg = (store && store.apiConfig) || {}

@@ -3,11 +3,12 @@
 // graph.js buildSnapshot. Node type is derived from frontmatter and link count
 // from adjacency degree, exactly mirroring api-v1.js buildGraph so the two
 // backends produce identical graphs.
+// req.projectId, req.projectRoot, and req.project are attached by the
+// projectLookup middleware (middleware/project-lookup.js).
 
 import { Router } from "express"
 import { validate } from "../middleware/validate.js"
 import { GraphQuerySchema } from "../schemas/graph.js"
-import { resolveProjectRoot } from "../store/project-paths.js"
 import { buildSnapshot } from "../graph.js"
 
 const router = Router({ mergeParams: true })
@@ -25,11 +26,9 @@ function fmType(content) {
 // GET /api/v2/projects/:id/graph?q=&nodeType=&limit=
 router.get("/", validate({ query: GraphQuerySchema }), async (req, res, next) => {
   try {
-    const projectId = parseInt(req.params.id, 10)
-    const projectPath = resolveProjectRoot(projectId)
     const { q, nodeType, limit } = req.validated.query
 
-    const { pages, adjacency } = buildSnapshot(projectPath, null)
+    const { pages, adjacency } = buildSnapshot(req.projectRoot, null)
     let nodes = pages.map((p) => {
       const deg = adjacency.get(p.path)?.size || 0
       return {

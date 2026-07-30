@@ -12,17 +12,9 @@ import { validate } from "../middleware/validate.js"
 import { LoginRequestSchema } from "../schemas/auth.js"
 import { resolveAuth } from "../auth/config.js"
 import { ApiError, ErrorCode } from "../errors.js"
+import { constantTimeEq } from "../lib/crypto-utils.js"
 
 const router = Router()
-
-function constantTimeEq(a, b) {
-  const A = Buffer.from(String(a))
-  const B = Buffer.from(String(b))
-  if (A.length !== B.length) return false
-  let d = 0
-  for (let i = 0; i < A.length; i++) d |= A[i] ^ B[i]
-  return d === 0
-}
 
 // GET /api/v2/auth/status — public; reports auth posture for the client
 router.get("/status", (req, res) => {

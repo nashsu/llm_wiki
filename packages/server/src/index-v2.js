@@ -19,6 +19,7 @@ import helmet from "helmet"
 import { PORT, HOST, WEB_DIST, ensureDataDirs } from "./config.js"
 import { authMiddleware } from "./middleware/auth.js"
 import { errorHandler } from "./middleware/error.js"
+import { projectLookup } from "./middleware/project-lookup.js"
 import { dispatch, hasCommand, commandNames } from "./invoke.js"
 import { ApiError, ErrorCode } from "./errors.js"
 import { getDb } from "./store/db.js"
@@ -82,14 +83,17 @@ app.post("/api/invoke/:command", async (req, res, next) => {
 })
 
 // ── v2 route groups ───────────────────────────────────────────────────────
+// All /api/v2/projects/:id/* routes share a project lookup middleware that
+// resolves req.params.id → req.projectId / req.projectRoot / req.project,
+// eliminating the duplicated parseInt+resolveProjectRoot in every handler.
 app.use("/api/v2/projects", projectsRouter)
 app.use("/api/v2/projects", chatRouter)
-app.use("/api/v2/projects/:id/files", filesRouter)
-app.use("/api/v2/projects/:id/search", searchRouter)
-app.use("/api/v2/projects/:id/graph", graphRouter)
-app.use("/api/v2/projects/:id/reviews", reviewsRouter)
-app.use("/api/v2/projects/:id/maintenance", maintenanceRouter)
-app.use("/api/v2/projects/:id/ingest", ingestRouter)
+app.use("/api/v2/projects/:id/files", projectLookup(), filesRouter)
+app.use("/api/v2/projects/:id/search", projectLookup(), searchRouter)
+app.use("/api/v2/projects/:id/graph", projectLookup(), graphRouter)
+app.use("/api/v2/projects/:id/reviews", projectLookup(), reviewsRouter)
+app.use("/api/v2/projects/:id/maintenance", projectLookup(), maintenanceRouter)
+app.use("/api/v2/projects/:id/ingest", projectLookup(), ingestRouter)
 app.use("/api/v2/events", eventsRouter)
 app.use("/api/v2/settings", settingsRouter)
 app.use("/api/v2/auth", authRouter)
