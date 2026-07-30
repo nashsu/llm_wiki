@@ -4,12 +4,16 @@
 // the envelope `{ error: { code, message, details } }` (architecture.md §4.6).
 // Handlers throw ApiError with one of the stable codes below; anything else is
 // mapped to INTERNAL_ERROR so internals never leak.
+//
+// When adding or changing an error code, keep @llm-wiki/api-types in sync
+// (packages/api-types/src/index.ts) — the web client imports from there.
 
 export const ErrorCode = {
   VALIDATION_ERROR: "VALIDATION_ERROR",
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
+  PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
   CONFLICT: "CONFLICT",
   FILE_TOO_LARGE: "FILE_TOO_LARGE",
   RATE_LIMITED: "RATE_LIMITED",
@@ -23,6 +27,7 @@ const STATUS = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  PROJECT_NOT_FOUND: 404,
   CONFLICT: 409,
   FILE_TOO_LARGE: 413,
   RATE_LIMITED: 429,

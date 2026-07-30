@@ -1,13 +1,58 @@
 /**
  * @llm-wiki/api-types
  *
- * TypeScript types for the LLM Wiki REST API, inferred from the server's Zod
- * schemas. This package is populated in Phase 2 when the Express + Zod server
- * is built. For now it's a placeholder to establish the workspace structure.
+ * TypeScript types and constants for the LLM Wiki REST API. This is the single
+ * source of truth for the stable error code, the error envelope shape, and any
+ * other types that both the server and web client need to agree on.
  *
- * Usage (Phase 2+):
- *   import type { Project, CreateProjectInput } from '@llm-wiki/api-types'
+ * The types mirror the server's JS definitions (packages/server/src/errors.js)
+ * but live here so the web client (and MCP server) don't hand-duplicate them.
+ *
+ * Usage:
+ *   import { ApiErrorCode, ERROR_CODES, type ApiErrorBody } from '@llm-wiki/api-types'
  */
 
-// Placeholder export so the package has a valid entry point.
-export const API_TYPES_VERSION = '0.6.6'
+/**
+ * Stable error codes returned by the server in the
+ * `{ error: { code, message, details } }` envelope.
+ *
+ * Keep in sync with packages/server/src/errors.js ErrorCode object.
+ */
+export const ERROR_CODES = {
+  VALIDATION_ERROR: "VALIDATION_ERROR",
+  UNAUTHORIZED: "UNAUTHORIZED",
+  FORBIDDEN: "FORBIDDEN",
+  NOT_FOUND: "NOT_FOUND",
+  PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
+  CONFLICT: "CONFLICT",
+  FILE_TOO_LARGE: "FILE_TOO_LARGE",
+  RATE_LIMITED: "RATE_LIMITED",
+  INTERNAL_ERROR: "INTERNAL_ERROR",
+  UPSTREAM_ERROR: "UPSTREAM_ERROR",
+  WORKER_BUSY: "WORKER_BUSY",
+} as const
+
+/** Stable error code values (union of constant strings). */
+export type ApiErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+
+/** HTTP status for each error code (matches the server's STATUS map). */
+export const ERROR_STATUS: Record<ApiErrorCode, number> = {
+  VALIDATION_ERROR: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  PROJECT_NOT_FOUND: 404,
+  CONFLICT: 409,
+  FILE_TOO_LARGE: 413,
+  RATE_LIMITED: 429,
+  INTERNAL_ERROR: 500,
+  UPSTREAM_ERROR: 502,
+  WORKER_BUSY: 503,
+}
+
+/** The server's error envelope: `{ error: { code, message, details } }`. */
+export interface ApiErrorBody {
+  code: ApiErrorCode | string
+  message: string
+  details: unknown
+}

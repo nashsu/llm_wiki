@@ -6,27 +6,12 @@
 // - Errors are parsed from the server's `{ error: { code, message, details } }`
 //   envelope (architecture.md §4.6) and surfaced as ApiError.
 
+import type { ApiErrorCode, ApiErrorBody } from "@llm-wiki/api-types"
+
 export const TOKEN_STORAGE_KEY = "llm-wiki-token"
 
-/** Stable error codes returned by the server (packages/server/src/errors.js). */
-export type ApiErrorCode =
-  | "VALIDATION_ERROR"
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "FILE_TOO_LARGE"
-  | "RATE_LIMITED"
-  | "INTERNAL_ERROR"
-  | "UPSTREAM_ERROR"
-  | "WORKER_BUSY"
-
-/** The server's error envelope: `{ error: { code, message, details } }`. */
-export interface ApiErrorBody {
-  code: ApiErrorCode | string
-  message: string
-  details: unknown
-}
+/** Re-export for convenience — most callers only need the ApiError class. */
+export type { ApiErrorCode, ApiErrorBody }
 
 /** Error thrown for any non-2xx response from the API. */
 export class ApiError extends Error {

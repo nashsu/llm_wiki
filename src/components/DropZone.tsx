@@ -32,12 +32,6 @@ interface UploadEntry {
   taskId?: number
 }
 
-let entrySeq = 0
-function nextEntryId(): string {
-  entrySeq += 1
-  return `upload-${entrySeq}`
-}
-
 const STATUS_LABEL: Record<FileStatus, string> = {
   uploading: "Uploading",
   queued: "Queued",
@@ -70,6 +64,7 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const entrySeq = useRef(0)
 
   const patchEntry = useCallback((id: string, patch: Partial<UploadEntry>) => {
     setEntries((prev) => prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)))
@@ -99,7 +94,8 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
       const fresh: UploadEntry[] = []
       const jobs: Array<Promise<void>> = []
       for (const file of files) {
-        const id = nextEntryId()
+        entrySeq.current += 1
+        const id = `upload-${entrySeq.current}`
         fresh.push({
           id,
           name: file.webkitRelativePath || file.name,

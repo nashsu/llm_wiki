@@ -11,11 +11,17 @@ import { z } from "zod"
 // Every error response is `{ error: { code, message, details } }`. `code` is one
 // of the stable ErrorCode strings; `details` carries structured context (Zod
 // issues, provider info) or null.
+// When adding new unknown-valued fields, prefer importing DynamicValue over
+// reaching for bare z.unknown() — the shared alias makes intent clear.
+export const DynamicValue = z.unknown()
+
+export const DynamicValueRecord = z.record(z.string(), DynamicValue)
+
 export const ErrorEnvelopeSchema = z.object({
   error: z.object({
     code: z.string(),
     message: z.string(),
-    details: z.unknown().nullable(),
+    details: DynamicValue.nullable(),
   }),
 })
 
