@@ -49,6 +49,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
   // textarea so metadata/frontmatter can be edited without a WYSIWYG serializer
   // rewriting YAML, wikilinks, or other wiki-specific source syntax.
   const [mode, setMode] = useState<"read" | "edit">("read")
+  useEffect(() => { (globalThis as { __lwEditingOpenFile?: boolean }).__lwEditingOpenFile = mode === "edit" }, [mode])
   const [selectionRequest, setSelectionRequest] = useState<EditorSelectionRequest | null>(null)
   const [selectionInstruction, setSelectionInstruction] = useState("")
   // The first action defines the interaction for this selection. Mixing Q&A

@@ -1,0 +1,33 @@
+{
+  "name": "@llm-wiki/server",
+  "version": "0.6.6",
+  "private": true,
+  "description": "Backend server for LLM Wiki (browser client + server architecture). Serves the built web client and exposes the Tauri command surface over HTTP/SSE.",
+  "type": "module",
+  "bin": {
+    "llm-wiki-server": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "start:v2": "node src/index-v2.js",
+    "dev:v2": "node --watch src/index-v2.js",
+    "test": "vitest run --config vitest.config.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "better-sqlite3": "^13.0.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "multer": "^2.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.4"
+  }
+}

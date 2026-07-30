@@ -4,59 +4,66 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  check:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
-
-    runs-on: ${{ matrix.platform }}
-
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install protoc (macOS)
-        if: matrix.platform == 'macos-latest'
-        run: brew install protobuf
-
-      - name: Install dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf protobuf-compiler
-
-      - name: Install protoc (Windows)
-        if: matrix.platform == 'windows-latest'
-        run: choco install protoc -y
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          workspaces: src-tauri
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --build
+
+  test:
+    name: Server integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
-      - name: Install frontend dependencies
-        run: npm install
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Check frontend build
-        run: npx vite build
+      - name: Run v2 integration tests
+        working-directory: packages/server
+        run: npm test
 
-      - name: Prepare MCP server resources
-        run: |
-          npm --prefix mcp-server ci
-          npm run mcp:build
+  docker:
+    name: Docker build
+    # The image is only built on main; PRs validate via typecheck + tests to
+    # keep feedback fast.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Check Rust build
-        working-directory: src-tauri
-        run: cargo build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: llm-wiki:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

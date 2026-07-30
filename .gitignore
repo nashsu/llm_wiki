@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 dist-ssr/
+dist-web/
 # RC artifacts pulled from CI for local Windows / Intel Mac verification.
 # These are pre-release binaries downloaded via `gh run download`, never
 # meant for the repo.
@@ -49,3 +50,9 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+# Overnight scheduler runtime (logs/lock), untracked
+.overnight/
+
+# Local scratch space (handoffs, notes), untracked
+.scratch/
