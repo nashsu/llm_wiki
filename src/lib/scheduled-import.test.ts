@@ -81,6 +81,21 @@ describe("scheduled import path handling", () => {
     )
   })
 
+  it("preserves nested relative paths when the import root differs only in case (Windows)", () => {
+    const dest = scheduledImportDestinationForFile(
+      "C:/Users/Me/Wiki",
+      "C:/Users/Me/Inbox",
+      {
+        name: "report.pdf",
+        path: "c:/users/me/inbox/sub/report.pdf",
+      },
+    )
+
+    expect(dest).toBe(
+      "C:/Users/Me/Wiki/raw/sources/scheduled-import/sub/report.pdf",
+    )
+  })
+
   it("does not copy files that are already under raw/sources", () => {
     const dest = scheduledImportDestinationForFile(
       projectPath,
@@ -113,6 +128,27 @@ describe("scheduled import path handling", () => {
     ).toBe(true)
     expect(
       isProjectManagedScheduledImportPath(projectPath, "/Users/me/inbox"),
+    ).toBe(false)
+  })
+
+  it("detects Windows project paths case-insensitively", () => {
+    expect(
+      isProjectManagedScheduledImportPath(
+        "C:/Users/Me/Wiki",
+        "c:\\users\\me\\wiki\\raw\\sources",
+      ),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(
+        "//Server/Share/Wiki",
+        "//server/share/wiki/raw/sources",
+      ),
+    ).toBe(true)
+    expect(
+      isProjectManagedScheduledImportPath(
+        "/Users/Me/Wiki",
+        "/users/me/wiki/raw/sources",
+      ),
     ).toBe(false)
   })
 
@@ -212,6 +248,43 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.copyFile).toHaveBeenCalled()
     expect(mocks.enqueueSourceIngest).toHaveBeenCalled()
     expect(mocks.writeFileAtomic).not.toHaveBeenCalled()
+  })
+
+  it("reuses legacy mixed-case Windows database keys after upgrade", async () => {
+    const windowsProject: WikiProject = {
+      id: "windows-project",
+      name: "Windows Project",
+      path: "C:/Users/Me/Wiki",
+    }
+    useWikiStore.setState({ project: windowsProject })
+    mocks.fileExists.mockResolvedValue(true)
+    mocks.readFile.mockResolvedValue(JSON.stringify({
+      version: 1,
+      directories: {
+        "C:/Users/Me/Inbox": {
+          files: {
+            "C:/Users/Me/Inbox/Paper.pdf": "md5-new",
+          },
+          lastScan: 123,
+        },
+      },
+    }))
+    mocks.listDirectory.mockResolvedValue([
+      {
+        name: "Paper.pdf",
+        path: "c:/users/me/inbox/paper.pdf",
+        is_dir: false,
+      },
+    ])
+
+    await scanAndImport(windowsProject, "c:/users/me/inbox")
+
+    expect(mocks.copyFile).not.toHaveBeenCalled()
+    expect(mocks.enqueueSourceIngest).not.toHaveBeenCalled()
+    expect(mocks.writeFileAtomic).toHaveBeenCalledWith(
+      "C:/Users/Me/Wiki/.llm-wiki/scheduled-import-db.json",
+      expect.stringContaining('"c:/users/me/inbox/paper.pdf": "md5-new"'),
+    )
   })
 
   it("does not leave the scanner locked after a managed project path is skipped", async () => {

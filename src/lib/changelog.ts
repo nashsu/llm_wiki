@@ -26,6 +26,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.6",
+    date: "2026-07-27",
+    highlights: {
+      en: [
+        "Added Bocha Web Search as an external search provider for Agent, Deep Research, API, and MCP workflows.",
+        "Added targeted recovery for truncated Ingest output so missing Wiki files can be regenerated automatically.",
+        "Improved cross-platform PDF preview support.",
+        "Improved Windows scheduled imports, nested paths, drive-letter and UNC path handling, Clip Server recovery, and overall stability.",
+      ],
+      zh: [
+        "新增博查网页搜索 Provider，可用于 Agent、Deep Research、API 和 MCP 工作流。",
+        "新增 Ingest 截断定向恢复，可自动重新生成缺失的 Wiki 文件。",
+        "完善 PDF 跨平台预览支持。",
+        "优化 Windows 计划导入、嵌套目录、盘符和 UNC 路径处理，并改进 Clip Server 恢复与整体稳定性。",
+      ],
+    },
+  },
+  {
     version: "0.6.5",
     date: "2026-07-20",
     highlights: {

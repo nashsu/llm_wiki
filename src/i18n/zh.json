@@ -667,6 +667,7 @@
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
+        "bochaHint": "使用博查官方网页搜索 API。可前往 open.bocha.cn 创建和管理 API Key。",
         "firecrawlHint": "API Key 留空时使用匿名搜索；填写 Firecrawl API Key 后使用认证额度。Base URL 也可指向兼容的自托管端点。",
         "searxngJsonHint": "实例必须允许 JSON 搜索响应（`format=json`）。",
         "searchCategories": "搜索分类",
@@ -947,7 +948,10 @@
     "historyRestore": "恢复此版本",
     "pdfText": "文本",
     "pdfDocument": "PDF",
-    "pdfPage": "页码"
+    "pdfPage": "页码",
+    "pdfLoading": "正在加载 PDF...",
+    "pdfLoadError": "无法渲染此 PDF。你可以重试或使用系统应用打开。",
+    "pdfTooLarge": "此 PDF 文件过大，无法在应用内预览。请使用系统应用打开。"
   },
   "activity": {
     "processing": "处理中：{{title}}",

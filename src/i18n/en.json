@@ -667,6 +667,7 @@
         "savedBadge": "Saved",
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
+        "bochaHint": "Uses the official Bocha Web Search API. Create and manage API keys at open.bocha.cn.",
         "firecrawlHint": "Leave API key blank for anonymous search, or add a Firecrawl API key for authenticated quota. Base URL supports compatible self-hosted endpoints.",
         "searxngJsonHint": "The instance must allow JSON search responses (`format=json`).",
         "searchCategories": "Search categories",
@@ -947,7 +948,10 @@
     "historyRestore": "Restore this version",
     "pdfText": "Text",
     "pdfDocument": "PDF",
-    "pdfPage": "Page"
+    "pdfPage": "Page",
+    "pdfLoading": "Loading PDF...",
+    "pdfLoadError": "The PDF could not be rendered. You can retry or open it with the system app.",
+    "pdfTooLarge": "This PDF is too large for the in-app preview. Open it with the system app."
   },
   "activity": {
     "processing": "Processing: {{title}}",

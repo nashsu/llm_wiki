@@ -1861,6 +1861,7 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
                 "bmp" => "image/bmp",
                 "tiff" | "tif" => "image/tiff",
                 "svg" => "image/svg+xml",
+                "pdf" => "application/pdf",
                 _ => "application/octet-stream",
             }
             .to_string();

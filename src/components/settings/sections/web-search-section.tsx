@@ -62,6 +62,13 @@ const SEARCH_PROVIDERS = [
     keyPlaceholder: "Enter your Brave Search API subscription token",
     configKind: "key",
   },
+  {
+    id: "bocha",
+    label: "Bocha Search",
+    hint: "Chinese and global web search via Bocha AI",
+    keyPlaceholder: "Enter your Bocha API key (open.bocha.cn)",
+    configKind: "key",
+  },
 ] as const
 
 export function WebSearchSection() {
@@ -404,6 +411,11 @@ export function WebSearchSection() {
                       {provider.id === "ollama" && (
                         <p className="text-xs text-muted-foreground">
                           {t("settings.sections.webSearch.ollamaHint")}
+                        </p>
+                      )}
+                      {provider.id === "bocha" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.bochaHint")}
                         </p>
                       )}
                     </div>

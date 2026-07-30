@@ -57,6 +57,7 @@ export type SearchProvider =
   | "searxng"
   | "ollama"
   | "brave"
+  | "bocha"
   | "firecrawl"
   | "none"
 export type DeepResearchSource = "web" | "anytxt" | "both"

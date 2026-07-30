@@ -33,14 +33,27 @@ export function getFileStem(p: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
+// Windows drive-letter and UNC paths are case-insensitive; fold them for
+// comparison purposes only (never for the paths actually returned/written).
+function caseFoldPath(normalized: string): string {
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized
+}
+
 /**
  * Get relative path from base.
  */
 export function getRelativePath(fullPath: string, basePath: string): string {
   const normalFull = normalizePath(fullPath)
   const normalBase = normalizePath(basePath).replace(/\/$/, "")
-  if (normalFull.startsWith(normalBase + "/")) {
-    return normalFull.slice(normalBase.length + 1)
+  const fullKey = caseFoldPath(normalFull)
+  const baseKey = caseFoldPath(normalBase)
+  if (fullKey.startsWith(baseKey + "/")) {
+    // Slice by path segments rather than the original string length. Unicode
+    // case folding can change UTF-16 length, so an offset derived from the
+    // differently-cased base can split the returned relative path incorrectly.
+    return normalFull.split("/").slice(normalBase.split("/").length).join("/")
   }
   return normalFull
 }

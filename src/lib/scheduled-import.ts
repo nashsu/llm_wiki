@@ -91,7 +91,12 @@ function dbFilePath(projectPath: string): string {
 }
 
 function dbDirectoryKey(importPath: string): string {
-  const normalized = normalizePath(importPath)
+  return caseFoldPath(normalizePath(importPath))
+}
+
+// Windows drive-letter and UNC paths are case-insensitive; fold them for
+// comparison purposes only (never for the paths actually written to disk).
+function caseFoldPath(normalized: string): string {
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
     ? normalized.toLowerCase()
     : normalized
@@ -105,8 +110,8 @@ function cloneDb(db: ImportDb): ImportDb {
 }
 
 function isPathInside(path: string, parent: string): boolean {
-  const normalizedPath = normalizePath(path)
-  const normalizedParent = normalizePath(parent).replace(/\/+$/, "")
+  const normalizedPath = dbDirectoryKey(path)
+  const normalizedParent = dbDirectoryKey(parent).replace(/\/+$/, "")
   return (
     normalizedPath === normalizedParent ||
     normalizedPath.startsWith(`${normalizedParent}/`)
@@ -256,8 +261,10 @@ export function scheduledImportDestinationForFile(
   }
 
   const importRoot = normalizePath(importPath).replace(/\/+$/, "")
+  const sourceKey = caseFoldPath(source)
+  const importRootKey = caseFoldPath(importRoot)
   const relative =
-    source === importRoot || !source.startsWith(`${importRoot}/`)
+    sourceKey === importRootKey || !sourceKey.startsWith(`${importRootKey}/`)
       ? file.name
       : source.slice(importRoot.length + 1)
 
@@ -302,8 +309,22 @@ async function loadImportDb(
   importPath: string,
 ): Promise<ImportDb> {
   const store = await loadDbStore(projectPath)
-  const db = store.directories[dbDirectoryKey(importPath)]
-  return db ? cloneDb(db) : cloneDb(EMPTY_DB)
+  const directoryKey = dbDirectoryKey(importPath)
+  const db = store.directories[directoryKey] ??
+    Object.entries(store.directories).find(
+      ([storedKey]) => dbDirectoryKey(storedKey) === directoryKey,
+    )?.[1]
+  if (!db) return cloneDb(EMPTY_DB)
+
+  // Older builds persisted Windows directory and file keys with their
+  // observed casing. Normalize both levels while loading so upgrading does
+  // not make the first scan treat every unchanged file as new.
+  return {
+    files: Object.fromEntries(
+      Object.entries(db.files).map(([path, md5]) => [dbDirectoryKey(path), md5]),
+    ),
+    lastScan: db.lastScan,
+  }
 }
 
 async function saveImportDb(
@@ -383,7 +404,7 @@ export async function scanAndImport(
           continue
         }
 
-        const key = sourcePath
+        const key = dbDirectoryKey(sourcePath)
         const md5 = await getFileMd5(sourcePath)
 
         if (db.files[key] === md5) {

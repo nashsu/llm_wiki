@@ -137,10 +137,15 @@ export async function webSearch(
     throw new Error("Web search not configured. Select a search provider in Settings.")
   }
   if (
-    (resolved.provider === "tavily" || resolved.provider === "serpapi" || resolved.provider === "brave") &&
+    (
+      resolved.provider === "tavily" ||
+      resolved.provider === "serpapi" ||
+      resolved.provider === "brave" ||
+      resolved.provider === "bocha"
+    ) &&
     !resolved.apiKey
   ) {
-    throw new Error("Web search not configured. Add a Tavily, SerpApi, or Brave Search API key in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
+    throw new Error("Web search not configured. Add an API key for the selected search provider in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")

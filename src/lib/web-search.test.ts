@@ -63,12 +63,35 @@ describe("webSearch", () => {
     await expect(webSearch("x", { provider: "none", apiKey: "" }, 5))
       .rejects.toThrow("Web search not configured")
     await expect(webSearch("x", { provider: "serpapi", apiKey: "" }, 5))
-      .rejects.toThrow("Add a Tavily, SerpApi, or Brave Search API key")
+      .rejects.toThrow("Add an API key for the selected search provider")
+    await expect(webSearch("x", { provider: "bocha", apiKey: "" }, 5))
+      .rejects.toThrow("Add an API key for the selected search provider")
     await expect(webSearch("x", { provider: "searxng", apiKey: "" }, 5))
       .rejects.toThrow("Add a SearXNG instance URL")
     await expect(webSearch("x", { provider: "ollama", apiKey: "" }, 5))
       .rejects.toThrow("Ollama Web Search API requires an Ollama API key")
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it("resolves and forwards a stored Bocha provider key", async () => {
+    invokeMock.mockResolvedValueOnce([])
+
+    await webSearch("阿里巴巴 ESG 报告", {
+      provider: "bocha",
+      apiKey: "",
+      providerConfigs: {
+        bocha: { apiKey: "bocha-key" },
+      },
+    }, 12)
+
+    expect(invokeMock).toHaveBeenCalledWith("web_search", {
+      query: "阿里巴巴 ESG 报告",
+      maxResults: 12,
+      config: expect.objectContaining({
+        provider: "bocha",
+        apiKey: "bocha-key",
+      }),
+    })
   })
 
   it("treats key-free providers as configured", () => {
