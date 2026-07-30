@@ -15,8 +15,6 @@ import { z } from "zod"
 // reaching for bare z.unknown() — the shared alias makes intent clear.
 export const DynamicValue = z.unknown()
 
-export const DynamicValueRecord = z.record(z.string(), DynamicValue)
-
 export const ErrorEnvelopeSchema = z.object({
   error: z.object({
     code: z.string(),

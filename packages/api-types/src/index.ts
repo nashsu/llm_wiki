@@ -35,21 +35,6 @@ export const ERROR_CODES = {
 /** Stable error code values (union of constant strings). */
 export type ApiErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
 
-/** HTTP status for each error code (matches the server's STATUS map). */
-export const ERROR_STATUS: Record<ApiErrorCode, number> = {
-  VALIDATION_ERROR: 400,
-  UNAUTHORIZED: 401,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  PROJECT_NOT_FOUND: 404,
-  CONFLICT: 409,
-  FILE_TOO_LARGE: 413,
-  RATE_LIMITED: 429,
-  INTERNAL_ERROR: 500,
-  UPSTREAM_ERROR: 502,
-  WORKER_BUSY: 503,
-}
-
 /** The server's error envelope: `{ error: { code, message, details } }`. */
 export interface ApiErrorBody {
   code: ApiErrorCode | string
