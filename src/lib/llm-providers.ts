@@ -1055,19 +1055,24 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
       // blur, but older configs saved before that shipped may still carry
       // a pasted "/chat/completions" tail. Don't double-append in that
       // case, or we'd POST to ".../chat/completions/chat/completions".
-      const base = customEndpoint.replace(/\/+$/, "")
-      const url = isAzureOpenAiEndpoint(base)
-        ? buildAzureOpenAiUrl(
-            base,
-            model,
-            config.azureApiVersion ?? AZURE_OPENAI_API_VERSION,
-          )
-        : /\/chat\/completions$/i.test(base)
-          ? base
-          : `${base}/chat/completions`
-      const azure = isAzureOpenAiEndpoint(url)
+      const base = customEndpoint.trim().replace(/\/+$/, "")
+      let urlStr = base
+      if (isAzureOpenAiEndpoint(base)) {
+        urlStr = buildAzureOpenAiUrl(base, model, config.azureApiVersion ?? AZURE_OPENAI_API_VERSION)
+      } else {
+        try {
+          const u = new URL(base)
+          if (!u.pathname.toLowerCase().endsWith("/chat/completions")) {
+            u.pathname = u.pathname.replace(/\/+$/, "") + "/chat/completions"
+          }
+          urlStr = u.toString()
+        } catch {
+          urlStr = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`
+        }
+      }
+      const azure = isAzureOpenAiEndpoint(urlStr)
       return {
-        url,
+        url: urlStr,
         headers: mergeLlmRequestHeaders(config.customHeaders, {
           "Content-Type": JSON_CONTENT_TYPE,
           ...(apiKey
