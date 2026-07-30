@@ -34,6 +34,7 @@ import eventsRouter from "./api/events.js"
 import maintenanceRouter from "./api/maintenance.js"
 import chatRouter from "./api/chat.js"
 import ingestRouter from "./api/ingest.js"
+import storeRouter from "./api/store.js"
 import { generateOpenApiDocument } from "./openapi.js"
 
 // Initialize data directories and database (runs migrations on first boot)
@@ -78,7 +79,19 @@ app.post("/api/invoke/:command", async (req, res, next) => {
     const result = await dispatch(command, req.body)
     res.json({ ok: true, result })
   } catch (err) {
-    next(err)
+    if (err instanceof ApiError) return next(err)
+    // Command-handler business error (e.g. "Directory already exists",
+    // "missing schema.md"). The global handler would scrub a plain Error to a
+    // generic 500, losing the reason; surface the message instead. Log the
+    // stack here because the ApiError path in errorHandler does not log.
+    console.error(`[v2] command ${req.params.command} failed:`, err)
+    return next(
+      new ApiError(
+        ErrorCode.VALIDATION_ERROR,
+        err && err.message ? err.message : "Command failed",
+        { command: req.params.command },
+      ),
+    )
   }
 })
 
@@ -97,6 +110,7 @@ app.use("/api/v2/projects/:id/ingest", projectLookup(), ingestRouter)
 app.use("/api/v2/events", eventsRouter)
 app.use("/api/v2/settings", settingsRouter)
 app.use("/api/v2/auth", authRouter)
+app.use("/api/store", storeRouter)
 
 // ── static web client (SPA) ───────────────────────────────────────────────
 // Serves the built web client from WEB_DIST (dist-web/), mirroring the

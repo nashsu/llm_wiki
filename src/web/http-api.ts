@@ -12,7 +12,9 @@ const API_BASE = "" // same origin; the server serves both the SPA and the API
 export class ServerCommandError extends Error {}
 
 /** Invoke a backend command. Mirrors Tauri's `invoke`: resolves with the
- *  result value or rejects with an Error carrying the backend's message. */
+ *  result value or rejects with an Error carrying the backend's message.
+ *  The legacy bridge wraps successful results in an `{ ok, result }`
+ *  envelope; this unwraps `.result` (bare-value responses pass through). */
 export async function invokeHttp<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_BASE}/api/invoke/${encodeURIComponent(command)}`, {
     method: "POST",
@@ -25,13 +27,12 @@ export async function invokeHttp<T>(command: string, args?: Record<string, unkno
     try { parsed = JSON.parse(text) } catch { parsed = text }
   }
   if (!res.ok) {
-    const message =
-      parsed && typeof parsed === "object" && "error" in (parsed as Record<string, unknown>)
-        ? String((parsed as Record<string, unknown>).error)
-        : `Command '${command}' failed (${res.status})`
+    const errObj = (parsed as { error?: { message?: string } } | null)?.error
+    const message = errObj?.message ?? `Command '${command}' failed (${res.status})`
     throw new ServerCommandError(message)
   }
-  return parsed as T
+  const env = parsed as { ok?: boolean; result?: unknown } | null
+  return (env && typeof env === "object" && "result" in env ? env.result : parsed) as T
 }
 
 export async function storeGet(name: string): Promise<Record<string, unknown>> {
