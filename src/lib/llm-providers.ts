@@ -1084,7 +1084,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           // llama.cpp, vLLM, LocalAI) need the Ollama-style Origin
           // workaround. Public custom gateways may reject unexpected
           // browser Origin headers, so leave them untouched.
-          ...(!azure && isLocalOrPrivateHttpEndpoint(url) ? localLlmOriginHeader() : {}),
+          ...(!azure && isLocalOrPrivateHttpEndpoint(urlStr) ? localLlmOriginHeader() : {}),
         }),
         buildBody: (messages, overrides) => {
           const body = buildOpenAiCompatibleBody(config, messages, overrides, streaming)
