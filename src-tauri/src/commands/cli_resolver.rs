@@ -4,13 +4,26 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+/// Budget for the login shell PATH probe.
+///
+/// Sized to clear a *cold* interactive shell startup, not just a warm one. Real
+/// setups chain several version managers (nvm, pyenv, rbenv, conda, direnv) off
+/// `.zshrc`, which measures ~2.4s warm here and is slower against a cold
+/// filesystem cache — exactly the state an app is in when launched from the
+/// Dock. The probe runs off the async runtime via `spawn_blocking` and its
+/// result is cached, so a generous bound costs nothing in the steady state
+/// while leaving real headroom instead of ~0.5s.
+const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
 const PATH_MARKER: char = '\x1e';
 
 static RESOLVED_COMMANDS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
+/// Cached login shell PATH. `Mutex<Option<_>>` rather than `OnceLock<Option<_>>`
+/// so that only *successes* are memoized: a probe that times out must be
+/// retryable, otherwise one slow cold start poisons PATH resolution for the
+/// entire process lifetime.
 #[cfg(not(windows))]
-static RESOLVED_SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
+static RESOLVED_SHELL_PATH: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 /// PATH to hand a spawned CLI so its interpreter resolves.
 ///
@@ -19,18 +32,16 @@ static RESOLVED_SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
 /// back to the login shell PATH; node-shim CLIs like `codex`
 /// (`#!/usr/bin/env node`) additionally need that PATH at *run* time so their
 /// shebang finds `node`. We prepend the login shell PATH to the inherited one
-/// (cached, so the shell is spawned at most once). Returns `None` when there is
-/// nothing to add, in which case the child should inherit PATH unchanged.
+/// (memoized once resolved, so a successful probe spawns the shell exactly
+/// once). Returns `None` when there is nothing to add, in which case the child
+/// should inherit PATH unchanged.
 #[cfg(not(windows))]
 pub(crate) async fn child_path_env() -> Option<String> {
-    let shell_path = tokio::task::spawn_blocking(|| {
-        RESOLVED_SHELL_PATH
-            .get_or_init(|| login_shell_path(LOGIN_SHELL_PATH_TIMEOUT))
-            .clone()
-    })
-    .await
-    .ok()
-    .flatten()?;
+    let shell_path =
+        tokio::task::spawn_blocking(|| login_shell_path_cached(LOGIN_SHELL_PATH_TIMEOUT))
+            .await
+            .ok()
+            .flatten()?;
     Some(merge_child_path_env(
         &shell_path,
         std::env::var("PATH").ok().as_deref(),
@@ -120,7 +131,7 @@ fn find_cli_command_uncached(
             return Ok(path);
         }
 
-        if let Some(full_path) = login_shell_path(LOGIN_SHELL_PATH_TIMEOUT) {
+        if let Some(full_path) = login_shell_path_cached(LOGIN_SHELL_PATH_TIMEOUT) {
             if let Ok(path) = which::which_in(command, Some(&full_path), ".") {
                 return Ok(path);
             }
@@ -128,6 +139,44 @@ fn find_cli_command_uncached(
 
         Err(format!("`{command}` not found on PATH"))
     }
+}
+
+#[cfg(not(windows))]
+fn shell_path_cache() -> &'static Mutex<Option<String>> {
+    RESOLVED_SHELL_PATH.get_or_init(|| Mutex::new(None))
+}
+
+/// Probe the login shell for its PATH, memoizing the result.
+///
+/// Shared by command lookup and child spawning so the (expensive) shell startup
+/// is paid at most once per process rather than once per call site.
+#[cfg(not(windows))]
+fn login_shell_path_cached(timeout: Duration) -> Option<String> {
+    resolve_shell_path_cached(shell_path_cache(), || login_shell_path(timeout))
+}
+
+/// Return the cached PATH, else run `probe` and cache it **only on success**.
+///
+/// Caching a `None` would make a single timed-out probe permanent for the
+/// lifetime of the process; leaving failures uncached lets the next call try
+/// again, which is what makes a slow cold start recoverable.
+#[cfg(not(windows))]
+fn resolve_shell_path_cached<F>(cache: &Mutex<Option<String>>, probe: F) -> Option<String>
+where
+    F: FnOnce() -> Option<String>,
+{
+    if let Ok(cached) = cache.lock() {
+        if let Some(path) = cached.as_ref() {
+            return Some(path.clone());
+        }
+    }
+
+    let path = probe()?;
+
+    if let Ok(mut cached) = cache.lock() {
+        *cached = Some(path.clone());
+    }
+    Some(path)
 }
 
 #[cfg(not(windows))]
@@ -175,25 +224,77 @@ fn login_shell_path(timeout: Duration) -> Option<String> {
     }
 }
 
+/// Extract the marker-delimited PATH from a login shell's stdout.
+///
+/// The payload is located by scanning the whole stream rather than by matching
+/// at the start of a line. Terminal shell-integration hooks (iTerm2 / Ghostty
+/// emit OSC 1337 `RemoteHost` / `CurrentDir` / `ShellIntegrationVersion`
+/// sequences) write control codes to stdout *without* a trailing newline, so in
+/// practice the marker lands mid-line behind ~170 bytes of escapes. Anchoring
+/// to the line start silently discarded an otherwise valid PATH and made every
+/// CLI report "not found on PATH" on any GUI launch.
 #[cfg(not(windows))]
 fn parse_shell_path_output(stdout: &str) -> Option<String> {
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix(PATH_MARKER) {
-            if let Some(val) = rest.strip_suffix(PATH_MARKER) {
-                if let Some(path) = val.strip_prefix("PATH=") {
-                    if !path.is_empty() {
-                        return Some(path.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
+    let after_marker = stdout.split_once(PATH_MARKER)?.1;
+    let payload = after_marker.split_once(PATH_MARKER)?.0;
+    let path = payload.strip_prefix("PATH=")?;
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use super::{merge_child_path_env, parse_shell_path_output};
+    use super::{merge_child_path_env, parse_shell_path_output, resolve_shell_path_cached};
+    use std::sync::Mutex;
+
+    #[test]
+    fn resolve_shell_path_cached_probes_once_on_success() {
+        let cache = Mutex::new(None);
+        let calls = Mutex::new(0);
+        let probe = || {
+            *calls.lock().unwrap() += 1;
+            Some("/opt/homebrew/bin".to_string())
+        };
+
+        assert_eq!(
+            resolve_shell_path_cached(&cache, probe).as_deref(),
+            Some("/opt/homebrew/bin")
+        );
+        assert_eq!(
+            resolve_shell_path_cached(&cache, probe).as_deref(),
+            Some("/opt/homebrew/bin")
+        );
+        assert_eq!(*calls.lock().unwrap(), 1, "second call must hit the cache");
+    }
+
+    /// A timed-out probe (cold start) must not poison the cache: the next call
+    /// re-probes and can succeed. This is the regression that made a slow first
+    /// launch report `not found on PATH` for the rest of the process lifetime.
+    #[test]
+    fn resolve_shell_path_cached_retries_after_failure() {
+        let cache = Mutex::new(None);
+        let calls = Mutex::new(0);
+        let probe = || {
+            let mut n = calls.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                None
+            } else {
+                Some("/Users/dev/.local/bin".to_string())
+            }
+        };
+
+        assert_eq!(resolve_shell_path_cached(&cache, probe), None);
+        assert_eq!(
+            resolve_shell_path_cached(&cache, probe).as_deref(),
+            Some("/Users/dev/.local/bin"),
+            "failure must not be memoized"
+        );
+        assert_eq!(
+            resolve_shell_path_cached(&cache, probe).as_deref(),
+            Some("/Users/dev/.local/bin")
+        );
+        assert_eq!(*calls.lock().unwrap(), 2, "success must then be cached");
+    }
 
     #[test]
     fn parse_shell_path_output_ignores_banners() {
@@ -201,6 +302,28 @@ mod tests {
         assert_eq!(
             parse_shell_path_output(output).as_deref(),
             Some("/opt/homebrew/bin:/usr/bin")
+        );
+    }
+
+    /// Regression: terminal shell-integration hooks print OSC 1337 escape
+    /// sequences to stdout with no trailing newline, so the marker arrives
+    /// mid-line rather than at the start of one. Anchoring to the line start
+    /// dropped the PATH entirely and broke CLI discovery on every GUI launch.
+    #[test]
+    fn parse_shell_path_output_survives_shell_integration_escapes() {
+        let output = concat!(
+            "\u{1b}]1337;RemoteHost=user@host.local\u{7}",
+            "\u{1b}]1337;CurrentDir=/Users/user/project\u{7}",
+            "\u{1b}]1337;ShellIntegrationVersion=14;shell=zsh\u{7}",
+            "\u{1e}PATH=/Users/user/.local/bin:/usr/bin\u{1e}\n"
+        );
+        assert!(
+            !output.lines().next().unwrap().starts_with('\u{1e}'),
+            "fixture must reproduce the mid-line marker"
+        );
+        assert_eq!(
+            parse_shell_path_output(output).as_deref(),
+            Some("/Users/user/.local/bin:/usr/bin")
         );
     }
 
