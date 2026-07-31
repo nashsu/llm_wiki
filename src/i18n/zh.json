@@ -4,11 +4,21 @@
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
   "common": {
-    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭",
-    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+    "retry": "重试",
+    "cancel": "取消",
+    "ignore": "忽略",
+    "close": "关闭",
+    "dismiss": "关闭",
+    "loading": "加载中……",
+    "optional": "可选"
   },
-  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
-  "errors": { "generic": "出现错误" },
+  "layout": {
+    "showSidebar": "展开侧栏",
+    "hideSidebar": "收起侧栏"
+  },
+  "errors": {
+    "generic": "出现错误"
+  },
   "mermaid": {
     "renderFailed": "无法渲染 Mermaid 图表",
     "showDetails": "查看解析器详情",
@@ -46,10 +56,16 @@
     "rawSources": "原始资料",
     "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
     "typeLabels": {
-      "overview": "概览", "entity": "实体", "concept": "概念",
-      "source": "来源", "synthesis": "综合", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论",
-      "comparison": "比较", "query": "查询"
+      "overview": "概览",
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "synthesis": "综合",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "comparison": "比较",
+      "query": "查询"
     }
   },
   "editor": {
@@ -91,7 +107,10 @@
       "createFailed": "无法创建缺失页面。",
       "emptyDraftError": "模型返回了空白草稿。"
     },
-    "frontmatter": { "origin": "来源", "more": "更多" },
+    "frontmatter": {
+      "origin": "来源",
+      "more": "更多"
+    },
     "rawMarkdownEditor": "Markdown 源码编辑器"
   },
   "research": {
@@ -448,7 +467,9 @@
         "closeMinimize": "隐藏窗口",
         "closeMinimizeHint": "关闭窗口时让 LLM Wiki 留在后台运行。在 macOS 上这符合红色关闭按钮的常规行为；如果 Linux 托盘不可用，会最小化窗口而不是隐藏。",
         "closeExit": "退出应用",
-        "closeExitHint": "关闭窗口时立即退出 LLM Wiki。"
+        "closeExitHint": "关闭窗口时立即退出 LLM Wiki。",
+        "autoProcessReviews": "AI 自动处理审核条目",
+        "autoProcessReviewsHint": "开启后，ingest 生成的审核条目将由 LLM 自动处理——创建页面、排入深度研究或跳过。AI 无法确定的条目保留在 Review 面板供手动处理。"
       },
       "skills": {
         "title": "Skills",
@@ -474,7 +495,7 @@
           "activeDefault": "使用当前活跃模型",
           "hint": "可为交互聊天和文档摄取分别选择模型；未指定时继续使用当前活跃模型。"
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "为当前项目使用独立模型",
           "provider": "项目 Provider",
           "selectProvider": "选择 Provider",
@@ -973,12 +994,25 @@
     "fileSync": "文件同步",
     "rescan": "重新扫描",
     "rescanTitle": "扫描项目文件的外部变更",
-    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "changeKinds": {
+      "created": "已创建",
+      "modified": "已修改",
+      "deleted": "已删除"
+    },
     "fileTypes": {
-      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
-      "synthesis": "综合", "comparison": "比较", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论", "overview": "概览",
-      "index": "索引", "log": "日志", "file": "文件"
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "query": "查询",
+      "synthesis": "综合",
+      "comparison": "比较",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "overview": "概览",
+      "index": "索引",
+      "log": "日志",
+      "file": "文件"
     }
   },
   "fileTree": {
