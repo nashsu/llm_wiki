@@ -18,6 +18,7 @@ import cors from "cors"
 import helmet from "helmet"
 import { PORT, HOST, WEB_DIST, ensureDataDirs } from "./config.js"
 import { authMiddleware } from "./middleware/auth.js"
+import { isAuthorized } from "./auth/config.js"
 import { errorHandler } from "./middleware/error.js"
 import { projectLookup } from "./middleware/project-lookup.js"
 import { dispatch, hasCommand, commandNames } from "./invoke.js"
@@ -35,6 +36,7 @@ import maintenanceRouter from "./api/maintenance.js"
 import chatRouter from "./api/chat.js"
 import ingestRouter from "./api/ingest.js"
 import storeRouter from "./api/store.js"
+import { handleProxy } from "./proxy.js"
 import { generateOpenApiDocument } from "./openapi.js"
 
 // Initialize data directories and database (runs migrations on first boot)
@@ -46,6 +48,21 @@ const app = express()
 // ── middleware chain ──────────────────────────────────────────────────────
 app.use(cors())
 app.use(helmet({ contentSecurityPolicy: false })) // CSP disabled for dev; enable in prod
+
+// ── cross-origin proxy (web LLM/embedding/search calls) ───────────────────
+// The browser web client cannot set arbitrary headers or reach providers that
+// omit CORS headers, so src/web/http.ts forwards every cross-origin request
+// here. handleProxy reads the raw request stream itself, so this MUST be
+// mounted BEFORE express.json() (which would consume the body). It is also
+// placed before authMiddleware, so we enforce auth inline — same contract as
+// the rest of the API (none mode = open, token mode = bearer/header/query).
+app.post("/api/proxy", (req, res, next) => {
+  if (!isAuthorized(req)) {
+    return next(new ApiError(ErrorCode.UNAUTHORIZED, "Authentication required"))
+  }
+  return handleProxy(req, res)
+})
+
 app.use(express.json({ limit: "64mb", strict: false }))
 app.use(authMiddleware)
 

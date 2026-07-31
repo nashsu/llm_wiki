@@ -30,6 +30,14 @@ function isSameOrigin(url: string): boolean {
   }
 }
 
+// Same storage key as src/api/client.ts + src/web/http-api.ts. The proxy call
+// is same-origin but the server enforces auth on it (token mode), so we attach
+// the bearer token here just like the rest of the transport.
+const TOKEN_KEY = "llm-wiki-token"
+function authToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
 async function bodyToString(body: BodyInit | null | undefined): Promise<string | null> {
   if (body == null) return null
   if (typeof body === "string") return body
@@ -46,9 +54,13 @@ export const fetch: typeof globalThis.fetch = async (input, init) => {
   const headers = headersToObject(init?.headers ?? (input instanceof Request ? input.headers : undefined))
   const body = (method === "GET" || method === "HEAD") ? null : await bodyToString(init?.body)
 
+  const proxyHeaders: Record<string, string> = { "Content-Type": "application/json" }
+  const tok = authToken()
+  if (tok) proxyHeaders["Authorization"] = `Bearer ${tok}`
+
   return globalThis.fetch("/api/proxy", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: proxyHeaders,
     body: JSON.stringify({ url, method, headers, body }),
   })
 }
