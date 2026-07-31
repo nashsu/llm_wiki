@@ -9,6 +9,30 @@ export const IS_WEB_BUILD = true
 
 const API_BASE = "" // same origin; the server serves both the SPA and the API
 
+// ── Auth token (shared key with src/api/client.ts) ────────────────────────
+const TOKEN_KEY = "llm-wiki-token"
+
+function getAuthToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
+/** Headers with Content-Type + optional Bearer token. */
+function authHeaders(json = false): Record<string, string> {
+  const h: Record<string, string> = {}
+  if (json) h["Content-Type"] = "application/json"
+  const tok = getAuthToken()
+  if (tok) h["Authorization"] = `Bearer ${tok}`
+  return h
+}
+
+/** Append ?token= for EventSource (cannot set headers). */
+function authedUrl(base: string): string {
+  const tok = getAuthToken()
+  if (!tok) return base
+  const sep = base.includes("?") ? "&" : "?"
+  return `${base}${sep}token=${encodeURIComponent(tok)}`
+}
+
 export class ServerCommandError extends Error {}
 
 /** Invoke a backend command. Mirrors Tauri's `invoke`: resolves with the
@@ -18,7 +42,7 @@ export class ServerCommandError extends Error {}
 export async function invokeHttp<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_BASE}/api/invoke/${encodeURIComponent(command)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(true),
     body: JSON.stringify(args ?? {}),
   })
   const text = await res.text()
@@ -36,7 +60,7 @@ export async function invokeHttp<T>(command: string, args?: Record<string, unkno
 }
 
 export async function storeGet(name: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}`)
+  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}`, { headers: authHeaders() })
   if (!res.ok) return {}
   return (await res.json()) as Record<string, unknown>
 }
@@ -44,13 +68,13 @@ export async function storeGet(name: string): Promise<Record<string, unknown>> {
 export async function storePut(name: string, value: Record<string, unknown>): Promise<void> {
   await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(true),
     body: JSON.stringify(value ?? {}),
   })
 }
 
 export async function storeGetKey(name: string, key: string): Promise<unknown> {
-  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`)
+  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { headers: authHeaders() })
   if (!res.ok) return undefined
   const text = await res.text()
   if (!text || text === "null") return undefined
@@ -60,13 +84,13 @@ export async function storeGetKey(name: string, key: string): Promise<unknown> {
 export async function storePutKey(name: string, key: string, value: unknown): Promise<void> {
   await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(true),
     body: JSON.stringify(value),
   })
 }
 
 export async function storeDeleteKey(name: string, key: string): Promise<void> {
-  await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { method: "DELETE" })
+  await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { method: "DELETE", headers: authHeaders() })
 }
 
 export interface HomeInfo {
@@ -79,7 +103,7 @@ export interface HomeInfo {
 let homeCache: HomeInfo | null = null
 export async function getHome(): Promise<HomeInfo> {
   if (!homeCache) {
-    const res = await fetch(`${API_BASE}/api/home`)
+    const res = await fetch(`${API_BASE}/api/home`, { headers: authHeaders() })
     homeCache = (await res.json()) as HomeInfo
   }
   return homeCache
@@ -97,7 +121,7 @@ let eventSource: EventSource | null = null
 
 function ensureEventSource() {
   if (eventSource) return
-  eventSource = new EventSource(`${API_BASE}/api/v2/events`)
+  eventSource = new EventSource(authedUrl(`${API_BASE}/api/v2/events`))
   eventSource.onmessage = (msg) => {
     try {
       const { event, payload } = JSON.parse(msg.data) as { event: string; payload: unknown }

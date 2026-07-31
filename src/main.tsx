@@ -1,9 +1,24 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import LoginScreen from "@/components/LoginScreen";
 import "./index.css";
 import "@/i18n";
 import { loadAndApplyTheme, watchSystemTheme } from "@/lib/theme";
+
+// In the web build, gate the app behind LoginScreen so a token-auth server is
+// usable from the browser (#6). LoginScreen self-skips (calls onConnected
+// immediately) when the server reports auth not required, so it is safe to
+// mount unconditionally on web. The desktop build never shows it: there is no
+// same-origin /api/v2/auth/status, and auth is handled by the Tauri transport.
+function Root() {
+  const isWeb = (globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__ === true;
+  const [authed, setAuthed] = useState(!isWeb);
+  if (isWeb && !authed) {
+    return <LoginScreen onConnected={() => setAuthed(true)} />;
+  }
+  return <App />;
+}
 
 function applyPlatformClass() {
   const isTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
@@ -21,7 +36,7 @@ async function initApp() {
 
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
-        <App />
+        <Root />
       </React.StrictMode>
     );
   } catch (err) {
