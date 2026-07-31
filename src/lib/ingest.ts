@@ -1348,7 +1348,6 @@ async function autoIngestImpl(
         const { autoProcessReviews } = await import("@/lib/auto-review")
         const autoResult = await autoProcessReviews(pp, signal)
         if (autoResult.resolved > 0) {
-          console.log(`[ingest] Auto-review: ${autoResult.resolved}/${autoResult.total} processed (${autoResult.created} created, ${autoResult.researched} researched, ${autoResult.skipped} skipped, ${autoResult.held} held)`)
         }
       } catch (err) {
         console.warn("[ingest] Auto-review failed:", err)
