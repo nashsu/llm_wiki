@@ -119,7 +119,7 @@ export async function autoProcessReviews(
 // ── Single item processing ───────────────────────────────────────────────
 
 interface ReviewDecision {
-  action: "skip" | "create" | "research" | "hold"
+  action: "skip" | "dismiss" | "create" | "research" | "hold"
   /** Human-readable justification (shown in activity panel). */
   reason?: string
   /**
