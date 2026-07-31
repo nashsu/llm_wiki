@@ -1340,6 +1340,22 @@ async function autoIngestImpl(
     )
   }
 
+  // ── Step 5.5: Auto-process reviews (if enabled) ────────────
+  if (reviewItems.length > 0 && !signal?.aborted) {
+    const generalConfig = useWikiStore.getState().generalConfig
+    if (generalConfig.autoProcessReviews) {
+      try {
+        const { autoProcessReviews } = await import("@/lib/auto-review")
+        const autoResult = await autoProcessReviews(pp, signal)
+        if (autoResult.resolved > 0) {
+          console.log(`[ingest] Auto-review: ${autoResult.resolved}/${autoResult.total} processed (${autoResult.created} created, ${autoResult.researched} researched, ${autoResult.skipped} skipped, ${autoResult.held} held)`)
+        }
+      } catch (err) {
+        console.warn("[ingest] Auto-review failed:", err)
+      }
+    }
+  }
+
   // ── Step 6: Generate embeddings (if enabled) ───────────────
   const embCfg = useWikiStore.getState().embeddingConfig
   if (embCfg.enabled && embCfg.model && writtenPaths.length > 0) {

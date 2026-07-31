@@ -122,6 +122,7 @@ export async function loadTaskModelRouting(): Promise<TaskModelRoutingConfig | n
   const saved = await store.get<Partial<TaskModelRoutingConfig>>(TASK_MODEL_ROUTING_KEY)
   if (!saved) return null
   return {
+    autoProcessReviews: typeof config?.autoProcessReviews === "boolean" ? config.autoProcessReviews : DEFAULT_GENERAL_CONFIG.autoProcessReviews,
     chatPresetId: typeof saved.chatPresetId === "string" ? saved.chatPresetId : null,
     ingestPresetId: typeof saved.ingestPresetId === "string" ? saved.ingestPresetId : null,
   }
@@ -148,6 +149,7 @@ export async function loadProjectLlmOverride(projectId: string): Promise<Project
   const existing = await store.get<Record<string, Partial<ProjectLlmOverride>>>(PROJECT_LLM_OVERRIDES_KEY)
   const saved = existing?.[projectId]
   return {
+    autoProcessReviews: typeof config?.autoProcessReviews === "boolean" ? config.autoProcessReviews : DEFAULT_GENERAL_CONFIG.autoProcessReviews,
     enabled: saved?.enabled === true,
     presetId: typeof saved?.presetId === "string" ? saved.presetId : null,
     model: typeof saved?.model === "string" ? saved.model : "",
@@ -203,6 +205,7 @@ const LOCAL_MINERU_BACKENDS = new Set([
 
 function normalizeMineruConfig(config: MineruConfig): MineruConfig {
   return {
+    autoProcessReviews: typeof config?.autoProcessReviews === "boolean" ? config.autoProcessReviews : DEFAULT_GENERAL_CONFIG.autoProcessReviews,
     enabled: config.enabled === true,
     backend: config.backend === "local" ? "local" : "cloud",
     localEndpoint:
@@ -306,11 +309,13 @@ const GENERAL_CONFIG_KEY = "generalConfig"
 export const DEFAULT_GENERAL_CONFIG: GeneralConfig = {
   autostart: false,
   closeBehavior: "minimize",
+  autoProcessReviews: false,
 }
 
 export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): GeneralConfig {
   const closeBehavior = config?.closeBehavior
   return {
+    autoProcessReviews: typeof config?.autoProcessReviews === "boolean" ? config.autoProcessReviews : DEFAULT_GENERAL_CONFIG.autoProcessReviews,
     autostart: typeof config?.autostart === "boolean" ? config.autostart : DEFAULT_GENERAL_CONFIG.autostart,
     closeBehavior:
       closeBehavior === "ask" || closeBehavior === "minimize" || closeBehavior === "exit"
