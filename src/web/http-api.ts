@@ -55,7 +55,14 @@ export async function invokeHttp<T>(command: string, args?: Record<string, unkno
     const message = errObj?.message ?? `Command '${command}' failed (${res.status})`
     throw new ServerCommandError(message)
   }
-  const env = parsed as { ok?: boolean; result?: unknown } | null
+  const env = parsed as { ok?: boolean; result?: unknown; error?: { message?: string } } | null
+  // The legacy bridge answers "resource not found" (optional sidecar probes
+  // that legitimately miss) with 200 + ok:false so the browser doesn't log a
+  // failed request. Re-throw here so callers' catch blocks see the same error
+  // they always did — the only thing that changed is the HTTP status.
+  if (env && typeof env === "object" && env.ok === false) {
+    throw new ServerCommandError(env.error?.message ?? `Command '${command}' failed`)
+  }
   return (env && typeof env === "object" && "result" in env ? env.result : parsed) as T
 }
 

@@ -60,6 +60,19 @@ describe("invokeHttp", () => {
     await expect(promise).rejects.toThrow("Directory already exists: '/tmp/x'")
   })
 
+  it("throws on a 200 ok:false not-found envelope (quiet sidecar probe)", async () => {
+    // The legacy bridge answers missing-resource probes with HTTP 200 + ok:false
+    // so the browser doesn't log a failed request; the transport must still
+    // re-throw so callers' catch blocks behave exactly as before.
+    fetchMock.mockResolvedValue(
+      jsonResponse({ ok: false, error: { code: "NOT_FOUND", message: "Path does not exist: '/p/.llm-wiki/lint.json'" } }),
+    )
+
+    const promise = invokeHttp("read_file", { path: "/p/.llm-wiki/lint.json" })
+    await expect(promise).rejects.toBeInstanceOf(ServerCommandError)
+    await expect(promise).rejects.toThrow("Path does not exist: '/p/.llm-wiki/lint.json'")
+  })
+
   it("falls back to a generic message when the body is not an error object", async () => {
     fetchMock.mockResolvedValue({
       ok: false,

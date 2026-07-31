@@ -84,6 +84,22 @@ app.get("/api/v2/openapi.json", (req, res) => {
 // migration. Flagged deprecated (RFC 8594) with a Link to the v2 API docs; the
 // web client migrates to /api/v2/* in Phase 3, after which this bridge can be
 // removed.
+// A missing-resource error from a command handler (read_file ENOENT,
+// list_directory "Path does not exist", etc.). On the web client these are
+// almost always *optional sidecar probes* (chat-history.json, lint.json,
+// .llm-wiki/chats, …) that legitimately miss on a fresh project; the client
+// catches the throw and treats it as empty. Returning a 4xx for them makes the
+// browser log a failed request (and the server log a stack trace) on every
+// project open — pure noise. We answer these with 200 + ok:false instead, so
+// the web transport re-throws client-side (identical catch path) without a
+// logged failed request. Real validation errors still fall through to 400.
+function isMissingResourceError(err) {
+  if (!err) return false
+  if (err.code === "ENOENT") return true
+  const m = typeof err.message === "string" ? err.message : ""
+  return /does not exist|no such file or directory/i.test(m)
+}
+
 app.post("/api/invoke/:command", async (req, res, next) => {
   res.setHeader("Deprecation", "true")
   res.setHeader("Warning", '299 - "This endpoint is deprecated; use /api/v2/*"')
@@ -97,6 +113,11 @@ app.post("/api/invoke/:command", async (req, res, next) => {
     res.json({ ok: true, result })
   } catch (err) {
     if (err instanceof ApiError) return next(err)
+    const msg = err && err.message ? err.message : "Command failed"
+    if (isMissingResourceError(err)) {
+      // Quiet not-found: 200 + ok:false (no failed-request log, no stack).
+      return res.json({ ok: false, error: { code: "NOT_FOUND", message: msg } })
+    }
     // Command-handler business error (e.g. "Directory already exists",
     // "missing schema.md"). The global handler would scrub a plain Error to a
     // generic 500, losing the reason; surface the message instead. Log the
@@ -105,7 +126,7 @@ app.post("/api/invoke/:command", async (req, res, next) => {
     return next(
       new ApiError(
         ErrorCode.VALIDATION_ERROR,
-        err && err.message ? err.message : "Command failed",
+        msg,
         { command: req.params.command },
       ),
     )

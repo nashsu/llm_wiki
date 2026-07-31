@@ -65,6 +65,36 @@ describe("legacy /api/invoke bridge error handling", () => {
     expect(res.body.error.code).toBe("NOT_FOUND")
   })
 
+  it("answers a missing-resource probe with 200 ok:false (not a 400)", async () => {
+    // Optional sidecar probes (chat-history.json, lint.json, …) legitimately
+    // miss on a fresh project. The web client catches the throw and treats it
+    // as empty, so a 4xx would only produce a logged failed request + a server
+    // stack trace on every project open. The bridge must answer 200 + ok:false
+    // instead, with the real reason in the envelope so the transport re-throws.
+    const missing = path.join(DATA_DIR, "does-not-exist.json")
+
+    const res = await request(app)
+      .post("/api/invoke/read_file")
+      .send({ path: missing })
+
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(false)
+    expect(res.body.error.code).toBe("NOT_FOUND")
+    expect(res.body.error.message).toMatch(/no such file|does not exist/i)
+  })
+
+  it("answers a missing-directory probe (list_directory) with 200 ok:false", async () => {
+    const missingDir = path.join(DATA_DIR, "no-such-dir")
+
+    const res = await request(app)
+      .post("/api/invoke/list_directory")
+      .send({ path: missingDir })
+
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(false)
+    expect(res.body.error.code).toBe("NOT_FOUND")
+  })
+
   it("keeps the success envelope shape { ok: true, result }", async () => {
     const projectDir = path.join(DATA_DIR, "valid-proj")
     mkdirSync(path.join(projectDir, "wiki"), { recursive: true })
