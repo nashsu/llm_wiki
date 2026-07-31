@@ -210,6 +210,11 @@ function App() {
   // first interaction. Silent on failure; the UI in Settings → About
   // lets the user retry manually.
   useEffect(() => {
+    // The desktop updater (GitHub releases check) is meaningless in the web
+    // build: there is no app to update, and the cross-origin fetch to
+    // api.github.com goes through the /api/proxy shim which doesn't exist on
+    // the v2 server, producing a spurious 404 on every landing load (#7).
+    if ((globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__) return
     let cancelled = false
     const timer = setTimeout(async () => {
       if (cancelled) return

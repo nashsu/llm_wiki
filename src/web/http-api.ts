@@ -97,7 +97,7 @@ let eventSource: EventSource | null = null
 
 function ensureEventSource() {
   if (eventSource) return
-  eventSource = new EventSource(`${API_BASE}/api/events`)
+  eventSource = new EventSource(`${API_BASE}/api/v2/events`)
   eventSource.onmessage = (msg) => {
     try {
       const { event, payload } = JSON.parse(msg.data) as { event: string; payload: unknown }
