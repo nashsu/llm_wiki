@@ -46,7 +46,7 @@ const app = express()
 // ── middleware chain ──────────────────────────────────────────────────────
 app.use(cors())
 app.use(helmet({ contentSecurityPolicy: false })) // CSP disabled for dev; enable in prod
-app.use(express.json({ limit: "64mb" }))
+app.use(express.json({ limit: "64mb", strict: false }))
 app.use(authMiddleware)
 
 // ── public routes ─────────────────────────────────────────────────────────

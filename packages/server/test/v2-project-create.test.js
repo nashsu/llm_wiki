@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterAll } from "vitest"
 import request from "supertest"
-import { mkdtempSync, rmSync, mkdirSync, existsSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, existsSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -48,9 +48,11 @@ describe("v2 POST /api/v2/projects scaffolds the project on disk", () => {
     expect(existsSync(path.join(root, ".llm-wiki"))).toBe(true)
   })
 
-  it("rejects with 409 CONFLICT when the directory already exists", async () => {
+  it("rejects with 409 CONFLICT when a wiki project already exists there", async () => {
     const root = path.join(DATA_DIR, "occupied-v2-proj")
     mkdirSync(root, { recursive: true })
+    // schema.md is the app's canonical "this is a wiki project" marker.
+    writeFileSync(path.join(root, "schema.md"), "# existing schema\n")
 
     const res = await request(app)
       .post("/api/v2/projects")
@@ -59,5 +61,23 @@ describe("v2 POST /api/v2/projects scaffolds the project on disk", () => {
     expect(res.status).toBe(409)
     expect(res.body.error.code).toBe("CONFLICT")
     expect(res.body.error.message).toContain("already exists")
+  })
+
+  it("adopts a populated folder that is not yet a wiki project", async () => {
+    // A folder with user content but no schema.md may still be registered:
+    // the scaffold adds the wiki tree alongside the existing files rather
+    // than refusing. (This is the path the api-v2 integration suite relies on.)
+    const root = path.join(DATA_DIR, "adopt-v2-proj")
+    mkdirSync(path.join(root, "wiki", "concepts"), { recursive: true })
+    writeFileSync(path.join(root, "wiki", "concepts", "attention.md"), "# Attention\n")
+
+    const res = await request(app)
+      .post("/api/v2/projects")
+      .send({ name: "adopt-v2-proj", path: root })
+
+    expect(res.status).toBe(201)
+    // Existing content preserved, scaffold added alongside it.
+    expect(existsSync(path.join(root, "wiki", "concepts", "attention.md"))).toBe(true)
+    expect(existsSync(path.join(root, "schema.md"))).toBe(true)
   })
 })

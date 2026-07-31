@@ -1,6 +1,7 @@
 import { Router } from "express"
 import crypto from "node:crypto"
 import { validate } from "../middleware/validate.js"
+import { projectLookup } from "../middleware/project-lookup.js"
 import { ChatRequestSchema, ChatCancelParamsSchema, ChatSessionParamsSchema } from "../schemas/chat.js"
 import { agentStartTurnStream, agentCancelTurn, agentGetSession } from "../agent.js"
 import { ApiError, ErrorCode } from "../errors.js"
@@ -8,7 +9,7 @@ import { ApiError, ErrorCode } from "../errors.js"
 const router = Router()
 
 // POST /api/v2/projects/:id/chat - start a chat turn (streaming)
-router.post("/:id/chat", validate({ body: ChatRequestSchema }), async (req, res, next) => {
+router.post("/:id/chat", projectLookup(), validate({ body: ChatRequestSchema }), async (req, res, next) => {
   try {
     const { message, sessionId, mode, tools, topK, includeContent, skills, history } = req.validated.body
     const request = {

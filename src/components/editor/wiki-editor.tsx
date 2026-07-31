@@ -6,6 +6,7 @@ import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { WikiReader } from "@/components/editor/wiki-reader"
 import { useWikiStore } from "@/stores/wiki-store"
 import { PageLinksPanel } from "@/components/editor/page-links-panel"
+import { FileHistoryButton } from "@/components/editor/file-history-panel"
 import { useTranslation } from "react-i18next"
 import { buildWordDiff, findDomTextSelection, findUniqueTextSelection, normalizeEditableMarkdown, normalizeSelectionReplacement } from "@/lib/selection-edit"
 import { applyTextSelectionEdit, readFile } from "@/commands/fs"
@@ -340,6 +341,14 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
             <Link2 className="h-3.5 w-3.5" />
             {t("editor.pageLinks.button")}
           </button>
+        )}
+        {filePath && (
+          <FileHistoryButton
+            filePath={filePath}
+            currentContent={content}
+            triggerClassName="inline-flex items-center rounded-md border border-border/60 bg-background/90 p-1.5 text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
+            overlayClassName="fixed inset-0 z-50 flex bg-background"
+          />
         )}
         <button
           type="button"

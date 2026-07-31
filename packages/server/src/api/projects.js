@@ -6,6 +6,7 @@
 
 import { Router } from "express"
 import fs from "node:fs"
+import path from "node:path"
 import { validate } from "../middleware/validate.js"
 import {
   CreateProjectSchema,
@@ -38,10 +39,16 @@ router.get("/:id", validate({ params: ProjectIdParamSchema }), (req, res) => {
 // scaffold the wiki tree at that root so the project is immediately usable;
 // without this the row would point at a non-existent (or empty) dir and every
 // subsequent lookup would fail validation (issue #2).
+//
+// Clobber guard: refuse only when the target is ALREADY a wiki project
+// (schema.md is the app's canonical marker — see validateWikiProjectRoot), so
+// re-creating over an existing project can't overwrite its seed files. A
+// populated folder that isn't yet a wiki project may still be adopted: the
+// scaffold adds the tree alongside the existing content.
 router.post("/", validate({ body: CreateProjectSchema }), (req, res) => {
   const { name, path: root } = req.validated.body
-  if (fs.existsSync(root)) {
-    throw new ApiError(ErrorCode.CONFLICT, `Directory already exists: '${root}'`)
+  if (fs.existsSync(path.join(root, "schema.md"))) {
+    throw new ApiError(ErrorCode.CONFLICT, `A wiki project already exists at: '${root}'`)
   }
   const project = store.createProject({ name, path: root })
   try {
