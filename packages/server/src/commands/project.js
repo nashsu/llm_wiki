@@ -186,9 +186,16 @@ function validateWikiProjectRoot(root) {
   }
 }
 
-function createProject({ name, path: basePath }) {
-  const root = path.join(basePath, name)
-  if (fs.existsSync(root)) throw new Error(`Directory already exists: '${root}'`)
+/**
+ * Scaffold a fresh wiki project's directory tree + seed files at `root`.
+ * Shared by the legacy `create_project` command and the v2
+ * `POST /api/v2/projects` route so the on-disk layout can never drift between
+ * the two create paths. `root` is the project root itself (the v2 contract);
+ * the legacy command derives it as join(parent, name) before calling this.
+ * Throws a plain Error on filesystem failure; callers map it to their own
+ * error type (legacy: rethrown to the bridge; v2: wrapped in an ApiError).
+ */
+export function scaffoldWikiProject(root) {
   const dirs = [
     "raw/sources", "raw/assets",
     "wiki/entities", "wiki/concepts", "wiki/sources",
@@ -207,6 +214,12 @@ function createProject({ name, path: basePath }) {
   writeFileSync(path.join(root, ".obsidian/core-plugins.json"), OBSIDIAN_CORE_PLUGINS)
   fs.mkdirSync(path.join(root, ".llm-wiki"), { recursive: true })
   markAppWrite(root)
+}
+
+function createProject({ name, path: basePath }) {
+  const root = path.join(basePath, name)
+  if (fs.existsSync(root)) throw new Error(`Directory already exists: '${root}'`)
+  scaffoldWikiProject(root)
   return { name, path: fwd(root) }
 }
 
