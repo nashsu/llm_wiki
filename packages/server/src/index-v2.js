@@ -12,6 +12,7 @@
 
 import "./zod-setup.js" // MUST be first: extends Zod with .openapi() before any schemas are created
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import express from "express"
 import cors from "cors"
@@ -77,6 +78,20 @@ app.get("/api/v2/version", (req, res) => {
 
 app.get("/api/v2/openapi.json", (req, res) => {
   res.json(generateOpenApiDocument())
+})
+
+// ── legacy /api/home (web file-picker default path) ───────────────────────
+// The web client's getHome() (src/web/http-api.ts) fetches this to seed the
+// file-picker's default browse directory. The legacy server (index.js) served
+// it but it was never ported to v2, so every view 404'd it. Mirrors the legacy
+// payload shape (HomeInfo) exactly.
+app.get("/api/home", (req, res) => {
+  res.json({
+    home: os.homedir(),
+    cwd: process.cwd(),
+    separator: path.sep,
+    platform: process.platform,
+  })
 })
 
 // ── legacy bridge: /api/invoke/:command (deprecated) ──────────────────────

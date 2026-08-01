@@ -17,6 +17,12 @@ export function authMiddleware(req, res, next) {
   if (PUBLIC_PATHS.has(req.path)) {
     return next()
   }
+  // The web client (SPA HTML + static assets) lives outside /api/* and must be
+  // served unauthenticated so the client-side LoginScreen can render in token
+  // mode. The actual data API is entirely under /api/*, which stays gated.
+  if (!req.path.startsWith("/api/")) {
+    return next()
+  }
   if (!isAuthorized(req)) {
     return next(new ApiError(ErrorCode.UNAUTHORIZED, "Authentication required"))
   }

@@ -73,7 +73,9 @@ async function readFile({ path: p, extractImages }) {
 async function writeFile({ path: p, contents }) {
   assertAbsoluteFsPath("writeFile", p)
   await fsp.mkdir(path.dirname(p), { recursive: true })
+  recordFileVersion(p, "baseline", "before.human.write")
   await fsp.writeFile(p, contents ?? "", "utf-8")
+  recordFileVersion(p, "human", "human.write")
   markAppWrite(p)
 }
 
@@ -87,9 +89,11 @@ async function writeFileBase64({ path: p, base64 }) {
 async function writeFileAtomic({ path: p, contents }) {
   assertAbsoluteFsPath("writeFileAtomic", p)
   await fsp.mkdir(path.dirname(p), { recursive: true })
+  recordFileVersion(p, "baseline", "before.human.write")
   const tmp = `${p}.${process.pid}.${Date.now()}.tmp`
   await fsp.writeFile(tmp, contents ?? "", "utf-8")
   await fsp.rename(tmp, p)
+  recordFileVersion(p, "human", "human.write")
   markAppWrite(p)
 }
 
