@@ -54,9 +54,9 @@
   },
   "editor": {
     "edit": "编辑",
-    "done": "完成",
+    "done": "保存",
     "editRaw": "编辑原始 Markdown",
-    "doneEditing": "完成编辑",
+    "doneEditing": "保存并返回阅读视图",
     "selection": {
       "askAgent": "让 Agent 处理选中内容",
       "placeholder": "解释、改写、缩短……",
