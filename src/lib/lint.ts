@@ -11,6 +11,7 @@ import {
   type StructuralLintFinding,
   type StructuralLintPage,
 } from "@/lib/lint-structural-core"
+import { parseFrontmatter } from "@/lib/frontmatter"
 
 export interface LintResult {
   type: "orphan" | "broken-link" | "no-outlinks" | "semantic"
@@ -89,6 +90,18 @@ function extractTitle(content: string, fallbackPath: string): string {
   return getFileName(fallbackPath)
     .replace(/\.md$/i, "")
     .replace(/[-_]+/g, " ")
+}
+
+/**
+ * True for placeholder stubs the lint "Fix" action creates for broken links
+ * (see ensureBrokenLinkStub in lint-fixes.ts), identified by the
+ * `tags: [stub, lint]` frontmatter it writes. Structural lint skips the
+ * orphan / no-outlinks checks for these so fixing a broken link doesn't
+ * immediately re-flag the new stub as a fresh finding.
+ */
+function isLintStub(content: string): boolean {
+  const tags = parseFrontmatter(content).frontmatter?.tags
+  return Array.isArray(tags) && tags.includes("stub") && tags.includes("lint")
 }
 
 function tokenizeForSuggestion(text: string): Set<string> {
@@ -183,7 +196,7 @@ export async function runStructuralLint(
       const outlinks = extractWikilinks(content)
       const slugName = getFileName(slug)
       const tokens = Array.from(tokenizeForSuggestion(`${title}\n${slugName}\n${content.slice(0, SUGGESTION_TOKEN_WINDOW)}`))
-      pages.push({ shortName, slug, title, outlinks, tokens })
+      pages.push({ shortName, slug, title, outlinks, tokens, isLintStub: isLintStub(content) })
     } catch {
       // skip unreadable files
     }

@@ -32,4 +32,51 @@ describe("computeStructuralLint", () => {
     // scan while remaining stable on slower CI runners.
     expect(elapsed).toBeLessThan(5_000)
   })
+
+  it("skips orphan/no-outlinks findings for lint-generated stub pages", () => {
+    // A stub (tags: [stub, lint]) is intentionally empty and unlinked. Without
+    // the exclusion it would be flagged both orphan and no-outlinks the moment
+    // the "Fix broken link" action creates it.
+    const pages: StructuralLintPage[] = [
+      {
+        shortName: "concepts/transformer.md",
+        slug: "concepts/transformer",
+        title: "Transformer",
+        outlinks: ["queries/missing-page"],
+        tokens: ["transformer"],
+      },
+      {
+        shortName: "queries/missing-page.md",
+        slug: "queries/missing-page",
+        title: "Missing Page",
+        outlinks: [],
+        tokens: ["missing", "page"],
+        isLintStub: true,
+      },
+    ]
+    const findings = computeStructuralLint(pages)
+
+    // The stub must not be re-flagged as orphan or no-outlinks.
+    expect(findings.filter((f) => f.page === "queries/missing-page.md")).toEqual([])
+    // The link from the real page to the stub still resolves (not broken).
+    expect(findings.filter((f) => f.type === "broken-link")).toEqual([])
+    // The real page is linked-to by nothing but links out, so it is an orphan
+    // but not no-outlinks — proving the checks still run for normal pages.
+    const realFindings = findings.filter((f) => f.page === "concepts/transformer.md")
+    expect(realFindings.map((f) => f.type)).toEqual(["orphan"])
+  })
+
+  it("still flags an empty non-stub page as orphan and no-outlinks", () => {
+    const pages: StructuralLintPage[] = [
+      {
+        shortName: "notes/lonely.md",
+        slug: "notes/lonely",
+        title: "Lonely",
+        outlinks: [],
+        tokens: ["lonely"],
+      },
+    ]
+    const types = computeStructuralLint(pages).map((f) => f.type).sort()
+    expect(types).toEqual(["no-outlinks", "orphan"])
+  })
 })
