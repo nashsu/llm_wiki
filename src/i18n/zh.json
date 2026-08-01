@@ -116,7 +116,7 @@
   "research": {
     "title": "深度研究",
     "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
-    "activeBadge": "{{running}} 个运行中{{queued, plural, =0 {} other {，{{queued}} 个排队中}}}",
+    "activeBadge": "{{running}} 个运行中",
     "inputPlaceholder": "输入研究主题...",
     "emptyTitle": "还没有研究任务",
     "emptyHint": "在上方输入主题，或在待审阅中点击深度研究",
@@ -135,7 +135,8 @@
       "saved": "已保存",
       "done": "已完成",
       "failed": "失败"
-    }
+    },
+    "activeBadgeWithQueued": "{{running}} 个运行中，{{queued}} 个排队中"
   },
   "project": {
     "createTitle": "新建 Wiki 项目",
@@ -415,7 +416,9 @@
     "dismissSelected": "忽略选中项",
     "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
-    "resolvedDivider": "— 已解决 —"
+    "resolvedDivider": "— 已解决 —",
+    "autoReviewed": "已自动审阅",
+    "autoReviewedHint": "仅显示已由自动审阅处理的条目"
   },
   "settings": {
     "title": "设置",

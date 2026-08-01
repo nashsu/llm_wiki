@@ -42,6 +42,7 @@ export function ReviewView() {
   const project = useWikiStore((s) => s.project)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
+  const [showAutoReviewed, setShowAutoReviewed] = useState(false)
 
   // Reload review items from disk. The review pane has no equivalent of
   // lint's re-run, so external writers — the resolve API, another window,
@@ -265,6 +266,9 @@ export function ReviewView() {
 
   const pending = items.filter((i) => !i.resolved)
   const resolved = items.filter((i) => i.resolved)
+  const isAutoReviewed = (item: ReviewItem) =>
+    item.resolved && (item.resolvedAction ?? "").startsWith("auto")
+  const autoReviewed = resolved.filter(isAutoReviewed)
   const selectedPendingIds = useMemo(
     () => pending.map((item) => item.id).filter((id) => selectedReviewIds.has(id)),
     [pending, selectedReviewIds],
@@ -338,7 +342,7 @@ export function ReviewView() {
         </div>
       </div>
 
-      {pending.length > 0 && (
+      {(pending.length > 0 || autoReviewed.length > 0) && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
           <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
             <input
@@ -370,11 +374,46 @@ export function ReviewView() {
           >
             {t("review.dismissSelected")}
           </Button>
+          <Button
+            variant={showAutoReviewed ? "default" : "outline"}
+            size="sm"
+            className="h-7 text-xs"
+            disabled={autoReviewed.length === 0}
+            onClick={() => setShowAutoReviewed((v) => !v)}
+            title={t("review.autoReviewedHint")}
+          >
+            {t("review.autoReviewed")}
+            {autoReviewed.length > 0 && (
+              <span className="ml-1 rounded-full bg-primary/20 px-1.5 text-[10px] font-medium">
+                {autoReviewed.length}
+              </span>
+            )}
+          </Button>
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto">
-        {items.length === 0 ? (
+        {showAutoReviewed ? (
+          autoReviewed.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
+              <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
+              <p>{t("review.allClear")}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 p-3">
+              {autoReviewed.map((item) => (
+                <ReviewCard
+                  key={item.id}
+                  item={item}
+                  onResolve={handleResolve}
+                  onDismiss={dismissItem}
+                  selected={selectedReviewIds.has(item.id)}
+                  onSelectedChange={setReviewSelected}
+                />
+              ))}
+            </div>
+          )
+        ) : items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
             <CheckCircle2 className="h-8 w-8 text-muted-foreground/30" />
             <p>{t("review.allClear")}</p>

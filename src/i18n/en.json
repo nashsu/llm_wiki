@@ -116,7 +116,7 @@
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
-    "activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
+    "activeBadge": "{{running}} active",
     "inputPlaceholder": "Enter a research topic...",
     "emptyTitle": "No research tasks yet",
     "emptyHint": "Enter a topic above or click Deep Research in Review",
@@ -135,7 +135,8 @@
       "saved": "Saved",
       "done": "Done",
       "failed": "Failed"
-    }
+    },
+    "activeBadgeWithQueued": "{{running}} active, {{queued}} queued"
   },
   "project": {
     "createTitle": "Create New Wiki Project",
@@ -415,7 +416,9 @@
     "dismissSelected": "Dismiss selected",
     "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
-    "resolvedDivider": "— Resolved —"
+    "resolvedDivider": "— Resolved —",
+    "autoReviewed": "Auto-reviewed",
+    "autoReviewedHint": "Show only items already processed by auto-review"
   },
   "settings": {
     "title": "Settings",

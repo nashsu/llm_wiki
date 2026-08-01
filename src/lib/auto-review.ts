@@ -18,11 +18,12 @@ import { useActivityStore } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
-import { createReviewPageDrafts } from "@/lib/review-create-page"
+import { createReviewPageDrafts, type ReviewPageType } from "@/lib/review-create-page"
 import { writeFile, createDirectory, readFile, fileExists } from "@/commands/fs"
-import { makeQueryFileName } from "@/lib/wiki-filename"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
 import { normalizePath } from "@/lib/path-utils"
 import { cleanAssistantContentForWikiSave } from "@/lib/chat-save-to-wiki"
+import { parseFrontmatter } from "@/lib/frontmatter"
 import { queueResearch } from "@/lib/deep-research"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 
@@ -381,13 +382,15 @@ async function createPagesFromReview(
 
   // If the LLM supplied content, write it directly
   if (content && content.length > 50) {
-    const clean = cleanAssistantContentForWikiSave(content)
-    const title = extractTitleFromContent(clean) || item.title
-    const { fileName } = makeQueryFileName(title)
-
-    // Determine the subdirectory based on review type
-    const drafts = createReviewPageDrafts(item, "Create")
-    const dir = drafts.length > 0 ? drafts[0].dir : "queries"
+    const cleanBase = cleanAssistantContentForWikiSave(content)
+    // Prefer the page type the LLM declared in frontmatter; fall back to the
+    // review's keyword inference, then to query. Keeping type + dir + file
+    // naming in lock-step matches normal ingest output (frontmatter type == folder).
+    const pageType = resolveContentType(item, cleanBase)
+    const title = extractTitleFromContent(cleanBase) || item.title
+    const dir = dirForType(pageType)
+    const fileName = fileNameForType(pageType, title)
+    const clean = ensureFrontmatterType(cleanBase, pageType)
 
     const filePath = `${pp}/wiki/${dir}/${fileName}`
     await createDirectory(`${pp}/wiki/${dir}`).catch(() => {})
@@ -408,7 +411,7 @@ async function createPagesFromReview(
 
   for (const draft of drafts) {
     const dir = draft.dir
-    const { fileName } = makeQueryFileName(draft.title)
+    const fileName = fileNameForType(draft.pageType, draft.title)
     const filePath = `${pp}/wiki/${dir}/${fileName}`
     await createDirectory(`${pp}/wiki/${dir}`).catch(() => {})
 
@@ -443,6 +446,68 @@ async function createPagesFromReview(
   }
 
   return written
+}
+const REVIEW_PAGE_TYPES = new Set<ReviewPageType>([
+  "entity",
+  "concept",
+  "comparison",
+  "synthesis",
+  "query",
+])
+
+function dirForType(type: ReviewPageType): string {
+  switch (type) {
+    case "entity":
+      return "entities"
+    case "concept":
+      return "concepts"
+    case "comparison":
+      return "comparisons"
+    case "synthesis":
+      return "synthesis"
+    default:
+      return "queries"
+  }
+}
+
+/** Query pages use timestamped filenames; typed pages use stable slugs. */
+function fileNameForType(type: ReviewPageType, title: string): string {
+  if (type === "query") return makeQueryFileName(title).fileName
+  return `${makeQuerySlug(title)}.md`
+}
+
+/** Prefer the LLM-declared frontmatter type, then keyword inference, then query. */
+function resolveContentType(item: ReviewItem, clean: string): ReviewPageType {
+  const fmType = parseFrontmatter(clean).frontmatter?.type
+  if (typeof fmType === "string") {
+    const normalized = fmType.trim().toLowerCase()
+    if (REVIEW_PAGE_TYPES.has(normalized as ReviewPageType)) {
+      return normalized as ReviewPageType
+    }
+  }
+  const drafts = createReviewPageDrafts(item, "Create")
+  return drafts.length > 0 ? drafts[0].pageType : "query"
+}
+
+/** Guarantee frontmatter `type` matches the destination folder. */
+function ensureFrontmatterType(markdown: string, type: ReviewPageType): string {
+  const block = markdown.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  if (!block) {
+    const heading = markdown.match(/^#+\s+(.+)$/m)?.[1]?.trim() ?? ""
+    const fm = [
+      "---",
+      `type: ${type}`,
+      heading ? `title: "${heading.replace(/"/g, '\\"')}"` : "",
+      "---",
+      "",
+    ].filter(Boolean).join("\n")
+    return fm + markdown
+  }
+  const payload = block[1]
+  const nextPayload = /^type\s*:/m.test(payload)
+    ? payload.replace(/^type\s*:.*$/m, `type: ${type}`)
+    : `type: ${type}\n` + payload
+  return markdown.replace(payload, nextPayload)
 }
 
 function extractTitleFromContent(content: string): string | undefined {
