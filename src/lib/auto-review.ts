@@ -447,15 +447,25 @@ async function createPagesFromReview(
 
   return written
 }
-const REVIEW_PAGE_TYPES = new Set<ReviewPageType>([
+// Page types auto-review can materialize. Base set comes from
+// createReviewPageDrafts; the extra wiki generation types (source, finding,
+// thesis, methodology) are honored when the LLM explicitly declares them in
+// the generated page's frontmatter — following the canonical WIKI_TYPE_DIRS.
+type CreatePageType = ReviewPageType | "source" | "finding" | "thesis" | "methodology"
+
+const REVIEW_PAGE_TYPES = new Set<CreatePageType>([
   "entity",
   "concept",
   "comparison",
   "synthesis",
   "query",
+  "source",
+  "finding",
+  "thesis",
+  "methodology",
 ])
 
-function dirForType(type: ReviewPageType): string {
+function dirForType(type: CreatePageType): string {
   switch (type) {
     case "entity":
       return "entities"
@@ -465,24 +475,32 @@ function dirForType(type: ReviewPageType): string {
       return "comparisons"
     case "synthesis":
       return "synthesis"
+    case "source":
+      return "sources"
+    case "finding":
+      return "findings"
+    case "thesis":
+      return "thesis"
+    case "methodology":
+      return "methodology"
     default:
       return "queries"
   }
 }
 
 /** Query pages use timestamped filenames; typed pages use stable slugs. */
-function fileNameForType(type: ReviewPageType, title: string): string {
+function fileNameForType(type: CreatePageType, title: string): string {
   if (type === "query") return makeQueryFileName(title).fileName
   return `${makeQuerySlug(title)}.md`
 }
 
 /** Prefer the LLM-declared frontmatter type, then keyword inference, then query. */
-function resolveContentType(item: ReviewItem, clean: string): ReviewPageType {
+function resolveContentType(item: ReviewItem, clean: string): CreatePageType {
   const fmType = parseFrontmatter(clean).frontmatter?.type
   if (typeof fmType === "string") {
     const normalized = fmType.trim().toLowerCase()
-    if (REVIEW_PAGE_TYPES.has(normalized as ReviewPageType)) {
-      return normalized as ReviewPageType
+    if (REVIEW_PAGE_TYPES.has(normalized as CreatePageType)) {
+      return normalized as CreatePageType
     }
   }
   const drafts = createReviewPageDrafts(item, "Create")
@@ -490,7 +508,7 @@ function resolveContentType(item: ReviewItem, clean: string): ReviewPageType {
 }
 
 /** Guarantee frontmatter `type` matches the destination folder. */
-function ensureFrontmatterType(markdown: string, type: ReviewPageType): string {
+function ensureFrontmatterType(markdown: string, type: CreatePageType): string {
   const block = markdown.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
   if (!block) {
     const heading = markdown.match(/^#+\s+(.+)$/m)?.[1]?.trim() ?? ""
@@ -546,7 +564,11 @@ async function updateWikiIndex(
     dir === "entities" ? "Entities" :
     dir === "concepts" ? "Concepts" :
     dir === "comparisons" ? "Comparisons" :
-    dir === "synthesis" ? "Synthesis" : ""
+    dir === "synthesis" ? "Synthesis" :
+    dir === "sources" ? "Sources" :
+    dir === "findings" ? "Findings" :
+    dir === "thesis" ? "Thesis" :
+    dir === "methodology" ? "Methodology" : ""
 
   if (sectionHeader && indexContent.includes(`## ${sectionHeader}`)) {
     indexContent = indexContent.replace(
