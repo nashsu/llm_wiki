@@ -6,7 +6,7 @@
 // rebuild) lives here so the main thread stays responsive for HTTP/SSE/SQLite.
 //
 // Handlers must be pure-ish: no SQLite writes (the main thread owns the DB per
-// architecture.md §4.4) — they compute and return data for the main thread to
+// V1_CHARTERED_ARCHITECTURE.md §4.4) — they compute and return data for the main thread to
 // persist.
 
 import { preprocessFile } from "../commands/preprocess.js"

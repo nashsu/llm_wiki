@@ -5,7 +5,7 @@
 // worker frees up. A worker that crashes is respawned in its own slot (the pool
 // never grows). The main thread correlates responses by message id.
 //
-// All SQLite writes stay on the main thread (architecture.md §4.4); workers only
+// All SQLite writes stay on the main thread (V1_CHARTERED_ARCHITECTURE.md §4.4); workers only
 // compute and return data.
 
 import { Worker } from "node:worker_threads"

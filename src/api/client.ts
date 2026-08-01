@@ -4,7 +4,7 @@
 // - Auth token is read from localStorage('llm-wiki-token') and sent as a
 //   Bearer header on every request.
 // - Errors are parsed from the server's `{ error: { code, message, details } }`
-//   envelope (architecture.md §4.6) and surfaced as ApiError.
+//   envelope (V1_CHARTERED_ARCHITECTURE.md §4.6) and surfaced as ApiError.
 
 import type { ApiErrorCode, ApiErrorBody } from "@llm-wiki/api-types"
 

@@ -1,5 +1,12 @@
-# LLM Wiki — Client-Server Architecture Design
+# LLM Wiki — V1 Chartered Architecture (Design)
 
+> **This is the original chartered architecture for V1** — the design spec and
+> decision record that the client-server migration was built against. It
+> describes the *intended* system. For what was actually delivered, see
+> [docs/PUSH1_ACTUAL_ARCHITECTURE.md](docs/PUSH1_ACTUAL_ARCHITECTURE.md) (the
+> as-built architecture after PR #1); the open deltas between this charter and
+> the implementation are tracked in issue #14.
+>
 > **Cross-references**: [PLAN.md](PLAN.md) (implementation plan) · [GOAL.md](GOAL.md) (goal definition) · [RUNBOOK.md](RUNBOOK.md) (current operational runbook)
 
 ---

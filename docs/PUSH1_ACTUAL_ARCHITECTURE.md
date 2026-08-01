@@ -1,4 +1,10 @@
-# LLM Wiki — Architecture & Dataflow
+# LLM Wiki — Actual Architecture After PR #1 (As-Built)
+
+> **Note:** This documents the **actual architecture status after PR #1** — the
+> system as it was really built and merged, including where it diverges from the
+> original design. The chartered V1 design it was built against is
+> [V1_CHARTERED_ARCHITECTURE.md](../V1_CHARTERED_ARCHITECTURE.md); the open gaps
+> between the two are tracked in issue #14.
 
 High-level architecture of the web deployment, what lives in the database vs on
 disk, and end-to-end dataflows for the two core operations: **ingest** (raw

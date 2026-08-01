@@ -2,7 +2,7 @@
 //
 // Thin wrappers over the projects table. All writes go through the main thread
 // (better-sqlite3 is synchronous), per the worker-thread model in
-// architecture.md §4.4.
+// V1_CHARTERED_ARCHITECTURE.md §4.4.
 
 import { getDb } from "./db.js"
 

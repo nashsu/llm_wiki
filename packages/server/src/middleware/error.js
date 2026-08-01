@@ -1,7 +1,7 @@
 // Global error handler for the v2 Express server.
 //
 // Mounted last in the middleware chain. Normalizes every error into the
-// envelope `{ error: { code, message, details } }` (architecture.md §4.6):
+// envelope `{ error: { code, message, details } }` (V1_CHARTERED_ARCHITECTURE.md §4.6):
 //   - ApiError      → its own code/status/details
 //   - ZodError      → VALIDATION_ERROR with the issue array as details
 //   - anything else → INTERNAL_ERROR (message scrubbed so internals don't leak)

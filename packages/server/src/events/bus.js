@@ -7,13 +7,13 @@
 // and lets multiple consumers (SSE today; logging/metrics later) react to the
 // same events.
 //
-// Event envelope (matches architecture.md §4.7):
+// Event envelope (matches V1_CHARTERED_ARCHITECTURE.md §4.7):
 //   { type, projectId, payload, ts }
 // where `type` is one of the stable event names below.
 
 import { EventEmitter } from "node:events"
 
-// Stable event type names (architecture.md §4.7). Producers should use these
+// Stable event type names (V1_CHARTERED_ARCHITECTURE.md §4.7). Producers should use these
 // constants so typos don't silently drop events.
 export const EventTypes = {
   FILE_CREATED: "file:created",

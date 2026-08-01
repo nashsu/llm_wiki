@@ -1,6 +1,6 @@
 # LLM Wiki — Goal Definition
 
-> **Cross-references**: [architecture.md](architecture.md) (design) · [PLAN.md](PLAN.md) (implementation plan) · [RUNBOOK.md](RUNBOOK.md) (current operational runbook)
+> **Cross-references**: [V1_CHARTERED_ARCHITECTURE.md](V1_CHARTERED_ARCHITECTURE.md) (design) · [PLAN.md](PLAN.md) (implementation plan) · [RUNBOOK.md](RUNBOOK.md) (current operational runbook)
 
 ---
 
@@ -12,7 +12,7 @@
 
 ## Architecture Decisions (locked)
 
-These 17 decisions are final for v1. See [architecture.md §2](architecture.md) for rationale.
+These 17 decisions are final for v1. See [V1_CHARTERED_ARCHITECTURE.md §2](V1_CHARTERED_ARCHITECTURE.md) for rationale.
 
 | # | Decision | Choice |
 |---|---|---|

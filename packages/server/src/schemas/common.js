@@ -1,13 +1,13 @@
 // Shared Zod schemas for the v2 API (Phase 2.1.10).
 //
 // Cross-cutting shapes reused by every route group: the error envelope
-// (architecture.md §4.6), pagination, and the health/version responses. Keeping
+// (V1_CHARTERED_ARCHITECTURE.md §4.6), pagination, and the health/version responses. Keeping
 // these in one place means the OpenAPI spec (openapi.js) and every router agree
 // on the wire format.
 
 import { z } from "zod"
 
-// ── Error envelope (architecture.md §4.6) ─────────────────────────────────
+// ── Error envelope (V1_CHARTERED_ARCHITECTURE.md §4.6) ─────────────────────────────────
 // Every error response is `{ error: { code, message, details } }`. `code` is one
 // of the stable ErrorCode strings; `details` carries structured context (Zod
 // issues, provider info) or null.

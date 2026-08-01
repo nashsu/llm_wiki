@@ -1,7 +1,7 @@
 // Structured API error for the v2 Express server.
 //
 // Every error that reaches the client is normalized by middleware/error.js into
-// the envelope `{ error: { code, message, details } }` (architecture.md §4.6).
+// the envelope `{ error: { code, message, details } }` (V1_CHARTERED_ARCHITECTURE.md §4.6).
 // Handlers throw ApiError with one of the stable codes below; anything else is
 // mapped to INTERNAL_ERROR so internals never leak.
 //

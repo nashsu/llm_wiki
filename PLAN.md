@@ -1,6 +1,6 @@
 # LLM Wiki — Implementation Plan: Client-Server Architecture
 
-> **Cross-references**: [architecture.md](architecture.md) (design) · [GOAL.md](GOAL.md) (goal definition) · [RUNBOOK.md](RUNBOOK.md) (current operational runbook)
+> **Cross-references**: [V1_CHARTERED_ARCHITECTURE.md](V1_CHARTERED_ARCHITECTURE.md) (design) · [GOAL.md](GOAL.md) (goal definition) · [RUNBOOK.md](RUNBOOK.md) (current operational runbook)
 
 ---
 
