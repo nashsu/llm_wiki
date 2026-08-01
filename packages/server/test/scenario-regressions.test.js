@@ -129,3 +129,43 @@ describe("#11 — manual writes record File History versions", () => {
     expect(entries[entries.length - 1].author).toBe("human")
   })
 })
+
+describe("auth mode heuristic — auto is open iff no token is configured", () => {
+  // Regression: in auto mode (AUTH_MODE unset) the middleware used to compute
+  // authRequired as `!allowUnauth`, which is true even with NO token set — so a
+  // token-less deployment (the docker-compose default) 401'd every API call
+  // while /auth/status reported authRequired:false. Auto must be open when no
+  // token is configured and required only once a token exists.
+
+  it("auto mode with NO token is open (docker-compose default)", async () => {
+    delete process.env.AUTH_MODE // auto
+    delete process.env.LLM_WIKI_API_TOKEN
+    const res = await request(app).get("/api/v2/projects")
+    expect(res.status).not.toBe(401)
+  })
+
+  it("auto mode WITH a token requires it", async () => {
+    delete process.env.AUTH_MODE // auto
+    process.env.LLM_WIKI_API_TOKEN = "sekrit"
+    const denied = await request(app).get("/api/v2/projects")
+    expect(denied.status).toBe(401)
+    const allowed = await request(app)
+      .get("/api/v2/projects")
+      .set("Authorization", "Bearer sekrit")
+    expect(allowed.status).not.toBe(401)
+  })
+
+  it("AUTH_MODE=none is open even when a token is configured", async () => {
+    process.env.AUTH_MODE = "none"
+    process.env.LLM_WIKI_API_TOKEN = "sekrit"
+    const res = await request(app).get("/api/v2/projects")
+    expect(res.status).not.toBe(401)
+  })
+
+  it("AUTH_MODE=token with no token configured is closed", async () => {
+    process.env.AUTH_MODE = "token"
+    delete process.env.LLM_WIKI_API_TOKEN
+    const res = await request(app).get("/api/v2/projects")
+    expect(res.status).toBe(401)
+  })
+})

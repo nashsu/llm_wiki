@@ -41,7 +41,7 @@ export function resolveAuth() {
       ? true // explicitly required regardless of allowUnauth
       : mode === "none"
         ? false // explicitly open
-        : !allowUnauth // heuristic: require if not explicitly opened
+        : !!token && !allowUnauth // auto: require only when a token is configured
   const authConfigured = !!token || mode === "token"
   return { token, source, mode, allowUnauth, authRequired, authConfigured }
 }
