@@ -268,7 +268,14 @@ export function ReviewView() {
   const resolved = items.filter((i) => i.resolved)
   const isAutoReviewed = (item: ReviewItem) =>
     item.resolved && (item.resolvedAction ?? "").startsWith("auto")
-  const autoReviewed = resolved.filter(isAutoReviewed)
+  // Most recently processed first so users can quickly confirm handling.
+  const autoReviewed = resolved
+    .filter(isAutoReviewed)
+    .sort(
+      (a, b) =>
+        (b.resolvedAt ?? Number.NEGATIVE_INFINITY) -
+        (a.resolvedAt ?? Number.NEGATIVE_INFINITY),
+    )
   const selectedPendingIds = useMemo(
     () => pending.map((item) => item.id).filter((id) => selectedReviewIds.has(id)),
     [pending, selectedReviewIds],

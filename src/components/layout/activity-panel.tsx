@@ -74,6 +74,10 @@ export function ActivityPanel() {
   const { t } = useTranslation()
   const items = useActivityStore((s) => s.items)
   const clearDone = useActivityStore((s) => s.clearDone)
+  // Pin in-progress tasks to the top so ongoing work stays visible.
+  const orderedItems = items
+    .filter((i) => i.status === "running")
+    .concat(items.filter((i) => i.status !== "running"))
   const project = useWikiStore((s) => s.project)
   const fileSyncTasks = useFileSyncStore((s) => s.tasks)
   const setFileSyncTasks = useFileSyncStore((s) => s.setTasks)
@@ -352,7 +356,7 @@ export function ActivityPanel() {
           ))}
 
           {/* Activity items */}
-          {items.map((item) => {
+          {orderedItems.map((item) => {
             // Find matching queue task for cancel button
             const matchingTask = item.status === "running"
               ? queueTasks.find((t) => t.status === "processing" && getFileName(t.sourcePath) === item.title)

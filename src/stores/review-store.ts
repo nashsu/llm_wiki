@@ -17,6 +17,8 @@ export interface ReviewItem {
   options: ReviewOption[]
   resolved: boolean
   resolvedAction?: string
+  /** Timestamp of when the item was resolved (for recency sorting). */
+  resolvedAt?: number
   createdAt: number
 }
 
@@ -79,10 +81,12 @@ function mergeOptions(a: ReviewOption[], b: ReviewOption[]): ReviewOption[] {
 function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
   const resolved = a.resolved || b.resolved
   const resolvedAction = resolved ? a.resolvedAction ?? b.resolvedAction : undefined
+  const resolvedAt = resolved ? a.resolvedAt ?? b.resolvedAt : undefined
   return {
     ...a, // a.id is kept; both share it by construction
     resolved,
     resolvedAction,
+    resolvedAt,
     description: a.description || b.description,
     sourcePath: a.sourcePath ?? b.sourcePath,
     affectedPages: unionField(a.affectedPages, b.affectedPages),
@@ -166,7 +170,9 @@ export const useReviewStore = create<ReviewState>((set) => ({
   resolveItem: (id, action) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === id ? { ...item, resolved: true, resolvedAction: action } : item
+        item.id === id
+          ? { ...item, resolved: true, resolvedAction: action, resolvedAt: Date.now() }
+          : item
       ),
     })),
 
