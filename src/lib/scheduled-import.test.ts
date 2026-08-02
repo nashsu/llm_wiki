@@ -38,6 +38,7 @@ vi.mock("@/lib/project-store", () => ({
 }))
 
 import {
+  getScheduledImportPathIssue,
   isProjectManagedScheduledImportPath,
   resolveImportPath,
   scheduledImportDestinationForFile,
@@ -64,6 +65,11 @@ describe("scheduled import path handling", () => {
     expect(resolveImportPath("C:/Users/me/wiki", "//server/share/input")).toBe(
       "//server/share/input",
     )
+  })
+
+  it("keeps an empty configured path empty", () => {
+    expect(resolveImportPath(projectPath, "")).toBe("")
+    expect(resolveImportPath(projectPath, "   ")).toBe("")
   })
 
   it("preserves nested relative paths for external directories", () => {
@@ -129,6 +135,21 @@ describe("scheduled import path handling", () => {
     expect(
       isProjectManagedScheduledImportPath(projectPath, "/Users/me/inbox"),
     ).toBe(false)
+  })
+
+  it("distinguishes paths inside the project from paths containing it", () => {
+    expect(
+      getScheduledImportPathIssue(projectPath, `${projectPath}/inbox`),
+    ).toBe("inside-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/Users/me"),
+    ).toBe("contains-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/"),
+    ).toBe("contains-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/Users/me/inbox"),
+    ).toBeNull()
   })
 
   it("detects Windows project paths case-insensitively", () => {
