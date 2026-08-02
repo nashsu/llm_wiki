@@ -38,7 +38,9 @@ vi.mock("@/lib/project-store", () => ({
 }))
 
 import {
+  getScheduledImportPathIssue,
   isProjectManagedScheduledImportPath,
+  normalizeScheduledImportConfigForProject,
   resolveImportPath,
   scheduledImportDestinationForFile,
   scanAndImport,
@@ -64,6 +66,83 @@ describe("scheduled import path handling", () => {
     expect(resolveImportPath("C:/Users/me/wiki", "//server/share/input")).toBe(
       "//server/share/input",
     )
+  })
+
+  it("keeps an empty configured path empty", () => {
+    expect(resolveImportPath(projectPath, "")).toBe("")
+    expect(resolveImportPath(projectPath, "   ")).toBe("")
+  })
+
+  it("uses an empty directory list when a project has no saved config", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, null)).toEqual({
+      version: 2,
+      enabled: false,
+      interval: 60,
+      directories: [],
+    })
+  })
+
+  it("clears legacy project-managed paths during hydration", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: false,
+      path: `${projectPath}/raw/sources`,
+      interval: 30,
+      lastScan: 123,
+    })).toEqual({
+      version: 2,
+      enabled: false,
+      interval: 30,
+      directories: [],
+    })
+
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: true,
+      path: "/Users/me",
+      interval: 15,
+      lastScan: null,
+    })).toEqual({
+      version: 2,
+      // The project-containment path is discarded and consequently cannot
+      // enable the V2 scheduler.
+      enabled: false,
+      interval: 15,
+      directories: [],
+    })
+  })
+
+  it("retains a valid external directory during hydration", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: false,
+      path: "/Users/me/inbox",
+      interval: 60,
+      lastScan: null,
+    }).directories[0]?.path).toBe("/Users/me/inbox")
+  })
+
+  it("keeps the V1 destination namespace empty after repeated normalization", () => {
+    const migrated = normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: true,
+      path: "/Users/me/inbox",
+      interval: 60,
+      lastScan: null,
+    })
+    expect(normalizeScheduledImportConfigForProject(projectPath, migrated).directories[0]?.outputNamespace).toBe("")
+  })
+
+  it("normalizes V2 directories to non-overlapping paths and namespaces", () => {
+    const config = normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: true,
+      interval: 60,
+      directories: [
+        { id: "one", name: "Inbox", path: "/Users/me/inbox", enabled: true, lastScan: null, lastError: null, outputNamespace: "inbox" },
+        { id: "two", name: "Nested", path: "/Users/me/inbox/nested", enabled: true, lastScan: null, lastError: null, outputNamespace: "inbox" },
+        { id: "three", name: "Other", path: "/Users/me/other", enabled: true, lastScan: null, lastError: null, outputNamespace: "inbox" },
+      ],
+    })
+
+    expect(config.directories).toHaveLength(2)
+    expect(config.directories.map((directory) => directory.path)).toEqual(["/Users/me/inbox", "/Users/me/other"])
+    expect(new Set(config.directories.map((directory) => directory.outputNamespace)).size).toBe(2)
   })
 
   it("preserves nested relative paths for external directories", () => {
@@ -129,6 +208,21 @@ describe("scheduled import path handling", () => {
     expect(
       isProjectManagedScheduledImportPath(projectPath, "/Users/me/inbox"),
     ).toBe(false)
+  })
+
+  it("distinguishes paths inside the project from paths containing it", () => {
+    expect(
+      getScheduledImportPathIssue(projectPath, `${projectPath}/inbox`),
+    ).toBe("inside-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/Users/me"),
+    ).toBe("contains-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/"),
+    ).toBe("contains-project")
+    expect(
+      getScheduledImportPathIssue(projectPath, "/Users/me/inbox"),
+    ).toBeNull()
   })
 
   it("detects Windows project paths case-insensitively", () => {
@@ -218,6 +312,7 @@ describe("scanAndImport failure handling", () => {
     mocks.copyFile.mockResolvedValue(undefined)
     mocks.preprocessFile.mockResolvedValue("")
     mocks.isIngestableSourcePath.mockReturnValue(true)
+    mocks.enqueueSourceIngest.mockResolvedValue(["task-1"])
     mocks.loadScheduledImportConfig.mockResolvedValue({
       enabled: true,
       path: "/Users/me/inbox",
@@ -283,7 +378,7 @@ describe("scanAndImport failure handling", () => {
     expect(mocks.enqueueSourceIngest).not.toHaveBeenCalled()
     expect(mocks.writeFileAtomic).toHaveBeenCalledWith(
       "C:/Users/Me/Wiki/.llm-wiki/scheduled-import-db.json",
-      expect.stringContaining('"c:/users/me/inbox/paper.pdf": "md5-new"'),
+      expect.stringContaining('"md5": "md5-new"'),
     )
   })
 

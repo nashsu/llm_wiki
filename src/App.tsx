@@ -94,22 +94,19 @@ function App() {
   async function hydrateScheduledImportAfterOpen(proj: WikiProject): Promise<void> {
     try {
       const savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      const { normalizeScheduledImportConfigForProject } = await import("@/lib/scheduled-import")
       if (!isCurrentProject(proj)) return
-      if (savedScheduledImport) {
-        // Migrate relative path to absolute (backward compatibility)
-        let path = savedScheduledImport.path
-        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
-          path = `${proj.path}/${path}`
-        }
-        useWikiStore.getState().setScheduledImportConfig({
-          ...savedScheduledImport,
-          path,
-        })
+      const normalizedScheduledImport = normalizeScheduledImportConfigForProject(proj.path, savedScheduledImport)
+      useWikiStore.getState().setScheduledImportConfig(normalizedScheduledImport)
+      // Persist normalization immediately so a legacy one-directory config is
+      // migrated once, even if the user never opens Settings again.
+      if (JSON.stringify(savedScheduledImport) !== JSON.stringify(normalizedScheduledImport)) {
+        await saveScheduledImportConfig(proj.path, normalizedScheduledImport)
       }
 
-      const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
+      const scheduledImportConfig = normalizedScheduledImport
       if (!isCurrentProject(proj)) return
-      if (scheduledImportConfig.enabled && scheduledImportConfig.path && scheduledImportConfig.interval > 0) {
+      if (scheduledImportConfig.enabled && scheduledImportConfig.directories.some((directory) => directory.enabled) && scheduledImportConfig.interval > 0) {
         const { startScheduledImport } = await import("@/lib/scheduled-import")
         if (!isCurrentProject(proj)) return
         startScheduledImport(proj, scheduledImportConfig)
@@ -434,10 +431,10 @@ function App() {
       setFileTree([])
       setActiveView("wiki")
       useWikiStore.getState().setScheduledImportConfig({
+        version: 2,
         enabled: false,
-        path: `${proj.path}/raw/sources`,
         interval: 60,
-        lastScan: null,
+        directories: [],
       })
       // Bump data version so any cached graphs/views invalidate
       useWikiStore.getState().bumpDataVersion()
