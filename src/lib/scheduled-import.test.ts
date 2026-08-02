@@ -40,6 +40,7 @@ vi.mock("@/lib/project-store", () => ({
 import {
   getScheduledImportPathIssue,
   isProjectManagedScheduledImportPath,
+  normalizeScheduledImportConfigForProject,
   resolveImportPath,
   scheduledImportDestinationForFile,
   scanAndImport,
@@ -70,6 +71,50 @@ describe("scheduled import path handling", () => {
   it("keeps an empty configured path empty", () => {
     expect(resolveImportPath(projectPath, "")).toBe("")
     expect(resolveImportPath(projectPath, "   ")).toBe("")
+  })
+
+  it("uses an empty path when a project has no saved config", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, null)).toEqual({
+      enabled: false,
+      path: "",
+      interval: 60,
+      lastScan: null,
+    })
+  })
+
+  it("clears legacy project-managed paths during hydration", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: false,
+      path: `${projectPath}/raw/sources`,
+      interval: 30,
+      lastScan: 123,
+    })).toEqual({
+      enabled: false,
+      path: "",
+      interval: 30,
+      lastScan: 123,
+    })
+
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: true,
+      path: "/Users/me",
+      interval: 15,
+      lastScan: null,
+    })).toEqual({
+      enabled: true,
+      path: "",
+      interval: 15,
+      lastScan: null,
+    })
+  })
+
+  it("retains a valid external directory during hydration", () => {
+    expect(normalizeScheduledImportConfigForProject(projectPath, {
+      enabled: false,
+      path: "/Users/me/inbox",
+      interval: 60,
+      lastScan: null,
+    }).path).toBe("/Users/me/inbox")
   })
 
   it("preserves nested relative paths for external directories", () => {

@@ -133,6 +133,29 @@ export function isProjectManagedScheduledImportPath(
 
 export type ScheduledImportPathIssue = "inside-project" | "contains-project"
 
+export function normalizeScheduledImportConfigForProject(
+  projectPath: string,
+  config: ScheduledImportConfig | null,
+): ScheduledImportConfig {
+  if (!config) {
+    return {
+      enabled: false,
+      path: "",
+      interval: 60,
+      lastScan: null,
+    }
+  }
+
+  const path = resolveImportPath(projectPath, config.path)
+  return {
+    ...config,
+    // Older builds could persist the project's own raw/sources directory as
+    // the scheduled-import path. Clear any self-referential value while
+    // retaining a valid external directory for later re-enabling.
+    path: path && !isProjectManagedScheduledImportPath(projectPath, path) ? path : "",
+  }
+}
+
 export function getScheduledImportPathIssue(
   projectPath: string,
   importPath: string,

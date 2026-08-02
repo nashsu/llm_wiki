@@ -195,7 +195,7 @@ interface ProxyConfig {
 
 interface ScheduledImportConfig {
   enabled: boolean
-  path: string // 监控目录的相对路径（相对于项目根目录），空字符串表示使用默认的 "raw"
+  path: string // 监控目录；空字符串表示尚未选择目录
   interval: number // 扫描间隔（分钟）
   lastScan: number | null // 上次扫描时间戳
 }

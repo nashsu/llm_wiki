@@ -408,7 +408,9 @@ export function SettingsView() {
     const newSourceWatch = normalizeSourceWatchConfig(draft.sourceWatchConfig)
     const newScheduledImport = {
       enabled: draft.scheduledImportEnabled,
-      path: scheduledImportPath,
+      // Keep valid external selections while disabled, but clean up invalid
+      // project-local values persisted by older releases.
+      path: scheduledImportPathIssue ? "" : scheduledImportPath,
       interval: Math.max(1, Math.min(1440, draft.scheduledImportInterval || 60)),
       lastScan: scheduledImportConfig.lastScan,
     }
