@@ -29,6 +29,10 @@ import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import {
+  getScheduledImportPathIssue,
+  normalizeScheduledImportConfigForProject,
+} from "@/lib/scheduled-import"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
 import { MultimodalSection } from "./sections/multimodal-section"
@@ -102,21 +106,9 @@ function initialDraft(
   generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
-  projectPath?: string,
   theme?: AppTheme,
   zoomLevel?: number,
 ): SettingsDraft {
-  // Show absolute path: if stored path is empty, show default using project path
-  // If stored path is relative (legacy), prepend project path
-  // If stored path is absolute, show as-is
-  let displayPath = scheduledImport.path || ""
-  if (!displayPath && projectPath) {
-    displayPath = `${projectPath}/raw/sources`
-  } else if (displayPath && projectPath && !displayPath.startsWith("/") && !displayPath.match(/^[a-zA-Z]:[/\\]/)) {
-    // Legacy relative path - prepend project path for display
-    displayPath = `${projectPath}/${displayPath}`
-  }
-
   return {
     provider: llm.provider,
     apiKey: llm.apiKey,
@@ -156,7 +148,7 @@ function initialDraft(
     proxyUrl: proxy.url,
     proxyBypassLocal: proxy.bypassLocal,
     scheduledImportEnabled: scheduledImport.enabled,
-    scheduledImportPath: displayPath,
+    scheduledImportDirectories: scheduledImport.directories,
     scheduledImportInterval: scheduledImport.interval,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatch),
     mineruEnabled: mineru.enabled,
@@ -239,7 +231,6 @@ export function SettingsView() {
       generalConfig,
       maxHistoryMessages,
       i18n.language,
-      project?.path,
     ),
   )
 
@@ -296,7 +287,6 @@ export function SettingsView() {
         generalConfig,
         maxHistoryMessages,
         prev.uiLanguage,
-        project?.path,
         prev.theme,
         prev.zoomLevel,
       ),
@@ -320,6 +310,19 @@ export function SettingsView() {
     setSaveError(null)
     setDraftState((prev) => ({ ...prev, [key]: value }))
   }, [])
+
+  const scheduledImportInvalid = draft.scheduledImportEnabled && (
+    !project ||
+    !draft.scheduledImportDirectories.some((directory) => directory.enabled) ||
+    draft.scheduledImportDirectories.some((directory) =>
+      getScheduledImportPathIssue(
+        project.path,
+        directory.path,
+        draft.scheduledImportDirectories,
+        directory.id,
+      ) !== null,
+    )
+  )
 
   useEffect(() => {
     setSaveError(null)
@@ -402,12 +405,19 @@ export function SettingsView() {
       bypassLocal: draft.proxyBypassLocal,
     }
     const newSourceWatch = normalizeSourceWatchConfig(draft.sourceWatchConfig)
-    const newScheduledImport = {
-      enabled: draft.scheduledImportEnabled,
-      path: draft.scheduledImportPath,
-      interval: Math.max(1, Math.min(1440, draft.scheduledImportInterval || 60)),
-      lastScan: scheduledImportConfig.lastScan,
-    }
+    const newScheduledImport = project
+      ? normalizeScheduledImportConfigForProject(project.path, {
+          version: 2,
+          enabled: draft.scheduledImportEnabled,
+          interval: Math.max(1, Math.min(1440, draft.scheduledImportInterval || 60)),
+          directories: draft.scheduledImportDirectories,
+        })
+      : {
+          version: 2 as const,
+          enabled: false,
+          interval: Math.max(1, Math.min(1440, draft.scheduledImportInterval || 60)),
+          directories: [],
+        }
     const newMineruConfig = {
       enabled: draft.mineruEnabled,
       backend: draft.mineruBackend,
@@ -483,7 +493,7 @@ export function SettingsView() {
         const { startScheduledImport, stopScheduledImport } = await import("@/lib/scheduled-import")
         if (
           newScheduledImport.enabled &&
-          newScheduledImport.path &&
+          newScheduledImport.directories.some((directory) => directory.enabled) &&
           newScheduledImport.interval > 0
         ) {
           startScheduledImport(project, newScheduledImport)
@@ -577,7 +587,12 @@ export function SettingsView() {
         setOutputLanguage((resultValue(persistedOutputLanguage, null) ?? outputLanguage) as typeof outputLanguage)
         setProxyConfig(resultValue(persistedProxy, null) ?? proxyConfig)
         setSourceWatchConfig(resultValue(persistedSourceWatch, sourceWatchConfig))
-        setScheduledImportConfig(resultValue(persistedScheduledImport, null) ?? scheduledImportConfig)
+        setScheduledImportConfig(project
+          ? normalizeScheduledImportConfigForProject(
+              project.path,
+              resultValue(persistedScheduledImport, null) ?? scheduledImportConfig,
+            )
+          : scheduledImportConfig)
         setMaxHistoryMessages(maxHistoryMessages)
         setMineruConfig(resultValue(persistedMineru, null) ?? mineruConfig)
         setApiConfig(resultValue(persistedApi, null) ?? apiConfig)
@@ -717,14 +732,26 @@ export function SettingsView() {
         {active !== "about" && active !== "llm" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
-              <p className={`text-xs ${saveError ? "text-destructive" : "text-muted-foreground"}`}>
-                {saveError
+              <p className={`text-xs ${saveError || scheduledImportInvalid ? "text-destructive" : "text-muted-foreground"}`}>
+                {scheduledImportInvalid
+                  ? t("settings.sections.scheduledImport.invalidSave", {
+                      defaultValue: "Choose a valid external directory before saving.",
+                    })
+                  : saveError
                   ? t("settings.saveFailed")
                   : saved
                     ? t("settings.savedTick")
                     : t("settings.changeHint")}
               </p>
-              <Button onClick={handleSave}>
+              <Button
+                onClick={handleSave}
+                disabled={scheduledImportInvalid}
+                title={scheduledImportInvalid
+                  ? t("settings.sections.scheduledImport.invalidSave", {
+                      defaultValue: "Choose a valid external directory before saving.",
+                    })
+                  : undefined}
+              >
                 {saved ? t("settings.saved") : t("settings.save")}
               </Button>
             </div>

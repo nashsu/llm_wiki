@@ -193,11 +193,22 @@ interface ProxyConfig {
   bypassLocal: boolean
 }
 
-interface ScheduledImportConfig {
+interface ScheduledImportDirectory {
+  id: string
+  name: string
+  path: string
   enabled: boolean
-  path: string // 监控目录的相对路径（相对于项目根目录），空字符串表示使用默认的 "raw"
+  lastScan: number | null
+  lastError: string | null
+  /** Empty only for the single directory migrated from the v1 layout. */
+  outputNamespace: string
+}
+
+interface ScheduledImportConfig {
+  version: 2
+  enabled: boolean
   interval: number // 扫描间隔（分钟）
-  lastScan: number | null // 上次扫描时间戳
+  directories: ScheduledImportDirectory[]
 }
 
 /**
@@ -604,10 +615,10 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   scheduledImportConfig: {
+    version: 2,
     enabled: false,
-    path: "",
     interval: 60,
-    lastScan: null,
+    directories: [],
   },
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
@@ -674,4 +685,4 @@ export const useWikiStore = create<WikiState>((set) => ({
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, ScheduledImportDirectory, SourceWatchConfig, ApiConfig }
