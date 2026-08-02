@@ -5,7 +5,23 @@ import { listFileHistory, restoreFileHistory, type FileHistoryEntry } from "@/co
 import { summarizeAgentFileChange } from "@/lib/agent-file-activity"
 import { useWikiStore } from "@/stores/wiki-store"
 
-export function FileHistoryButton({ filePath, currentContent }: { filePath: string; currentContent: string }) {
+export function FileHistoryButton({
+  filePath,
+  currentContent,
+  triggerClassName = "absolute right-3 top-3 z-20 rounded-md border bg-background/90 p-1.5 text-muted-foreground shadow-sm hover:text-foreground",
+  overlayClassName = "absolute inset-0 z-40 flex bg-background",
+}: {
+  filePath: string
+  currentContent: string
+  /** Class for the trigger button. Defaults to the absolute corner placement
+   *  used by FilePreview; the WikiEditor toolbar passes an inline style so the
+   *  trigger sits alongside the Page Links / Edit buttons. */
+  triggerClassName?: string
+  /** Class for the full-panel overlay. Defaults to pane-scoped (absolute);
+   *  the editor passes fixed so the overlay isn't clipped by the toolbar's
+   *  positioned ancestor. */
+  overlayClassName?: string
+}) {
   const { t } = useTranslation()
   const project = useWikiStore((state) => state.project)
   const openFileInPreview = useWikiStore((state) => state.openFileInPreview)
@@ -30,8 +46,8 @@ export function FileHistoryButton({ filePath, currentContent }: { filePath: stri
   }).diff : ""
 
   return <>
-    <button type="button" onClick={() => void show()} className="absolute right-3 top-3 z-20 rounded-md border bg-background/90 p-1.5 text-muted-foreground shadow-sm hover:text-foreground" title={t("preview.history")}><Clock3 className="h-4 w-4" /></button>
-    {open && <div className="absolute inset-0 z-40 flex bg-background">
+    <button type="button" onClick={() => void show()} className={triggerClassName} title={t("preview.history")}><Clock3 className="h-4 w-4" /></button>
+    {open && <div className={overlayClassName}>
       <aside className="w-72 shrink-0 border-r p-3">
         <div className="mb-3 flex items-center justify-between"><strong className="text-sm">{t("preview.history")}</strong><button type="button" onClick={() => setOpen(false)}><X className="h-4 w-4" /></button></div>
         <div className="space-y-1 overflow-auto">

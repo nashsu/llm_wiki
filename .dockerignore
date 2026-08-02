@@ -1,0 +1,37 @@
+# Keep the Docker build context small and deterministic.
+
+# Dependencies are installed from the lockfile inside the image.
+node_modules
+**/node_modules
+
+# Build outputs (regenerated in the image).
+dist
+dist-web
+dist-ssr
+dist-rc
+src-tauri/target
+src-tauri/gen
+*.tsbuildinfo
+
+# VCS / editor / tooling noise.
+.git
+.github
+.vscode
+.idea
+.claude
+.superpowers
+.overnight
+.DS_Store
+
+# Local environment and logs.
+.env
+.env.*
+*.log
+
+# Desktop-only artifacts not needed for the web image.
+src-tauri
+extension
+mcp-server
+
+# Docs / planning files (top-level only; the app may import .md content).
+docs

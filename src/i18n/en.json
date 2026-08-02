@@ -54,9 +54,9 @@
   },
   "editor": {
     "edit": "Edit",
-    "done": "Done",
+    "done": "Save",
     "editRaw": "Edit raw Markdown",
-    "doneEditing": "Done editing",
+    "doneEditing": "Save and return to reading view",
     "selection": {
       "askAgent": "Ask Agent about selection",
       "placeholder": "Explain, rewrite, shorten...",

@@ -325,4 +325,28 @@ describe("runStructuralLint — link suggestions", () => {
 
     expect(broken?.suggestedTarget).toBeUndefined()
   })
+
+  it("does not re-flag lint-generated stub pages (tags: [stub, lint])", async () => {
+    // The "Fix broken link" action writes a stub with `tags: [stub, lint]`
+    // frontmatter (see ensureBrokenLinkStub). Re-linting must not flag that
+    // empty stub as orphan / no-outlinks, and the link to it must resolve.
+    const pages = [
+      makeFileNode("concepts/transformer.md", "# Transformer\nSee [[missing-page]]."),
+      makeFileNode(
+        "queries/missing-page.md",
+        "---\ntype: query\ntitle: \"Missing Page\"\ntags: [stub, lint]\n---\n\n# Missing Page\n\nCreated by Wiki Lint as a placeholder for a missing wikilink target.\n",
+      ),
+    ]
+    mockListDirectory.mockResolvedValue(pages.map((p) => p.node))
+    mockReadFile.mockImplementation(async (path) => {
+      const match = pages.find((p) => p.node.path === path)
+      return match?.content ?? ""
+    })
+
+    const results = await runStructuralLint("/project")
+
+    // The stub is neither orphan nor no-outlinks, and the link resolves.
+    expect(results.filter((r) => r.page === "queries/missing-page.md")).toEqual([])
+    expect(results.filter((r) => r.type === "broken-link")).toEqual([])
+  })
 })

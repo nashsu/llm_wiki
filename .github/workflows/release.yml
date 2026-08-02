@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  docker:
+    name: Build & publish Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Strip the leading "v" from the tag (v0.6.6 → 0.6.6) for the semver
+      # image tag, and keep the raw ref for the release name.
+      - name: Compute image tags
+        id: meta
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: |
+            llm-wiki:${{ steps.meta.outputs.version }}
+            llm-wiki:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # No container registry is configured, so the image is exported as a
+      # tarball and attached to the GitHub release for download.
+      - name: Export image tarball
+        run: |
+          mkdir -p dist
+          docker save llm-wiki:${{ steps.meta.outputs.version }} \
+            | gzip > dist/llm-wiki-${{ steps.meta.outputs.version }}-docker.tar.gz
+
+      - name: Upload image tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: dist/llm-wiki-${{ steps.meta.outputs.version }}-docker.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download image tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: dist
+
+      # --generate-notes builds the changelog from the commits between the
+      # previous tag and this one. --notes-start-tag falls back gracefully
+      # when this is the first tag in the repo.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          if [ -n "$PREV_TAG" ]; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "LLM Wiki ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --notes-start-tag "$PREV_TAG" \
+              dist/*
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "LLM Wiki ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              dist/*
+          fi

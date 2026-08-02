@@ -123,6 +123,23 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+    let unlistenExt: (() => void) | undefined
+    import("@/lib/external-project-changes")
+      .then((m) => m.subscribeExternalProjectChanges().then((u) => { unlistenExt = u }))
+      .catch((err) => console.warn("Failed to subscribe to external project changes:", err))
+
+    // Start the v2 SSE sync layer (Phase 3). Dispatches server events
+    // (ingest progress, chat deltas, graph updates, etc.) directly to the
+    // Zustand stores. Idempotent — calling startSseSync() multiple times
+    // reuses the same connection.
+    let sseStop: (() => void) | undefined
+    import("@/lib/sse-sync")
+      .then((m) => {
+        m.startSseSync()
+        sseStop = () => m.stopSseSync()
+      })
+      .catch((err) => console.warn("Failed to start SSE sync:", err))
+    return () => { unlistenExt?.(); sseStop?.() }
   }, [])
 
   useEffect(() => {
@@ -193,6 +210,11 @@ function App() {
   // first interaction. Silent on failure; the UI in Settings → About
   // lets the user retry manually.
   useEffect(() => {
+    // The desktop updater (GitHub releases check) is meaningless in the web
+    // build: there is no app to update, and the cross-origin fetch to
+    // api.github.com goes through the /api/proxy shim which doesn't exist on
+    // the v2 server, producing a spurious 404 on every landing load (#7).
+    if ((globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__) return
     let cancelled = false
     const timer = setTimeout(async () => {
       if (cancelled) return
@@ -417,6 +439,17 @@ function App() {
       const { resetProjectState } = await import("@/lib/reset-project-state")
       await resetProjectState()
 
+      // Clear the OUTGOING project's view state (selected file + file tree)
+      // BEFORE setting the new project. Setting the project mounts AppLayout,
+      // whose effect asynchronously loads the new tree via
+      // refreshProjectFileTree. If these clears run AFTER setProject, they race
+      // that load: on the web backend the HTTP store reads between setProject
+      // and the clear delay it until AFTER the fresh tree has landed, wiping it
+      // with no re-trigger (the Files tree stays empty). Clearing first makes
+      // the ordering deterministic on both the desktop and web backends.
+      setSelectedFile(null)
+      setFileTree([])
+
       setProject(proj)
       const projectLlmOverride = await loadProjectLlmOverride(proj.id)
       const llmState = useWikiStore.getState()
@@ -430,8 +463,6 @@ function App() {
       ))
       const projectOutputLang = await loadOutputLanguage(proj.id)
       useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
-      setSelectedFile(null)
-      setFileTree([])
       setActiveView("wiki")
       useWikiStore.getState().setScheduledImportConfig({
         enabled: false,
@@ -473,22 +504,26 @@ function App() {
           stopProjectFileSync().catch(() => {})
         }
       }).catch((err) => console.error("Failed to configure project file sync:", err))
-      // Notify local clip server of the current project + all recent projects
-      fetch("http://127.0.0.1:19827/project", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: proj.path }),
-      }).catch(() => {})
-
-      // Send all recent projects to clip server for extension project picker
-      getRecentProjects().then((recents) => {
-        const projects = recents.map((p) => ({ name: p.name, path: p.path }))
-        fetch("http://127.0.0.1:19827/projects", {
+      // Notify local clip server of the current project + all recent projects.
+      // The clip server (Chrome extension companion on :19827) is desktop-only;
+      // skip in the browser web build to avoid connection-refused noise.
+      if (!(globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__) {
+        fetch("http://127.0.0.1:19827/project", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projects }),
+          body: JSON.stringify({ path: proj.path }),
         }).catch(() => {})
-      }).catch(() => {})
+
+        // Send all recent projects to clip server for extension project picker
+        getRecentProjects().then((recents) => {
+          const projects = recents.map((p) => ({ name: p.name, path: p.path }))
+          fetch("http://127.0.0.1:19827/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projects }),
+          }).catch(() => {})
+        }).catch(() => {})
+      }
       // Load lightweight chat preferences before first paint so the chat
       // controls reflect the user's saved tool toggles. The heavier per-
       // conversation history load is deferred below.

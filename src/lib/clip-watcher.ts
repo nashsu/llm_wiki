@@ -12,6 +12,10 @@ let intervalId: ReturnType<typeof setInterval> | null = null
  */
 export function startClipWatcher() {
   if (intervalId) return // Already running
+  // The clip server is a desktop-only companion (Chrome extension → native
+  // HTTP server on :19827). It does not exist in the browser web build, so
+  // skip polling there to avoid pointless connection-refused noise.
+  if ((globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__) return
 
   intervalId = setInterval(async () => {
     try {

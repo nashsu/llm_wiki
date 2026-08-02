@@ -4,6 +4,13 @@ export interface StructuralLintPage {
   title: string
   outlinks: string[]
   tokens: string[]
+  /**
+   * True for placeholder stubs the lint "Fix" action creates for broken links
+   * (frontmatter `tags: [stub, lint]`). These are intentionally empty, so the
+   * orphan / no-outlinks checks skip them — otherwise fixing a broken link
+   * immediately re-flags the new stub as a fresh finding.
+   */
+  isLintStub?: boolean
 }
 
 export interface StructuralLintFinding {
@@ -173,23 +180,29 @@ export function computeStructuralLint(
 
   const results: StructuralLintFinding[] = []
   pages.forEach((page, pageIndex) => {
-    if (!inboundCounts.has(pageIndex)) {
-      results.push({
-        type: "orphan",
-        severity: "info",
-        page: page.shortName,
-        detail: "No other pages link to this page.",
-        suggestedSource: relatedCandidate(pageIndex, "source")?.shortName,
-      })
-    }
-    if (page.outlinks.length === 0) {
-      results.push({
-        type: "no-outlinks",
-        severity: "info",
-        page: page.shortName,
-        detail: "This page has no [[wikilink]] references to other pages.",
-        suggestedTarget: relatedCandidate(pageIndex, "target")?.shortName,
-      })
+    // Lint-generated stub pages are placeholders the "Fix" action creates for
+    // broken links; they are meant to be empty. Skip the orphan / no-outlinks
+    // checks for them so fixing a broken link doesn't immediately re-flag the
+    // new stub. They still appear in slugMap, so links to/from them resolve.
+    if (!page.isLintStub) {
+      if (!inboundCounts.has(pageIndex)) {
+        results.push({
+          type: "orphan",
+          severity: "info",
+          page: page.shortName,
+          detail: "No other pages link to this page.",
+          suggestedSource: relatedCandidate(pageIndex, "source")?.shortName,
+        })
+      }
+      if (page.outlinks.length === 0) {
+        results.push({
+          type: "no-outlinks",
+          severity: "info",
+          page: page.shortName,
+          detail: "This page has no [[wikilink]] references to other pages.",
+          suggestedTarget: relatedCandidate(pageIndex, "target")?.shortName,
+        })
+      }
     }
     for (const link of page.outlinks) {
       const basename = fileName(link).replace(/\.md$/i, "")

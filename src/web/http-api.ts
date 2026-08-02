@@ -1,0 +1,152 @@
+// Marker so shared (non-shim) code can detect it is running in the browser
+// web build and skip desktop-only behavior (e.g. the clip-server poller).
+export const IS_WEB_BUILD = true
+;(globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__ = true
+
+// Transport layer for the browser web client. Talks to the llm-wiki-server
+// backend over same-origin HTTP + SSE. Only used in the web build (wired in
+// via Vite aliases); the desktop Tauri build never imports this module.
+
+const API_BASE = "" // same origin; the server serves both the SPA and the API
+
+// ── Auth token (shared key with src/api/client.ts) ────────────────────────
+const TOKEN_KEY = "llm-wiki-token"
+
+function getAuthToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+
+/** Headers with Content-Type + optional Bearer token. */
+function authHeaders(json = false): Record<string, string> {
+  const h: Record<string, string> = {}
+  if (json) h["Content-Type"] = "application/json"
+  const tok = getAuthToken()
+  if (tok) h["Authorization"] = `Bearer ${tok}`
+  return h
+}
+
+/** Append ?token= for EventSource (cannot set headers). */
+function authedUrl(base: string): string {
+  const tok = getAuthToken()
+  if (!tok) return base
+  const sep = base.includes("?") ? "&" : "?"
+  return `${base}${sep}token=${encodeURIComponent(tok)}`
+}
+
+export class ServerCommandError extends Error {}
+
+/** Invoke a backend command. Mirrors Tauri's `invoke`: resolves with the
+ *  result value or rejects with an Error carrying the backend's message.
+ *  The legacy bridge wraps successful results in an `{ ok, result }`
+ *  envelope; this unwraps `.result` (bare-value responses pass through). */
+export async function invokeHttp<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${API_BASE}/api/invoke/${encodeURIComponent(command)}`, {
+    method: "POST",
+    headers: authHeaders(true),
+    body: JSON.stringify(args ?? {}),
+  })
+  const text = await res.text()
+  let parsed: unknown = null
+  if (text) {
+    try { parsed = JSON.parse(text) } catch { parsed = text }
+  }
+  if (!res.ok) {
+    const errObj = (parsed as { error?: { message?: string } } | null)?.error
+    const message = errObj?.message ?? `Command '${command}' failed (${res.status})`
+    throw new ServerCommandError(message)
+  }
+  const env = parsed as { ok?: boolean; result?: unknown; error?: { message?: string } } | null
+  // The legacy bridge answers "resource not found" (optional sidecar probes
+  // that legitimately miss) with 200 + ok:false so the browser doesn't log a
+  // failed request. Re-throw here so callers' catch blocks see the same error
+  // they always did — the only thing that changed is the HTTP status.
+  if (env && typeof env === "object" && env.ok === false) {
+    throw new ServerCommandError(env.error?.message ?? `Command '${command}' failed`)
+  }
+  return (env && typeof env === "object" && "result" in env ? env.result : parsed) as T
+}
+
+export async function storeGet(name: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}`, { headers: authHeaders() })
+  if (!res.ok) return {}
+  return (await res.json()) as Record<string, unknown>
+}
+
+export async function storePut(name: string, value: Record<string, unknown>): Promise<void> {
+  await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: authHeaders(true),
+    body: JSON.stringify(value ?? {}),
+  })
+}
+
+export async function storeGetKey(name: string, key: string): Promise<unknown> {
+  const res = await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { headers: authHeaders() })
+  if (!res.ok) return undefined
+  const text = await res.text()
+  if (!text || text === "null") return undefined
+  try { return JSON.parse(text) } catch { return undefined }
+}
+
+export async function storePutKey(name: string, key: string, value: unknown): Promise<void> {
+  await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: authHeaders(true),
+    body: JSON.stringify(value),
+  })
+}
+
+export async function storeDeleteKey(name: string, key: string): Promise<void> {
+  await fetch(`${API_BASE}/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`, { method: "DELETE", headers: authHeaders() })
+}
+
+export interface HomeInfo {
+  home: string
+  cwd: string
+  separator: string
+  platform: string
+}
+
+let homeCache: HomeInfo | null = null
+export async function getHome(): Promise<HomeInfo> {
+  if (!homeCache) {
+    const res = await fetch(`${API_BASE}/api/home`, { headers: authHeaders() })
+    homeCache = (await res.json()) as HomeInfo
+  }
+  return homeCache
+}
+
+/** URL that streams a server-side file to the browser (image previews etc.). */
+export function rawFileUrl(path: string): string {
+  return `${API_BASE}/api/raw?path=${encodeURIComponent(path)}`
+}
+
+// ── SSE event bus ─────────────────────────────────────────────────────────
+type EventCallback = (payload: unknown) => void
+const listeners = new Map<string, Set<EventCallback>>()
+let eventSource: EventSource | null = null
+
+function ensureEventSource() {
+  if (eventSource) return
+  eventSource = new EventSource(authedUrl(`${API_BASE}/api/v2/events`))
+  eventSource.onmessage = (msg) => {
+    try {
+      const { event, payload } = JSON.parse(msg.data) as { event: string; payload: unknown }
+      const set = listeners.get(event)
+      if (set) for (const cb of [...set]) {
+        try { cb(payload) } catch (err) { console.error(`[events] listener for '${event}' threw`, err) }
+      }
+    } catch { /* ignore malformed frames */ }
+  }
+  eventSource.onerror = () => {
+    // EventSource auto-reconnects; nothing to do but stay quiet.
+  }
+}
+
+export function subscribeEvent(event: string, cb: EventCallback): () => void {
+  ensureEventSource()
+  let set = listeners.get(event)
+  if (!set) { set = new Set(); listeners.set(event, set) }
+  set.add(cb)
+  return () => { set!.delete(cb) }
+}

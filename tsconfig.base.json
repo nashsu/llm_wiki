@@ -1,0 +1,16 @@
+# Shared TypeScript compiler options for all workspace packages.
+# Each package's tsconfig.json extends this and adds its own include/lib.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "resolveJsonModule": true
+  }
+}

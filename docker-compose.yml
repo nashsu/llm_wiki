@@ -1,0 +1,27 @@
+services:
+  llm-wiki:
+    build: .
+    image: llm-wiki
+    ports:
+      - "3000:3000"
+    volumes:
+      # SQLite database + plugin stores persist here (LLM_WIKI_DATA_DIR=/data).
+      - wiki-data:/data
+    environment:
+      LLM_WIKI_PORT: "3000"
+      # Auth is driven by LLM_WIKI_API_TOKEN (see packages/server/src/auth/config.js):
+      # when a token is set it is required on all non-public routes; when it is
+      # empty the server runs open (zero-friction local mode). LLM_WIKI_AUTH_MODE
+      # is passed through for operator intent but is not read by the server today.
+      LLM_WIKI_AUTH_MODE: ${LLM_WIKI_AUTH_MODE:-open}
+      LLM_WIKI_API_TOKEN: ${LLM_WIKI_API_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v2/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  wiki-data:
