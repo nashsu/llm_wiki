@@ -25,6 +25,11 @@ export const SOURCE_WATCH_FILE_TYPE_GROUPS = [
     id: "data",
     extensions: ["json", "yaml", "yml", "xml"],
   },
+  // Code files
+  {
+    id: "code",
+    extensions: ["js", "ts", "jsx", "tsx", "py", "java", "c", "cpp", "cs", "rb", "go", "rs", "php"],
+  },
 ]
 
 function normalizeExtensions(values: readonly string[] | undefined): string[] {

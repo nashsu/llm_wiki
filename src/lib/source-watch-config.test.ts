@@ -45,6 +45,27 @@ describe("source watch config", () => {
     expect(isPathAllowedBySourceWatch("raw/sources/~$Document.docx", config)).toBe(false)
   })
 
+  it("rejects code extensions under default config", () => {
+    expect(isPathAllowedBySourceWatch("raw/sources/app.ts", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
+    expect(isPathAllowedBySourceWatch("raw/sources/lib.py", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
+    expect(isPathAllowedBySourceWatch("raw/sources/main.go", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
+  })
+
+  it("allows code extensions when explicitly included", () => {
+    const config = normalizeSourceWatchConfig({
+      includeExtensions: ["js", "ts", "tsx", "py", "go", "rs", "php"],
+    })
+
+    expect(isPathAllowedBySourceWatch("raw/sources/app.ts", config)).toBe(true)
+    expect(isPathAllowedBySourceWatch("raw/sources/lib.py", config)).toBe(true)
+    expect(isPathAllowedBySourceWatch("raw/sources/main.go", config)).toBe(true)
+    expect(isPathAllowedBySourceWatch("raw/sources/lib.rs", config)).toBe(true)
+    // still rejects unknown extensions
+    expect(isPathAllowedBySourceWatch("raw/sources/notes.xyz", config)).toBe(false)
+    // still rejects dotfiles
+    expect(isPathAllowedBySourceWatch("raw/sources/.hidden.ts", config)).toBe(false)
+  })
+
   it("normalizes comma-separated exclusion values from text fields", () => {
     const config = normalizeSourceWatchConfig({
       includeExtensions: ["md, pdf", "docx"],

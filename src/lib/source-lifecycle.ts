@@ -66,6 +66,20 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "epub",
   "mobi",
   "org",
+  // Code file extensions
+  "js",
+  "ts",
+  "jsx",
+  "tsx",
+  "py",
+  "java",
+  "c",
+  "cpp",
+  "cs",
+  "rb",
+  "go",
+  "rs",
+  "php",
 ])
 
 function flattenFiles(nodes: FileNode[]): FileNode[] {
