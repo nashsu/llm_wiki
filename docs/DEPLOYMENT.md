@@ -420,7 +420,8 @@ Home-server tips:
 | `LLM_WIKI_HOST` | `127.0.0.1` | Bind address. Set `0.0.0.0` to expose on the LAN / inside a container. Keep loopback when behind a reverse proxy. |
 | `LLM_WIKI_DATA_DIR` | `~/.llm-wiki-server` | Server-side persistent state (plugin-store JSON, SQLite DB for v2). Point at a volume in containers. |
 | `LLM_WIKI_WEB_DIST` | `<repo>/dist-web` | Path to the built web client. Only needed if you serve the SPA from a non-default location. |
-| `LLM_WIKI_API_TOKEN` | unset | API token. When set, all non-public endpoints require it (Bearer header, `x-llm-wiki-token` header, or `?token=` query). Unset = open access. See [CLIENT_CONFIG.md](./CLIENT_CONFIG.md). |
+| `LLM_WIKI_AUTH_MODE` | unset (auto) | Auth mode (chartered name, §4.5): `none` = always open; `token` = token required on all non-public routes; unset = **auto** (open when no token is configured, required when one is set). `open` is accepted as a synonym of `none` (the docker-compose default). The legacy `AUTH_MODE` variable still works as a deprecated alias; `LLM_WIKI_AUTH_MODE` wins when both are set. |
+| `LLM_WIKI_API_TOKEN` | unset | API token. Required on all non-public endpoints in `token` mode, or in `auto` mode once set (Bearer header, `x-llm-wiki-token` header, or `?token=` query). See [CLIENT_CONFIG.md](./CLIENT_CONFIG.md). |
 | `LLM_WIKI_STORE_FILE` | unset | Absolute path to a plugin-store file (`app-state.json`) to use instead of auto-detecting the desktop app's store. |
 | `LLM_WIKI_NO_SHARE` | unset | `1` = never share the desktop app's store; use a web-only store under `LLM_WIKI_DATA_DIR`. |
 | `LLM_WIKI_ALLOW_SHELL` | unset | `1` = allow the chat agent's shell tools. Leave unset unless you trust every API client. |
@@ -434,7 +435,14 @@ Home-server tips:
 
 ### Auth precedence
 
-The effective token is `LLM_WIKI_API_TOKEN` (env) if set, otherwise the token
+**Mode:** `LLM_WIKI_AUTH_MODE` is the primary variable (`none|token`; `open`
+is a synonym of `none`). The legacy `AUTH_MODE` remains a deprecated alias —
+it still works when the primary is unset and logs a one-time deprecation
+warning; when both are set, `LLM_WIKI_AUTH_MODE` wins. With neither set the
+server runs in **auto** mode: open while no token is configured, required as
+soon as one exists.
+
+**Token:** the effective token is `LLM_WIKI_API_TOKEN` (env) if set, otherwise the token
 stored in the shared store's `apiConfig.token` (set via the desktop app's
 Settings → API, or via `/api/v2/settings`). When no token is configured the
 server is open (zero-friction local mode). Setting `apiConfig.allowUnauthenticated = true`

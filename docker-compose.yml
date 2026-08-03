@@ -9,11 +9,17 @@ services:
       - wiki-data:/data
     environment:
       LLM_WIKI_PORT: "3000"
-      # Auth is driven by LLM_WIKI_API_TOKEN (see packages/server/src/auth/config.js):
-      # when a token is set it is required on all non-public routes; when it is
-      # empty the server runs open (zero-friction local mode). LLM_WIKI_AUTH_MODE
-      # is passed through for operator intent but is not read by the server today.
+      # Auth mode (chartered name, V1_CHARTERED_ARCHITECTURE.md §4.5) — read by
+      # the server (packages/server/src/auth/config.js):
+      #   none (or "open") → server is always open (zero-friction local mode)
+      #   token            → token required on all non-public routes
+      #   unset            → auto: open when no token is configured, required
+      #                       when LLM_WIKI_API_TOKEN (or a store token) is set
+      # The legacy AUTH_MODE variable still works as a deprecated alias;
+      # LLM_WIKI_AUTH_MODE wins when both are set.
       LLM_WIKI_AUTH_MODE: ${LLM_WIKI_AUTH_MODE:-open}
+      # When a token is set it is required on all non-public routes (in token
+      # mode, or in auto mode); empty = open local mode.
       LLM_WIKI_API_TOKEN: ${LLM_WIKI_API_TOKEN:-}
     restart: unless-stopped
     healthcheck:

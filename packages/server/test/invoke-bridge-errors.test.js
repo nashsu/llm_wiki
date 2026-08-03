@@ -20,7 +20,7 @@ import path from "node:path"
 const DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-bridge-"))
 process.env.LLM_WIKI_DATA_DIR = DATA_DIR
 process.env.LLM_WIKI_NO_SHARE = "1"
-process.env.AUTH_MODE = "none" // open mode: no token required (local-first test)
+process.env.LLM_WIKI_AUTH_MODE = "none" // open mode: no token required (local-first test)
 delete process.env.LLM_WIKI_API_TOKEN
 
 const { app } = await import("../src/index-v2.js")

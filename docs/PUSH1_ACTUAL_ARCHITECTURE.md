@@ -308,9 +308,12 @@ request; the server keeps only an in-memory session map.
 - **Chat is ephemeral.** No SQLite persistence for sessions/messages yet.
 - **Single-process server.** `index-v2.js` serves the SPA, the v2 REST API, and
   the legacy `/api/invoke/*` bridge in one process — no second service needed.
-- **Auth** (`auth/config.js`): `AUTH_MODE=none` → open; `token` → required;
-  unset (**auto**) → open when no token is configured, required once a token is
-  set (env `LLM_WIKI_API_TOKEN` or plugin-store `apiConfig.token`).
+- **Auth** (`auth/config.js`): `LLM_WIKI_AUTH_MODE` is the chartered primary
+  (`none` → open, `token` → required, `open` normalized to `none`; the
+  docker-compose default), `AUTH_MODE` a deprecated warn-once alias — the
+  primary wins when both are set; unset (**auto**) → open when no token is
+  configured, required once a token is set (env `LLM_WIKI_API_TOKEN` or
+  plugin-store `apiConfig.token`).
 - **Shared state with desktop.** When the server runs on the same host as the
   desktop app, it reads/writes the desktop's plugin store so settings stay in
   sync; disable with `LLM_WIKI_NO_SHARE=1`.

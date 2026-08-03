@@ -149,6 +149,8 @@ server (or `node --watch packages/server/src/index.js` via `npm --prefix package
 |---|---|---|
 | `LLM_WIKI_PORT` | `19828` | HTTP port for the server (and the served SPA). |
 | `LLM_WIKI_HOST` | `127.0.0.1` | Bind host. Set `0.0.0.0` to expose on the LAN. |
+| `LLM_WIKI_AUTH_MODE` | unset (auto) | Auth mode: `none` = open; `token` = token required on non-public routes; unset = auto (open until a token is configured). `open` = synonym of `none`. Legacy `AUTH_MODE` works as a deprecated alias; the primary wins when both are set. |
+| `LLM_WIKI_API_TOKEN` | unset | API token for non-public routes (Bearer / `x-llm-wiki-token` / `?token=`). Required in `token` mode, or in auto mode once set. |
 | `LLM_WIKI_DATA_DIR` | `~/.llm-wiki-server` | Server-side persistent state (the plugin-store JSON files). |
 | `LLM_WIKI_WEB_DIST` | `<repo>/dist-web` | Directory of the built web client to serve. |
 | `LLM_WIKI_BACKEND` | `http://127.0.0.1:19828` | Backend the *dev* server proxies `/api` to (`dev:web` only). |
