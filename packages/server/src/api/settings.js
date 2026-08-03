@@ -10,7 +10,7 @@ import {
   SettingKeyParamSchema,
   SettingWriteBodySchema,
   SettingWriteManyBodySchema,
-} from "../schemas/settings.js"
+} from "@llm-wiki/api-types"
 import {
   readStore,
   writeStore,

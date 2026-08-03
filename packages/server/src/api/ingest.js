@@ -15,7 +15,7 @@ import {
   IngestQueueQuerySchema,
   IngestTaskIdParamSchema,
   IngestClearBodySchema,
-} from "../schemas/ingest.js"
+} from "@llm-wiki/api-types"
 import {
   enqueueIngestTask,
   getIngestTask,

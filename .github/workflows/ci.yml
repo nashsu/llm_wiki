@@ -22,8 +22,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `npm run typecheck` builds @llm-wiki/api-types first (the client
+      # typechecks against its emitted .d.ts), then runs tsc --build.
       - name: Typecheck
-        run: npx tsc --build
+        run: npm run typecheck
 
   test:
     name: Server integration tests
@@ -41,6 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `npm test` triggers the server's `pretest` hook, which builds
+      # @llm-wiki/api-types so the suite runs against the built package.
       - name: Run v2 integration tests
         working-directory: packages/server
         run: npm test

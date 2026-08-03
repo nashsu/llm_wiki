@@ -11,7 +11,7 @@ import {
   FileUploadBodySchema,
   FileDownloadQuerySchema,
   FileRawQuerySchema,
-} from "../schemas/files.js"
+} from "@llm-wiki/api-types"
 import { safeJoin } from "../store/project-paths.js"
 import { dispatch } from "../invoke.js"
 import { ApiError, ErrorCode } from "../errors.js"

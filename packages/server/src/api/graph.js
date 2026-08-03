@@ -8,7 +8,7 @@
 
 import { Router } from "express"
 import { validate } from "../middleware/validate.js"
-import { GraphQuerySchema } from "../schemas/graph.js"
+import { GraphQuerySchema } from "@llm-wiki/api-types"
 import { buildSnapshot } from "../graph.js"
 
 const router = Router({ mergeParams: true })

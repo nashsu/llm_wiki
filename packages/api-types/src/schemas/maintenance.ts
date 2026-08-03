@@ -27,3 +27,9 @@ export const RestoreHistoryBodySchema = z.object({
   path: z.string().min(1),
   entryId: z.string().min(1),
 })
+
+export type RebuildIndexResponse = z.infer<typeof RebuildIndexResponseSchema>
+export type ExportBody = z.infer<typeof ExportBodySchema>
+export type ImportBody = z.infer<typeof ImportBodySchema>
+export type FileHistoryQuery = z.infer<typeof FileHistoryQuerySchema>
+export type RestoreHistoryBody = z.infer<typeof RestoreHistoryBodySchema>

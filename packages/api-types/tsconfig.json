@@ -1,7 +1,19 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    // Buildable package (the base config is noEmit/bundler for the app):
+    // emit Node-runnable ESM + declarations for both consumers — the plain-JS
+    // server imports dist/*.js at runtime, the web client typechecks against
+    // the .d.ts. NodeNext forces explicit .js specifiers on relative imports,
+    // which is exactly what Node ESM needs.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": false
   },
   "include": ["src"]
 }

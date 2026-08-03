@@ -30,3 +30,8 @@ export const ChatCancelParamsSchema = z.object({
 export const ChatSessionParamsSchema = z.object({
   sessionId: z.string().min(1),
 })
+
+export type ChatRequest = z.infer<typeof ChatRequestSchema>
+export type ChatStartResponse = z.infer<typeof ChatStartResponseSchema>
+export type ChatCancelParams = z.infer<typeof ChatCancelParamsSchema>
+export type ChatSessionParams = z.infer<typeof ChatSessionParamsSchema>

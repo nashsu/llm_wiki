@@ -1,23 +1,21 @@
 // OpenAPI 3.1 spec generation from Zod schemas (Phase 2.5).
 //
 // Uses @asteasolutions/zod-to-openapi to turn the Zod schemas (the API's source
-// of truth, decision #8) into an OpenAPI document, served at
-// /api/v2/openapi.json. Adding a route group = registering its schemas + paths
-// here; the spec stays in sync with validation automatically.
-//
-// Import order matters: zod-setup.js extends `z` with .openapi() and MUST be
-// evaluated before the schema modules (which build schemas at load time).
+// of truth, decision #8 / issue #20 — they live in @llm-wiki/api-types) into
+// an OpenAPI document, served at /api/v2/openapi.json. Adding a route group =
+// registering its schemas + paths here; the spec stays in sync with validation
+// automatically.
 
-import "./zod-setup.js" // side-effect: extendZodWithOpenApi(z)
-import { z } from "zod"
-import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi"
 import {
+  z,
+  OpenAPIRegistry,
+  OpenApiGeneratorV31,
   CreateProjectSchema,
   UpdateProjectSchema,
   ProjectIdParamSchema,
   ProjectSchema,
-} from "./schemas/projects.js"
-import { ErrorEnvelopeSchema } from "./schemas/common.js"
+  ErrorEnvelopeSchema,
+} from "@llm-wiki/api-types"
 
 const registry = new OpenAPIRegistry()
 

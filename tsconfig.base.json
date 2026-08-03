@@ -1,5 +1,5 @@
-# Shared TypeScript compiler options for all workspace packages.
-# Each package's tsconfig.json extends this and adds its own include/lib.
+// Shared TypeScript compiler options for all workspace packages.
+// Each package's tsconfig.json extends this and adds its own include/lib.
 {
   "compilerOptions": {
     "target": "ES2022",

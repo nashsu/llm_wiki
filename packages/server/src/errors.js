@@ -5,22 +5,13 @@
 // Handlers throw ApiError with one of the stable codes below; anything else is
 // mapped to INTERNAL_ERROR so internals never leak.
 //
-// When adding or changing an error code, keep @llm-wiki/api-types in sync
-// (packages/api-types/src/index.ts) — the web client imports from there.
+// The code list itself lives in @llm-wiki/api-types (issue #20) — the server
+// DERIVES ErrorCode from it, so server and web client can never drift.
 
-export const ErrorCode = {
-  VALIDATION_ERROR: "VALIDATION_ERROR",
-  UNAUTHORIZED: "UNAUTHORIZED",
-  FORBIDDEN: "FORBIDDEN",
-  NOT_FOUND: "NOT_FOUND",
-  PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
-  CONFLICT: "CONFLICT",
-  FILE_TOO_LARGE: "FILE_TOO_LARGE",
-  RATE_LIMITED: "RATE_LIMITED",
-  INTERNAL_ERROR: "INTERNAL_ERROR",
-  UPSTREAM_ERROR: "UPSTREAM_ERROR",
-  WORKER_BUSY: "WORKER_BUSY",
-}
+import { ERROR_CODES } from "@llm-wiki/api-types"
+
+/** Stable API error codes, derived from the api-types SSOT (do not edit here). */
+export const ErrorCode = Object.freeze({ ...ERROR_CODES })
 
 const STATUS = {
   VALIDATION_ERROR: 400,

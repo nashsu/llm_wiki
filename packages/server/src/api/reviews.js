@@ -8,7 +8,7 @@ import { Router } from "express"
 import fs from "node:fs"
 import path from "node:path"
 import { validate } from "../middleware/validate.js"
-import { ReviewQuerySchema } from "../schemas/reviews.js"
+import { ReviewQuerySchema } from "@llm-wiki/api-types"
 
 const router = Router({ mergeParams: true })
 

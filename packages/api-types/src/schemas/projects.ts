@@ -23,3 +23,8 @@ export const ProjectSchema = z.object({
   created_at: z.number(),
   updated_at: z.number(),
 })
+
+export type CreateProject = z.infer<typeof CreateProjectSchema>
+export type UpdateProject = z.infer<typeof UpdateProjectSchema>
+export type ProjectIdParam = z.infer<typeof ProjectIdParamSchema>
+export type Project = z.infer<typeof ProjectSchema>

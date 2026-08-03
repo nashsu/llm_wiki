@@ -25,9 +25,11 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
 RUN npm ci
 
-# Copy the rest of the source and build the SPA into dist-web/.
+# Copy the rest of the source and build. build:api-types must run first: the
+# server imports the built @llm-wiki/api-types package at runtime, and the web
+# build typechecks against its .d.ts.
 COPY . .
-RUN npm run build:web
+RUN npm run build:api-types && npm run build:web
 
 # ── Stage 2: production dependencies ────────────────────────────────────────
 FROM node:22-slim AS deps
@@ -60,8 +62,12 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 # Server source (+ any nested modules), hoisted production dependencies, and the
-# static SPA produced by the build stage.
+# static SPA produced by the build stage. The server imports the built
+# @llm-wiki/api-types package (node_modules holds a symlink to it), so the
+# built package ships too — from the builder, since the deps stage is
+# production-only and cannot run tsc.
 COPY --from=deps /app/packages/server ./packages/server
+COPY --from=builder /app/packages/api-types ./packages/api-types
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist-web ./dist-web
 

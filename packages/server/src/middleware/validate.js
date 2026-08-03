@@ -4,13 +4,15 @@
 // parsed (typed) result to req.validated. Throws ZodError on failure, which
 // the error handler normalizes to VALIDATION_ERROR with the issue array.
 
-import { ZodError } from "zod"
+// (ZodError is not imported here: this middleware just forwards whatever the
+// schema throws via next(err); error.js does the instanceof ZodError check.
+// Schema types below resolve to @llm-wiki/api-types' single zod instance.)
 
 /**
  * @param {object} schemas
- * @param {import("zod").ZodSchema} [schemas.body]
- * @param {import("zod").ZodSchema} [schemas.params]
- * @param {import("zod").ZodSchema} [schemas.query]
+ * @param {import("@llm-wiki/api-types").ZodSchema} [schemas.body]
+ * @param {import("@llm-wiki/api-types").ZodSchema} [schemas.params]
+ * @param {import("@llm-wiki/api-types").ZodSchema} [schemas.query]
  */
 export function validate(schemas) {
   return (req, res, next) => {

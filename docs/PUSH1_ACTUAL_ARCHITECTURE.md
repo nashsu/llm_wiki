@@ -314,6 +314,15 @@ request; the server keeps only an in-memory session map.
   primary wins when both are set; unset (**auto**) → open when no token is
   configured, required once a token is set (env `LLM_WIKI_API_TOKEN` or
   plugin-store `apiConfig.token`).
+- **API contract is a single source of truth** (`packages/api-types`, issue #20).
+  The Zod schemas in `packages/api-types/src/schemas/` define the wire format
+  once: the server (plain JS) imports the **built** schemas to validate requests,
+  and the web client consumes the same package's `z.infer` types and error codes
+  (`ERROR_CODES` — the server's `ErrorCode` is derived from them, no hand-mirror).
+  One schema source, two consumers, so server validation and client types cannot
+  drift. The OpenAPI document (`/api/v2/openapi.json`) is generated from these
+  same schemas. CI and Docker build `@llm-wiki/api-types` before the server and
+  the web client.
 - **Shared state with desktop.** When the server runs on the same host as the
   desktop app, it reads/writes the desktop's plugin store so settings stay in
   sync; disable with `LLM_WIKI_NO_SHARE=1`.

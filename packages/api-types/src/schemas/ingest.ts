@@ -33,3 +33,10 @@ export const IngestUploadResponseSchema = z.object({
   filePath: z.string(),
   status: z.string(),
 })
+
+export type IngestQueueQuery = z.infer<typeof IngestQueueQuerySchema>
+export type IngestTaskIdParam = z.infer<typeof IngestTaskIdParamSchema>
+export type IngestClearBody = z.infer<typeof IngestClearBodySchema>
+export type IngestTask = z.infer<typeof IngestTaskSchema>
+export type IngestQueueResponse = z.infer<typeof IngestQueueResponseSchema>
+export type IngestUploadResponse = z.infer<typeof IngestUploadResponseSchema>
