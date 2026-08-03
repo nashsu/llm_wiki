@@ -6,7 +6,10 @@
 //   - ZodError      → VALIDATION_ERROR with the issue array as details
 //   - anything else → INTERNAL_ERROR (message scrubbed so internals don't leak)
 
-import { ZodError } from "zod"
+// NOTE: ZodError comes from @llm-wiki/api-types (not a direct zod dep) so it
+// is the SAME class instance that the schemas throw — `instanceof` fails
+// across duplicate zod copies.
+import { ZodError } from "@llm-wiki/api-types"
 import { ApiError, ErrorCode, statusForCode } from "../errors.js"
 
 /** Express error middleware (4-arg signature). */

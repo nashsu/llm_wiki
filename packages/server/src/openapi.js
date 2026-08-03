@@ -6,9 +6,10 @@
 // registering its schemas + paths here; the spec stays in sync with validation
 // automatically.
 
-import { z } from "zod"
-import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi"
 import {
+  z,
+  OpenAPIRegistry,
+  OpenApiGeneratorV31,
   CreateProjectSchema,
   UpdateProjectSchema,
   ProjectIdParamSchema,

@@ -20,14 +20,12 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@llm-wiki/api-types": "*",
     "better-sqlite3": "^13.0.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "helmet": "^8.3.0",
-    "multer": "^2.2.0",
-    "zod": "^4.4.3"
+    "multer": "^2.2.0"
   },
   "devDependencies": {
     "supertest": "^7.2.2",

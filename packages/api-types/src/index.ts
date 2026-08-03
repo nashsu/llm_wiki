@@ -18,6 +18,20 @@
 // first. Importing it here (the package's only entry point) guarantees that.
 import "./zod-setup.js"
 
+// Runtime re-exports so the server shares THIS package's single zod +
+// zod-to-openapi instances instead of depending on them directly. Duplicating
+// either library across packages breaks identity-sensitive machinery:
+// zod-to-openapi's registry cannot tag schemas built by a *different* zod
+// instance with refIds (so OpenAPI components get inlined instead of emitted
+// as $refs), and `err instanceof ZodError` fails across distinct zod copies.
+export { z, ZodError } from "zod"
+export type { ZodSchema, ZodType } from "zod"
+export {
+  OpenAPIRegistry,
+  OpenApiGeneratorV31,
+  extendZodWithOpenApi,
+} from "@asteasolutions/zod-to-openapi"
+
 // Stable error codes + envelope types (SSOT; server derives ErrorCode from these).
 export * from "./errors.js"
 
