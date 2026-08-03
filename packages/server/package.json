@@ -14,6 +14,8 @@
     "dev:v2": "node --watch src/index-v2.js",
     "build:api-types": "npm --prefix ../api-types run build",
     "pretest": "npm run build:api-types",
+    "predev:v2": "npm run build:api-types",
+    "prestart:v2": "npm run build:api-types",
     "test": "vitest run --config vitest.config.js"
   },
   "engines": {
