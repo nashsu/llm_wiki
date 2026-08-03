@@ -68,8 +68,15 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     ? sharedReindex
     : { kind: "idle" as const }
   const [testState, setTestState] = useState<TestState>({ kind: "idle" })
-  const [legacyDropped, setLegacyDropped] = useState(false)
   const [headersText, setHeadersText] = useState<string>(() => headersToText(draft.embeddingExtraHeaders ?? {}))
+  const [isHeadersFocused, setIsHeadersFocused] = useState(false)
+
+  useEffect(() => {
+    if (!isHeadersFocused) {
+      setHeadersText(headersToText(draft.embeddingExtraHeaders ?? {}))
+    }
+  }, [draft.embeddingExtraHeaders, isHeadersFocused])
+
 
   const refreshStats = useCallback(async () => {
     if (!project) return
@@ -236,6 +243,8 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
             <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
             <textarea
               value={headersText}
+              onFocus={() => setIsHeadersFocused(true)}
+              onBlur={() => setIsHeadersFocused(false)}
               onChange={(e) => {
                 const text = e.target.value
                 setHeadersText(text)
