@@ -2,7 +2,7 @@ import { Router } from "express"
 import crypto from "node:crypto"
 import { validate } from "../middleware/validate.js"
 import { projectLookup } from "../middleware/project-lookup.js"
-import { ChatRequestSchema, ChatCancelParamsSchema, ChatSessionParamsSchema } from "../schemas/chat.js"
+import { ChatRequestSchema, ChatCancelParamsSchema, ChatSessionParamsSchema } from "@llm-wiki/api-types"
 import { agentStartTurnStream, agentCancelTurn, agentGetSession } from "../agent.js"
 import { ApiError, ErrorCode } from "../errors.js"
 

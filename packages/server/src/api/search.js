@@ -7,7 +7,7 @@
 
 import { Router } from "express"
 import { validate } from "../middleware/validate.js"
-import { SearchRequestSchema } from "../schemas/search.js"
+import { SearchRequestSchema } from "@llm-wiki/api-types"
 import { searchCommands } from "../commands/search.js"
 import { readStore } from "../store.js"
 import { SHARED_STORE_NAME } from "../config.js"

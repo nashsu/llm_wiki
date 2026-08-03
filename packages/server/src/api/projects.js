@@ -12,7 +12,7 @@ import {
   CreateProjectSchema,
   UpdateProjectSchema,
   ProjectIdParamSchema,
-} from "../schemas/projects.js"
+} from "@llm-wiki/api-types"
 import * as store from "../store/projects.js"
 import { scaffoldWikiProject } from "../commands/project.js"
 import { ApiError, ErrorCode } from "../errors.js"

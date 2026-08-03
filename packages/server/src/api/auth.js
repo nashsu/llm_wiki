@@ -9,7 +9,7 @@
 import { Router } from "express"
 import crypto from "node:crypto"
 import { validate } from "../middleware/validate.js"
-import { LoginRequestSchema } from "../schemas/auth.js"
+import { LoginRequestSchema } from "@llm-wiki/api-types"
 import { resolveAuth } from "../auth/config.js"
 import { ApiError, ErrorCode } from "../errors.js"
 import { constantTimeEq } from "../lib/crypto-utils.js"

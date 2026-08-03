@@ -10,7 +10,6 @@
 //
 // The SQLite store, worker pool, and route groups are added in Phase 2.2+.
 
-import "./zod-setup.js" // MUST be first: extends Zod with .openapi() before any schemas are created
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"

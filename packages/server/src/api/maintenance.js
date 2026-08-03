@@ -12,7 +12,7 @@ import {
   ImportBodySchema,
   FileHistoryQuerySchema,
   RestoreHistoryBodySchema,
-} from "../schemas/maintenance.js"
+} from "@llm-wiki/api-types"
 import { safeJoin } from "../store/project-paths.js"
 import { dispatch } from "../invoke.js"
 import { listFileHistory, restoreFileHistory } from "../commands/fileHistory.js"

@@ -12,6 +12,8 @@
     "dev": "node --watch src/index.js",
     "start:v2": "node src/index-v2.js",
     "dev:v2": "node --watch src/index-v2.js",
+    "build:api-types": "npm --prefix ../api-types run build",
+    "pretest": "npm run build:api-types",
     "test": "vitest run --config vitest.config.js"
   },
   "engines": {
@@ -19,6 +21,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@llm-wiki/api-types": "*",
     "better-sqlite3": "^13.0.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
