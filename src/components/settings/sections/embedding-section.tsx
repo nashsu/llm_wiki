@@ -68,6 +68,7 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
     ? sharedReindex
     : { kind: "idle" as const }
   const [testState, setTestState] = useState<TestState>({ kind: "idle" })
+  const [legacyDropped, setLegacyDropped] = useState(false)
   const [headersText, setHeadersText] = useState<string>(() => headersToText(draft.embeddingExtraHeaders ?? {}))
   const [isHeadersFocused, setIsHeadersFocused] = useState(false)
 
