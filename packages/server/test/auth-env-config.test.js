@@ -11,7 +11,7 @@
 //   conflict; "open" (the compose default) behaves exactly as "none";
 //   unset/unknown → auto heuristic (required iff a token is configured).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -19,6 +19,10 @@ import path from "node:path"
 const DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-authenv-"))
 process.env.LLM_WIKI_DATA_DIR = DATA_DIR
 process.env.LLM_WIKI_NO_SHARE = "1"
+
+afterAll(() => {
+  try { rmSync(DATA_DIR, { recursive: true, force: true }) } catch { /* noop */ }
+})
 
 const ENV_KEYS = ["LLM_WIKI_AUTH_MODE", "AUTH_MODE", "LLM_WIKI_API_TOKEN"]
 let savedEnv = {}

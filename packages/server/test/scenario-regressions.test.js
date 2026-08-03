@@ -45,6 +45,7 @@ afterAll(() => {
 afterEach(() => {
   // Never leak token mode into another test.
   process.env.LLM_WIKI_AUTH_MODE = "none"
+  delete process.env.AUTH_MODE
   delete process.env.LLM_WIKI_API_TOKEN
 })
 
