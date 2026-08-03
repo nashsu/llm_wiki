@@ -23,3 +23,9 @@ export const FileDownloadQuerySchema = z.object({
 export const FileRawQuerySchema = z.object({
   path: z.string().min(1),
 })
+
+export type FileTreeQuery = z.infer<typeof FileTreeQuerySchema>
+export type FileContentQuery = z.infer<typeof FileContentQuerySchema>
+export type FileUploadBody = z.infer<typeof FileUploadBodySchema>
+export type FileDownloadQuery = z.infer<typeof FileDownloadQuerySchema>
+export type FileRawQuery = z.infer<typeof FileRawQuerySchema>

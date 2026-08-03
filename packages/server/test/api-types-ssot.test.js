@@ -94,6 +94,8 @@ describe("issue #20 — schema SSOT", () => {
   it("server ErrorCode is derived from the package ERROR_CODES", async () => {
     const { ERROR_CODES } = await import("@llm-wiki/api-types")
     const { ErrorCode } = await import("../src/errors.js")
-    expect([...Object.values(ErrorCode)].sort()).toEqual([...ERROR_CODES].sort())
+    expect([...Object.values(ErrorCode)].sort()).toEqual(
+      [...Object.values(ERROR_CODES)].sort(),
+    )
   })
 })

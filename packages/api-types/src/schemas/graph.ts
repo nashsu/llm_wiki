@@ -25,3 +25,8 @@ export const GraphResponseSchema = z.object({
   nodes: z.array(GraphNodeSchema),
   edges: z.array(GraphEdgeSchema),
 })
+
+export type GraphQuery = z.infer<typeof GraphQuerySchema>
+export type GraphNode = z.infer<typeof GraphNodeSchema>
+export type GraphEdge = z.infer<typeof GraphEdgeSchema>
+export type GraphResponse = z.infer<typeof GraphResponseSchema>

@@ -20,3 +20,7 @@ export const SearchResponseSchema = z.object({
   vectorHits: z.number(),
   graphHits: z.number(),
 })
+
+export type SearchRequest = z.infer<typeof SearchRequestSchema>
+export type SearchResult = z.infer<typeof SearchResultSchema>
+export type SearchResponse = z.infer<typeof SearchResponseSchema>

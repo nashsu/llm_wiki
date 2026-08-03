@@ -1,43 +1,35 @@
 /**
- * @llm-wiki/api-types
+ * @llm-wiki/api-types — the LLM Wiki REST API contract.
  *
- * TypeScript types and constants for the LLM Wiki REST API. This is the single
- * source of truth for the stable error code, the error envelope shape, and any
- * other types that both the server and web client need to agree on.
- *
- * The types mirror the server's JS definitions (packages/server/src/errors.js)
- * but live here so the web client (and MCP server) don't hand-duplicate them.
+ * Single source of truth (issue #20; V1_CHARTERED_ARCHITECTURE.md §6.1,
+ * Decision 8): the Zod schemas here are exactly what the server validates
+ * requests with (it imports the built JS), and the web client consumes the
+ * `z.infer` types — so the wire format cannot drift between server and
+ * client. The hand-mirrored error enum is gone; the server's `ErrorCode`
+ * is derived from {@link ERROR_CODES}.
  *
  * Usage:
- *   import { ApiErrorCode, ERROR_CODES, type ApiErrorBody } from '@llm-wiki/api-types'
+ *   import { CreateProjectSchema, type CreateProject, ERROR_CODES, type ApiErrorCode }
+ *     from '@llm-wiki/api-types'
  */
 
-/**
- * Stable error codes returned by the server in the
- * `{ error: { code, message, details } }` envelope.
- *
- * Keep in sync with packages/server/src/errors.js ErrorCode object.
- */
-export const ERROR_CODES = {
-  VALIDATION_ERROR: "VALIDATION_ERROR",
-  UNAUTHORIZED: "UNAUTHORIZED",
-  FORBIDDEN: "FORBIDDEN",
-  NOT_FOUND: "NOT_FOUND",
-  PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
-  CONFLICT: "CONFLICT",
-  FILE_TOO_LARGE: "FILE_TOO_LARGE",
-  RATE_LIMITED: "RATE_LIMITED",
-  INTERNAL_ERROR: "INTERNAL_ERROR",
-  UPSTREAM_ERROR: "UPSTREAM_ERROR",
-  WORKER_BUSY: "WORKER_BUSY",
-} as const
+// Zod OpenAPI wiring MUST be evaluated before any schema module: the OpenAPI
+// registry calls schema.openapi() when registering, so Zod has to be extended
+// first. Importing it here (the package's only entry point) guarantees that.
+import "./zod-setup.js"
 
-/** Stable error code values (union of constant strings). */
-export type ApiErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+// Stable error codes + envelope types (SSOT; server derives ErrorCode from these).
+export * from "./errors.js"
 
-/** The server's error envelope: `{ error: { code, message, details } }`. */
-export interface ApiErrorBody {
-  code: ApiErrorCode | string
-  message: string
-  details: unknown
-}
+// Runtime Zod schemas + inferred types, grouped as they were on the server.
+export * from "./schemas/common.js"
+export * from "./schemas/auth.js"
+export * from "./schemas/projects.js"
+export * from "./schemas/files.js"
+export * from "./schemas/chat.js"
+export * from "./schemas/graph.js"
+export * from "./schemas/ingest.js"
+export * from "./schemas/maintenance.js"
+export * from "./schemas/reviews.js"
+export * from "./schemas/search.js"
+export * from "./schemas/settings.js"

@@ -29,3 +29,7 @@ export const ReviewListResponseSchema = z.object({
   count: z.number(),
   reviews: z.array(ReviewItemSchema),
 })
+
+export type ReviewQuery = z.infer<typeof ReviewQuerySchema>
+export type ReviewItem = z.infer<typeof ReviewItemSchema>
+export type ReviewListResponse = z.infer<typeof ReviewListResponseSchema>
