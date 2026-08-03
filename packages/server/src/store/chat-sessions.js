@@ -77,7 +77,15 @@ export function createSession(projectId, { uuid = crypto.randomUUID(), title = D
  */
 export function ensureSession(projectId, uuid, { title } = {}) {
   const existing = getSessionByUuid(uuid)
-  if (existing) return existing
+  if (existing) {
+    // Sessions are per-project. Letting a turn from another project's
+    // endpoint adopt this session would leak its history into that turn's
+    // context and write foreign messages into it (issue #21 isolation).
+    if (existing.projectId !== projectId) {
+      throw new Error(`Chat session ${uuid} belongs to another project`)
+    }
+    return existing
+  }
   return createSession(projectId, { uuid, title: title || DEFAULT_TITLE })
 }
 
@@ -123,4 +131,25 @@ export function listMessages(sessionUuid) {
   return db.prepare(
     "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY id ASC"
   ).all(session.id).map(messageToWire)
+}
+
+/**
+ * Drop the session's last user→assistant exchange (issue #21 regenerate).
+ * If the newest message is an assistant reply, remove it together with the
+ * user message right before it; if it is a lone user message (a cancelled
+ * or errored turn), remove just that. No-op for missing/empty sessions.
+ */
+export function dropLastExchange(sessionUuid) {
+  const db = getDb()
+  const session = db.prepare("SELECT id FROM chat_sessions WHERE uuid = ?").get(sessionUuid)
+  if (!session) return
+  const rows = db.prepare(
+    "SELECT id, role FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT 2"
+  ).all(session.id)
+  const ids = []
+  let idx = 0
+  if (rows[idx]?.role === "assistant") { ids.push(rows[idx].id); idx += 1 }
+  if (rows[idx]?.role === "user") ids.push(rows[idx].id)
+  const del = db.prepare("DELETE FROM chat_messages WHERE id = ?")
+  for (const id of ids) del.run(id)
 }

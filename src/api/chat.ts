@@ -25,6 +25,8 @@ export interface ChatOptions {
   skills?: string[]
   /** Approval/continuation re-send: the server must not re-persist the user message. */
   resume?: boolean
+  /** Re-run the last turn: the server drops the session's last user/assistant exchange first. */
+  regenerate?: boolean
   /** How many prior messages the agent loop feeds the model. */
   historyLimit?: number
 }
@@ -82,6 +84,7 @@ export function startChat(
       includeContent: opts.includeContent,
       skills: opts.skills,
       resume: opts.resume,
+      regenerate: opts.regenerate,
       historyLimit: opts.historyLimit,
     },
   })

@@ -58,7 +58,7 @@ function chatProjectLookup() {
 // completed message as it lands.
 router.post("/:id/chat", chatProjectLookup(), validate({ body: ChatRequestSchema }), async (req, res, next) => {
   try {
-    const { message, sessionId, mode, tools, topK, includeContent, skills, resume, historyLimit } = req.validated.body
+    const { message, sessionId, mode, tools, topK, includeContent, skills, resume, regenerate, historyLimit } = req.validated.body
     const request = {
       message,
       sessionId: sessionId || crypto.randomUUID(),
@@ -70,6 +70,7 @@ router.post("/:id/chat", chatProjectLookup(), validate({ body: ChatRequestSchema
       includeContent,
       skills,
       resume,
+      regenerate,
       ...(historyLimit !== undefined ? { historyLimit } : {}),
     }
 

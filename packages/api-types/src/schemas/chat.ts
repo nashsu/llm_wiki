@@ -20,11 +20,15 @@ export const ChatRequestSchema = z.object({
   includeContent: z.boolean().optional().default(false),
   skills: z.array(z.string()).optional().default([]),
   // Issue #21: history is no longer client-held. The server loads prior
-  // messages from chat_messages by sessionId. Two knobs remain:
+  // messages from chat_messages by sessionId. Three knobs remain:
   // - resume: marks an approval-boundary re-send; the user message is already
   //   persisted from the original turn, so the server must not persist it again.
+  // - regenerate: the client is re-running the last user turn. The server
+  //   drops the session's last user/assistant exchange before running, so the
+  //   re-persisted user message and the fresh answer replace the old pair.
   // - historyLimit: how many prior messages the agent loop feeds the model.
   resume: z.boolean().optional().default(false),
+  regenerate: z.boolean().optional().default(false),
   historyLimit: z.number().int().min(1).max(100).optional(),
 })
 

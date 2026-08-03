@@ -42,12 +42,18 @@ delete process.env.LLM_WIKI_API_TOKEN
 
 const PROJECT_UUID = "persist-proj-uuid"
 const PROJECT_PATH = path.join(DATA_DIR, "persist-proj")
+const PROJECT_B_UUID = "persist-proj-b-uuid"
+const PROJECT_B_PATH = path.join(DATA_DIR, "persist-proj-b")
 
 beforeAll(() => {
   mkdirSync(path.join(PROJECT_PATH, ".llm-wiki"), { recursive: true })
+  mkdirSync(path.join(PROJECT_B_PATH, ".llm-wiki"), { recursive: true })
   mkdirSync(path.join(DATA_DIR, "stores"), { recursive: true })
   writeFileSync(path.join(DATA_DIR, "stores", "app-state.json"), JSON.stringify({
-    projectRegistry: { [PROJECT_UUID]: { id: PROJECT_UUID, path: PROJECT_PATH } },
+    projectRegistry: {
+      [PROJECT_UUID]: { id: PROJECT_UUID, path: PROJECT_PATH },
+      [PROJECT_B_UUID]: { id: PROJECT_B_UUID, path: PROJECT_B_PATH },
+    },
     llmConfig: { provider: "openai", apiKey: "sk-test", model: "gpt-4o-mini" },
   }))
 })
@@ -58,6 +64,7 @@ afterAll(() => {
 
 const { agentStartTurn } = await import("../src/agent.js")
 const chatStore = await import("../src/store/chat-sessions.js")
+const projectsStore = await import("../src/store/projects.js")
 
 function turnRequest(sessionId, message, extra = {}) {
   return {
@@ -162,5 +169,76 @@ describe("agent loop persists sessions and messages in SQLite", () => {
     chatStore.appendMessage(otherSession, "assistant", "With refs", refs)
     const after = chatStore.listMessages(otherSession)
     expect(after[after.length - 1]).toMatchObject({ role: "assistant", content: "With refs", references: refs })
+  })
+})
+
+describe("regenerate + isolation (issue #21 review fixes)", () => {
+  const sessionId = "conv_test_regen"
+
+  it("regenerate replaces the last exchange instead of duplicating it", async () => {
+    await agentStartTurn({
+      projectId: PROJECT_UUID,
+      request: turnRequest(sessionId, "Original question"),
+    })
+    expect(chatStore.listMessages(sessionId)).toHaveLength(2)
+
+    llmCalls.length = 0
+    await agentStartTurn({
+      projectId: PROJECT_UUID,
+      request: turnRequest(sessionId, "Original question", { regenerate: true }),
+    })
+
+    // DB transcript stays [user, assistant] — the old pair was dropped before
+    // the re-run, not left behind as [u, a_old, u, a_new].
+    const messages = chatStore.listMessages(sessionId)
+    expect(messages.map((m) => [m.role, m.content])).toEqual([
+      ["user", "Original question"],
+      ["assistant", "Mocked assistant answer"],
+    ])
+
+    // The dropped pair must not feed the model either: system + new user only.
+    const sent = llmCalls[0].messages
+    expect(sent.map((m) => m.role)).toEqual(["system", "user"])
+    expect(sent[1].content).toBe("Original question")
+  })
+
+  it("rejects a turn that tries to adopt another project's session", async () => {
+    await expect(agentStartTurn({
+      projectId: PROJECT_B_UUID,
+      request: turnRequest(sessionId, "intruder turn"),
+    })).rejects.toThrow(/belongs to another project/)
+
+    // The foreign session's transcript is untouched.
+    expect(chatStore.listMessages(sessionId)).toHaveLength(2)
+    expect(chatStore.listSessions(
+      chatStore.getSessionByUuid(sessionId).projectId
+    ).some((s) => s.id === sessionId)).toBe(true)
+  })
+})
+
+describe("dropLastExchange store semantics (issue #21 review fixes)", () => {
+  it("drops assistant+user pair, and a lone trailing user message", () => {
+    const project = projectsStore.ensureProjectRow({ uuid: "drop-proj-uuid", path: PROJECT_PATH })
+    const sid = "conv_test_drop"
+    chatStore.createSession(project.id, { uuid: sid, title: "drop" })
+    chatStore.appendMessage(sid, "user", "u1")
+    chatStore.appendMessage(sid, "assistant", "a1")
+    chatStore.appendMessage(sid, "user", "u2")
+    chatStore.appendMessage(sid, "assistant", "a2")
+
+    chatStore.dropLastExchange(sid)
+    expect(chatStore.listMessages(sid).map((m) => m.content)).toEqual(["u1", "a1"])
+
+    // Lone trailing user message (cancelled/errored turn) drops alone.
+    chatStore.appendMessage(sid, "user", "u3")
+    chatStore.dropLastExchange(sid)
+    expect(chatStore.listMessages(sid).map((m) => m.content)).toEqual(["u1", "a1"])
+
+    // The remaining pair drops too, then the session is empty and further
+    // drops are no-ops (as is an unknown session uuid).
+    chatStore.dropLastExchange(sid)
+    expect(chatStore.listMessages(sid)).toHaveLength(0)
+    expect(() => chatStore.dropLastExchange(sid)).not.toThrow()
+    expect(() => chatStore.dropLastExchange("conv_missing")).not.toThrow()
   })
 })

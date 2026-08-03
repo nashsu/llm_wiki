@@ -31,6 +31,8 @@ import { summarizeAgentFileChange } from "@/lib/agent-file-activity"
 
 type InternalChatSendOptions = ChatSendOptions & {
   suppressUserMessage?: boolean
+  /** Web build: server drops the session's last exchange before re-running the turn. */
+  regenerate?: boolean
   historyOverride?: { role: "user" | "assistant"; content: string }[]
 }
 
@@ -846,11 +848,26 @@ export function ChatPanel() {
         convId = createConversation()
       }
 
+      // Issue #21 review fix: sync the sidebar auto-title to the server.
+      // UI-created sessions start as "New Conversation" server-side; the local
+      // store auto-titles from the first user message below, and the server
+      // row must follow — otherwise every reload reverts the title.
+      const titleBeforeSend = useChatStore.getState().conversations.find((c) => c.id === convId)?.title
+
       if (!sendOptions.suppressUserMessage) {
         const messageContextFiles = project
           ? sendOptions.contextFiles.map((path) => projectAbsolutePath(project.path, path))
           : []
         addMessageToConversation(convId, "user", text, images, messageContextFiles)
+        if (IS_WEB_BUILD && project) {
+          const newTitle = text.trim().slice(0, 50)
+          const isDefaultTitle = titleBeforeSend === t("chat.newConversation") || titleBeforeSend === "New chat"
+          if (newTitle && isDefaultTitle) {
+            void renameChatSession(project.id, convId, newTitle).catch((err) => {
+              console.warn("[chat] failed to sync session title to server:", err)
+            })
+          }
+        }
       }
       setStreamingConversationId(convId)
       setStreaming(true)
@@ -1109,7 +1126,11 @@ export function ChatPanel() {
                 // answers) whose scaffolding message must not persist;
                 // historyLimit carries the user's context-window setting.
                 ...(IS_WEB_BUILD
-                  ? { resume: !!sendOptions.suppressUserMessage, historyLimit: maxHistoryMessages }
+                  ? {
+                      resume: !!sendOptions.suppressUserMessage,
+                      regenerate: !!sendOptions.regenerate,
+                      historyLimit: maxHistoryMessages,
+                    }
                   : { history: activeConvMessages, historyExplicit: true }),
                 skills: requestSkills,
                 contextFiles: sendOptions.contextFiles,
@@ -1466,8 +1487,19 @@ export function ChatPanel() {
       }))
     }
     // Re-send with the original text AND images so a regenerated turn
-    // keeps the same vision context.
-    handleSend(lastUserMsg.content, lastUserMsg.images ?? [])
+    // keeps the same vision context. `regenerate` tells the web build's
+    // server to drop the session's persisted last exchange first, so the DB
+    // transcript stays [u, a_new] instead of [u, a_old, u, a_new] (issue #21).
+    handleSend(lastUserMsg.content, lastUserMsg.images ?? [], {
+      useWebSearch: useChatStore.getState().useWebSearch,
+      useAnyTxtSearch: useChatStore.getState().useAnyTxtSearch,
+      agentMode: useChatStore.getState().agentMode,
+      retrievalMode: useChatStore.getState().retrievalMode,
+      skills: useChatStore.getState().selectedSkills,
+      contextFiles: useChatStore.getState().selectedContextFiles,
+      skillMode: useChatStore.getState().selectedSkills.length > 0 ? "explicit" : "auto",
+      regenerate: true,
+    })
   }, [activeStreaming, removeLastAssistantMessage, handleSend])
 
   const handleApproveShellCommand = useCallback(async (command: string, assistantMessageId: string) => {

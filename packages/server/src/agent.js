@@ -10,7 +10,7 @@ import {
 import { loadProjectSkills, renderSkillPlannerContext, listAvailableSkills } from "./skills.js"
 import { ensureProjectRow, getProjectByUuid } from "./store/projects.js"
 import {
-  ensureSession, getSessionByUuid, listSessions, listMessages, appendMessage,
+  ensureSession, getSessionByUuid, listSessions, listMessages, appendMessage, dropLastExchange,
 } from "./store/chat-sessions.js"
 
 // Node port of the desktop Rust chat-agent runtime (src-tauri/src/agent).
@@ -134,6 +134,10 @@ async function runLoop({ request, projectId, stream, onDelta }) {
   const session = ensureSession(projectRow.id, request.sessionId, {
     title: (request.message || "").trim().slice(0, 50) || undefined,
   })
+  // Regenerate replaces the last exchange: drop the persisted pair BEFORE
+  // loading history, so the model never sees the answer being replaced, and
+  // the re-persisted user message + fresh answer below take their place.
+  if (request.regenerate) dropLastExchange(session.id)
   const historyLimit = Number.isInteger(request.historyLimit) ? request.historyLimit : DEFAULT_HISTORY_LIMIT
   const priorMessages = listMessages(session.id).slice(-historyLimit)
   if (!request.resume) {
@@ -180,6 +184,7 @@ async function runLoop({ request, projectId, stream, onDelta }) {
   const emitFile = (fc) => emitEvent(request.sessionId, request.runId, { type: "fileChanged", path: fc.path, tool: fc.tool, existedBefore: fc.existedBefore, previousContent: fc.previousContent })
 
   let finalText = ""
+  let stoppedAtApproval = false
   for (let iter = 0; iter < MAX_ITER; iter++) {
     if (runs.get(request.runId)?.cancelled) throw new Error("Agent run cancelled")
     const ctx = { ...ctxBase }
@@ -258,6 +263,7 @@ async function runLoop({ request, projectId, stream, onDelta }) {
       // "available"->skipped shell_exec step (detail "approval required: <cmd>").
       if (stream) emitEvent(request.sessionId, request.runId, { type: "messageDelta", text: approvalMessage })
       finalText = approvalMessage
+      stoppedAtApproval = true
       break
     }
     // loop again for the model to answer
@@ -271,8 +277,11 @@ async function runLoop({ request, projectId, stream, onDelta }) {
   }
   // Issue #21: persist the completed assistant message (with its references).
   // Runs that throw or are cancelled before this point leave only the user
-  // message persisted — the assistant turn never completed.
-  if (finalText) {
+  // message persisted — the assistant turn never completed. Turns that stop
+  // at an approval boundary persist nothing here: the approval text is UI
+  // scaffolding, not an answer, and persisting it would leave two consecutive
+  // assistant rows once the resumed turn completes.
+  if (finalText && !stoppedAtApproval) {
     appendMessage(session.id, "assistant", finalText, finalReferences)
   }
   return { finalText, references: finalReferences, toolEvents }
