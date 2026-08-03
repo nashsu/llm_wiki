@@ -195,4 +195,24 @@ const MIGRATIONS = [
       )
     `)
   }],
+
+  ["010_chat_sessions_uuid", (db) => {
+    // Issue #21: chat persistence. The wire session id is a UUID string (the
+    // client's locally generated conversation id), while the table keeps its
+    // integer surrogate key — so add a uuid column with a unique index.
+    // Nullable-unique is safe for pre-existing rows (none known live: the
+    // tables were schema-only with no writer before this change).
+    db.exec(`ALTER TABLE chat_sessions ADD COLUMN uuid TEXT`)
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_sessions_uuid ON chat_sessions(uuid)`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_project ON chat_sessions(project_id)`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`)
+  }],
+
+  ["011_projects_uuid", (db) => {
+    // Issue #21: let v2 routes resolve a project by the client's project UUID
+    // (WikiProject.id, persisted in .llm-wiki/project.json) in addition to the
+    // integer surrogate key. Nullable-unique keeps legacy rows valid.
+    db.exec(`ALTER TABLE projects ADD COLUMN uuid TEXT`)
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_uuid ON projects(uuid)`)
+  }],
 ]

@@ -8,16 +8,28 @@ import {
   skippedSkillPreferenceProbeSummary, shellApprovalSummary, SHELL_REQUIRES_SKILL_ERROR,
 } from "./shell-policy.js"
 import { loadProjectSkills, renderSkillPlannerContext, listAvailableSkills } from "./skills.js"
+import { ensureProjectRow, getProjectByUuid } from "./store/projects.js"
+import {
+  ensureSession, getSessionByUuid, listSessions, listMessages, appendMessage,
+} from "./store/chat-sessions.js"
 
 // Node port of the desktop Rust chat-agent runtime (src-tauri/src/agent).
 // Runs the model<->tool loop server-side, calling the configured LLM directly
 // and streaming `agent-event` payloads over SSE in the exact shape the React
 // chat panel parses (see BackendAgentEventPayload in chat-panel.tsx).
+//
+// Issue #21: sessions and messages persist in SQLite (chat_sessions /
+// chat_messages). The loop LOADS prior messages by sessionId instead of
+// receiving client-held history, and APPENDS each completed message: the
+// user message when its turn starts, the assistant message when the turn
+// finishes (never per streamed delta).
 
 const EVENT = "agent-event"
 const MAX_ITER = 8
+// How many prior messages the loop feeds the model when the request does not
+// say (client setting maxHistoryMessages is passed as request.historyLimit).
+const DEFAULT_HISTORY_LIMIT = 20
 const runs = new Map()          // runId -> { abort, cancelled }
-const sessions = new Map()      // sessionId -> { messages }
 
 const fwd = (p) => p.split(path.sep).join("/")
 import path from "node:path"
@@ -42,10 +54,10 @@ You have tools to search the wiki (wiki.search), read wiki pages (wiki.read_page
 Workflow: search/read to gather evidence, then answer grounded in what you found. When you write or update wiki pages, use wiki.write_page with valid YAML frontmatter.
 Be concise and cite the pages/sources you used. The system automatically attaches references from your tool results to your answer.`
 
-function buildMessages(request) {
+function buildMessages(request, history) {
   const messages = [{ role: "system", content: SYSTEM_PROMPT }]
-  const history = Array.isArray(request.history) ? request.history : []
-  for (const m of history) {
+  const prior = Array.isArray(history) ? history : []
+  for (const m of prior) {
     if (m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string") {
       messages.push({ role: m.role, content: m.content })
     }
@@ -114,13 +126,26 @@ async function runLoop({ request, projectId, stream, onDelta }) {
   const store = readStore("app-state.json")
   const projectPath = projectPathFor(store, projectId)
   if (!projectPath) throw new Error(`Project not found for id '${projectId}'. Open the project in the web client first.`)
+  // Issue #21: persistence. Resolve/create the projects row (chat_sessions'
+  // FK target) and the session row, load prior messages from SQLite, and
+  // record the user message before the loop runs. `resume` marks an
+  // approval-boundary re-send whose user message was already persisted.
+  const projectRow = ensureProjectRow({ uuid: projectId, path: projectPath })
+  const session = ensureSession(projectRow.id, request.sessionId, {
+    title: (request.message || "").trim().slice(0, 50) || undefined,
+  })
+  const historyLimit = Number.isInteger(request.historyLimit) ? request.historyLimit : DEFAULT_HISTORY_LIMIT
+  const priorMessages = listMessages(session.id).slice(-historyLimit)
+  if (!request.resume) {
+    appendMessage(session.id, "user", request.message || "")
+  }
   const llmConfig = resolveChatConfig(store)
   const ep = normalizeEndpoint(llmConfig)
   const mode = request.mode || "standard"
   const toolNames = toolsForRequest(request, mode)
   const tools = buildToolSpecs(toolNames)
   const skills = loadProjectSkills(projectPath, request.skills)
-  const messages = buildMessages(request)
+  const messages = buildMessages(request, priorMessages)
   if (skills.length) {
     const skillBlock = renderSkillPlannerContext(skills, request.skillMode || "auto")
     messages[0] = { ...messages[0], content: `${messages[0].content}\n\n## Skills\n${skillBlock}` }
@@ -244,6 +269,12 @@ async function runLoop({ request, projectId, stream, onDelta }) {
     toolEvents.push({ tool: "deep_research.run", status: "completed", detail, timestamp: Date.now() })
     emitEvent(request.sessionId, request.runId, { type: "toolEnd", tool: "deep_research.run", output: detail })
   }
+  // Issue #21: persist the completed assistant message (with its references).
+  // Runs that throw or are cancelled before this point leave only the user
+  // message persisted — the assistant turn never completed.
+  if (finalText) {
+    appendMessage(session.id, "assistant", finalText, finalReferences)
+  }
   return { finalText, references: finalReferences, toolEvents }
 }
 
@@ -287,9 +318,18 @@ export async function agentCancelTurn(args) {
 }
 
 export async function agentGetSession({ sessionId } = {}) {
-  return sessionId ? (sessions.get(sessionId) ?? null) : null
+  // Issue #21: sessions live in SQLite, not an in-memory map.
+  if (!sessionId) return null
+  const session = getSessionByUuid(sessionId)
+  if (!session) return null
+  return { session, messages: listMessages(sessionId) }
 }
-export async function agentListSessions() { return [] }
+export async function agentListSessions(args = {}) {
+  const projectId = args?.projectId
+  if (!projectId) return []
+  const row = getProjectByUuid(String(projectId))
+  return row ? listSessions(row.id) : []
+}
 export async function agentListSkills(args = {}) { return listAvailableSkills(args.projectPath ?? "") }
 
 export const agentCommands = {
@@ -297,6 +337,6 @@ export const agentCommands = {
   agent_start_turn_stream: (a) => agentStartTurnStream(a),
   agent_cancel_turn: (a) => agentCancelTurn(a),
   agent_get_session: (a) => agentGetSession(a),
-  agent_list_sessions: () => agentListSessions(),
+  agent_list_sessions: (a) => agentListSessions(a),
   agent_list_skills: (a) => agentListSkills(a),
 }
