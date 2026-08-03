@@ -2,12 +2,16 @@ import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { convertFileSrc, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText } from "lucide-react"
+import { BookOpen, Plus, Trash2, Pencil, Check, MessageSquare, X, Maximize2, FolderOpen, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePreview } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
 import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReference } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import {
+  listChatSessions, createChatSession, getChatSession, renameChatSession, deleteChatSession,
+  type ChatMessageInfo,
+} from "@/api/chat"
 import { resolveTaskLlmConfig } from "@/lib/llm-task-routing"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
@@ -29,6 +33,13 @@ type InternalChatSendOptions = ChatSendOptions & {
   suppressUserMessage?: boolean
   historyOverride?: { role: "user" | "assistant"; content: string }[]
 }
+
+// True only in the web (server-backed) build. The flag is set by the web
+// invoke shim (src/web/http-api.ts) which vite.web.config.ts aliases in; the
+// desktop build never loads it. Mirrors the inline check in main.tsx — we
+// deliberately do NOT import from @/web here, because importing that module
+// in the desktop build would set the flag as a side effect.
+const IS_WEB_BUILD = (globalThis as { __LLM_WIKI_WEB__?: boolean }).__LLM_WIKI_WEB__ === true
 
 interface BackendAgentReference {
   title: string
@@ -147,9 +158,13 @@ function formatDate(timestamp: number): string {
 function ConversationSidebar({
   onNewConversation,
   onSelectConversation,
+  onRenameConversation,
+  onDeleteConversation,
 }: {
   onNewConversation?: () => void
   onSelectConversation?: (id: string) => void
+  onRenameConversation?: (id: string, title: string) => void
+  onDeleteConversation?: (id: string) => void
 }) {
   const { t } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
@@ -157,14 +172,28 @@ function ConversationSidebar({
   const messages = useChatStore((s) => s.messages)
   const createConversation = useChatStore((s) => s.createConversation)
   const deleteConversation = useChatStore((s) => s.deleteConversation)
+  const renameConversation = useChatStore((s) => s.renameConversation)
   const setActiveConversation = useChatStore((s) => s.setActiveConversation)
 
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState("")
 
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
 
   function getMessageCount(convId: string): number {
     return messages.filter((m) => m.conversationId === convId).length
+  }
+
+  function commitRename(convId: string) {
+    const title = editingTitle.trim()
+    setEditingId(null)
+    if (!title) return
+    if (onRenameConversation) {
+      onRenameConversation(convId, title)
+    } else {
+      renameConversation(convId, title)
+    }
   }
 
   return (
@@ -196,6 +225,7 @@ function ConversationSidebar({
           sorted.map((conv) => {
             const isActive = conv.id === activeConversationId
             const msgCount = getMessageCount(conv.id)
+            const isEditing = editingId === conv.id
             return (
               <div
                 key={conv.id}
@@ -205,6 +235,7 @@ function ConversationSidebar({
                     : "hover:bg-accent text-foreground"
                 }`}
                 onClick={() => {
+                  if (isEditing) return
                   if (onSelectConversation) {
                     onSelectConversation(conv.id)
                   } else {
@@ -215,23 +246,66 @@ function ConversationSidebar({
                 onMouseLeave={() => setHoveredId(null)}
               >
                 <div className="flex items-start justify-between gap-1">
-                  <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
-                    {conv.title}
-                  </span>
-                  {hoveredId === conv.id && (
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      className="w-full flex-1 rounded border bg-background px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRename(conv.id)
+                        if (e.key === "Escape") setEditingId(null)
+                      }}
+                      onBlur={() => commitRename(conv.id)}
+                    />
+                  ) : (
+                    <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
+                      {conv.title}
+                    </span>
+                  )}
+                  {!isEditing && hoveredId === conv.id && (
+                    <span className="flex flex-shrink-0 items-center gap-0.5">
+                      <button
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                        title={t("chat.rename", "Rename")}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setEditingId(conv.id)
+                          setEditingTitle(conv.title)
+                        }}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (onDeleteConversation) {
+                            onDeleteConversation(conv.id)
+                          } else {
+                            deleteConversation(conv.id)
+                            // Delete persisted chat file
+                            const proj = useWikiStore.getState().project
+                            if (proj) {
+                              deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
+                            }
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </span>
+                  )}
+                  {isEditing && (
                     <button
-                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
+                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
                         e.stopPropagation()
-                        deleteConversation(conv.id)
-                        // Delete persisted chat file
-                        const proj = useWikiStore.getState().project
-                        if (proj) {
-                          deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
-                        }
+                        commitRename(conv.id)
                       }}
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Check className="h-3 w-3" />
                     </button>
                   )}
                 </div>
@@ -527,6 +601,59 @@ export function ChatPanel() {
       }
     }
   }, [project])
+
+  // ── server session sync (issue #21, web build) ─────────────────────────
+  // Sessions and messages live in the server's SQLite store; the sidebar and
+  // message pane hydrate from there. Desktop keeps its existing behavior.
+  const loadSessionMessages = useCallback(async (projectIdValue: string, sessionId: string) => {
+    const detail = await getChatSession(projectIdValue, sessionId)
+    if (!detail.messages.length) return // keep whatever local state exists
+    const mapped = detail.messages.map((m: ChatMessageInfo) => ({
+      id: `srv_${sessionId}_${m.id}`,
+      role: m.role,
+      content: m.content,
+      timestamp: m.createdAt,
+      conversationId: sessionId,
+      ...(m.references && m.references.length > 0
+        ? { references: m.references.map((ref) => backendReferenceToMessageReference(ref as unknown as BackendAgentReference)) }
+        : {}),
+    }))
+    useChatStore.getState().setMessagesForConversation(sessionId, mapped)
+  }, [])
+
+  const projectIdValue = project?.id ?? null
+  useEffect(() => {
+    if (!IS_WEB_BUILD || !projectIdValue) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const { sessions } = await listChatSessions(projectIdValue)
+        if (cancelled) return
+        const store = useChatStore.getState()
+        const serverIds = new Set(sessions.map((s) => s.id))
+        // Server sessions are the source of truth; keep file-only local
+        // conversations (created before persistence existed) alongside them.
+        const localOnly = store.conversations.filter((c) => !serverIds.has(c.id))
+        store.setConversations([
+          ...sessions.map((s) => ({
+            id: s.id,
+            title: s.title,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+          })),
+          ...localOnly,
+        ])
+        const active = useChatStore.getState().activeConversationId
+        if (active && serverIds.has(active)) {
+          await loadSessionMessages(projectIdValue, active)
+        }
+      } catch (err) {
+        console.warn("[chat] failed to load sessions from server:", err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [projectIdValue, loadSessionMessages])
+
   const autoOpenSingleGeneratedOutput = useCallback((conversationId: string, references?: MessageReference[]) => {
     if (useChatStore.getState().activeConversationId !== conversationId) return
     const outputs = (references ?? []).filter((ref) => ref.kind === "workspace")
@@ -753,9 +880,14 @@ export function ChatPanel() {
           ])
           const visibleHistory = conversationMessages(convId)
             .filter((m) => m.role === "user" || m.role === "assistant")
-          const activeConvMessages = sendOptions.historyOverride
-            ?? (sendOptions.suppressUserMessage ? visibleHistory : visibleHistory.slice(0, -1))
-              .slice(-maxHistoryMessages)
+          // Desktop keeps the client-held history round-trip. In the web
+          // build history is server-owned (issue #21): the agent loop loads
+          // prior messages for sessionId from SQLite, so nothing is sent.
+          const activeConvMessages = IS_WEB_BUILD
+            ? []
+            : (sendOptions.historyOverride
+                ?? (sendOptions.suppressUserMessage ? visibleHistory : visibleHistory.slice(0, -1))
+              ).slice(-maxHistoryMessages)
               .map((m) => ({ role: m.role, content: m.content }))
           let accumulated = ""
           const references: MessageReference[] = []
@@ -971,8 +1103,14 @@ export function ChatPanel() {
                 },
                 topK: sendOptions.agentMode === "deep" ? 8 : 5,
                 includeContent: sendOptions.agentMode === "deep",
-                history: activeConvMessages,
-                historyExplicit: true,
+                // Issue #21: the web build sends no history — the server
+                // loads it from SQLite by sessionId. `resume` marks
+                // continuation re-sends (shell approval / user-input
+                // answers) whose scaffolding message must not persist;
+                // historyLimit carries the user's context-window setting.
+                ...(IS_WEB_BUILD
+                  ? { resume: !!sendOptions.suppressUserMessage, historyLimit: maxHistoryMessages }
+                  : { history: activeConvMessages, historyExplicit: true }),
                 skills: requestSkills,
                 contextFiles: sendOptions.contextFiles,
                 skillMode: requestedSkillMode,
@@ -1241,12 +1379,67 @@ export function ChatPanel() {
     setGeneratedOutputPreview(null)
     setApprovingShellMessageId(null)
     dismissedGeneratedOutputsKeyRef.current = null
-    createConversation()
-  }, [createConversation, handleStop])
+    if (IS_WEB_BUILD && project) {
+      // Server owns the session id; fall back to local creation (the agent
+      // loop then creates the session lazily on first turn) if unreachable.
+      const projectIdForApi = project.id
+      void createChatSession(projectIdForApi, t("chat.newConversation"))
+        .then(({ session }) => {
+          const store = useChatStore.getState()
+          store.upsertConversation({
+            id: session.id,
+            title: session.title,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          })
+          store.setMessagesForConversation(session.id, [])
+          store.setActiveConversation(session.id)
+        })
+        .catch((err) => {
+          console.warn("[chat] server session create failed, creating locally:", err)
+          createConversation()
+        })
+    } else {
+      createConversation()
+    }
+  }, [createConversation, handleStop, project, t])
 
   const handleSelectConversation = useCallback((conversationId: string) => {
+    const alreadyActive = useChatStore.getState().activeConversationId === conversationId
     useChatStore.getState().setActiveConversation(conversationId)
     setApprovingShellMessageId(null)
+    // Reload the transcript from the server on switch. Skip the reload when
+    // the clicked session is already active so an in-flight stream's store
+    // state is not clobbered mid-turn.
+    if (IS_WEB_BUILD && project && !alreadyActive) {
+      void loadSessionMessages(project.id, conversationId).catch((err) => {
+        console.warn("[chat] failed to load session messages:", err)
+      })
+    }
+  }, [project, loadSessionMessages])
+
+  const handleRenameConversation = useCallback((conversationId: string, title: string) => {
+    // Optimistic local update in both builds; the web build syncs to server.
+    useChatStore.getState().renameConversation(conversationId, title)
+    if (IS_WEB_BUILD && project) {
+      void renameChatSession(project.id, conversationId, title).catch((err) => {
+        console.warn("[chat] failed to rename session on server:", err)
+      })
+    }
+  }, [project])
+
+  const handleDeleteConversation = useCallback((conversationId: string) => {
+    useChatStore.getState().deleteConversation(conversationId)
+    const proj = useWikiStore.getState().project
+    if (proj) {
+      // Remove the file-persisted copy (both builds write it via auto-save).
+      deleteFile(`${proj.path}/.llm-wiki/chats/${conversationId}.json`).catch(() => {})
+      if (IS_WEB_BUILD) {
+        void deleteChatSession(proj.id, conversationId).catch((err) => {
+          console.warn("[chat] failed to delete session on server:", err)
+        })
+      }
+    }
   }, [])
 
   const handleRegenerate = useCallback(async () => {
@@ -1382,6 +1575,8 @@ export function ChatPanel() {
       <ConversationSidebar
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={handleDeleteConversation}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">

@@ -244,6 +244,7 @@
     "sources": "Sources",
     "newChat": "New Chat",
     "newConversation": "New Conversation",
+    "rename": "Rename",
     "noConversationsYet": "No conversations yet",
     "msgCount": "msgs",
     "startNewConversation": "Start a new conversation",
