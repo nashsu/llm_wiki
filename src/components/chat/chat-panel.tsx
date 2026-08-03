@@ -860,7 +860,9 @@ export function ChatPanel() {
           : []
         addMessageToConversation(convId, "user", text, images, messageContextFiles)
         if (IS_WEB_BUILD && project) {
-          const newTitle = text.trim().slice(0, 50)
+          // Mirrors the store's auto-title: message text, or the image-label
+          // fallback for image-only first messages.
+          const newTitle = text.trim().slice(0, 50) || (images.length > 0 ? t("chat.imageMessage") : "")
           const isDefaultTitle = titleBeforeSend === t("chat.newConversation") || titleBeforeSend === "New chat"
           if (newTitle && isDefaultTitle) {
             void renameChatSession(project.id, convId, newTitle).catch((err) => {
