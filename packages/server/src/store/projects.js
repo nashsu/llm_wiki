@@ -35,3 +35,45 @@ export function deleteProject(id) {
   const info = getDb().prepare("DELETE FROM projects WHERE id = ?").run(id)
   return info.changes > 0
 }
+
+/** Look a project up by its client UUID (WikiProject.id; migration 011). */
+export function getProjectByUuid(uuid) {
+  return getDb().prepare("SELECT * FROM projects WHERE uuid = ?").get(uuid)
+}
+
+/** Look a project up by its root path (unique per migration 003). */
+export function getProjectByPath(path) {
+  return getDb().prepare("SELECT * FROM projects WHERE path = ?").get(path)
+}
+
+/**
+ * Resolve-or-create a project row (issue #21). Chat persistence needs a
+ * projects FK target, but projects registered through the legacy flow only
+ * exist in the plugin store / on disk — never in this table. Resolution
+ * order: uuid → path → insert. When an existing row matches by path but
+ * lacks the uuid, it is backfilled so both lookups agree going forward.
+ * @param {{ uuid?: string|null, path: string, name?: string|null }} args
+ */
+export function ensureProjectRow({ uuid = null, path, name = null }) {
+  const db = getDb()
+  if (uuid) {
+    const byUuid = getProjectByUuid(uuid)
+    if (byUuid) return byUuid
+  }
+  const byPath = getProjectByPath(path)
+  if (byPath) {
+    if (uuid && !byPath.uuid) {
+      db.prepare("UPDATE projects SET uuid = ?, updated_at = ? WHERE id = ?").run(uuid, Date.now(), byPath.id)
+      return getProject(byPath.id)
+    }
+    return byPath
+  }
+  const finalName = name || path.split(/[\\/]/).filter(Boolean).pop() || path
+  const now = Date.now()
+  const info = db
+    .prepare(
+      "INSERT INTO projects (name, path, uuid, owner_id, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)"
+    )
+    .run(finalName, path, uuid, now, now)
+  return getProject(info.lastInsertRowid)
+}

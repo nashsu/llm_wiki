@@ -96,18 +96,17 @@ the agent runtime. Both call the same external LLM providers.
 
 ### 2a. SQLite — `server.db` (under `LLM_WIKI_DATA_DIR`, `/data` in Docker)
 
-Relational **metadata**. Live schema (9 migrations applied; all tables empty on
-a fresh install):
+Relational **metadata**. Live schema (11 migrations applied):
 
 | Table | Purpose | Status |
 |---|---|---|
-| `projects` | Registered projects (name, path, owner) | used |
+| `projects` | Registered projects (uuid, name, path, owner) | used |
 | `users` | Local user accounts (username, password_hash) | used |
 | `settings` | Per-user key/value settings | used |
 | `ingest_queue` | Server-side ingest task queue (upload → pending/done) | used |
 | `reviews` | Review items (type, title, status) | used |
-| `chat_sessions` | Chat session metadata | **schema-only — no writer** |
-| `chat_messages` | Chat message history | **schema-only — no writer** |
+| `chat_sessions` | Chat session metadata (uuid, project_id, title, timestamps) | used |
+| `chat_messages` | Chat message history (role, content, references JSON) | used |
 | `graph_nodes` / `graph_edges` | Knowledge-graph cache (path, title, type, link_count; weighted edges) | written when the graph is built |
 | `vec_chunks` | Embedding chunks (chunk_text, heading_path, embedding BLOB) | **schema-only — no writer** (see note) |
 | `_migrations` | Applied migration bookkeeping | used |
@@ -116,10 +115,14 @@ a fresh install):
 > the **web server embeddings are NOT stored in SQLite**. They live as JSON in
 > `<project>/.llm-wiki/vectorstore.json` (cosine-ranked). See §3/§4.
 
-> **Note on `chat_*`:** chat history is **not persisted to SQLite**. It is held
-> client-side (the client passes `history` in each chat request) and in an
-> in-memory map on the server. Restarting the server does not lose your wiki, but
-> chat transcripts are ephemeral.
+> **Note on `chat_*`:** chat history **is persisted to SQLite** (issue #21).
+> Sessions are created lazily on the first turn of a conversation (keyed by the
+> client's locally generated session UUID) and every completed turn appends its
+> user/assistant messages; the client loads history back over the session
+> endpoints instead of re-sending it. The desktop/web client additionally keeps
+> its own file-based copies (`.llm-wiki/conversations.json`,
+> `.llm-wiki/chats/<id>.json`); in the web build the server DB is the source of
+> truth and the sidebar merges server sessions with any file-only conversations.
 
 ### 2b. Project files on disk — `<project>/`
 
@@ -239,12 +242,13 @@ sequenceDiagram
   participant VS as vectorstore.json + wiki/
 
   U->>SPA: ask a question
-  SPA->>SRV: POST /projects/:id/chat {message, sessionId, mode, tools, history}
+  SPA->>SRV: POST /projects/:id/chat {message, sessionId, mode, tools, resume?, historyLimit?}
   SRV->>AG: agentStartTurnStream → runId (returned immediately)
   SRV-->>SPA: {runId}  (answer streams over SSE agent-event)
 
   AG->>AG: resolve project path (plugin store projectRegistry) + LLM config
-  AG->>AG: build messages (system prompt + history + question), pick tools
+  AG->>AG: ensure session row, load prior messages from SQLite, persist user message
+  AG->>AG: build messages (system prompt + DB history + question), pick tools
 
   loop model↔tool loop (max 8 iterations)
     AG->>LLM: streamCall(messages, tools)
@@ -261,6 +265,7 @@ sequenceDiagram
     AG->>AG: append tool observation to messages
   end
 
+  AG->>AG: append assistant message (+references) to chat_messages
   AG-->>SPA: SSE done {finalText, references}
   SPA->>U: render grounded answer + cited pages/sources
 ```
@@ -271,7 +276,7 @@ sequenceDiagram
    `agentStartTurnStream`; the `runId` returns immediately and the turn runs
    asynchronously, streaming `agent-event` payloads over SSE.
 2. **Agent loop** (`agent.js` → `runLoop`, max 8 iterations) — builds the
-   message list (system prompt + client-supplied `history` + the question),
+   message list (system prompt + **server-loaded history** + the question),
    selects tools (`wiki.search`, `wiki.read_page`, `source.search`,
    `graph.search`; plus `web.search`/`anytxt.search` if enabled), and loops:
    call the LLM → if it returns tool calls, execute them and feed observations
@@ -290,9 +295,19 @@ sequenceDiagram
 6. **Shell tools** — `shell.exec` is gated behind an active skill + per-command
    approval policy (or `LLM_WIKI_ALLOW_SHELL=1`).
 
-**Persistence:** chat turns are **not written to SQLite** (`chat_sessions` /
-`chat_messages` are schema-only). History is client-held and passed back in each
-request; the server keeps only an in-memory session map.
+**Persistence:** chat turns **are written to SQLite** (issue #21). A session
+row is ensured on the first turn of a conversation (client-generated session
+UUID, unique-indexed); the user message is persisted at turn start and the
+assistant message (with its references JSON) at turn completion — never per
+streamed delta, so a cancelled or errored turn leaves just the user message.
+History for the next turn is loaded from `chat_messages` capped at
+`historyLimit` (client setting, default 10; server default 20). The `:id`
+segment accepts either the integer projects-table id or the project UUID; the
+UUID path resolves via the plugin-store registry and materializes the
+projects row (`chat_sessions`' FK target) on demand. A `resume: true`
+re-send (approval/continuation scaffolding) skips persisting the user
+message. Session CRUD: list/create/get/rename/delete under
+`/projects/:id/chat/sessions`, with cross-project access returning 404.
 
 ---
 
@@ -305,7 +320,10 @@ request; the server keeps only an in-memory session map.
 - **Vectors live on disk, not in SQLite** (web). `vectorstore.json` is the
   source of truth for embeddings on the web server; the `vec_chunks` SQLite
   table is a no-writer placeholder for the desktop/LanceDB path.
-- **Chat is ephemeral.** No SQLite persistence for sessions/messages yet.
+- **Chat is persisted (web).** Sessions and messages live in SQLite
+  (`chat_sessions`/`chat_messages`, issue #21); the server owns history in the
+  web build, and the desktop build keeps its client-held history re-send and
+  file persistence untouched.
 - **Single-process server.** `index-v2.js` serves the SPA, the v2 REST API, and
   the legacy `/api/invoke/*` bridge in one process — no second service needed.
 - **Auth** (`auth/config.js`): `LLM_WIKI_AUTH_MODE` is the chartered primary
@@ -337,6 +355,7 @@ request; the server keeps only an in-memory session map.
 | Ingest queue | `GET/POST /api/v2/projects/:id/ingest/queue[…]` | `api/ingest.js` |
 | Chat turn | `POST /api/v2/projects/:id/chat` | `api/chat.js` → `agent.js` |
 | Chat cancel | `POST /api/v2/projects/:id/chat/:runId/cancel` | `api/chat.js` |
+| Chat sessions | `GET/POST /api/v2/projects/:id/chat/sessions`, `GET/PATCH/DELETE …/:sessionId` | `api/chat.js` → `store/chat-sessions.js` |
 | Search | `POST /api/invoke/search_project` (via bridge) | `commands/search.js` |
 | Embeddings | `POST /api/proxy` + `embedding_fetch` / `vector_upsert_chunks` | `proxy.js`, `commands/search.js`, `commands/vectorstore.js` |
 | Events (SSE) | `GET /api/v2/events` | `api/events.js` |

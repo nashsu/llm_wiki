@@ -70,11 +70,18 @@ interface ChatState {
   deleteConversation: (id: string) => void
   setActiveConversation: (id: string | null) => void
   renameConversation: (id: string, title: string) => void
+  /** Insert-or-update one conversation entry (server session sync, issue #21). */
+  upsertConversation: (conversation: Conversation) => void
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
   addMessageToConversation: (conversationId: string, role: DisplayMessage["role"], content: string, images?: MessageImage[], contextFiles?: string[]) => void
   setMessages: (messages: DisplayMessage[]) => void
+  /**
+   * Replace one conversation's messages with the set loaded from the server
+   * (issue #21). Other conversations' messages are untouched.
+   */
+  setMessagesForConversation: (conversationId: string, messages: DisplayMessage[]) => void
   setConversations: (conversations: Conversation[]) => void
   setStreaming: (streaming: boolean) => void
   appendStreamToken: (token: string) => void
@@ -178,6 +185,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
+  upsertConversation: (conversation) =>
+    set((state) => {
+      const exists = state.conversations.some((c) => c.id === conversation.id)
+      return {
+        conversations: exists
+          ? state.conversations.map((c) => (c.id === conversation.id ? { ...c, ...conversation } : c))
+          : [conversation, ...state.conversations],
+      }
+    }),
+
   addMessage: (role, content, images) => {
     const activeConversationId = get().activeConversationId
     if (!activeConversationId) return
@@ -230,6 +247,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   setMessages: (messages) => set({ messages }),
+
+  setMessagesForConversation: (conversationId, conversationMessages) =>
+    set((state) => ({
+      messages: [
+        ...state.messages.filter((m) => m.conversationId !== conversationId),
+        ...conversationMessages,
+      ],
+    })),
 
   setConversations: (conversations) =>
     set((state) => ({
