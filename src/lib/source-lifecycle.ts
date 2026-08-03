@@ -5,7 +5,6 @@ import {
   fileExists,
   getFileSize,
   listDirectory,
-  preprocessFile,
   readFile,
   writeFile,
 } from "@/commands/fs"
@@ -39,6 +38,9 @@ import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig } from "@/lib/so
 import { isSensitiveConfigSourceFile } from "@/lib/source-filter"
 import { naturalCompare } from "@/lib/natural-sort"
 import type { SourceWatchConfig } from "@/stores/wiki-store"
+import { useWikiStore } from "@/stores/wiki-store"
+import { preprocessSourceFiles } from "@/lib/source-preprocess"
+import { moveParsedMarkdown, removeParsedMarkdown } from "@/lib/parsed-source-output"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "md",
@@ -193,6 +195,11 @@ export async function migrateSourcePath(
       summaryMoves.set(oldSummaryRel, newSummaryRel)
     }
     await moveIngestCacheEntry(pp, oldIdentity, newIdentity, summaryMoves)
+    try {
+      await moveParsedMarkdown(pp, oldSourcePath, newSourcePath)
+    } catch (err) {
+      console.warn("[source-lifecycle] failed to move optional parsed Markdown:", err)
+    }
     return writes.length
   } catch (err) {
     if (newSummaryCreated) {
@@ -240,8 +247,12 @@ export async function enqueueSourceIngest(
   project: WikiProject,
   sourcePaths: string[],
   llmConfig: LlmConfig,
-  options: { sourceRoot?: string; rootContext?: string } = {},
+  options: { sourceRoot?: string; rootContext?: string; parsingConcurrency?: number } = {},
 ): Promise<string[]> {
+  // Extraction can be expensive (OCR and Office parsers in particular).
+  // Do not parse a batch that cannot proceed to ingest because no usable
+  // model is configured. Imported source files remain on disk and can be
+  // queued after the user configures a provider.
   if (!hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))) return []
   const files = sourcePaths
     .filter((sourcePath) =>
@@ -256,6 +267,9 @@ export async function enqueueSourceIngest(
       ),
     }))
   if (files.length === 0) return []
+  const parsingConcurrency = options.parsingConcurrency
+    ?? normalizeSourceWatchConfig(useWikiStore.getState().sourceWatchConfig).parsingConcurrency
+  await preprocessSourceFiles(files.map((file) => file.sourcePath), parsingConcurrency)
   return enqueueBatch(project.id, files)
 }
 
@@ -295,13 +309,14 @@ export async function importSourceFiles(
     try {
       await copyFile(sourcePath, destPath)
       importedPaths.push(destPath)
-      preprocessFile(destPath).catch(() => {})
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
     }
   }
 
-  await enqueueSourceIngest(project, importedPaths, llmConfig)
+  await enqueueSourceIngest(project, importedPaths, llmConfig, {
+    parsingConcurrency: cfg.parsingConcurrency,
+  })
 
   return importedPaths
 }
@@ -348,7 +363,6 @@ export async function importSourceFolder(
     if (parent) await createDirectory(parent)
     await copyFile(file.path, destPath)
     allowedFiles.push(destPath)
-    preprocessFile(destPath).catch(() => {})
   }
 
   const naturallyOrderedFiles = [...allowedFiles].sort((a, b) =>
@@ -359,6 +373,7 @@ export async function importSourceFolder(
     await enqueueSourceIngest(project, naturallyOrderedFiles, llmConfig, {
       sourceRoot: destDir,
       rootContext: folderName,
+      parsingConcurrency: cfg.parsingConcurrency,
     })
   }
 
@@ -410,6 +425,7 @@ export async function deleteSourceFiles(
   }
 
   for (const info of sourceInfos) {
+    await removeParsedMarkdown(pp, info.source)
     try {
       await deleteFile(`${pp}/raw/sources/.cache/${info.fileName}.txt`)
     } catch {

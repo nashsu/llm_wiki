@@ -4,6 +4,9 @@ import type { WebSearchResult } from "@/lib/web-search"
 export interface ResearchTask {
   id: string
   topic: string
+  /** Review item that requested this research. It is resolved only after the
+   * generated page has been written successfully. */
+  sourceReviewId?: string
   searchQueries?: string[]
   status: "queued" | "searching" | "synthesizing" | "saving" | "done" | "error"
   webResults: WebSearchResult[]

@@ -9,6 +9,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { useReviewStore } from "@/stores/review-store"
 
 const MAX_RESEARCH_SOURCES = 20
 
@@ -65,6 +66,7 @@ export function queueResearch(
   llmConfig: LlmConfig,
   searchConfig: SearchApiConfig,
   searchQueries?: string[],
+  sourceReviewId?: string,
 ): string {
   const store = useResearchStore.getState()
   const taskId = store.addTask(topic)
@@ -72,6 +74,7 @@ export function queueResearch(
   if (searchQueries && searchQueries.length > 0) {
     store.updateTask(taskId, { searchQueries })
   }
+  if (sourceReviewId) store.updateTask(taskId, { sourceReviewId })
   // Ensure panel is open
   store.setPanelOpen(true)
   // Start processing on next tick to ensure React has rendered the panel
@@ -79,6 +82,24 @@ export function queueResearch(
     processQueue(projectPath, llmConfig, searchConfig)
   }, 50)
   return taskId
+}
+
+export function resolveReviewForSavedResearch(
+  projectPath: string,
+  taskId: string,
+  savedPath: string,
+): boolean {
+  if (!isActiveProjectPath(projectPath)) return false
+  const task = useResearchStore.getState().tasks.find((candidate) => candidate.id === taskId)
+  if (
+    !task?.sourceReviewId ||
+    task.status !== "done" ||
+    task.savedPath !== savedPath
+  ) return false
+  const review = useReviewStore.getState().items.find((item) => item.id === task.sourceReviewId)
+  if (!review || review.resolved) return false
+  useReviewStore.getState().resolveItem(task.sourceReviewId, `Research saved: ${savedPath}`)
+  return true
 }
 
 export async function collectResearchSources(
@@ -328,6 +349,7 @@ async function executeResearch(
       status: "done",
       savedPath,
     })) return
+    resolveReviewForSavedResearch(pp, taskId, savedPath)
 
     try {
       await refreshProjectFileTree(pp, { bumpDataVersion: true })

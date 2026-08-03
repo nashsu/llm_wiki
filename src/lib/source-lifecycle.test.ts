@@ -94,6 +94,8 @@ describe("source-lifecycle path helpers", () => {
       {
         enabled: true,
         autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
         includeExtensions: ["md"],
         excludeExtensions: ["json"],
         excludeDirs: ["drafts"],
@@ -153,6 +155,8 @@ describe("source-lifecycle path helpers", () => {
       {
         enabled: true,
         autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
         includeExtensions: ["json", "yaml", "md"],
         excludeExtensions: [],
         excludeDirs: [],
@@ -221,6 +225,8 @@ describe("source-lifecycle path helpers", () => {
       {
         enabled: true,
         autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
         includeExtensions: ["md"],
         excludeExtensions: [],
         excludeDirs: ["drafts"],
@@ -256,6 +262,8 @@ describe("source-lifecycle path helpers", () => {
       {
         enabled: true,
         autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
         includeExtensions: ["md", "pdf"],
         excludeExtensions: [],
         excludeDirs: [],
@@ -298,6 +306,25 @@ describe("source-lifecycle path helpers", () => {
     ])
   })
 
+  it("does not preprocess files when no usable ingest model is configured", async () => {
+    const queued = await enqueueSourceIngest(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/project/raw/sources/report.pdf"],
+      {
+        provider: "openai",
+        apiKey: "",
+        model: "gpt-5",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128_000,
+      },
+    )
+
+    expect(queued).toEqual([])
+    expect(mocks.preprocessFile).not.toHaveBeenCalled()
+    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+  })
+
   it("naturally orders imported folder files before enqueueing ingest tasks", async () => {
     mocks.listDirectory.mockResolvedValue([
       { name: "10.md", path: "/external/imported/10.md", is_dir: false },
@@ -319,6 +346,8 @@ describe("source-lifecycle path helpers", () => {
       {
         enabled: true,
         autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
         includeExtensions: ["md"],
         excludeExtensions: [],
         excludeDirs: [],

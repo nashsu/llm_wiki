@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { useWikiStore, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
+import { useWikiStore, type LlmConfig, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
 import { availableLlmPresets, findLlmPreset, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
 import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
@@ -14,6 +14,7 @@ import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
 import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/lib/connection-tests"
 import { projectLlmProfile, resolveProjectLlmConfig } from "@/lib/llm-task-routing"
 import { saveProjectLlmOverride } from "@/lib/project-store"
+import { normalizeReasoningForProvider, resolveReasoningCapabilities } from "@/lib/reasoning-capabilities"
 
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 
@@ -782,6 +783,7 @@ function PresetRow({
 
           <ReasoningControls
             value={reasoning}
+            config={resolvedConfig}
             onChange={(reasoning) => onChange({ reasoning })}
           />
 
@@ -843,13 +845,18 @@ function PresetRow({
 
 function ReasoningControls({
   value,
+  config,
   onChange,
 }: {
   value: ReasoningConfig
+  config: LlmConfig
   onChange: (value: ReasoningConfig) => void
 }) {
   const { t } = useTranslation()
-  const modes: { value: ReasoningMode; label: string }[] = [
+  const capabilities = resolveReasoningCapabilities(config)
+  const supportedModes = capabilities.modes
+  const normalizedValue = normalizeReasoningForProvider(config, value)
+  const allModes: { value: ReasoningMode; label: string }[] = [
     { value: "auto", label: t("settings.sections.llm.reasoning.auto") },
     { value: "off", label: t("settings.sections.llm.reasoning.off") },
     { value: "low", label: t("settings.sections.llm.reasoning.low") },
@@ -858,13 +865,14 @@ function ReasoningControls({
     { value: "max", label: t("settings.sections.llm.reasoning.max") },
     { value: "custom", label: t("settings.sections.llm.reasoning.custom") },
   ]
+  const modes = allModes.filter((mode) => supportedModes.includes(mode.value))
 
   return (
     <div className="space-y-2">
       <Label>{t("settings.sections.llm.reasoning.title")}</Label>
       <div className="flex flex-wrap gap-1.5">
         {modes.map((m) => {
-          const active = value.mode === m.value
+          const active = normalizedValue.mode === m.value
           return (
             <button
               key={m.value}
@@ -881,11 +889,13 @@ function ReasoningControls({
           )
         })}
       </div>
-      {value.mode === "custom" && (
+      {normalizedValue.mode === "custom" && (
         <div className="flex items-center gap-2">
           <Input
             type="number"
-            min={0}
+            min={capabilities.customBudgetRange.min}
+            max={capabilities.customBudgetRange.max}
+            step={1}
             className="w-28"
             value={value.budgetTokens ?? ""}
             onChange={(e) => {
@@ -893,7 +903,12 @@ function ReasoningControls({
               const n = Number(raw)
               onChange({
                 ...value,
-                budgetTokens: raw === "" || !Number.isFinite(n) ? undefined : Math.max(0, n),
+                budgetTokens: raw === "" || !Number.isFinite(n)
+                  ? undefined
+                  : Math.max(
+                      capabilities.customBudgetRange.min,
+                      Math.min(capabilities.customBudgetRange.max, Math.floor(n)),
+                    ),
               })
             }}
             placeholder="1024"

@@ -1,16 +1,20 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+#[cfg(not(windows))]
 use std::time::Duration;
 
-const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(not(windows))]
+const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(not(windows))]
 const PATH_MARKER: char = '\x1e';
 
 static RESOLVED_COMMANDS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
 #[cfg(not(windows))]
-static RESOLVED_SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
+static RESOLVED_SHELL_PATH: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 /// PATH to hand a spawned CLI so its interpreter resolves.
 ///
@@ -23,14 +27,10 @@ static RESOLVED_SHELL_PATH: OnceLock<Option<String>> = OnceLock::new();
 /// nothing to add, in which case the child should inherit PATH unchanged.
 #[cfg(not(windows))]
 pub(crate) async fn child_path_env() -> Option<String> {
-    let shell_path = tokio::task::spawn_blocking(|| {
-        RESOLVED_SHELL_PATH
-            .get_or_init(|| login_shell_path(LOGIN_SHELL_PATH_TIMEOUT))
-            .clone()
-    })
-    .await
-    .ok()
-    .flatten()?;
+    let shell_path = tokio::task::spawn_blocking(resolve_login_shell_path)
+        .await
+        .ok()
+        .flatten()?;
     Some(merge_child_path_env(
         &shell_path,
         std::env::var("PATH").ok().as_deref(),
@@ -120,7 +120,7 @@ fn find_cli_command_uncached(
             return Ok(path);
         }
 
-        if let Some(full_path) = login_shell_path(LOGIN_SHELL_PATH_TIMEOUT) {
+        if let Some(full_path) = resolve_login_shell_path() {
             if let Ok(path) = which::which_in(command, Some(&full_path), ".") {
                 return Ok(path);
             }
@@ -128,6 +128,34 @@ fn find_cli_command_uncached(
 
         Err(format!("`{command}` not found on PATH"))
     }
+}
+
+#[cfg(not(windows))]
+fn resolve_login_shell_path() -> Option<String> {
+    resolve_shell_path_cached(RESOLVED_SHELL_PATH.get_or_init(|| Mutex::new(None)), || {
+        login_shell_path(LOGIN_SHELL_PATH_TIMEOUT)
+    })
+}
+
+/// Cache only successful probes. A failed or timed-out shell startup may be
+/// transient, so later CLI operations are allowed to retry. The mutex remains
+/// held during the probe to prevent concurrent first-use calls from launching
+/// several interactive login shells at once.
+#[cfg(not(windows))]
+fn resolve_shell_path_cached(
+    cache: &Mutex<Option<String>>,
+    probe: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let mut cached = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cached.is_some() {
+        return cached.clone();
+    }
+
+    let path = probe()?;
+    *cached = Some(path.clone());
+    Some(path)
 }
 
 #[cfg(not(windows))]
@@ -170,30 +198,33 @@ fn login_shell_path(timeout: Duration) -> Option<String> {
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(_) => return None,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
         }
     }
 }
 
 #[cfg(not(windows))]
 fn parse_shell_path_output(stdout: &str) -> Option<String> {
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix(PATH_MARKER) {
-            if let Some(val) = rest.strip_suffix(PATH_MARKER) {
-                if let Some(path) = val.strip_prefix("PATH=") {
-                    if !path.is_empty() {
-                        return Some(path.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
+    let prefix = format!("{PATH_MARKER}PATH=");
+    stdout.match_indices(&prefix).find_map(|(start, _)| {
+        let path_start = start + prefix.len();
+        let path_end = stdout[path_start..].find(PATH_MARKER)? + path_start;
+        let path = &stdout[path_start..path_end];
+        // PATH entries cannot contain line breaks. Rejecting them also prevents
+        // a malformed marker in shell startup output from swallowing a later
+        // valid payload.
+        (!path.is_empty() && !path.contains(['\r', '\n'])).then(|| path.to_string())
+    })
 }
 
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use super::{merge_child_path_env, parse_shell_path_output};
+    use super::{merge_child_path_env, parse_shell_path_output, resolve_shell_path_cached};
+    use std::sync::Mutex;
 
     #[test]
     fn parse_shell_path_output_ignores_banners() {
@@ -209,6 +240,57 @@ mod tests {
         assert_eq!(parse_shell_path_output("PATH=/usr/bin"), None);
         assert_eq!(parse_shell_path_output("\x1ePATH=\x1e"), None);
         assert_eq!(parse_shell_path_output("\x1eOTHER=/usr/bin\x1e"), None);
+    }
+
+    #[test]
+    fn parse_shell_path_output_accepts_marker_after_shell_integration_prefix() {
+        let output = "\x1b]1337;RemoteHost=user@host\x07\x1ePATH=/custom/bin:/usr/bin\x1e\n";
+        assert_eq!(
+            parse_shell_path_output(output).as_deref(),
+            Some("/custom/bin:/usr/bin")
+        );
+    }
+
+    #[test]
+    fn parse_shell_path_output_skips_malformed_marker_segments() {
+        let output = "\x1eorphaned output\n\x1ePATH=/valid/bin\x1e";
+        assert_eq!(
+            parse_shell_path_output(output).as_deref(),
+            Some("/valid/bin")
+        );
+    }
+
+    #[test]
+    fn successful_shell_path_probe_is_cached() {
+        let cache = Mutex::new(None);
+        let mut calls = 0;
+        assert_eq!(
+            resolve_shell_path_cached(&cache, || {
+                calls += 1;
+                Some("/first".to_string())
+            })
+            .as_deref(),
+            Some("/first")
+        );
+        assert_eq!(
+            resolve_shell_path_cached(&cache, || {
+                calls += 1;
+                Some("/second".to_string())
+            })
+            .as_deref(),
+            Some("/first")
+        );
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn failed_shell_path_probe_can_retry() {
+        let cache = Mutex::new(None);
+        assert_eq!(resolve_shell_path_cached(&cache, || None), None);
+        assert_eq!(
+            resolve_shell_path_cached(&cache, || Some("/retry".to_string())).as_deref(),
+            Some("/retry")
+        );
     }
 
     #[test]

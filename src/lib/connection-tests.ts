@@ -87,7 +87,7 @@ export async function testLlmConnection(cfg: LlmConfig): Promise<ProviderTestRes
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
+    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "auto" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }
@@ -118,7 +118,7 @@ export async function testLlmFunction(cfg: LlmConfig): Promise<ProviderTestResul
       onError: (err) => { errorMessage = err.message },
     },
     undefined,
-    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "off" } },
+    { max_tokens: LLM_PROVIDER_TEST_MAX_TOKENS, reasoning: { mode: "auto" } },
   )
 
   if (errorMessage) return { ok: false, message: errorMessage }

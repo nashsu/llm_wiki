@@ -404,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_camelcase_bypassLocal_field() {
+    fn parses_camelcase_bypass_local_field() {
         // Frontend writes `bypassLocal` (camelCase). We must accept
         // that exact spelling — verify the serde rename works.
         let json = r#"{"enabled": true, "url": "http://x:1", "bypassLocal": false}"#;
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_proxyConfig_returns_none() {
+    fn missing_proxy_config_returns_none() {
         let dir = tempdir_for_test();
         let path = dir.join("missing.json");
         assert!(read_proxy_config_from_store(&path).is_none());

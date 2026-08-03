@@ -646,6 +646,7 @@ fn tool_top_k(input: &Value) -> usize {
         .clamp(1, 10)
 }
 
+#[cfg(test)]
 pub fn write_wiki_page_with_options(
     project_path: &str,
     rel_path: &str,
@@ -1941,7 +1942,10 @@ fn provider_payload_error(provider: &str, value: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 .filter(|message| !message.trim().is_empty())
                 .unwrap_or("unknown API error");
-            return Some(format!("{provider} failed (code {}): {message}", code.unwrap_or(0)));
+            return Some(format!(
+                "{provider} failed (code {}): {message}",
+                code.unwrap_or(0)
+            ));
         }
     }
     if provider == "Brave Search" && value.get("web").is_none() {

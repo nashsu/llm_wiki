@@ -42,6 +42,7 @@ import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { persistParsedMarkdown } from "@/lib/parsed-source-output"
 
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
@@ -711,6 +712,18 @@ async function autoIngestImpl(
     tryReadFile(`${pp}/wiki/index.md`),
     tryReadFile(`${pp}/wiki/overview.md`),
   ])
+  if (useWikiStore.getState().sourceWatchConfig.persistExtractedMarkdown) {
+    try {
+      await persistParsedMarkdown(pp, sp, sourceContent)
+    } catch (err) {
+      // The visible copy is optional and must never turn a successful parse
+      // into a failed ingest. The internal extraction/cache remains usable.
+      console.warn(
+        `[ingest] Failed to keep parsed Markdown for "${sourceIdentity}":`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
   if (isPdf && mineruSavedImages.length === 0 && hasMineruImageRefs(sourceContent, sourceSummarySlug)) {
     mineruSavedImages = await savedImagesFromMineruMarkdown(pp, sourceSummarySlug, sourceContent)
     if (mineruSavedImages.length > 0) {

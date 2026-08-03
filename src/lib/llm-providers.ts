@@ -5,6 +5,11 @@ import {
   buildAzureOpenAiUrl,
   isAzureOpenAiEndpoint,
 } from "@/lib/azure-openai"
+import {
+  isAdaptiveAnthropicModel,
+  isGeminiThinkingLevelModel,
+  normalizeReasoningForProvider,
+} from "@/lib/reasoning-capabilities"
 
 /**
  * One piece of a multimodal message body. Text + image is the only
@@ -336,30 +341,27 @@ function stripWireAgnosticOverrides(overrides?: RequestOverrides): Omit<RequestO
 }
 
 function effectiveReasoning(config: LlmConfig, overrides?: RequestOverrides): ReasoningConfig {
-  return overrides?.reasoning ?? config.reasoning ?? { mode: "auto" }
+  return normalizeReasoningForProvider(
+    config,
+    overrides?.reasoning ?? config.reasoning ?? { mode: "auto" },
+  )
 }
 
 function isDeepSeekEndpoint(config: LlmConfig): boolean {
-  return /deepseek/i.test(config.model) || /deepseek/i.test(config.customEndpoint)
+  return /api\.deepseek\.(?:com|cn)(?:[:/]|$)/i.test(config.customEndpoint)
 }
 
 function supportsDeepSeekThinkingParam(config: LlmConfig): boolean {
   return /deepseek[-_]?v4/i.test(config.model)
 }
 
-function isQwenThinkingModel(model: string): boolean {
-  return /qwen[-_]?3/i.test(model)
-}
-
 function isKimiEndpoint(config: LlmConfig): boolean {
-  return /(^|[/:.-])kimi([/:.-]|$)/i.test(config.model)
-    || /moonshot/i.test(config.model)
-    || /api\.moonshot\.(ai|cn)/i.test(config.customEndpoint)
+  return /api\.moonshot\.(ai|cn)(?:[:/]|$)/i.test(config.customEndpoint)
+    || /api\.kimi\.com\/coding(?:\/|$)/i.test(config.customEndpoint)
 }
 
 function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
-  return /(^|[/:.-])mimo([/:.-]|$)/i.test(config.model)
-    || /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
+  return /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
 }
 
 function isBigModelEndpoint(config: LlmConfig): boolean {
@@ -507,10 +509,6 @@ function buildOpenAiCompatibleBody(
     return body
   }
 
-  if (reasoning.mode === "off" && isQwenThinkingModel(config.model)) {
-    body.chat_template_kwargs = { enable_thinking: false }
-  }
-
   if (config.provider === "openai" && reasoning.mode !== "auto" && reasoning.mode !== "off") {
     if (reasoning.mode === "low" || reasoning.mode === "medium" || reasoning.mode === "high") {
       body.reasoning_effort = reasoning.mode
@@ -617,6 +615,20 @@ function buildAnthropicBodyWithReasoning(
   const body = buildAnthropicBody(messages, overrides, streaming)
   const reasoning = effectiveReasoning(config, overrides)
   if (reasoning.mode === "auto" || reasoning.mode === "off") return body
+
+  if (isAdaptiveAnthropicModel(config)) {
+    body.thinking = { type: "adaptive" }
+    const effort = reasoning.mode === "custom"
+      ? "high"
+      : reasoning.mode === "max"
+        ? "max"
+        : reasoning.mode
+    body.output_config = { effort }
+    delete body.temperature
+    delete body.top_p
+    delete body.top_k
+    return body
+  }
 
   const budget =
     reasoning.mode === "custom" && reasoning.budgetTokens !== undefined
@@ -807,6 +819,7 @@ function flattenGoogleSystemParts(content: string | ContentBlock[]): string {
 }
 
 function buildGoogleBody(
+  config: LlmConfig,
   messages: ChatMessage[],
   overrides?: RequestOverrides,
 ): Record<string, unknown> {
@@ -846,18 +859,26 @@ function buildGoogleBody(
   if (overrides?.stop !== undefined) {
     generationConfig.stopSequences = Array.isArray(overrides.stop) ? overrides.stop : [overrides.stop]
   }
-  if (overrides?.reasoning?.mode === "off") {
+  const reasoning = effectiveReasoning(config, overrides)
+  if (reasoning.mode === "off") {
     generationConfig.thinkingConfig = { thinkingBudget: 0 }
-  } else if (overrides?.reasoning && overrides.reasoning.mode !== "auto") {
-    const budget =
-      overrides.reasoning.mode === "custom" && overrides.reasoning.budgetTokens !== undefined
-        ? overrides.reasoning.budgetTokens
-        : overrides.reasoning.mode === "low"
-          ? 1024
-          : overrides.reasoning.mode === "medium"
-            ? 4096
-            : 8192
-    generationConfig.thinkingConfig = { thinkingBudget: budget }
+  } else if (reasoning.mode !== "auto") {
+    if (isGeminiThinkingLevelModel(config)) {
+      const thinkingLevel = reasoning.mode === "low" || reasoning.mode === "medium"
+        ? reasoning.mode
+        : "high"
+      generationConfig.thinkingConfig = { thinkingLevel }
+    } else {
+      const budget =
+        reasoning.mode === "custom" && reasoning.budgetTokens !== undefined
+          ? reasoning.budgetTokens
+          : reasoning.mode === "low"
+            ? 1024
+            : reasoning.mode === "medium"
+              ? 4096
+              : 8192
+      generationConfig.thinkingConfig = { thinkingBudget: budget }
+    }
   }
 
   return {
@@ -939,7 +960,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           "Content-Type": JSON_CONTENT_TYPE,
           "x-goog-api-key": apiKey,
         }),
-        buildBody: (messages, overrides) => buildGoogleBody(messages, {
+        buildBody: (messages, overrides) => buildGoogleBody(config, messages, {
           ...(overrides ?? {}),
           reasoning: effectiveReasoning(config, overrides),
         }),

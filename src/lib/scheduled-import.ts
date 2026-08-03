@@ -4,7 +4,6 @@ import {
   getFileMd5,
   getFileSize,
   listDirectory,
-  preprocessFile,
   readFile,
   writeFileAtomic,
 } from "@/commands/fs"
@@ -428,7 +427,6 @@ export async function scanAndImport(
 
     if (changedFiles.length > 0) {
       const destPaths = changedFiles.map((file) => file.destPath)
-      await Promise.all(destPaths.map((path) => preprocessFile(path).catch(() => {})))
       if (isCurrentRun(project.id, options.runId)) {
         const ids = await enqueueSourceIngest(project, destPaths, llmConfig)
         if (ids.length > 0) {

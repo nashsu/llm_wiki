@@ -23,6 +23,7 @@ import { makeQueryFileName } from "@/lib/wiki-filename"
 import { createReviewPageDrafts } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
+import { useResearchStore } from "@/stores/research-store"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; color: string }> = {
   contradiction: { icon: AlertTriangle, color: "text-amber-500" },
@@ -76,8 +77,7 @@ export function ReviewView() {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
         const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries)
-        resolveItem(id, "Queued for research")
+        queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries, id)
       } else {
         resolveItem(id, action)
       }
@@ -178,8 +178,7 @@ export function ReviewView() {
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig)
-        resolveItem(id, "Queued for deep research")
+        queueResearch(pp, topic, llmConfig, searchConfig, undefined, id)
       } else {
         resolveItem(id, action)
       }
@@ -429,6 +428,21 @@ function ReviewCard({
   const { t } = useTranslation()
   const config = typeConfig[item.type]
   const Icon = config.icon
+  const researchTask = useResearchStore((state) => {
+    const matching = state.tasks.filter((task) => task.sourceReviewId === item.id)
+    return matching.find((task) => (
+      task.status === "queued" ||
+      task.status === "searching" ||
+      task.status === "synthesizing" ||
+      task.status === "saving"
+    )) ?? matching[matching.length - 1]
+  })
+  const researchRunning = researchTask !== undefined && (
+    researchTask.status === "queued" ||
+    researchTask.status === "searching" ||
+    researchTask.status === "synthesizing" ||
+    researchTask.status === "saving"
+  )
 
   return (
     <div
@@ -467,12 +481,19 @@ function ReviewCard({
       )}
 
       {!item.resolved ? (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="space-y-2">
+          {researchRunning && (
+            <div className="text-xs text-muted-foreground">
+              {t(`research.status.${researchTask.status}`)}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5">
           {(item.type === "suggestion" || item.type === "missing-page") && (
             <Button
               variant="default"
               size="sm"
               className="h-7 text-xs gap-1"
+              disabled={researchRunning}
               onClick={() => onResolve(item.id, "__deep_research__")}
             >
               🔍 {t("research.title")}
@@ -484,11 +505,13 @@ function ReviewCard({
               variant="outline"
               size="sm"
               className="h-7 text-xs"
+              disabled={researchRunning}
               onClick={() => onResolve(item.id, opt.action)}
             >
               {opt.label}
             </Button>
           ))}
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-1 text-xs text-emerald-600">

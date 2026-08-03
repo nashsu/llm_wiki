@@ -54,9 +54,12 @@ import {
   enqueueIngest,
   enqueueBatch,
   retryTask,
+  retryTasks,
   retryAllFailedTasks,
   cancelTask,
+  cancelTasks,
   cancelAllTasks,
+  movePendingTask,
   clearCompletedTasks,
   clearQueueState,
   cleanupWrittenFiles,
@@ -268,7 +271,7 @@ describe("ingest-queue — retry & failure", () => {
 })
 
 describe("ingest-queue — cancel", () => {
-  it("cancelTask removes a pending task without calling autoIngest", async () => {
+  it("cancelTask retains a pending task for restart without calling autoIngest", async () => {
     mockAutoIngest.mockImplementation(() => new Promise(() => {})) // block first task
 
     await enqueueBatch(TEST_ID, [
@@ -282,13 +285,93 @@ describe("ingest-queue — cancel", () => {
     const second = queue.find((t) => t.sourcePath === "second.md")!
     await cancelTask(second.id)
 
-    expect(getQueue().find((t) => t.sourcePath === "second.md")).toBeUndefined()
+    expect(getQueue().find((t) => t.sourcePath === "second.md")?.status).toBe("cancelled")
     expect(getQueue().find((t) => t.sourcePath === "first.md")).toBeDefined()
+  })
+
+  it("batch-cancelled tasks can be batch-restarted", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "active.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+      { sourcePath: "c.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+    const stopped = getQueue().filter((task) => task.status === "pending")
+
+    expect(await cancelTasks(stopped.map((task) => task.id))).toBe(2)
+    expect(getQueue().filter((task) => task.status === "cancelled")).toHaveLength(2)
+    expect(await retryTasks(stopped.map((task) => task.id))).toBe(2)
+    expect(getQueue().filter((task) => task.status === "pending")).toHaveLength(2)
+  })
+
+  it("enqueueing a cancelled source restarts the retained task without duplication", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "active.md", folderContext: "" },
+      { sourcePath: "cancelled.md", folderContext: "old" },
+    ])
+    await flushMicrotasks(2)
+    const stopped = getQueue().find((task) => task.sourcePath === "cancelled.md")!
+    await cancelTask(stopped.id)
+
+    const restartedId = await enqueueIngest(TEST_ID, "cancelled.md", "new")
+
+    expect(restartedId).toBe(stopped.id)
+    expect(getQueue().filter((task) => task.sourcePath === "cancelled.md")).toHaveLength(1)
+    expect(getQueue().find((task) => task.id === stopped.id)).toMatchObject({
+      status: "pending",
+      folderContext: "new",
+    })
+  })
+
+  it("discards an old in-flight result when a cancelled task is immediately restarted", async () => {
+    let finishOldRun: ((files: string[]) => void) | undefined
+    mockAutoIngest
+      .mockImplementationOnce(
+        () => new Promise<string[]>((resolve) => {
+          finishOldRun = resolve
+        }),
+      )
+      .mockResolvedValueOnce(["wiki/restart-new.md"])
+
+    await enqueueIngest(TEST_ID, "restart.md")
+    await flushMicrotasks(2)
+    const task = getQueue()[0]
+    await cancelTask(task.id)
+    await retryTasks([task.id])
+
+    // Simulate a provider that ignores AbortSignal and completes the old run.
+    finishOldRun?.(["wiki/restart.md"])
+    await vi.waitFor(() => expect(mockAutoIngest).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(getQueue()).toHaveLength(0))
+
+    expect(getQueueSummary().completed).toBe(1)
+  })
+
+  it("moves pending task priority without crossing the processing task", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "active.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+      { sourcePath: "c.md", folderContext: "" },
+      { sourcePath: "d.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+    const d = getQueue().find((task) => task.sourcePath === "d.md")!
+
+    expect(await movePendingTask(d.id, "up")).toBe(true)
+    expect(getQueue().map((task) => task.sourcePath)).toEqual([
+      "active.md",
+      "b.md",
+      "d.md",
+      "c.md",
+    ])
   })
 })
 
 describe("ingest-queue — cancelAllTasks", () => {
-  it("drops all pending and processing tasks but keeps failed ones", async () => {
+  it("retains pending and processing tasks as cancelled alongside failed ones", async () => {
     // Block the processing task so it doesn't finish on its own.
     mockAutoIngest.mockImplementation(() => new Promise(() => {}))
 
@@ -305,10 +388,9 @@ describe("ingest-queue — cancelAllTasks", () => {
 
     const removed = await cancelAllTasks()
 
-    expect(removed).toBe(2) // a (processing) + b (pending) gone
-    expect(getQueue()).toHaveLength(1)
-    expect(getQueue()[0].sourcePath).toBe("c.md")
-    expect(getQueue()[0].status).toBe("failed")
+    expect(removed).toBe(2)
+    expect(getQueue()).toHaveLength(3)
+    expect(getQueue().map((task) => task.status)).toEqual(["cancelled", "cancelled", "failed"])
   })
 
   it("returns 0 when the queue is empty", async () => {
@@ -840,7 +922,8 @@ describe("ingest-queue — pause/resume processing", () => {
     await flushMicrotasks(10)
     expect(mockAutoIngest).toHaveBeenCalledTimes(2)
     expect(mockAutoIngest.mock.calls[1][1]).toBe(`${TEST_PATH}/fresh.md`)
-    expect(getQueue()).toHaveLength(0)
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueue()[0]).toMatchObject({ sourcePath: "only.md", status: "cancelled" })
   })
 
   it("restoreQueue resets the paused flag — every project loads un-paused", async () => {

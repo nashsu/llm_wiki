@@ -9,6 +9,15 @@ import sourceWatchDefaults from "@/lib/source-watch-defaults.json"
 describe("source watch config", () => {
   it("uses the shared default fixture", () => {
     expect(DEFAULT_SOURCE_WATCH_CONFIG).toEqual(sourceWatchDefaults)
+    expect(normalizeSourceWatchConfig({}).persistExtractedMarkdown).toBe(false)
+    expect(normalizeSourceWatchConfig({}).parsingConcurrency).toBe(2)
+    expect(
+      normalizeSourceWatchConfig({ persistExtractedMarkdown: true }).persistExtractedMarkdown,
+    ).toBe(true)
+    expect(normalizeSourceWatchConfig({ parsingConcurrency: 20 }).parsingConcurrency).toBe(8)
+    expect(
+      normalizeSourceWatchConfig({ parsingConcurrency: Number.NaN }).parsingConcurrency,
+    ).toBe(2)
   })
 
   it("allows document types by default and rejects config/media/binaries", () => {

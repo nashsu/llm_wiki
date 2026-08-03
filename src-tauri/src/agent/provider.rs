@@ -39,6 +39,8 @@ pub struct LlmConfig {
     #[serde(default)]
     pub azure_api_version: Option<String>,
     #[serde(default)]
+    pub azure_model_family: Option<String>,
+    #[serde(default)]
     pub api_mode: Option<String>,
     #[serde(default)]
     pub reasoning: Option<LlmReasoningConfig>,
@@ -311,7 +313,7 @@ impl LlmClient {
         if include_model {
             body["model"] = Value::String(self.config.model.clone());
         }
-        apply_openai_reasoning(&mut body, self.config.reasoning.as_ref());
+        apply_openai_reasoning(&mut body, &self.config);
         body
     }
 
@@ -399,7 +401,7 @@ impl LlmClient {
         if stream {
             body["stream"] = Value::Bool(true);
         }
-        apply_anthropic_reasoning(&mut body, self.config.reasoning.as_ref());
+        apply_anthropic_reasoning(&mut body, &self.config);
         body
     }
 
@@ -500,7 +502,7 @@ impl LlmClient {
                 "maxOutputTokens": self.max_output_tokens()
             }
         });
-        apply_google_reasoning(&mut body, self.config.reasoning.as_ref());
+        apply_google_reasoning(&mut body, &self.config);
         body
     }
 
@@ -585,8 +587,11 @@ impl LlmClient {
 
     pub fn structured_task_config(&self, max_tokens: u32) -> Self {
         let mut config = self.config.clone();
+        // Structured tasks need concise final content, but forcing "off" is
+        // invalid for thinking-only models and generic custom gateways. Auto
+        // omits provider-specific controls and is the portable safe default.
         config.reasoning = Some(LlmReasoningConfig {
-            mode: Some("off".to_string()),
+            mode: Some("auto".to_string()),
             budget_tokens: None,
         });
         config.max_tokens = Some(max_tokens);
@@ -909,10 +914,30 @@ fn requires_bearer_auth(url: &str) -> bool {
     lower.contains("minimax.io") || lower.contains("minimaxi.com")
 }
 
-fn apply_openai_reasoning(body: &mut Value, reasoning: Option<&LlmReasoningConfig>) {
-    let Some(reasoning) = reasoning else {
+fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
+    let Some(reasoning) = config.reasoning.as_ref() else {
         return;
     };
+    if config.provider == "ollama" {
+        match reasoning.mode.as_deref() {
+            Some("off") => body["reasoning_effort"] = Value::String("none".to_string()),
+            Some("low" | "medium" | "high") => {
+                body["reasoning_effort"] =
+                    Value::String(reasoning.mode.clone().unwrap_or_default());
+            }
+            Some("max") => body["reasoning_effort"] = Value::String("high".to_string()),
+            _ => {}
+        }
+        return;
+    }
+    // Generic OpenAI-compatible gateways do not promise support for OpenAI's
+    // private reasoning fields. The frontend follows the same omission rule.
+    if config.provider != "openai" && config.provider != "azure" {
+        return;
+    }
+    if !is_openai_reasoning_model(config) {
+        return;
+    }
     match reasoning.mode.as_deref() {
         Some("off") => {}
         Some("low" | "medium" | "high") => {
@@ -922,32 +947,93 @@ fn apply_openai_reasoning(body: &mut Value, reasoning: Option<&LlmReasoningConfi
     }
 }
 
-fn apply_anthropic_reasoning(body: &mut Value, reasoning: Option<&LlmReasoningConfig>) {
-    let Some(reasoning) = reasoning else {
+fn apply_anthropic_reasoning(body: &mut Value, config: &LlmConfig) {
+    let Some(reasoning) = config.reasoning.as_ref() else {
         return;
     };
+    if config.provider != "anthropic" {
+        return;
+    }
     if reasoning.mode.as_deref() == Some("off") {
         return;
     }
     let Some(budget) = reasoning_budget(reasoning) else {
         return;
     };
+    if is_claude_46_or_later(&config.model) {
+        let effort = match reasoning.mode.as_deref() {
+            Some("low") => "low",
+            Some("medium") => "medium",
+            Some("max") => "max",
+            _ => "high",
+        };
+        body["thinking"] = json!({ "type": "adaptive" });
+        body["output_config"] = json!({ "effort": effort });
+        return;
+    }
     body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
     let min_tokens = budget.saturating_add(1024).max(DEFAULT_MAX_TOKENS);
     body["max_tokens"] = Value::from(min_tokens);
 }
 
-fn apply_google_reasoning(body: &mut Value, reasoning: Option<&LlmReasoningConfig>) {
-    let Some(reasoning) = reasoning else {
+fn apply_google_reasoning(body: &mut Value, config: &LlmConfig) {
+    let Some(reasoning) = config.reasoning.as_ref() else {
         return;
     };
     if reasoning.mode.as_deref() == Some("off") {
+        if is_gemini_thinking_required(&config.model) {
+            return;
+        }
         body["generationConfig"]["thinkingConfig"] = json!({ "thinkingBudget": 0 });
+        return;
+    }
+    if is_gemini_3(&config.model) && reasoning_budget(reasoning).is_some() {
+        let level = match reasoning.mode.as_deref() {
+            Some("low") => "low",
+            Some("medium") => "medium",
+            _ => "high",
+        };
+        body["generationConfig"]["thinkingConfig"] = json!({ "thinkingLevel": level });
         return;
     }
     if let Some(budget) = reasoning_budget(reasoning) {
         body["generationConfig"]["thinkingConfig"] = json!({ "thinkingBudget": budget });
     }
+}
+
+fn is_claude_46_or_later(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    ["claude-opus-4-", "claude-sonnet-4-", "claude-haiku-4-"]
+        .iter()
+        .find_map(|prefix| lower.strip_prefix(prefix))
+        .and_then(|tail| tail.split(['-', '_', '.']).next())
+        .and_then(|version| version.parse::<u32>().ok())
+        .is_some_and(|version| version >= 6)
+}
+
+fn is_openai_reasoning_model(config: &LlmConfig) -> bool {
+    if config.provider == "azure" && config.azure_model_family.as_deref() == Some("gpt5") {
+        return true;
+    }
+    let lower = config.model.to_ascii_lowercase();
+    lower.starts_with("gpt-5")
+        || lower
+            .strip_prefix('o')
+            .and_then(|tail| tail.chars().next())
+            .is_some_and(|first| first.is_ascii_digit())
+}
+
+fn is_gemini_3(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.starts_with("gemini-3-")
+        || lower.starts_with("gemini-3.")
+        || lower.starts_with("gemini_3_")
+        || lower.starts_with("gemini_3.")
+}
+
+fn is_gemini_thinking_required(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    lower.starts_with("gemini-2.5-pro") || is_gemini_3(model)
 }
 
 fn reasoning_budget(reasoning: &LlmReasoningConfig) -> Option<u32> {
@@ -994,6 +1080,7 @@ mod tests {
             ollama_url: "http://localhost:11434/v1".to_string(),
             custom_endpoint: "https://example.com/v1".to_string(),
             azure_api_version: None,
+            azure_model_family: None,
             api_mode: None,
             reasoning: None,
             max_tokens: None,
@@ -1122,18 +1209,17 @@ mod tests {
     #[test]
     fn openai_reasoning_off_does_not_emit_null_field() {
         let mut body = json!({});
-        apply_openai_reasoning(
-            &mut body,
-            Some(&LlmReasoningConfig {
-                mode: Some("off".to_string()),
-                budget_tokens: None,
-            }),
-        );
+        let mut cfg = config("openai");
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        apply_openai_reasoning(&mut body, &cfg);
         assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]
-    fn structured_task_config_disables_reasoning_and_raises_output_budget() {
+    fn structured_task_config_uses_portable_auto_reasoning_and_raises_output_budget() {
         let mut cfg = config("openai");
         cfg.reasoning = Some(LlmReasoningConfig {
             mode: Some("high".to_string()),
@@ -1144,6 +1230,90 @@ mod tests {
 
         assert_eq!(body.get("max_tokens").and_then(Value::as_u64), Some(16_384));
         assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(
+            client
+                .config
+                .reasoning
+                .as_ref()
+                .and_then(|value| value.mode.as_deref()),
+            Some("auto")
+        );
+    }
+
+    #[test]
+    fn generic_custom_gateway_does_not_receive_openai_reasoning_fields() {
+        let mut cfg = config("custom");
+        cfg.model = "qwen3-thinking-only".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("high".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+        let body = client.openai_like_body("system", "user", &[], true, false);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn claude_47_uses_adaptive_thinking() {
+        let mut cfg = config("anthropic");
+        cfg.model = "claude-opus-4-7".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("high".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+        let body = client.anthropic_like_body("system", "user", &[], false);
+        assert_eq!(body.get("thinking"), Some(&json!({ "type": "adaptive" })));
+        assert_eq!(
+            body.get("output_config"),
+            Some(&json!({ "effort": "high" }))
+        );
+    }
+
+    #[test]
+    fn claude_46_uses_adaptive_thinking() {
+        let mut cfg = config("anthropic");
+        cfg.model = "claude-sonnet-4-6".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("medium".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+        let body = client.anthropic_like_body("system", "user", &[], false);
+        assert_eq!(body.get("thinking"), Some(&json!({ "type": "adaptive" })));
+        assert_eq!(
+            body.get("output_config"),
+            Some(&json!({ "effort": "medium" }))
+        );
+    }
+
+    #[test]
+    fn gemini_35_uses_thinking_level() {
+        let mut cfg = config("google");
+        cfg.model = "gemini-3.5-flash".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("medium".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+        let body = client.google_body("system", "user", &[]);
+        assert_eq!(
+            body["generationConfig"].get("thinkingConfig"),
+            Some(&json!({ "thinkingLevel": "medium" }))
+        );
+    }
+
+    #[test]
+    fn gemini_25_pro_does_not_receive_unsupported_zero_thinking_budget() {
+        let mut cfg = config("google");
+        cfg.model = "gemini-2.5-pro".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap();
+        let body = client.google_body("system", "user", &[]);
+        assert!(body["generationConfig"].get("thinkingConfig").is_none());
     }
 
     #[test]

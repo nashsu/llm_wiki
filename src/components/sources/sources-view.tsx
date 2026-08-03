@@ -23,9 +23,12 @@ import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
+import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
+import { getQueue, type IngestTask } from "@/lib/ingest-queue"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
+type SourceIngestStatus = "not-ingested" | "ingested" | IngestTask["status"]
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -45,6 +48,8 @@ export function SourcesView() {
   const [urlInput, setUrlInput] = useState("")
   const [urlError, setUrlError] = useState<string | null>(null)
   const [urlResults, setUrlResults] = useState<UrlImportResult[]>([])
+  const [ingestedIdentities, setIngestedIdentities] = useState<string[]>([])
+  const [queueSnapshot, setQueueSnapshot] = useState<IngestTask[]>(() => [...getQueue()])
   /**
    * Path of the source-tree node currently in "click again to
    * confirm delete" state. Lifted up here (rather than living
@@ -84,6 +89,46 @@ export function SourcesView() {
   useEffect(() => {
     loadSources()
   }, [loadSources, dataVersion])
+
+  useEffect(() => {
+    if (!project) {
+      setIngestedIdentities([])
+      return
+    }
+    let active = true
+    listIngestedSourceIdentities(project.path)
+      .then((identities) => {
+        if (active) setIngestedIdentities(identities)
+      })
+      .catch(() => {
+        if (active) setIngestedIdentities([])
+      })
+    return () => {
+      active = false
+    }
+  }, [project, dataVersion])
+
+  useEffect(() => {
+    const refresh = () => setQueueSnapshot([...getQueue()])
+    refresh()
+    const interval = setInterval(refresh, 1000)
+    return () => clearInterval(interval)
+  }, [project])
+
+  const sourceStatuses = useMemo(() => {
+    const statuses = new Map<string, SourceIngestStatus>()
+    if (!project) return statuses
+    const pp = normalizePath(project.path)
+    for (const identity of ingestedIdentities) {
+      statuses.set(`${pp}/raw/sources/${normalizePath(identity)}`, "ingested")
+    }
+    for (const task of queueSnapshot) {
+      if (task.projectId !== project.id || task.status === "done") continue
+      const path = normalizePath(task.sourcePath)
+      statuses.set(path.startsWith("/") || /^[A-Za-z]:\//.test(path) ? path : `${pp}/${path}`, task.status)
+    }
+    return statuses
+  }, [ingestedIdentities, project, queueSnapshot])
 
   async function handleRefreshSources() {
     if (!project || refreshing) return
@@ -400,6 +445,7 @@ export function SourcesView() {
               pendingDeletePath={pendingDeletePath}
               setPendingDeletePath={setPendingDeletePath}
               ingestingPath={ingestingPath}
+              sourceStatuses={sourceStatuses}
             />
           </div>
         )}
@@ -481,6 +527,7 @@ function SourceTree({
   pendingDeletePath,
   setPendingDeletePath,
   ingestingPath,
+  sourceStatuses,
 }: {
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
@@ -494,6 +541,7 @@ function SourceTree({
   pendingDeletePath: string | null
   setPendingDeletePath: (path: string | null) => void
   ingestingPath: string | null
+  sourceStatuses: ReadonlyMap<string, SourceIngestStatus>
 }) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -552,6 +600,7 @@ function SourceTree({
     <>
       {visibleRows.map(({ node, depth }) => {
         const isPendingDelete = pendingDeletePath === node.path
+        const ingestStatus = sourceStatuses.get(normalizePath(node.path)) ?? "not-ingested"
         if (node.is_dir && node.children) {
           const isCollapsed = collapsed[node.path] ?? false
           return (
@@ -601,13 +650,28 @@ function SourceTree({
             >
               <FileText className="h-4 w-4 shrink-0" />
               <span className="truncate">{node.name}</span>
+              <span
+                className={
+                  ingestStatus === "failed"
+                    ? "shrink-0 text-[10px] text-destructive"
+                    : ingestStatus === "processing"
+                      ? "shrink-0 text-[10px] text-primary"
+                      : "shrink-0 text-[10px] text-muted-foreground"
+                }
+              >
+                {t(`sources.ingestStatus.${ingestStatus}`)}
+              </span>
             </button>
             <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
               title={t("sources.ingest")}
-              disabled={ingestingPath === node.path}
+              disabled={
+                ingestingPath === node.path ||
+                ingestStatus === "pending" ||
+                ingestStatus === "processing"
+              }
               onClick={() => onIngest(node)}
             >
               <BookOpen className="h-4 w-4" />

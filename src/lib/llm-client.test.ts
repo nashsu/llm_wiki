@@ -91,6 +91,154 @@ const cfg: LlmConfig = {
   maxContextSize: 8192,
 }
 
+const customStreamingCfg: LlmConfig = {
+  ...cfg,
+  provider: "custom",
+  model: "local-openai-model",
+  customEndpoint: "http://127.0.0.1:13305/v1",
+}
+
+function openAiSseToken(content: string): string {
+  return `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`
+}
+
+describe("streamChat — buffered streaming responses", () => {
+  beforeEach(() => mockHttpFetch.mockReset())
+
+  it("surfaces a JSON endpoint error returned inside HTTP 200", async () => {
+    mockHttpFetch.mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 400, message: "request exceeds available context" },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+    )
+
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0][0].message).toBe(
+      "LLM endpoint error 400: request exceeds available context",
+    )
+    expect(onToken).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it("cancels a still-open response body after an SSE endpoint error", async () => {
+    let bodyCancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          'data: {"error":{"message":"stream failed"}}\n',
+        ))
+      },
+      cancel() {
+        bodyCancelled = true
+      },
+    })
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+    )
+
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0][0].message).toBe("LLM endpoint error: stream failed")
+    expect(bodyCancelled).toBe(true)
+    expect(onToken).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it("parses every record from a fully buffered SSE body", async () => {
+    const body = [
+      openAiSseToken("Hello"),
+      "",
+      openAiSseToken(" world"),
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+    )
+
+    expect(onToken.mock.calls.map(([token]) => token)).toEqual(["Hello", " world"])
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it("normalizes escaped separators in a buffered SSE body", async () => {
+    const body = [
+      openAiSseToken("Hello"),
+      openAiSseToken(" world"),
+      "data: [DONE]",
+    ].join("\\n\\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+    )
+
+    expect(onToken.mock.calls.map(([token]) => token)).toEqual(["Hello", " world"])
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it("does not split separator-like text inside streamed JSON content", async () => {
+    const content = "first line\n\ndata: still model output"
+    const body = [
+      openAiSseToken(content),
+      "data: [DONE]",
+    ].join("\\n\\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, { status: 200 }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+    )
+
+    expect(onToken).toHaveBeenCalledWith(content)
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+})
+
 describe("streamChat — non-streaming HTTP responses", () => {
   beforeEach(() => mockHttpFetch.mockReset())
 
