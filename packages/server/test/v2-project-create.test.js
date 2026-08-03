@@ -7,7 +7,7 @@
 // parent). Also asserts the clobber guard (409 when the dir already exists).
 //
 // IMPORTANT: env vars set BEFORE importing the app (it reads LLM_WIKI_DATA_DIR
-// at module load). AUTH_MODE=none guarantees open mode regardless of host env.
+// at module load). LLM_WIKI_AUTH_MODE=none guarantees open mode regardless of host env.
 
 import { describe, it, expect, afterAll } from "vitest"
 import request from "supertest"
@@ -18,7 +18,7 @@ import path from "node:path"
 const DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-v2create-"))
 process.env.LLM_WIKI_DATA_DIR = DATA_DIR
 process.env.LLM_WIKI_NO_SHARE = "1"
-process.env.AUTH_MODE = "none"
+process.env.LLM_WIKI_AUTH_MODE = "none"
 delete process.env.LLM_WIKI_API_TOKEN
 
 const { app } = await import("../src/index-v2.js")

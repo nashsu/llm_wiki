@@ -16,7 +16,7 @@ import path from "node:path"
 const DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-proxy-"))
 process.env.LLM_WIKI_DATA_DIR = DATA_DIR
 process.env.LLM_WIKI_NO_SHARE = "1"
-process.env.AUTH_MODE = "none"
+process.env.LLM_WIKI_AUTH_MODE = "none"
 delete process.env.LLM_WIKI_API_TOKEN
 
 const { app } = await import("../src/index-v2.js")
@@ -87,7 +87,7 @@ describe("v2 POST /api/proxy (web cross-origin transport)", () => {
   })
 
   it("enforces the auth contract in token mode", async () => {
-    process.env.AUTH_MODE = "token"
+    process.env.LLM_WIKI_AUTH_MODE = "token"
     process.env.LLM_WIKI_API_TOKEN = "secret123"
     try {
       const noAuth = await request(app)
@@ -103,7 +103,7 @@ describe("v2 POST /api/proxy (web cross-origin transport)", () => {
         .send({ url: `${upstreamUrl}/sse`, method: "GET", headers: {} })
       expect(withAuth.status).toBe(200)
     } finally {
-      process.env.AUTH_MODE = "none"
+      process.env.LLM_WIKI_AUTH_MODE = "none"
       delete process.env.LLM_WIKI_API_TOKEN
     }
   })

@@ -10,8 +10,9 @@
 //        getHome() requests it); it was only on the legacy server. (index-v2.js)
 //
 // IMPORTANT: env vars that the app reads at MODULE LOAD (LLM_WIKI_DATA_DIR)
-// are set before importing the app. AUTH_MODE / LLM_WIKI_API_TOKEN are read
-// per-request by resolveAuth(), so they can be toggled at runtime per test.
+// are set before importing the app. LLM_WIKI_AUTH_MODE (and its deprecated
+// alias AUTH_MODE) / LLM_WIKI_API_TOKEN are read per-request by resolveAuth(),
+// so they can be toggled at runtime per test.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest"
 import request from "supertest"
@@ -23,7 +24,7 @@ import path from "node:path"
 const DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-scenario-"))
 process.env.LLM_WIKI_DATA_DIR = DATA_DIR
 process.env.LLM_WIKI_NO_SHARE = "1"
-process.env.AUTH_MODE = "none"
+process.env.LLM_WIKI_AUTH_MODE = "none"
 delete process.env.LLM_WIKI_API_TOKEN
 
 const { app } = await import("../src/index-v2.js")
@@ -43,13 +44,14 @@ afterAll(() => {
 
 afterEach(() => {
   // Never leak token mode into another test.
-  process.env.AUTH_MODE = "none"
+  process.env.LLM_WIKI_AUTH_MODE = "none"
+  delete process.env.AUTH_MODE
   delete process.env.LLM_WIKI_API_TOKEN
 })
 
 describe("#10 — token-auth still serves the web client", () => {
   it("serves non-/api routes (SPA) without a token in token mode", async () => {
-    process.env.AUTH_MODE = "token"
+    process.env.LLM_WIKI_AUTH_MODE = "token"
     process.env.LLM_WIKI_API_TOKEN = "secret123"
 
     const res = await request(app).get("/")
@@ -63,7 +65,7 @@ describe("#10 — token-auth still serves the web client", () => {
   })
 
   it("still gates the /api data surface in token mode", async () => {
-    process.env.AUTH_MODE = "token"
+    process.env.LLM_WIKI_AUTH_MODE = "token"
     process.env.LLM_WIKI_API_TOKEN = "secret123"
 
     const noToken = await request(app).get("/api/v2/projects")
@@ -131,21 +133,23 @@ describe("#11 — manual writes record File History versions", () => {
 })
 
 describe("auth mode heuristic — auto is open iff no token is configured", () => {
-  // Regression: in auto mode (AUTH_MODE unset) the middleware used to compute
+  // Regression: in auto mode (LLM_WIKI_AUTH_MODE unset) the middleware used to compute
   // authRequired as `!allowUnauth`, which is true even with NO token set — so a
   // token-less deployment (the docker-compose default) 401'd every API call
   // while /auth/status reported authRequired:false. Auto must be open when no
   // token is configured and required only once a token exists.
 
   it("auto mode with NO token is open (docker-compose default)", async () => {
-    delete process.env.AUTH_MODE // auto
+    delete process.env.LLM_WIKI_AUTH_MODE // auto
+    delete process.env.AUTH_MODE
     delete process.env.LLM_WIKI_API_TOKEN
     const res = await request(app).get("/api/v2/projects")
     expect(res.status).not.toBe(401)
   })
 
   it("auto mode WITH a token requires it", async () => {
-    delete process.env.AUTH_MODE // auto
+    delete process.env.LLM_WIKI_AUTH_MODE // auto
+    delete process.env.AUTH_MODE
     process.env.LLM_WIKI_API_TOKEN = "sekrit"
     const denied = await request(app).get("/api/v2/projects")
     expect(denied.status).toBe(401)
@@ -155,14 +159,16 @@ describe("auth mode heuristic — auto is open iff no token is configured", () =
     expect(allowed.status).not.toBe(401)
   })
 
-  it("AUTH_MODE=none is open even when a token is configured", async () => {
+  it("deprecated AUTH_MODE alias: none is open even when a token is configured", async () => {
+    delete process.env.LLM_WIKI_AUTH_MODE
     process.env.AUTH_MODE = "none"
     process.env.LLM_WIKI_API_TOKEN = "sekrit"
     const res = await request(app).get("/api/v2/projects")
     expect(res.status).not.toBe(401)
   })
 
-  it("AUTH_MODE=token with no token configured is closed", async () => {
+  it("deprecated AUTH_MODE alias: token with no token configured is closed", async () => {
+    delete process.env.LLM_WIKI_AUTH_MODE
     process.env.AUTH_MODE = "token"
     delete process.env.LLM_WIKI_API_TOKEN
     const res = await request(app).get("/api/v2/projects")
