@@ -874,7 +874,10 @@
           "resumeRestored": "Resume merges",
           "notDuplicates": "Not duplicates",
           "merged": "Merged",
-          "skipped": "Marked not duplicates"
+          "skipped": "Marked not duplicates",
+          "scanEmbeddings": "Scan (embeddings, beta)",
+          "serviceUrl": "turbovecdb service",
+          "threshold": "τ"
         }
       },
       "changelog": {
