@@ -2,12 +2,23 @@ import fs from "node:fs"
 import path from "node:path"
 import { blendGraphResults } from "../graph.js"
 import { vectorCommands } from "./vectorstore.js"
+import { isVecAvailable } from "../store/db.js"
+import { readStoreKey } from "../store.js"
+import { SHARED_STORE_NAME } from "../config.js"
 
 // Node port of the keyword-search + page-links subset of
 // src-tauri/src/commands/search.rs, plus server-side embedding fetches.
 // Keyword ranking is blended with the wikilink-graph neighbor expansion
 // (blend_graph_results), matching the desktop hybrid engine's graph layer.
 // Vector ranking is layered separately via the server vector store.
+//
+// Retrieval mode (issue #14 gap): the global `wikiSearchMode` setting
+// (keyword | vector | hybrid, default hybrid) governs every RAG surface —
+// search UI, v1/v2 HTTP routes, the invoke bridge, and agent wiki.search.
+// keyword = keyword+graph, vector = vector+graph, hybrid = all three. When
+// the vector leg was requested but cannot run, the response degrades to
+// keyword results and carries `vectorUnavailableReason` so clients can show a
+// notice; requests never fail.
 
 const MAX_SEARCH_FILES = 5000
 const fwd = (p) => p.split(path.sep).join("/")
@@ -207,6 +218,7 @@ function materializeVectorOnly(vectorResults, pagePathsByStem, projectPath, resu
       score: 0,
       vectorScore: vr.score,
       images: extractImages(content),
+      ...(includeContent ? { content } : {}),
     })
     known.add(vr.id)
   }
@@ -225,7 +237,18 @@ function applyRrf(results, tokenRank, vectorRank, vectorScoreMap) {
   }
 }
 
-async function searchProject({ projectPath, query, topK = 20, includeContent = false, queryEmbedding = null, embeddingConfig = null }) {
+const WIKI_SEARCH_MODES = new Set(["keyword", "vector", "hybrid"])
+
+/** Resolve the effective retrieval mode: explicit param → shared store → hybrid. */
+export function resolveWikiSearchMode(requested) {
+  if (WIKI_SEARCH_MODES.has(requested)) return requested
+  const stored = readStoreKey(SHARED_STORE_NAME, "wikiSearchMode")
+  if (WIKI_SEARCH_MODES.has(stored)) return stored
+  return "hybrid"
+}
+
+async function searchProject({ projectPath, query, topK = 20, includeContent = false, queryEmbedding = null, embeddingConfig = null, wikiSearchMode = null }) {
+  const retrievalMode = resolveWikiSearchMode(wikiSearchMode)
   const wikiRoot = path.join(projectPath, "wiki")
   const files = []
   walkMarkdownFiles(wikiRoot, files)
@@ -234,6 +257,27 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
   const results = []
   const graphPages = []
   const pagePathsByStem = new Map()
+
+  // Decide the vector leg up front so a requested-but-unavailable vector mode
+  // can still fall back to keyword scoring below.
+  const wantVector = retrievalMode !== "keyword"
+  let vectorUnavailableReason = null
+  let qEmb = null
+  if (wantVector) {
+    if (!isVecAvailable()) {
+      vectorUnavailableReason = "Vector search is unavailable on this server (sqlite-vec extension not loaded)"
+    } else if (!embeddingConfig || !embeddingConfig.enabled || !embeddingConfig.endpoint) {
+      vectorUnavailableReason = "No embedding provider is configured"
+    } else {
+      qEmb = await resolveQueryEmbedding(query, queryEmbedding, embeddingConfig)
+      if (!qEmb) vectorUnavailableReason = "The embedding request failed"
+    }
+  }
+  const useVector = wantVector && !!qEmb
+  // keyword leg runs in keyword/hybrid modes, and as the fallback when a
+  // vector-mode search degrades.
+  const useKeyword = retrievalMode !== "vector" || !useVector
+
   for (const file of files) {
     let content
     try { content = fs.readFileSync(file, "utf-8") } catch { continue }
@@ -241,6 +285,7 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
     const fileName = path.basename(file)
     pagePathsByStem.set(fileStem(rel), rel)
     graphPages.push({ path: rel, title: extractTitle(content, fileName), links: extractWikilinks(content), content })
+    if (!useKeyword) continue
     if (fileName === "index.md" || fileName === "log.md") continue
     const title = extractTitle(content, fileName)
     const titleLower = title.toLowerCase()
@@ -258,6 +303,7 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
       path: rel, title,
       snippet: makeSnippet(content, tokens.length ? tokens : [qLower]),
       titleMatch, score, images: extractImages(content),
+      ...(includeContent ? { content } : {}),
     })
   }
 
@@ -271,8 +317,7 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
   let vectorHits = 0
   const vectorRank = new Map()
   const vectorScoreMap = new Map()
-  const qEmb = await resolveQueryEmbedding(query, queryEmbedding, embeddingConfig)
-  if (qEmb) {
+  if (useVector) {
     try {
       const vres = await searchByEmbeddingServer(projectPath, qEmb, Math.max(limit, 10))
       vectorHits = vres.length
@@ -289,7 +334,10 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
   const { results: blended, graphHits } = blendGraphResults(results, graphPages, limit, vectorHits)
   const limited = blended.slice(0, limit)
   const mode = searchMode(tokenRank.size === 0, vectorHits, graphHits)
-  return { mode, results: limited, tokenHits: tokenRank.size, vectorHits, graphHits }
+  return {
+    mode, results: limited, tokenHits: tokenRank.size, vectorHits, graphHits,
+    ...(vectorUnavailableReason ? { vectorUnavailableReason } : {}),
+  }
 }
 
 function resolveReaderWikilink(pageKeys, link) {

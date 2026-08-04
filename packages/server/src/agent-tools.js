@@ -35,7 +35,7 @@ function walk(dir, out, pred) {
 }
 
 const SPECS = {
-  "wiki.search": { description: "Search the generated wiki pages by keyword. Returns matching pages with snippets.", parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "integer" } }, required: ["query"] } },
+  "wiki.search": { description: "Search the generated wiki pages using the project's retrieval mode (keyword, vector, or hybrid). Returns matching pages with snippets.", parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "integer" } }, required: ["query"] } },
   "wiki.read_page": { description: "Read the full content of a wiki page by project-relative path (e.g. wiki/concepts/foo.md).", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
   "source.search": { description: "Search the imported raw source documents (raw/sources) by keyword.", parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "integer" } }, required: ["query"] } },
   "graph.search": { description: "Search the knowledge graph for pages related to a query.", parameters: { type: "object", properties: { query: { type: "string" }, top_k: { type: "integer" } }, required: ["query"] } },
@@ -57,7 +57,15 @@ function specList(names) {
 
 async function wikiSearch(input, ctx) {
   const topK = input.top_k ?? ctx.topK ?? 5
-  const res = await searchCommands.search_project({ projectPath: ctx.projectPath, query: input.query, topK, includeContent: ctx.includeContent })
+  // Retrieval parity with the search UI (issue #14): honor the global
+  // wikiSearchMode and the configured embedding provider instead of running
+  // keyword-only.
+  const embCfg = ctx.store?.embeddingConfig
+  const res = await searchCommands.search_project({
+    projectPath: ctx.projectPath, query: input.query, topK, includeContent: ctx.includeContent,
+    embeddingConfig: embCfg && embCfg.enabled ? embCfg : null,
+    wikiSearchMode: ctx.store?.wikiSearchMode ?? null,
+  })
   const references = res.results.map((r) => ({ title: r.title, path: r.path, kind: "wiki", snippet: r.snippet, score: r.score }))
   const observation = res.results.length
     ? res.results.map((r) => `- ${r.title} (${r.path}): ${r.snippet}`).join("\n")

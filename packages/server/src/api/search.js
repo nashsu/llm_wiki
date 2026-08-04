@@ -1,7 +1,8 @@
 // Search API router (Phase 2.3.5)
 // Hybrid search: keyword + vector + graph, bridging to the existing
-// search_project command. Embedding config is read from the shared store so
-// vector search activates when the user has configured an embedding provider.
+// search_project command. Embedding config and the global retrieval mode
+// (wikiSearchMode) are read from the shared store so vector search activates
+// when the user has configured an embedding provider.
 // req.projectId, req.projectRoot, and req.project are attached by the
 // projectLookup middleware (middleware/project-lookup.js).
 
@@ -27,6 +28,7 @@ router.post("/", validate({ body: SearchRequestSchema }), async (req, res, next)
       includeContent,
       queryEmbedding: null,
       embeddingConfig: embCfg && embCfg.enabled ? embCfg : null,
+      wikiSearchMode: store?.wikiSearchMode ?? null,
     })
     res.json({
       results: r.results,
@@ -34,6 +36,7 @@ router.post("/", validate({ body: SearchRequestSchema }), async (req, res, next)
       tokenHits: r.tokenHits,
       vectorHits: r.vectorHits,
       graphHits: r.graphHits,
+      ...(r.vectorUnavailableReason ? { vectorUnavailableReason: r.vectorUnavailableReason } : {}),
     })
   } catch (err) {
     next(err)

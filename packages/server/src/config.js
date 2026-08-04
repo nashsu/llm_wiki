@@ -45,6 +45,7 @@ export const STORE_KEYS = [
   "searchApiConfig", "embeddingConfig", "mineruConfig", "multimodalConfig",
   "outputLanguage", "language", "generalConfig", "apiConfig", "proxyConfig",
   "scheduledImportConfig", "sourceWatchConfig", "zoomLevel", "updateCheckState",
+  "wikiSearchMode",
 ]
 
 function home() { return os.homedir() }
