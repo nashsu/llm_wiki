@@ -26,13 +26,13 @@ flowchart TB
   subgraph Browser["Browser — React SPA (dist-web/)"]
     UI["Views: Wiki / Sources / Graph / Chat / Reviews / Settings"]
     Stores["Zustand stores (app/wiki/activity state)"]
-    IngestDrv["Ingest pipeline driver<br/>(src/lib/ingest.ts, ingest-queue.ts)"]
-    Embed["Embedding client<br/>(src/lib/embedding.ts)"]
+    Embed["Embedding client — maintenance paths<br/>(src/lib/embedding.ts)"]
   end
 
   subgraph Server["Node server — packages/server/src/index-v2.js (Express)"]
     Auth["Auth middleware<br/>(auth/config.js)"]
     APIv2["/api/v2/* routers<br/>projects · files · search · graph · chat · ingest · reviews · settings · auth"]
+    Orch["Ingest orchestrator<br/>(ingest/orchestrator.js)"]
     Bridge["Legacy bridge<br/>/api/invoke/:command"]
     StoreAPI["/api/store/* (plugin store)"]
     Proxy["/api/proxy (cross-origin LLM/embed/search)"]
@@ -55,8 +55,6 @@ flowchart TB
   end
 
   UI --> Stores
-  UI --> IngestDrv
-  IngestDrv --> Embed
   Browser -- "REST + SSE /api/v2/events" --> Auth --> APIv2
   Browser -- "/api/invoke/*" --> Bridge
   Browser -- "/api/store/*" --> StoreAPI
@@ -64,15 +62,20 @@ flowchart TB
   Browser -- "GET /" --> SPA
 
   APIv2 --> Agent
+  APIv2 -- "enqueue / retry / cancel (kick)" --> Orch
+  Orch -- "streamChat (analysis · generation · review)" --> LLM
+  Orch -- "writes wiki/*.md" --> Disk
+  Orch -- "ingest_queue lifecycle" --> SQLite
+  Orch --> Workers
   Agent -- "streamCall / tools" --> LLM
   Proxy --> LLM
   Proxy --> EmbProv
   Embed --> Proxy
+  Workers -- "embedding worker" --> EmbProv
   Workers --> MinerU
   APIv2 --> SQLite
   Bridge --> Disk
   Agent --> Disk
-  IngestDrv -- "writes wiki/*.md" --> Disk
   Bridge -- "vector_upsert_chunks (sqlite-vec)" --> SQLite
   StoreAPI --> Plugin
 ```
@@ -81,15 +84,18 @@ flowchart TB
 
 | Tier | What it does | Key files |
 |---|---|---|
-| **Browser SPA** | UI; holds app state; **drives the ingest LLM pipeline client-side**; renders streaming chat; computes embeddings via the proxy. | `src/` (views, `src/lib/ingest.ts`, `src/lib/embedding.ts`, `src/lib/llm-client.ts`) |
-| **Node server** | Serves the SPA; exposes the API; runs the **chat agent loop server-side**; auth; SQLite access; CPU-offload worker pool; cross-origin proxy. | `packages/server/src/index-v2.js`, `api/*`, `agent.js`, `store/db.js`, `workers/` |
+| **Browser SPA** | UI; holds app state; enqueues ingest sources and mirrors the server queue (`server-ingest-store.ts`); renders streaming chat/ingest events from SSE. | `src/` (views, `src/stores/server-ingest-store.ts`, `src/lib/sse-sync.ts`) |
+| **Node server** | Serves the SPA; exposes the API; runs the **ingest pipeline** (`ingest/orchestrator.js` + `ingest/pipeline.js`) and the **chat agent loop** server-side; auth; SQLite access; CPU-offload worker pool; cross-origin proxy. | `packages/server/src/index-v2.js`, `api/*`, `ingest/*`, `agent.js`, `store/db.js`, `workers/` |
 | **Persistence** | SQLite (relational metadata + embedding vectors via sqlite-vec), project files on disk (actual content), plugin store (config). | see §2 |
 | **External** | LLM, embedding model, MinerU PDF extraction, web/AnyTXT search. | configured in plugin store / env |
 
-**Important division of labor:** the heavy LLM work for *ingest* runs in the
-**browser** (the server worker pool only offloads CPU tasks — binary parsing,
-embedding fetch, graph build). The LLM work for *chat* runs **server-side** in
-the agent runtime. Both call the same external LLM providers.
+**Important division of labor:** all heavy LLM work now runs **server-side** —
+*ingest* in the orchestrator/pipeline (`ingest/llm.js`), *chat* in the agent
+runtime (`agent.js`) (issue #14 P0; the browser pipeline was deleted). The
+server worker pool additionally offloads CPU tasks (binary parsing, embedding
+fetch, graph build). The browser no longer calls LLM providers for ingest; it
+only enqueues sources, watches SSE, and performs a few maintenance flows
+(dedup/re-index) through the legacy bridge.
 
 ---
 
@@ -104,7 +110,7 @@ Relational **metadata**. Live schema (12 migrations applied):
 | `projects` | Registered projects (uuid, name, path, owner) | used |
 | `users` | Local user accounts (username, password_hash) | used |
 | `settings` | Per-user key/value settings | used |
-| `ingest_queue` | Server-side ingest task queue (upload → pending/done) | used |
+| `ingest_queue` | Ingest task queue consumed by the server orchestrator (pending → running → complete/failed; attempt_count, error, not_before for retry/usage-limit deferral) | used |
 | `reviews` | Review items (type, title, status) | used |
 | `chat_sessions` | Chat session metadata (uuid, project_id, title, timestamps) | used |
 | `chat_messages` | Chat message history (role, content, references JSON) | used |
@@ -147,7 +153,7 @@ The actual knowledge-base content:
 │   └── log.md              # append-only ingest log
 └── .llm-wiki/              # per-project app state
     ├── vectorstore.json    # legacy embeddings (pre-sqlite-vec; no longer written or read — re-index to migrate)
-    ├── ingest-queue.json   # client-side ingest queue
+    ├── ingest-queue.json   # desktop-only client-side ingest queue (web uses the server's ingest_queue table)
     ├── ingest-cache.json   # skip-unchanged-source cache
     ├── image-caption-cache.json
     └── history/<hash>.json # file-history snapshots (human + agent edits)
@@ -168,71 +174,104 @@ id → path, used by the chat agent to locate a project on disk).
 
 ## 3. Dataflow — Ingest (raw document → wiki pages + embeddings)
 
-Triggered by dropping/uploading a source. The **browser drives the LLM
-pipeline**; the server handles upload, queue bookkeeping, and CPU offload.
+Triggered by dropping/uploading a source (or enqueueing an existing file). The
+**server drives the entire LLM pipeline** (issue #14 P0): the browser only
+uploads/enqueues and watches progress over SSE; the orchestrator claims tasks
+from SQLite and runs the pipeline end to end.
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant U as User
   participant SPA as Browser SPA
-  participant SRV as Node server
+  participant SRV as Node server (api/ingest.js)
+  participant ORC as Orchestrator (ingest/orchestrator.js)
   participant FS as Project disk
   participant DB as SQLite (server.db)
   participant LLM as LLM provider
   participant EMB as Embedding provider
 
   U->>SPA: drop / upload source
-  SPA->>SRV: POST /ingest/upload (multipart)
-  SRV->>FS: write raw/sources/<ts>_<name>
-  SRV->>SRV: INSERT ingest_queue (pending)
+  SPA->>SRV: POST /ingest/upload (multipart) or POST /ingest {filePath}
+  SRV->>FS: write raw/sources/<ts>_<name>_<hex> (upload path)
+  SRV->>DB: INSERT ingest_queue (pending, attempt_count 0)
   SRV-->>SPA: 201 {taskId} + SSE ingest:queued
+  SRV->>ORC: kick()
 
-  Note over SPA: client queue driver (ingest-queue.ts)<br/>processNext → autoIngest
-  SPA->>SRV: invoke preprocess_file (PDF→MinerU, else read text)
-  SRV-->>SPA: extracted text
-  SPA->>SPA: check ingest cache (skip if unchanged)
-  SPA->>FS: extract images → wiki/media/<slug>/ (optional VLM captions)
+  loop claim loop (concurrency LLM_WIKI_INGEST_CONCURRENCY, default 2;<br/>FIFO, one task per project at a time)
+    ORC->>DB: claim next pending task (attempt_count += 1)
+    ORC->>ORC: runIngestPipeline(task, env)
+    ORC-->>SPA: SSE ingest:progress {stage, detail}
+  end
+
+  Note over ORC,FS: pipeline stages (ingest/pipeline.js)
+  ORC->>FS: read source (MinerU for PDF → .cache/<name>.txt, else preprocess worker)
+  ORC->>FS: check ingest cache — unchanged source → skip all LLM spend
+  ORC->>FS: extract images → wiki/media/<slug>/ (optional VLM captions before injection)
 
   rect rgb(238,242,255)
-  Note over SPA,LLM: LLM stages (run in browser via streamChat)
-  SPA->>LLM: Stage 1 — analysis prompt
-  LLM-->>SPA: structured analysis
-  SPA->>LLM: Stage 2 — generation prompt (emits ---FILE: wiki/…--- blocks)
-  LLM-->>SPA: page blocks (+ optional review/repair pass)
+  Note over ORC,LLM: LLM stages (server-side streamChat, ingest/llm.js)
+  ORC->>LLM: analysis prompt (long sources: chunked with checkpoints)
+  LLM-->>ORC: structured analysis
+  ORC->>LLM: generation prompt (emits ---FILE: wiki/…--- blocks)
+  LLM-->>ORC: page blocks (+ optional review stage + truncation repair)
   end
 
-  SPA->>FS: write wiki/*.md (merge if page exists), update index.md + log.md
-  SPA->>SRV: INSERT/UPDATE ingest_queue (complete) + SSE ingest:complete
+  ORC->>FS: write wiki/*.md (merge if page exists), update index.md + log.md
+  ORC->>DB: persist reviews, save ingest cache (only when fully clean)
 
   rect rgb(240,255,240)
-  Note over SPA,EMB: Embeddings (per written page)
-  SPA->>SPA: chunkMarkdown(page)
-  SPA->>SRV: embedding_fetch (via /api/proxy)
-  SRV->>EMB: embeddings request
-  EMB-->>SRV: vectors
-  SRV-->>SPA: vectors
-  SPA->>SRV: vector_upsert_chunks
-  SRV->>DB: INSERT vec_chunks (sqlite-vec vec0, cosine)
+  Note over ORC,EMB: Embeddings (per written page, server embed worker)
+  ORC->>EMB: embeddings request (chunked markdown)
+  EMB-->>ORC: vectors
+  ORC->>DB: INSERT vec_chunks (sqlite-vec vec0, cosine)
   end
+
+  ORC->>DB: UPDATE ingest_queue (complete)
+  ORC-->>SPA: SSE ingest:complete {taskId, writtenPaths}
 ```
 
-### Stages (client: `src/lib/ingest.ts` → `autoIngestImpl`)
+### Stages (server: `ingest/pipeline.js` → `runIngestPipeline`)
 
-1. **Upload + enqueue** (server) — `api/ingest.js`: write to `raw/sources/`,
-   insert `ingest_queue`, emit `ingest:queued`.
-2. **Extract/preprocess** — MinerU for PDFs (`mineru.ts`, cached to
-   `raw/sources/.cache/`); otherwise `preprocess_file` (server `commands/preprocess.js`).
-3. **Cache check** — `ingest-cache.ts` skips unchanged sources.
-4. **Images** — extract to `wiki/media/<slug>/`; optional VLM captioning.
-5. **LLM analysis** (Stage 1) — `streamChat` + `buildAnalysisPrompt`.
-6. **LLM generation** (Stage 2) — `streamChat` + `buildGenerationPrompt`,
-   emitting `---FILE: wiki/…---` blocks; optional review/repair passes.
-7. **Write wiki pages** — `writeFileBlocks` (path-guarded, sanitized); existing
-   pages merged via LLM (`page-merge.ts`); `index.md`/`log.md` updated
-   deterministically.
-8. **Embeddings** — `embedPage` per written page → chunk → `embedding_fetch` →
-   `vector_upsert_chunks` → `vec_chunks` (sqlite-vec vec0 in SQLite).
+1. **Upload + enqueue** — `api/ingest.js`: multipart upload writes to
+   `raw/sources/` with a collision-safe `<ts>_<hex8>_<name>` filename; the
+   enqueue-by-path route re-ingests existing files (deduped against live
+   tasks). Both insert `ingest_queue`, emit `ingest:queued`, and kick the
+   orchestrator.
+2. **Claim loop** — `ingest/orchestrator.js`: concurrency cap
+   (`LLM_WIKI_INGEST_CONCURRENCY`, default 2, clamp 1–16), FIFO with
+   per-project serialization, boot recovery (`resetInterruptedTasks`) and a
+   60s sweep timer.
+3. **Extract/preprocess** — MinerU for PDFs (`ingest/mineru.js`, cached to
+   `raw/sources/.cache/`); otherwise the preprocess worker (text extraction
+   with `.cache/<name>.txt` sibling caching).
+4. **Cache check before any LLM spend** — `ingest/cache.js` skips unchanged
+   sources (the image cascade still runs on cache hits).
+5. **Images + captions** — `ingest/images.js` / `image-caption.js`: extract to
+   `wiki/media/<slug>/`, optional VLM captioning before injection.
+6. **LLM analysis → generation → review** — `ingest/llm.js` `streamChat` with
+   the prompt builders in `ingest/prompts.js`; long sources are chunked with
+   resumable checkpoints (`ingest/long-source.js`); truncated FILE blocks get
+   a repair pass.
+7. **Write wiki pages** — `ingest/write.js` `writeFileBlocks` (path-guarded,
+   sanitized); existing pages merged via LLM; `index.md`/`log.md` updated
+   deterministically; reviews folded into `.llm-wiki/review.json`
+   (`ingest/reviews.js`).
+8. **Embeddings** — `ingest/embed.js` `embedPage` per written page → embed
+   worker → `vec_chunks` (sqlite-vec vec0 in SQLite).
+
+### Queue semantics
+
+- **Retry cap:** 3 attempts (`attempt_count`); a failed task becomes terminal
+  `failed` and can be re-armed via `POST /queue/:taskId/retry`.
+- **Usage limits never consume an attempt:** `deferIngestTaskForUsageLimit`
+  rolls `attempt_count` back and parks the task on `not_before` (15 min).
+- **LLM not configured:** terminal failure with the exact settings hint.
+- **Cancel:** `DELETE /queue/:taskId` deletes the row, aborts the run, cleans
+  up written files (structural `index.md`/`log.md`/`overview.md` are never
+  deleted) and removes the pages' embeddings.
+- **Progress:** every stage emits `ingest:progress` SSE frames with
+  `{projectId, taskId, stage, detail}`; the client filters by project.
 
 **Artifacts:** disk (`raw/sources/`, `wiki/*.md`, `wiki/media/`,
 `.llm-wiki/` caches) and SQLite (`ingest_queue`, `vec_chunks`).
@@ -336,10 +375,12 @@ message. Session CRUD: list/create/get/rename/delete under
 
 ## 5. Key architectural notes
 
-- **Two LLM execution sites.** Ingest LLM calls run in the **browser**
-  (`streamChat`); chat LLM calls run **server-side** (`agent.js`). Both target
-  the same configured providers. Cross-origin browser calls go through
-  `/api/proxy`.
+- **All LLM work is server-side** (issue #14 P0). Ingest LLM calls run in the
+  orchestrator/pipeline (`ingest/llm.js` `streamChat`); chat LLM calls run in
+  the agent runtime (`agent.js`). Both target the same configured providers
+  resolved from the shared plugin store. The browser pipeline
+  (`src/lib/ingest.ts`) was deleted; `/api/proxy` still serves desktop-era
+  maintenance flows and cross-origin calls.
 - **Vectors live in SQLite via sqlite-vec** (web, issue #14). `vec_chunks` is a
   sqlite-vec vec0 virtual table loaded best-effort in `getDb()`; if the
   extension cannot load the server keeps working with keyword-only retrieval
@@ -382,8 +423,10 @@ message. Session CRUD: list/create/get/rename/delete under
 | Flow | Endpoint | Handler |
 |---|---|---|
 | Ingest upload | `POST /api/v2/projects/:id/ingest/upload` | `api/ingest.js` |
-| Ingest queue | `GET/POST /api/v2/projects/:id/ingest/queue[…]` | `api/ingest.js` |
+| Ingest enqueue (existing file) | `POST /api/v2/projects/:id/ingest` | `api/ingest.js` |
+| Ingest queue | `GET /…/ingest/queue`, `POST /…/queue/clear`, `GET /…/queue/:taskId`, `POST /…/queue/:taskId/retry`, `DELETE /…/queue/:taskId` | `api/ingest.js` → `store/ingest-queue.js` + `ingest/orchestrator.js` |
 | Chat turn | `POST /api/v2/projects/:id/chat` | `api/chat.js` → `agent.js` |
+| Chat Write-to-Wiki | `POST /api/v2/projects/:id/chat/writes` | `api/chat.js` (streams `agent-event` frames) |
 | Chat cancel | `POST /api/v2/projects/:id/chat/:runId/cancel` | `api/chat.js` |
 | Chat sessions | `GET/POST /api/v2/projects/:id/chat/sessions`, `GET/PATCH/DELETE …/:sessionId` | `api/chat.js` → `store/chat-sessions.js` |
 | Search | `POST /api/invoke/search_project` (via bridge) | `commands/search.js` |

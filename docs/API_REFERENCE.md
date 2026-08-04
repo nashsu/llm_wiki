@@ -127,6 +127,7 @@ upstream provider info). Stable error codes and their HTTP statuses:
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/v2/projects/:id/chat` | Start a chat turn (streaming response). |
+| POST | `/api/v2/projects/:id/chat/writes` | Chat "Write to Wiki" — generates and writes wiki pages from the conversation. Body `{ "sessionId", "userGuidance"?, "sourcePath"? }` → `{ runId, sessionId, writePrompt }`; streams `agent-event` frames (`messageDelta` / `wikiWrites` / `error` / `done`). |
 | POST | `/api/v2/projects/:id/chat/:runId/cancel` | Cancel a running turn. |
 | GET | `/api/v2/projects/:id/chat/sessions/:sessionId` | Get session state/history. |
 
@@ -135,10 +136,12 @@ upstream provider info). Stable error codes and their HTTP statuses:
 | Method | Path | Description |
 |---|---|---|
 | POST | `/ingest/upload` | Upload a document for ingestion — multipart form, field name `file`. |
+| POST | `/ingest` | Enqueue an existing project file for (re-)ingest. Body `{ "filePath", "folderContext"? }`; deduped against live tasks (`deduplicated: true` on hit). |
 | GET | `/ingest/queue` | List the ingest queue. Query: `status`, `limit`. |
 | POST | `/ingest/queue/clear` | Clear queue entries. Body `{ "status"? }`. |
 | GET | `/ingest/queue/:taskId` | Get one queued task. |
-| DELETE | `/ingest/queue/:taskId` | Cancel/remove one queued task. |
+| POST | `/ingest/queue/:taskId/retry` | Re-arm a `failed` task (409 otherwise). |
+| DELETE | `/ingest/queue/:taskId` | Cancel a task (aborts the run, cleans up written files + embeddings) or remove a queued one. |
 
 ### Reviews
 
