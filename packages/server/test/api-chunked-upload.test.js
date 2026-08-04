@@ -13,7 +13,16 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest"
 import request from "supertest"
 import crypto from "node:crypto"
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs"
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  readdirSync,
+  appendFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -36,12 +45,30 @@ vi.mock("../src/ingest/orchestrator.js", () => ({
 
 const { app } = await import("../src/index-v2.js")
 const { eventBus, EventTypes } = await import("../src/events/bus.js")
+const chunked = await import("../src/uploads/chunked.js")
 
 const CHUNK = 400 * 1024 // 400KB chunks, three of them per happy-path file
 const PROJECT_DIR = path.join(DATA_DIR, "proj")
 const OTHER_DIR = path.join(DATA_DIR, "proj-b")
+const STAGING_DIR = path.join(DATA_DIR, "upload-staging")
 let projectId
 let otherProjectId
+
+/**
+ * destroyChunkedUpload unlinks staging files fire-and-forget, so poll briefly
+ * until the staging directory has actually drained (or never materialized).
+ */
+async function expectStagingDirEmpty() {
+  const deadline = Date.now() + 2000
+  for (;;) {
+    const entries = existsSync(STAGING_DIR) ? readdirSync(STAGING_DIR) : []
+    if (entries.length === 0) return
+    if (Date.now() > deadline) {
+      throw new Error(`upload-staging did not drain: ${entries.join(", ")}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
 
 /** file:created / file:modified envelopes captured off the internal bus. */
 let frames = []
@@ -132,6 +159,10 @@ describe("happy path", () => {
     expect(frames[0].type).toBe(EventTypes.FILE_CREATED)
     expect(frames[0].projectId).toBeNull()
     expect(frames[0].payload).toEqual({ projectId, path: dest, size: total })
+
+    // Complete unlinks the staging .part (this is the only live session so
+    // far, so the whole staging directory must be empty).
+    await expectStagingDirEmpty()
   })
 
   it("the session is gone after complete (second complete → NOT_FOUND)", async () => {
@@ -174,6 +205,9 @@ describe("resume channel + offset rules", () => {
     expect(replay.status).toBe(400)
     expect(replay.body.error.code).toBe("VALIDATION_ERROR")
     expect(replay.body.error.details).toEqual({ received: CHUNK })
+
+    // Cleanup: drop the leftover session + staging (test hygiene).
+    chunked.destroyChunkedUpload(chunked.getChunkedUpload(uploadId))
   })
 
   it("a 0-byte chunk at the right offset is a no-op success", async () => {
@@ -181,6 +215,7 @@ describe("resume channel + offset rules", () => {
     const res = await putChunk(uploadId, 0, Buffer.alloc(0))
     expect(res.status).toBe(200)
     expect(res.body.received).toBe(0)
+    chunked.destroyChunkedUpload(chunked.getChunkedUpload(uploadId))
   })
 })
 
@@ -220,6 +255,9 @@ describe("complete guards", () => {
     const res = await request(app).post(files(`/upload/${uploadId}/complete`))
     expect(res.status).toBe(400)
     expect(res.body.error.code).toBe("VALIDATION_ERROR")
+
+    // Cleanup: drop the leftover session + staging (test hygiene).
+    chunked.destroyChunkedUpload(chunked.getChunkedUpload(uploadId))
   })
 
   it("unknown uploadId → NOT_FOUND on chunk and complete", async () => {
@@ -245,6 +283,9 @@ describe("complete guards", () => {
     expect(res.body.error.code).toBe("FORBIDDEN")
     expect(existsSync(path.resolve(PROJECT_DIR, "..", "evil.bin"))).toBe(false)
     expect(frames).toHaveLength(0)
+    // A terminal finalize failure destroys the session (destPath is fixed at
+    // init, so it can never complete on retry).
+    expect(chunked.getChunkedUpload(uploadId)).toBeUndefined()
   })
 })
 
@@ -301,12 +342,14 @@ describe("cross-project isolation", () => {
       .post(`/api/v2/projects/${otherProjectId}/files/upload/${uploadId}/complete`)
     expect(complete.status).toBe(404)
     expect(complete.body.error.code).toBe("NOT_FOUND")
+
+    // Cleanup: drop the leftover session + staging (test hygiene).
+    chunked.destroyChunkedUpload(chunked.getChunkedUpload(uploadId))
   })
 })
 
 describe("TTL sweep", () => {
   it("sweepExpiredChunkedUploads drops sessions idle past the TTL", async () => {
-    const chunked = await import("../src/uploads/chunked.js")
     const uploadId = await initUpload("stale.bin", 100, "raw/sources/stale.bin")
     const first = await putChunk(uploadId, 0, Buffer.alloc(100, 4))
     expect(first.status).toBe(200)
@@ -320,5 +363,113 @@ describe("TTL sweep", () => {
     expect(chunked.getChunkedUpload(uploadId)).toBeUndefined()
     const res = await request(app).post(files(`/upload/${uploadId}/complete`))
     expect(res.status).toBe(404)
+
+    // The sweep unlinks the swept session's staging file; every earlier test
+    // cleaned up its sessions, so the whole directory must drain.
+    await expectStagingDirEmpty()
+  })
+})
+
+describe("concurrent same-offset chunk PUTs (serialization)", () => {
+  it("exactly one append wins per offset; the loser gets the resume channel (3 rounds)", async () => {
+    for (let round = 0; round < 3; round++) {
+      const content = crypto.randomBytes(2 * CHUNK)
+      const dest = `raw/sources/race-${round}.bin`
+      const uploadId = await initUpload(`race-${round}.bin`, content.length, dest)
+
+      // Two concurrent PUTs at the SAME offset: before the per-session append
+      // chain both passed the offset check and double-appended. Now the
+      // serialized second append observes the winner's byte count.
+      const [a, b] = await Promise.all([
+        putChunk(uploadId, 0, content.subarray(0, CHUNK)),
+        putChunk(uploadId, 0, content.subarray(0, CHUNK)),
+      ])
+      expect([a.status, b.status].sort()).toEqual([200, 400])
+      const winner = a.status === 200 ? a : b
+      const loser = a.status === 400 ? a : b
+      expect(winner.body.received).toBe(CHUNK)
+      expect(loser.body.error.code).toBe("VALIDATION_ERROR")
+      expect(loser.body.error.details).toEqual({ received: CHUNK })
+
+      const tail = await putChunk(uploadId, CHUNK, content.subarray(CHUNK))
+      expect(tail.status).toBe(200)
+      expect(tail.body.received).toBe(content.length)
+
+      const done = await request(app).post(files(`/upload/${uploadId}/complete`))
+      expect(done.status).toBe(200)
+      const written = readFileSync(path.join(PROJECT_DIR, dest))
+      expect(crypto.createHash("sha256").update(written).digest("hex"))
+        .toBe(crypto.createHash("sha256").update(content).digest("hex"))
+    }
+  })
+})
+
+describe("resume channel beats the body-overflow bound", () => {
+  it("resending the FINAL chunk (all bytes on disk) → 400 WITH details.received, then complete succeeds", async () => {
+    const content = crypto.randomBytes(2 * CHUNK)
+    const uploadId = await initUpload("final-resend.bin", content.length, "raw/sources/final-resend.bin")
+    for (let i = 0; i < 2; i++) {
+      const res = await putChunk(uploadId, i * CHUNK, content.subarray(i * CHUNK, (i + 1) * CHUNK))
+      expect(res.status).toBe(200)
+    }
+
+    // The final chunk's 200 was "lost" and the client resends it: offset is
+    // stale and the remaining-bytes bound is 0 — the offset check must win
+    // so the 400 carries details.received === fileSize and resume survives.
+    const resend = await putChunk(uploadId, CHUNK, content.subarray(CHUNK))
+    expect(resend.status).toBe(400)
+    expect(resend.body.error.code).toBe("VALIDATION_ERROR")
+    expect(resend.body.error.details).toEqual({ received: content.length })
+
+    const done = await request(app).post(files(`/upload/${uploadId}/complete`))
+    expect(done.status).toBe(200)
+    expect(readFileSync(path.join(PROJECT_DIR, "raw/sources/final-resend.bin")).equals(content)).toBe(true)
+  })
+
+  it("wrong offset + oversize body → resume-channel 400 with details.received, session stays usable", async () => {
+    const size = 2000
+    const uploadId = await initUpload("wrong-and-over.bin", size, "raw/sources/wrong-and-over.bin")
+    const first = await putChunk(uploadId, 0, Buffer.alloc(1000, 1))
+    expect(first.status).toBe(200)
+
+    // Offset 0 ≠ received 1000 AND the 1500-byte body overflows the 1000
+    // remaining bytes: the offset check answers BEFORE the overflow bound.
+    const bad = await putChunk(uploadId, 0, Buffer.alloc(1500, 2))
+    expect(bad.status).toBe(400)
+    expect(bad.body.error.code).toBe("VALIDATION_ERROR")
+    expect(bad.body.error.details).toEqual({ received: 1000 })
+
+    const tail = await putChunk(uploadId, 1000, Buffer.alloc(1000, 3))
+    expect(tail.status).toBe(200)
+    expect(tail.body.received).toBe(size)
+
+    const done = await request(app).post(files(`/upload/${uploadId}/complete`))
+    expect(done.status).toBe(200)
+    const written = readFileSync(path.join(PROJECT_DIR, "raw/sources/wrong-and-over.bin"))
+    expect(written.length).toBe(size)
+    expect(written.subarray(0, 1000).every((b) => b === 1)).toBe(true)
+    expect(written.subarray(1000).every((b) => b === 3)).toBe(true)
+  })
+})
+
+describe("complete verifies the real staging size", () => {
+  it("staging larger than fileSize → INTERNAL_ERROR, session + staging destroyed", async () => {
+    const uploadId = await initUpload("tamper.bin", 100, "raw/sources/tamper.bin")
+    const first = await putChunk(uploadId, 0, Buffer.alloc(100, 6))
+    expect(first.status).toBe(200)
+
+    // Corrupt the staging state out-of-band: received still claims 100 bytes.
+    const session = chunked.getChunkedUpload(uploadId)
+    appendFileSync(session.stagingPath, Buffer.alloc(16, 0xff))
+
+    const res = await request(app).post(files(`/upload/${uploadId}/complete`))
+    expect(res.status).toBe(500)
+    expect(res.body.error.code).toBe("INTERNAL_ERROR")
+
+    // Corrupt state is unrecoverable: session dropped, staging unlinked,
+    // nothing written to the project.
+    expect(chunked.getChunkedUpload(uploadId)).toBeUndefined()
+    expect(existsSync(path.join(PROJECT_DIR, "raw/sources/tamper.bin"))).toBe(false)
+    await expectStagingDirEmpty()
   })
 })

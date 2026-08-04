@@ -25,6 +25,7 @@ import {
   getChunkedUpload,
   appendChunk,
   completeChunkedUpload,
+  destroyChunkedUpload,
 } from "../uploads/chunked.js"
 
 const router = Router({ mergeParams: true })
@@ -173,6 +174,26 @@ router.put("/upload/:uploadId/chunk", validate({ query: ChunkedUploadChunkQueryS
   try {
     const session = requireChunkedSession(req)
     const { offset } = req.validated.query
+    // RESUME CHANNEL FIRST: the offset check must run BEFORE the bounded body
+    // read. A resent final chunk (response lost, all bytes already on disk)
+    // overflows the zero remaining-bytes bound — if readChunkBody rejected
+    // first, the 400 would carry no details.received and the client could
+    // never resume. A mismatched offset answers 400 + details.received
+    // immediately, without buffering the body. appendChunk re-checks the
+    // offset inside its per-session chain, where a racing append may have
+    // moved the count since this pre-check.
+    if (offset !== session.received) {
+      const err = new ApiError(
+        ErrorCode.VALIDATION_ERROR,
+        `Chunk offset ${offset} does not match server byte count`,
+        { received: session.received },
+      )
+      res.status(err.status).json({
+        error: { code: err.code, message: err.message, details: err.details ?? null },
+      })
+      req.destroy()
+      return
+    }
     let buffer
     try {
       buffer = await readChunkBody(req, session.fileSize - session.received)
@@ -202,7 +223,22 @@ router.put("/upload/:uploadId/chunk", validate({ query: ChunkedUploadChunkQueryS
 router.post("/upload/:uploadId/complete", async (req, res, next) => {
   try {
     const session = requireChunkedSession(req)
-    const result = await completeChunkedUpload(session, req.projectRoot)
+    let result
+    try {
+      result = await completeChunkedUpload(session, req.projectRoot)
+    } catch (err) {
+      // VALIDATION_ERROR here is the "upload incomplete" precondition — the
+      // session can still receive its missing chunks, so it stays alive.
+      // Every other finalize failure is terminal: destPath is fixed at init,
+      // so a finalize that failed can never succeed on retry — drop the
+      // session + staging (the client re-uploads from byte 0). Fs errors map
+      // to structured codes (EISDIR → VALIDATION_ERROR, ENOENT → NOT_FOUND);
+      // ApiErrors pass through unchanged.
+      if (!(err instanceof ApiError && err.code === ErrorCode.VALIDATION_ERROR)) {
+        destroyChunkedUpload(session)
+      }
+      throw mapFsError(err)
+    }
     res.json(result)
   } catch (err) {
     next(err)

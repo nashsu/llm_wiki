@@ -228,6 +228,27 @@ describe("resume via 400 details.received (the resume channel)", () => {
     expect(mockEnqueueByPath).toHaveBeenCalledWith(PROJECT_ID, COMPLETE_PATH)
     expect(res.taskId).toBe(7)
   })
+
+  it("a resent FINAL chunk (400 details.received === fileSize) exits the loop straight to complete", async () => {
+    const file = makeFile("big.bin", LARGE_SIZE)
+    // The final chunk's 200 was lost; the server answers the resend with the
+    // resume channel reporting ALL bytes already received. The client must
+    // adopt fileSize, skip any resend, and proceed to complete + enqueue.
+    putScript[2] = () =>
+      errorResponse(400, "VALIDATION_ERROR", "Chunk offset does not match server byte count", {
+        received: LARGE_SIZE,
+      })
+
+    const res = await uploadFileAuto(PROJECT_ID, file)
+
+    // Exactly the three chunk PUTs — no degenerate empty resend at offset
+    // fileSize — then complete + enqueue once each.
+    expect(putCalls.map((c) => c.offset)).toEqual([0, CHUNK_SIZE, 2 * CHUNK_SIZE])
+    expect(completeCalls).toHaveLength(1)
+    expect(mockEnqueueByPath).toHaveBeenCalledTimes(1)
+    expect(mockEnqueueByPath).toHaveBeenCalledWith(PROJECT_ID, COMPLETE_PATH)
+    expect(res).toEqual(ENQUEUE_RESPONSE)
+  })
 })
 
 describe("transient retry", () => {

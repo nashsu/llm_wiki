@@ -209,7 +209,14 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
   useEffect(() => {
     const disconnect = connectEvents((evt) => {
       const payload = evt.payload as
-        | { projectId?: number; taskId?: number; progress?: number; error?: string }
+        | {
+            projectId?: number
+            taskId?: number
+            progress?: number
+            error?: string
+            status?: string
+            retryable?: boolean
+          }
         | null
       if (!payload || typeof payload !== "object") return
       if (typeof payload.projectId === "number" && payload.projectId !== sseProjectId) return
@@ -223,10 +230,17 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
       } else if (evt.event === "ingest:complete") {
         patchByTaskId(taskId, { status: "done", progress: 100 })
       } else if (evt.event === "ingest:error") {
-        patchByTaskId(taskId, {
-          status: "error",
-          error: typeof payload.error === "string" ? payload.error : "Ingest failed",
-        })
+        // Mirror src/lib/sse-sync.ts: the server also emits ingest:error for
+        // TRANSIENT failures (status "pending", retryable: true — the row goes
+        // back to the queue for the next attempt). Only a terminal failure
+        // flips the entry to error; a retryable one stays trackable as queued
+        // so the SSE/poll handlers keep following the retry.
+        const errorText = typeof payload.error === "string" ? payload.error : "Ingest failed"
+        if (payload.status === "failed" || payload.retryable === false) {
+          patchByTaskId(taskId, { status: "error", error: errorText })
+        } else {
+          patchByTaskId(taskId, { status: "queued", error: errorText })
+        }
       }
     })
     return disconnect

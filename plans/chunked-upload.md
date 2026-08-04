@@ -171,3 +171,27 @@ seeded project, Playwright) with REPO pointed at this worktree.
 
 **Gates:** `npm test -w @llm-wiki/server` per stage; stages 4–7 additionally
 `npm run typecheck`, `npm run test:mocks`, `npm run build:web`.
+
+## Review-fix addendum (PR #30 round 1)
+
+- **F1:** `appendChunk` serialized per session via a promise chain
+  (`session.appendChain`) — concurrent same-offset PUTs can no longer
+  double-append; the loser observes the updated count and answers the resume
+  channel.
+- **F2:** write-integrity guards — `bytesWritten` check (short write =
+  failure) and truncate-back-to-`received` on any staging write failure;
+  `completeChunkedUpload` verifies the actual staging size equals `fileSize`
+  before copying (mismatch → destroy session + staging, INTERNAL_ERROR;
+  client re-uploads).
+- **F3:** `startChunkedUploadSweeper` wipes orphaned staging `.part` files at
+  boot (sessions never survive a restart).
+- **F4:** DropZone treats retryable `ingest:error` frames (status "pending")
+  as queued, matching sse-sync.ts; only `status: "failed"` /
+  `retryable: false` flips the entry to error.
+- **F5:** the complete route maps finalize fs errors through `mapFsError` and
+  destroys the session + staging on a terminal finalize failure (destPath is
+  fixed at init, so it can never complete on retry).
+- **F6:** the chunk route checks `offset === received` BEFORE the bounded
+  body read, so a resent final chunk answers 400 WITH `details.received`
+  (resume channel survives); the client returns immediately from
+  `putChunkWithRetry` when the adopted `received` reaches `file.size`.

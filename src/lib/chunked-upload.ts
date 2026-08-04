@@ -181,6 +181,12 @@ async function putChunkWithRetry(
         // RESUME CHANNEL: the server's byte count is authoritative (happens
         // after ambiguous network drops). Adopt it and re-slice from there.
         offset = serverReceived
+        if (offset >= file.size) {
+          // The server already has every byte (e.g. the final chunk landed
+          // but its response was lost): nothing left to resend — return and
+          // let the loop fall through to complete.
+          return offset
+        }
         needsBackoff = false
       } else {
         needsBackoff = true

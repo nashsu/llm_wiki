@@ -12,7 +12,7 @@
 import crypto from "node:crypto"
 import path from "node:path"
 import fsp from "node:fs/promises"
-import { createReadStream, createWriteStream } from "node:fs"
+import { createReadStream, createWriteStream, rmSync } from "node:fs"
 import { pipeline } from "node:stream/promises"
 import { DATA_DIR, MAX_UPLOAD_BYTES } from "../config.js"
 import { safeJoin } from "../store/project-paths.js"
@@ -90,12 +90,27 @@ export function getChunkedUpload(uploadId) {
  * resumes from that byte count. This covers reconnect-after-ambiguity and
  * plain offset bugs without an un-chartered status endpoint.
  *
+ * SERIALIZATION: validation + write run inside a per-session promise chain
+ * (`session.appendChain`) so two concurrent PUTs at the same offset cannot
+ * both pass the offset check and double-append — the loser observes the
+ * winner's updated `received` and answers the resume channel instead of
+ * corrupting the staging file.
+ *
  * @param {object} session
  * @param {Buffer} buffer raw chunk bytes (may be empty — a no-op success)
  * @param {number} offset client-reported byte offset of this chunk
  * @returns {Promise<number>} total bytes received after this chunk
  */
-export async function appendChunk(session, buffer, offset) {
+export function appendChunk(session, buffer, offset) {
+  const run = (session.appendChain ?? Promise.resolve()).then(() =>
+    appendChunkLocked(session, buffer, offset),
+  )
+  // A failed append must not poison the chain for later chunks.
+  session.appendChain = run.catch(() => {})
+  return run
+}
+
+async function appendChunkLocked(session, buffer, offset) {
   if (offset !== session.received) {
     throw new ApiError(
       ErrorCode.VALIDATION_ERROR,
@@ -109,7 +124,16 @@ export async function appendChunk(session, buffer, offset) {
   if (buffer.length > 0) {
     const handle = await fsp.open(session.stagingPath, "a")
     try {
-      await handle.write(buffer)
+      const { bytesWritten } = await handle.write(buffer)
+      if (bytesWritten !== buffer.length) {
+        throw new ApiError(ErrorCode.INTERNAL_ERROR, "Short write to chunked-upload staging file")
+      }
+    } catch (err) {
+      // Write failure: truncate staging back to the last confirmed byte so
+      // the file and session.received never desync — a client retry then
+      // re-appends at the right place.
+      await fsp.truncate(session.stagingPath, session.received).catch(() => {})
+      throw err
     } finally {
       await handle.close()
     }
@@ -135,6 +159,15 @@ export async function completeChunkedUpload(session, projectRoot) {
       ErrorCode.VALIDATION_ERROR,
       `Upload incomplete: received ${session.received} of ${session.fileSize} bytes`,
     )
+  }
+  // Verify the ACTUAL staging size against the declared size before copying —
+  // the counter is only as trustworthy as the last append. A mismatch is
+  // unrecoverable (corrupt state; the client re-uploads from byte 0), so
+  // destroy the session + staging.
+  const staging = await fsp.stat(session.stagingPath)
+  if (staging.size !== session.fileSize) {
+    destroyChunkedUpload(session)
+    throw new ApiError(ErrorCode.INTERNAL_ERROR, "Chunked-upload staging file size mismatch")
   }
   const absDest = safeJoin(projectRoot, session.destPath) // FORBIDDEN on escape
   await fsp.mkdir(path.dirname(absDest), { recursive: true })
@@ -192,6 +225,15 @@ export function sweepExpiredChunkedUploads() {
  */
 export function startChunkedUploadSweeper() {
   if (sweepTimer) return
+  // Sessions live only in memory, so no session survives a restart: every
+  // .part file still present in staging was orphaned by the last restart and
+  // can never complete. Wipe them synchronously at start (best-effort — the
+  // lazy mkdir in createChunkedUpload recreates the directory on demand).
+  try {
+    rmSync(stagingDir(), { recursive: true, force: true })
+  } catch {
+    // Orphan cleanup must not block boot; leftover files are inert.
+  }
   sweepTimer = setInterval(() => sweepExpiredChunkedUploads(), SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
 }
