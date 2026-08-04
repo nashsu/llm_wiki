@@ -136,8 +136,23 @@ router.post("/:id/chat/:runId/cancel", validate({ params: ChatCancelParamsSchema
 
 const AGENT_EVENT = "agent-event"
 
-function emitAgentEvent(sessionId, runId, event) {
+function emitAgentEvent(sessionId, runId, event, projectId = null) {
   emit(AGENT_EVENT, { sessionId, runId, event })
+  // SSE taxonomy dual emission (plans/sse-taxonomy.md stage 5): messageDelta
+  // → chat:delta, done → chat:done, at the same choke point, so a tab that
+  // does not consume agent-event can sync the run. agent-event stays
+  // byte-identical; attribution rides in the payload (emit() bridge keeps the
+  // envelope projectId null). wikiWrites/referenceAdded/fileChanged/error
+  // have NO charter equivalent and stay agent-event-only — the error site's
+  // companion done carries no text, so the text gate keeps it agent-event
+  // too (parity with agentStartTurnStream's error site). done's content is
+  // the run's accumulated full text so a tab that missed deltas can finalize.
+  if (projectId == null || !event) return
+  if (event.type === "messageDelta") {
+    emit(EventTypes.CHAT_DELTA, { sessionId, runId, projectId, text: event.text })
+  } else if (event.type === "done" && typeof event.text === "string") {
+    emit(EventTypes.CHAT_DONE, { sessionId, runId, projectId, content: event.text, references: event.references ?? [] })
+  }
 }
 
 // Byte-identical port of the writePrompt assembly in
@@ -345,7 +360,7 @@ router.post(
             {
               onToken: (token) => {
                 accumulated += token
-                emitAgentEvent(sessionId, runId, { type: "messageDelta", text: token })
+                emitAgentEvent(sessionId, runId, { type: "messageDelta", text: token }, req.projectId)
               },
             },
           )
@@ -356,8 +371,8 @@ router.post(
           const message = err instanceof Error ? err.message : String(err)
           const finalText = `Error generating wiki files: ${message}`
           try { chatStore.appendMessage(session.id, "assistant", finalText) } catch { /* best effort */ }
-          emitAgentEvent(sessionId, runId, { type: "error", message: finalText })
-          emitAgentEvent(sessionId, runId, { type: "done" })
+          emitAgentEvent(sessionId, runId, { type: "error", message: finalText }, req.projectId)
+          emitAgentEvent(sessionId, runId, { type: "done" }, req.projectId)
           return
         }
 
@@ -371,7 +386,7 @@ router.post(
           activeSourceSummaryPath,
         })
 
-        emitAgentEvent(sessionId, runId, { type: "wikiWrites", writtenPaths })
+        emitAgentEvent(sessionId, runId, { type: "wikiWrites", writtenPaths }, req.projectId)
 
         // File events so sse-sync refreshes file trees. chat/writes writes
         // its FILE blocks itself (writeChatWikiBlocks, not via the
@@ -438,7 +453,7 @@ router.post(
           }
         }
 
-        emitAgentEvent(sessionId, runId, { type: "done", text: accumulated })
+        emitAgentEvent(sessionId, runId, { type: "done", text: accumulated }, req.projectId)
       })()
 
       res.json({ runId, sessionId, writePrompt })

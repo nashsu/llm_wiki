@@ -94,6 +94,7 @@ function watchEvents(sessionId) {
   const frames = []        // agent-event payloads { sessionId, runId, event }
   const fileEvents = []    // { type, payload } file:created / file:modified
   const graphEvents = []   // graph:updated envelopes (taxonomy stage 4)
+  const chatEvents = []    // chat:* envelopes (taxonomy stage 5 dual emission)
   let resolveDone
   const donePromise = new Promise((resolve) => { resolveDone = resolve })
   const unsub = eventBus.subscribe((env) => {
@@ -106,12 +107,16 @@ function watchEvents(sessionId) {
       fileEvents.push({ type: env.type, payload: env.payload })
     } else if (env.type === "graph:updated") {
       graphEvents.push(env)
+    } else if (env.type === "chat:delta" || env.type === "chat:toolStart" || env.type === "chat:toolEnd" || env.type === "chat:done") {
+      if ((env.payload?.sessionId ?? null) !== sessionId) return
+      chatEvents.push(env)
     }
   })
   return {
     frames,
     fileEvents,
     graphEvents,
+    chatEvents,
     events: () => frames.map((f) => f.event),
     async waitDone(timeoutMs = 5000) {
       await Promise.race([
@@ -260,6 +265,37 @@ describe("POST /:id/chat/writes — happy path", () => {
 
     const done = events[events.length - 1]
     expect(done.text).toBe(scriptedOutput)
+  })
+
+  it("dual-emits chat:delta + chat:done taxonomy frames alongside agent-event (stage 5)", async () => {
+    await watcher.waitDone()
+    const runId = response.body.runId
+    // agent-event frames stay byte-identical AND the charter chat:* frames
+    // ride the same bus: per messageDelta a chat:delta, then ONE chat:done
+    // after the done agent-event. chat/writes runs no tool steps, so no
+    // chat:toolStart/chat:toolEnd frames.
+    expect(watcher.chatEvents.map((e) => e.type)).toEqual([
+      "chat:delta", "chat:delta", "chat:delta", "chat:done",
+    ])
+    const deltas = watcher.chatEvents.filter((e) => e.type === "chat:delta")
+    for (const d of deltas) {
+      expect(d.projectId).toBeNull() // emit() bridge envelope
+      expect(d.payload).toEqual({ sessionId, runId, projectId, text: d.payload.text })
+    }
+    // Delta texts reconstruct the full streamed output (token parity with
+    // the messageDelta agent-event frames).
+    expect(deltas.map((d) => d.payload.text).join("")).toBe(scriptedOutput)
+    // chat:done carries the accumulated full text so a tab that missed the
+    // deltas can finalize; chat/writes has no references.
+    const done = watcher.chatEvents.find((e) => e.type === "chat:done")
+    expect(done.projectId).toBeNull()
+    expect(done.payload).toEqual({
+      sessionId,
+      runId,
+      projectId,
+      content: scriptedOutput,
+      references: [],
+    })
   })
 
   it("persists user writePrompt + assistant output as session rows", async () => {
@@ -483,6 +519,11 @@ describe("POST /:id/chat/writes — stream error path", () => {
       expect(events.map((e) => e.type)).toEqual(["error", "done"])
       expect(events[0].message).toBe("Error generating wiki files: provider exploded")
       expect(events[1]).toEqual({ type: "done" })
+
+      // Stage 5: error frames have no charter equivalent, and the error
+      // site's companion done carries no text — the whole site stays
+      // agent-event-only (no chat:* dual emission).
+      expect(watcher.chatEvents).toEqual([])
 
       // Client parity: onError finalizeStream persists the error text as the
       // assistant message, right after the user writePrompt row.
