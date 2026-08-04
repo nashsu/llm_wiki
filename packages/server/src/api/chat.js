@@ -145,8 +145,10 @@ function emitAgentEvent(sessionId, runId, event, projectId = null) {
   // envelope projectId null). wikiWrites/referenceAdded/fileChanged/error
   // have NO charter equivalent and stay agent-event-only — the error site's
   // companion done carries no text, so the text gate keeps it agent-event
-  // too (parity with agentStartTurnStream's error site). done's content is
-  // the run's accumulated full text so a tab that missed deltas can finalize.
+  // too (parity with agentStartTurnStream's error site); the error site ADDS
+  // a terminal chat:done dual below so previewing tabs can leave streaming
+  // state. done's content is the run's accumulated full text so a tab that
+  // missed deltas can finalize.
   if (projectId == null || !event) return
   if (event.type === "messageDelta") {
     emit(EventTypes.CHAT_DELTA, { sessionId, runId, projectId, text: event.text })
@@ -373,6 +375,18 @@ router.post(
           try { chatStore.appendMessage(session.id, "assistant", finalText) } catch { /* best effort */ }
           emitAgentEvent(sessionId, runId, { type: "error", message: finalText }, req.projectId)
           emitAgentEvent(sessionId, runId, { type: "done" }, req.projectId)
+          // Terminal chat:done dual (review fix): a tab previewing this write
+          // run via chat:delta has no agent-event consumer, so without a
+          // terminal frame its isStreaming stays true forever. Content mirrors
+          // the owning tab's error finalize (agentEvent.message = finalText).
+          // Direct emit keeps the agent-event stream byte-identical.
+          emit(EventTypes.CHAT_DONE, {
+            sessionId,
+            runId,
+            projectId: req.projectId,
+            content: finalText,
+            references: [],
+          })
           return
         }
 

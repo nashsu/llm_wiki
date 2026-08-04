@@ -21,11 +21,15 @@ vi.mock("@/api/projects", () => ({
 vi.mock("@/lib/project-file-tree-refresh", () => ({
   refreshProjectFileTree: vi.fn(),
 }))
+vi.mock("@/lib/project-store", () => ({
+  loadOutputLanguage: vi.fn(),
+}))
 
 import { connectEvents, type ServerEvent } from "@/api/events"
 import { request } from "@/api/client"
 import { listProjects } from "@/api/projects"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { loadOutputLanguage } from "@/lib/project-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { startSseSync, stopSseSync } from "./sse-sync"
@@ -34,6 +38,7 @@ const mockConnectEvents = vi.mocked(connectEvents)
 const mockRequest = vi.mocked(request)
 const mockListProjects = vi.mocked(listProjects)
 const mockRefreshTree = vi.mocked(refreshProjectFileTree)
+const mockLoadOutputLanguage = vi.mocked(loadOutputLanguage)
 
 let listener: ((evt: ServerEvent) => void) | null = null
 
@@ -79,6 +84,8 @@ beforeEach(() => {
   })
   mockRefreshTree.mockReset()
   mockRefreshTree.mockResolvedValue(undefined)
+  mockLoadOutputLanguage.mockReset()
+  mockLoadOutputLanguage.mockResolvedValue(null)
 
   useChatStore.setState({
     conversations: [{ id: "conv-1", title: "One", createdAt: 1, updatedAt: 1 }],
@@ -201,6 +208,45 @@ describe("sse-sync chat scoping (SSE taxonomy stage 6)", () => {
     expect(state.streamingContent).toBe("")
     expect(state.messages).toEqual([])
   })
+
+  it("terminal chat:done with empty content (cancelled run) resets streaming without a message", async () => {
+    const dispatch = await startSync()
+
+    // A foreign-tab run mid-preview: deltas set isStreaming + fill the buffer.
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-run", projectId: 7, text: "par" } })
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-run", projectId: 7, text: "tial" } })
+    let state = useChatStore.getState()
+    expect(state.isStreaming).toBe(true)
+    expect(state.streamingContent).toBe("partial")
+
+    // The server error site duals a textless terminal chat:done for cancelled
+    // runs; the preview must end WITHOUT an assistant message (owning-tab
+    // abort-like parity) — otherwise the tab stays stuck in isStreaming and
+    // its send paths remain locked.
+    dispatch({ event: "chat:done", payload: { sessionId: "conv-1", runId: "srv-run", projectId: 7, content: "" } })
+
+    state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    expect(state.messages).toEqual([])
+  })
+
+  it("terminal chat:done of a failed run finalizes the error text as the message", async () => {
+    const dispatch = await startSync()
+
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-run", projectId: 7, text: "partial " } })
+    dispatch({
+      event: "chat:done",
+      payload: { sessionId: "conv-1", runId: "srv-run", projectId: 7, content: "Error: llm exploded", references: [] },
+    })
+
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    expect(state.streamingContent).toBe("")
+    const messages = state.messages.filter((m) => m.conversationId === "conv-1")
+    expect(messages).toHaveLength(1)
+    expect(messages[0].role).toBe("assistant")
+    expect(messages[0].content).toBe("Error: llm exploded")
+  })
 })
 
 describe("sse-sync file refresh debounce (SSE taxonomy stage 6)", () => {
@@ -262,5 +308,50 @@ describe("sse-sync file refresh debounce (SSE taxonomy stage 6)", () => {
     vi.advanceTimersByTime(1000)
 
     expect(mockRefreshTree).not.toHaveBeenCalled()
+  })
+})
+
+describe("sse-sync settings invalidation (SSE taxonomy fleet S2)", () => {
+  it("settings:changed applies the synced output language to the wiki store (per-project override wins)", async () => {
+    const dispatch = await startSync()
+    useWikiStore.setState({ outputLanguage: "auto" })
+    mockLoadOutputLanguage.mockImplementation(async (projectId?: string) =>
+      projectId === "uuid-1" ? "Chinese" : "English",
+    )
+
+    dispatch({ event: "settings:changed", payload: { keys: ["outputLanguage"] } })
+
+    await vi.waitFor(() => {
+      expect(useWikiStore.getState().outputLanguage).toBe("Chinese")
+    })
+    expect(mockLoadOutputLanguage).toHaveBeenCalledWith("uuid-1")
+    // Per-project override won ⇒ the host-global read is skipped.
+    expect(mockLoadOutputLanguage).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back to the host-global key when no per-project override exists", async () => {
+    const dispatch = await startSync()
+    useWikiStore.setState({ outputLanguage: "auto" })
+    mockLoadOutputLanguage.mockImplementation(async (projectId?: string) =>
+      projectId ? null : "Chinese",
+    )
+
+    dispatch({ event: "settings:changed", payload: { keys: ["outputLanguage"] } })
+
+    await vi.waitFor(() => {
+      expect(useWikiStore.getState().outputLanguage).toBe("Chinese")
+    })
+  })
+
+  it("falls back to 'auto' when nothing is persisted (invalidates a stale value)", async () => {
+    const dispatch = await startSync()
+    useWikiStore.setState({ outputLanguage: "French" })
+    mockLoadOutputLanguage.mockResolvedValue(null)
+
+    dispatch({ event: "settings:changed", payload: { keys: ["projectOutputLanguages"] } })
+
+    await vi.waitFor(() => {
+      expect(useWikiStore.getState().outputLanguage).toBe("auto")
+    })
   })
 })

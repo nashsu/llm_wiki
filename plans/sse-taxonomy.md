@@ -107,6 +107,19 @@ Payloads (charter shape + runId for client scoping):
 `error`, `wikiWrites`, `referenceAdded`, `fileChanged` have NO charter
 equivalent — they stay `agent-event`-only.
 
+**Review-fix addendum (PR #29 round 1):** the `error` frames themselves stay
+`agent-event`-only, but a non-owning tab previewing a run via `chat:delta`
+has no `agent-event` consumer — if the run then FAILED or was CANCELLED, no
+terminal `chat:*` frame existed and the tab stayed stuck in `isStreaming`
+forever (all send paths locked). Both error sites (`agent.js
+agentStartTurnStream` catch, `api/chat.js` chat/writes catch) therefore now
+dual a TERMINAL `chat:done` alongside the untouched `error` + companion
+textless `done` agent-events, mirroring the owning tab's catch-path outcome:
+failed runs `content = "Error: <message>"` (writes: the `Error generating
+wiki files: …` finalize text), cancelled runs `content = ""` (sse-sync
+resets the stream without adding a message — owning-tab abort-like parity).
+No new event names: the charter taxonomy stays verbatim.
+
 ## Client sync layer (src/lib/sse-sync.ts)
 
 Already handled: `file:*` → refreshWiki; `ingest:*` → project-scoped stores;

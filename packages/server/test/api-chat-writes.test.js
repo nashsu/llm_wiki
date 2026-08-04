@@ -520,10 +520,19 @@ describe("POST /:id/chat/writes — stream error path", () => {
       expect(events[0].message).toBe("Error generating wiki files: provider exploded")
       expect(events[1]).toEqual({ type: "done" })
 
-      // Stage 5: error frames have no charter equivalent, and the error
-      // site's companion done carries no text — the whole site stays
-      // agent-event-only (no chat:* dual emission).
-      expect(watcher.chatEvents).toEqual([])
+      // Stage 5 kept the error frames agent-event-only; the review fix (PR
+      // #29 round 1) adds a TERMINAL chat:done dual so a tab previewing the
+      // write run via chat:delta can leave streaming state. Content mirrors
+      // the owning tab's error finalize (agentEvent.message = finalText).
+      expect(watcher.chatEvents.map((e) => e.type)).toEqual(["chat:done"])
+      expect(watcher.chatEvents[0].projectId).toBeNull() // emit() bridge envelope
+      expect(watcher.chatEvents[0].payload).toMatchObject({
+        sessionId,
+        projectId,
+        content: "Error generating wiki files: provider exploded",
+        references: [],
+      })
+      expect(typeof watcher.chatEvents[0].payload.runId).toBe("string")
 
       // Client parity: onError finalizeStream persists the error text as the
       // assistant message, right after the user writePrompt row.

@@ -21,6 +21,7 @@ import { useChatStore, type MessageReference } from "@/stores/chat-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { loadOutputLanguage } from "@/lib/project-store"
 import { normalizePath } from "@/lib/path-utils"
 
 interface HealthResponse {
@@ -228,9 +229,11 @@ function toMessageReferences(value: unknown): MessageReference[] | undefined {
  * them again would double tokens and messages. A tab that did NOT start the
  * run applies chat:delta → appendStreamToken (live preview) and chat:done →
  * finalizeStreamForConversation (the done frame carries the full content, so
- * a tab that missed the deltas still finalizes). Tombstones are never
- * cleared on finalize — only on conversation delete — so they survive the
- * done-frame race on the shared SSE stream.
+ * a tab that missed the deltas still finalizes). A chat:done with empty
+ * content is the terminal dual of a CANCELLED run: streaming resets without
+ * a message (parity with the owning tab's abort-like catch path). Tombstones
+ * are never cleared on finalize — only on conversation delete — so they
+ * survive the done-frame race on the shared SSE stream.
  */
 function handleChat(evt: ServerEvent): void {
   const store = useChatStore.getState()
@@ -257,6 +260,16 @@ function handleChat(evt: ServerEvent): void {
       // that missed deltas can finalize); fall back to the stream buffer for
       // content-less frames (parity with the pre-taxonomy handler).
       const content = str(p.content) ?? store.streamingContent
+      if (content === "") {
+        // Terminal dual of a CANCELLED run (the server's error site duals a
+        // textless terminal chat:done): end the preview without adding a
+        // message — parity with the owning tab's abort-like catch path, which
+        // resets streaming and discards the buffer. Without this frame a
+        // non-owning tab would stay stuck in isStreaming forever (its send
+        // paths are locked while streaming).
+        if (store.isStreaming) store.setStreaming(false)
+        return
+      }
       store.finalizeStreamForConversation(sessionId, content, toMessageReferences(p.references))
       return
     }
@@ -274,6 +287,25 @@ function handleSettingsChanged(): void {
   // Warm the settings cache; consumers re-read on next access. Errors are
   // non-fatal — the next reconnect retries.
   void getSettings().catch(() => {})
+  // The refetch alone leaves the Zustand mirrors of shared settings stale in
+  // this tab (they hydrate at boot / on save only). Invalidate them so a
+  // change made in another tab, the desktop app, or the API is reflected
+  // without a reload (charter §4.7: settings:changed drives store
+  // invalidation; plans/sse-taxonomy.md).
+  void applySyncedSettings().catch(() => {})
+}
+
+/**
+ * Re-read the settings mirrored in the Zustand stores through the app's
+ * normal settings read path (plugin-store → server). A per-project output
+ * language wins over the host-global key (settings-dialog write shape);
+ * neither present falls back to "auto" (boot parity, App.tsx).
+ */
+async function applySyncedSettings(): Promise<void> {
+  const projectId = useWikiStore.getState().project?.id
+  const projectOverride = projectId ? await loadOutputLanguage(projectId) : null
+  const lang = projectOverride ?? (await loadOutputLanguage()) ?? "auto"
+  useWikiStore.getState().setOutputLanguage(lang)
 }
 
 /** Legacy Tauri-style event names → v2 names (events.js bridge). */

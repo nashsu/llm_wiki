@@ -8,8 +8,10 @@
 //   toolStart    -> chat:toolStart { sessionId, runId, projectId, tool, input }
 //   toolEnd      -> chat:toolEnd { sessionId, runId, projectId, tool, output }
 //   done         -> chat:done { sessionId, runId, projectId, content, references }
-// referenceAdded/fileChanged have no charter equivalent; the error site
-// (error + companion textless done) stays agent-event-only.
+// referenceAdded/fileChanged have no charter equivalent. The error site's
+// error + companion textless done stay agent-event-only, but the site ADDS a
+// terminal chat:done dual (failed: "Error: <message>"; cancelled: empty
+// content) so tabs previewing the run via chat:* can leave streaming state.
 //
 // llm-call.js is mocked (scriptable streamCall/blockingCall) so no real LLM
 // is touched; the tool executor (source.search) runs the real code path.
@@ -244,11 +246,19 @@ describe("blocking (non-stream) turns dual-emit chat:delta only", () => {
   })
 })
 
-describe("error site emits no chat:* frames", () => {
-  it("error + companion textless done stay agent-event-only", async () => {
+describe("error site keeps agent-event byte-identical and duals a terminal chat:done", () => {
+  // Review fix (PR #29 round 1): a tab previewing a run via chat:* frames
+  // has no agent-event consumer; without a terminal chat frame its
+  // isStreaming stays true forever on error/cancel and all send paths lock.
+  // The error site therefore duals a terminal chat:done mirroring the owning
+  // tab's catch-path outcome: failed runs finalize as "Error: <message>",
+  // cancelled runs end with empty content (sse-sync resets the stream
+  // without adding a message).
+  it("failed run: error + companion textless done agent-events, terminal chat:done with the error text", async () => {
     const sessionId = "conv_dual_error"
     const runId = "run-dual-error"
     streamCallMock.mockImplementationOnce(async function* () {
+      yield { type: "delta", text: "partial " }
       throw new Error("llm exploded")
     })
 
@@ -260,11 +270,66 @@ describe("error site emits no chat:* frames", () => {
       })
       await watcher.waitDone()
 
-      expect(watcher.agentEvents.map((f) => f.event.type)).toEqual(["error", "done"])
-      expect(watcher.agentEvents[0].event.message).toBe("llm exploded")
-      // error frames have no charter equivalent; the companion done carries
-      // no text ⇒ no chat:* dual emission.
-      expect(watcher.chatEvents).toEqual([])
+      // agent-event stream unchanged: deltas, error, companion textless done.
+      expect(watcher.agentEvents.map((f) => f.event.type)).toEqual(["messageDelta", "error", "done"])
+      expect(watcher.agentEvents[1].event.message).toBe("llm exploded")
+      expect(watcher.agentEvents[2].event).toEqual({ type: "done" })
+
+      // One terminal chat:done, attributed to the projects row, carrying the
+      // same "Error: <message>" text the owning tab's catch path finalizes.
+      const dones = watcher.chatEvents.filter((e) => e.type === "chat:done")
+      expect(dones).toHaveLength(1)
+      expect(dones[0].projectId).toBeNull()
+      expect(dones[0].payload).toEqual({
+        sessionId, runId, projectId: numericProjectId,
+        content: "Error: llm exploded", references: [],
+      })
+      // The partial delta still dualized, so the frame order is preview → terminal.
+      expect(watcher.chatEvents.map((e) => e.type)).toEqual(["chat:delta", "chat:done"])
+    } finally {
+      watcher.unsub()
+    }
+  })
+
+  it("cancelled run: terminal chat:done carries empty content (reset, no message)", async () => {
+    const sessionId = "conv_dual_cancel"
+    const runId = "run-dual-cancel"
+    streamCallMock.mockImplementationOnce(async function* ({ signal }) {
+      yield { type: "delta", text: "partial " }
+      // Block until the cancel aborts the call (the runLoop cancellation
+      // checks only run between yielded events).
+      await new Promise((_, reject) => {
+        if (signal?.aborted) return reject(new Error("The operation was aborted"))
+        signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")), { once: true })
+      })
+    })
+
+    const watcher = watchSession(sessionId)
+    try {
+      await agentStartTurnStream({
+        projectId: PROJECT_UUID,
+        request: turnRequest(sessionId, runId, "Interrupted question"),
+      })
+      // Wait for the first delta so the run is provably in flight, then cancel.
+      await vi.waitFor(() => {
+        expect(watcher.chatEvents.some((e) => e.type === "chat:delta")).toBe(true)
+      })
+      const { agentCancelTurn } = await import("../src/agent.js")
+      await agentCancelTurn({ runId })
+      await watcher.waitDone()
+
+      expect(watcher.agentEvents.map((f) => f.event.type)).toEqual(["messageDelta", "error", "done"])
+      expect(watcher.agentEvents[1].event.message).toMatch(/abort|cancel/i)
+
+      // Terminal dual with EMPTY content: sse-sync resets isStreaming without
+      // adding a message (parity with the owning tab's abort-like catch path,
+      // which discards the preview).
+      const dones = watcher.chatEvents.filter((e) => e.type === "chat:done")
+      expect(dones).toHaveLength(1)
+      expect(dones[0].payload).toEqual({
+        sessionId, runId, projectId: numericProjectId,
+        content: "", references: [],
+      })
     } finally {
       watcher.unsub()
     }

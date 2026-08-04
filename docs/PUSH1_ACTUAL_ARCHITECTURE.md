@@ -435,7 +435,11 @@ message. Session CRUD: list/create/get/rename/delete under
     write and on writes to the shared store (`app-state.json`) through the
     `/api/store` shim and the legacy server; other store names emit nothing.
   - `chat:*` dual-emitted next to the byte-identical `agent-event` frames
-    (§4) so tabs that did not start a run can still sync it.
+    (§4) so tabs that did not start a run can still sync it. Failed and
+    cancelled runs dual a TERMINAL `chat:done` (`Error: <message>` on
+    failure, empty content on cancel) so previewing tabs always leave
+    streaming state — a non-owning tab has no `agent-event` consumer to
+    reset it otherwise.
   The client sync layer (`src/lib/sse-sync.ts`) dispatches each frame to the
   store that owns the state: `file:*` refreshes the project file tree
   (trailing-debounced ~400 ms — one chat save emits several frames),

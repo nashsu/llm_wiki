@@ -202,7 +202,7 @@ rest of the emitted taxonomy:
 | `chat:delta` | `{ sessionId, runId, projectId, text }` | Streaming token chunk of a chat turn (dual-emitted next to `agent-event`). |
 | `chat:toolStart` | `{ sessionId, runId, projectId, tool, input }` | Agent tool call started. |
 | `chat:toolEnd` | `{ sessionId, runId, projectId, tool, output }` | Agent tool call finished. |
-| `chat:done` | `{ sessionId, runId, projectId, content, references }` | Turn finished. `content` is the run's full accumulated text so a tab that missed the deltas can finalize. |
+| `chat:done` | `{ sessionId, runId, projectId, content, references }` | Turn finished. `content` is the run's full accumulated text so a tab that missed the deltas can finalize. Also dual-emitted as a TERMINAL frame when a run fails (`content` = `Error: <message>`, the owning tab's error-finalize text) or is cancelled (`content` empty ⇒ non-owning tabs reset their stream without adding a message), so previewing tabs never stay stuck in streaming state. |
 | `agent-event` | `{ sessionId, runId, event }` | Pre-taxonomy chat stream consumed by the active tab's chat panel (turns and Write-to-Wiki). `error` / `wikiWrites` / `referenceAdded` / `fileChanged` exist only here — they have no charter equivalent. |
 
 Notes: `path` is project-relative when the emitting site knows the project

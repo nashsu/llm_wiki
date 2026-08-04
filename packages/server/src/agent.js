@@ -54,10 +54,12 @@ function emitEvent(sessionId, runId, event, projectId = null) {
   // payload — the emit() bridge keeps the envelope projectId null.
   // messageDelta/toolStart/toolEnd/done map to chat:delta/toolStart/toolEnd/
   // done; error, referenceAdded and fileChanged have NO charter equivalent
-  // and stay agent-event-only, as does the error site's companion done (it
-  // carries no text and is never passed a projectId). done duals only when it
-  // carries the turn's accumulated text, so chat:done content can finalize a
-  // tab that missed the deltas.
+  // and stay agent-event-only, as does the error site's companion done here
+  // (it carries no text). The error site ADDS a terminal chat:done dual in
+  // agentStartTurnStream's catch (failed: "Error: <message>"; cancelled:
+  // empty content) so previewing tabs can leave streaming state. done duals
+  // only when it carries the turn's accumulated text, so chat:done content
+  // can finalize a tab that missed the deltas.
   if (projectId == null || !event) return
   if (event.type === "messageDelta") {
     emit(EventTypes.CHAT_DELTA, { sessionId, runId, projectId, text: event.text })
@@ -143,7 +145,7 @@ function dedupRefs(list) {
   return out
 }
 
-async function runLoop({ request, projectId, stream, onDelta }) {
+async function runLoop({ request, projectId, stream, onDelta, attribution = null }) {
   const store = readStore("app-state.json")
   const projectPath = projectPathFor(store, projectId)
   if (!projectPath) throw new Error(`Project not found for id '${projectId}'. Open the project in the web client first.`)
@@ -152,6 +154,10 @@ async function runLoop({ request, projectId, stream, onDelta }) {
   // record the user message before the loop runs. `resume` marks an
   // approval-boundary re-send whose user message was already persisted.
   const projectRow = ensureProjectRow({ uuid: projectId, path: projectPath })
+  // Surface the numeric projects-row id to the caller even when the loop
+  // throws: the error/cancel terminal chat:done dual (below) needs it for
+  // attribution, and this is the earliest point it exists.
+  if (attribution) attribution.projectRowId = projectRow.id
   const session = ensureSession(projectRow.id, request.sessionId, {
     title: (request.message || "").trim().slice(0, 50) || undefined,
   })
@@ -317,20 +323,44 @@ export async function agentStartTurnStream({ projectId, request }) {
   const runId = request.runId || crypto.randomUUID()
   const abort = new AbortController()
   runs.set(runId, { abort, cancelled: false })
+  // Holder so the catch below knows the numeric projects-row id even when
+  // runLoop throws (terminal chat:done dual attribution).
+  const attribution = {}
   // Run asynchronously; the invoke returns the runId immediately and the UI
   // awaits the "done" event on the SSE stream.
   void (async () => {
     try {
-      const { finalText, references, projectRowId } = await runLoop({ request: { ...request, runId }, projectId, stream: true })
+      const { finalText, references, projectRowId } = await runLoop({ request: { ...request, runId }, projectId, stream: true, attribution })
       // The done agent-event carries the turn's accumulated text; emitEvent
       // duals it as chat:done (taxonomy stage 5) so a tab that missed the
       // deltas can finalize.
       emitEvent(request.sessionId, runId, { type: "done", text: finalText, references }, projectRowId)
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       // Error site: error frames (and the companion textless done) have no
-      // charter equivalent — agent-event only, no chat:* dual emission.
-      emitEvent(request.sessionId, runId, { type: "error", message: err instanceof Error ? err.message : String(err) })
+      // charter equivalent — they stay agent-event-only.
+      emitEvent(request.sessionId, runId, { type: "error", message })
       emitEvent(request.sessionId, runId, { type: "done" })
+      // But a tab previewing this run via chat:* frames has no agent-event
+      // consumer — without a terminal dual its isStreaming stays true forever
+      // and every send path is locked (review fix). Dual a terminal chat:done
+      // mirroring the owning tab's catch-path outcome: cancelled runs end
+      // silently (empty content ⇒ sse-sync resets the stream without adding a
+      // message, parity with the owning tab's abort-like setStreaming(false));
+      // failed runs finalize with the same "Error: <message>" text the owning
+      // tab renders. Direct emit so the agent-event stream stays
+      // byte-identical (emitEvent would add an extra done agent-event).
+      const projectRowId = attribution.projectRowId ?? null
+      if (projectRowId != null) {
+        const cancelled = runs.get(runId)?.cancelled === true || /abort|cancel/i.test(message)
+        emit(EventTypes.CHAT_DONE, {
+          sessionId: request.sessionId,
+          runId,
+          projectId: projectRowId,
+          content: cancelled ? "" : `Error: ${message}`,
+          references: [],
+        })
+      }
     } finally {
       runs.delete(runId)
     }
