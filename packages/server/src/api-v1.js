@@ -269,8 +269,12 @@ export async function handleApiV1(ctx) {
           projectPath: project.path, query: String(b?.query ?? ""), topK: Number(b?.topK) || 20,
           includeContent: b?.includeContent === true, queryEmbedding: null,
           embeddingConfig: embCfg && embCfg.enabled ? embCfg : null,
+          wikiSearchMode: store?.wikiSearchMode ?? null,
         })
-        return ok({ results: r.results, mode: r.mode, tokenHits: r.tokenHits, vectorHits: r.vectorHits, graphHits: r.graphHits }), true
+        return ok({
+          results: r.results, mode: r.mode, tokenHits: r.tokenHits, vectorHits: r.vectorHits, graphHits: r.graphHits,
+          ...(r.vectorUnavailableReason ? { vectorUnavailableReason: r.vectorUnavailableReason } : {}),
+        }), true
       }
       if (method === "POST" && rest[0] === "chat" && rest.length === 1) {
         const b = parseJson(body)

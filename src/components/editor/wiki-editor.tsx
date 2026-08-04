@@ -184,7 +184,7 @@ export function WikiEditor({ content, onSave, filePath }: WikiEditorProps) {
       : selectionRequest.filePath
     const references = intent === "ask" && project
       ? await searchWiki(project.path, `${instruction} ${selectionRequest.selectedText.slice(0, 500)}`)
-        .then((results) => results.slice(0, 5))
+        .then((outcome) => outcome.results.slice(0, 5))
         .catch(() => [])
       : []
     if (runId !== selectionRunIdRef.current) return

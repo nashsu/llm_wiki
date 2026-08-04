@@ -92,6 +92,7 @@ const CATEGORIES: Category[] = [
 function initialDraft(
   llm: ReturnType<typeof useWikiStore.getState>["llmConfig"],
   embed: ReturnType<typeof useWikiStore.getState>["embeddingConfig"],
+  wikiSearchMode: ReturnType<typeof useWikiStore.getState>["wikiSearchMode"],
   multimodal: ReturnType<typeof useWikiStore.getState>["multimodalConfig"],
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
@@ -139,6 +140,7 @@ function initialDraft(
     embeddingConcurrency: embed.concurrency ?? 1,
     embeddingBatchSize: embed.batchSize ?? 1,
     embeddingExtraHeaders: embed.extraHeaders ?? {},
+    wikiSearchMode,
     multimodalEnabled: multimodal.enabled,
     multimodalUseMainLlm: multimodal.useMainLlm,
     multimodalProvider: multimodal.provider,
@@ -193,6 +195,8 @@ export function SettingsView() {
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
   const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
+  const wikiSearchMode = useWikiStore((s) => s.wikiSearchMode)
+  const setWikiSearchMode = useWikiStore((s) => s.setWikiSearchMode)
   const multimodalConfig = useWikiStore((s) => s.multimodalConfig)
   const setMultimodalConfig = useWikiStore((s) => s.setMultimodalConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
@@ -229,6 +233,7 @@ export function SettingsView() {
     initialDraft(
       llmConfig,
       embeddingConfig,
+      wikiSearchMode,
       multimodalConfig,
       outputLanguage,
       proxyConfig,
@@ -286,6 +291,7 @@ export function SettingsView() {
       initialDraft(
         llmConfig,
         embeddingConfig,
+        wikiSearchMode,
         multimodalConfig,
         outputLanguage,
         proxyConfig,
@@ -304,6 +310,7 @@ export function SettingsView() {
   }, [
     llmConfig,
     embeddingConfig,
+    wikiSearchMode,
     multimodalConfig,
     outputLanguage,
     proxyConfig,
@@ -332,6 +339,8 @@ export function SettingsView() {
       loadLlmConfig,
       saveEmbeddingConfig,
       loadEmbeddingConfig,
+      saveWikiSearchMode,
+      loadWikiSearchMode,
       saveMultimodalConfig,
       loadMultimodalConfig,
       saveOutputLanguage,
@@ -441,6 +450,7 @@ export function SettingsView() {
     // the old value and make the UI look like saving reverted the user's edit.
     setLlmConfig(newLlm)
     setEmbeddingConfig(newEmbed)
+    setWikiSearchMode(draft.wikiSearchMode)
     setMultimodalConfig(newMultimodal)
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     setProxyConfig(newProxy)
@@ -454,6 +464,10 @@ export function SettingsView() {
     try {
       await saveLlmConfig(newLlm)
       await saveEmbeddingConfig(newEmbed)
+      // Global retrieval mode. The web server reads this top-level
+      // app-state.json key on every search, so saving is enough — no
+      // IPC reload needed (unlike proxy/apiConfig).
+      await saveWikiSearchMode(draft.wikiSearchMode)
       await saveMultimodalConfig(newMultimodal)
       await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
       await saveProxyConfig(newProxy)
@@ -549,6 +563,7 @@ export function SettingsView() {
         const [
           persistedLlm,
           persistedEmbedding,
+          persistedWikiSearchMode,
           persistedMultimodal,
           persistedOutputLanguage,
           persistedProxy,
@@ -561,6 +576,7 @@ export function SettingsView() {
         ] = await Promise.allSettled([
           loadLlmConfig(),
           loadEmbeddingConfig(),
+          loadWikiSearchMode(),
           loadMultimodalConfig(),
           loadOutputLanguage(project?.id),
           loadProxyConfig(),
@@ -573,6 +589,7 @@ export function SettingsView() {
         ] as const)
         setLlmConfig(resultValue(persistedLlm, null) ?? llmConfig)
         setEmbeddingConfig(resultValue(persistedEmbedding, null) ?? embeddingConfig)
+        setWikiSearchMode(resultValue(persistedWikiSearchMode, null) ?? wikiSearchMode)
         setMultimodalConfig(resultValue(persistedMultimodal, null) ?? multimodalConfig)
         setOutputLanguage((resultValue(persistedOutputLanguage, null) ?? outputLanguage) as typeof outputLanguage)
         setProxyConfig(resultValue(persistedProxy, null) ?? proxyConfig)
@@ -593,6 +610,7 @@ export function SettingsView() {
     project,
     llmConfig,
     embeddingConfig,
+    wikiSearchMode,
     multimodalConfig,
     outputLanguage,
     proxyConfig,
@@ -604,6 +622,7 @@ export function SettingsView() {
     maxHistoryMessages,
     setLlmConfig,
     setEmbeddingConfig,
+    setWikiSearchMode,
     setMultimodalConfig,
     setOutputLanguage,
     setProxyConfig,

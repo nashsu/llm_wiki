@@ -340,6 +340,7 @@
     "fromSource": "From: {{source}}",
     "jumpToSource": "Jump to source document",
     "noResults": "No results found",
+    "vectorDegradedNotice": "Vector search is unavailable — showing keyword results only.",
     "startSearching": "Type to search wiki pages"
   },
   "lint": {
@@ -569,6 +570,11 @@
         "description": "Enable semantic search against your wiki. Works with OpenAI-compatible /v1/embeddings endpoints, Google Gemini native embedContent endpoints, and Volcengine/Doubao embedding endpoints. Local models (LM Studio, Ollama embedding) don't need an API key.",
         "enableLabel": "Enable vector search",
         "enableHint": "When off, search uses token matching only.",
+        "retrievalMode": "Retrieval mode",
+        "retrievalModeHint": "Applies to every wiki search surface, including the chat agent. Enforced by the web server; vector and hybrid modes fall back to keyword results with a notice when no embedding provider is configured or the vector index is unavailable.",
+        "modeKeyword": "Keyword",
+        "modeVector": "Vector",
+        "modeHybrid": "Hybrid",
         "endpoint": "Endpoint",
         "endpointHint": "OpenAI-compatible example: http://127.0.0.1:1234/v1/embeddings. Gemini example: https://generativelanguage.googleapis.com/v1beta with model gemini-embedding-001. Volcengine example: https://ark.cn-beijing.volces.com/api/v3 with model doubao-embedding-vision.",
         "apiKey": "API Key (optional)",

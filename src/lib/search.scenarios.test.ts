@@ -43,7 +43,7 @@ describe("searchWiki backend command contract", () => {
       ],
     })
 
-    const results = await searchWiki("/tmp/project", "attention")
+    const outcome = await searchWiki("/tmp/project", "attention")
 
     expect(mockInvoke).toHaveBeenCalledWith("search_project", {
       projectPath: "/tmp/project",
@@ -53,6 +53,20 @@ describe("searchWiki backend command contract", () => {
       queryEmbedding: null,
       embeddingConfig: expect.objectContaining({ enabled: false }),
     })
-    expect(results[0].path).toBe("/tmp/project/wiki/concepts/attention.md")
+    expect(outcome.results[0].path).toBe("/tmp/project/wiki/concepts/attention.md")
+  })
+
+  it("surfaces vectorUnavailableReason when the backend degraded to keyword", async () => {
+    mockInvoke.mockResolvedValueOnce({
+      mode: "keyword",
+      tokenHits: 1,
+      vectorHits: 0,
+      results: [],
+      vectorUnavailableReason: "No embedding provider is configured",
+    })
+
+    const outcome = await searchWiki("/tmp/project", "attention")
+    expect(outcome.results).toEqual([])
+    expect(outcome.vectorUnavailableReason).toBe("No embedding provider is configured")
   })
 })

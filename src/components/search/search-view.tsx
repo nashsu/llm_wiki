@@ -35,6 +35,10 @@ export function SearchView() {
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  // Retrieval-degradation notice (issue #14): non-null when the last search
+  // wanted a vector leg but the server degraded to keyword. Shown inline so
+  // the user knows why semantic matches are missing and what to configure.
+  const [vectorNotice, setVectorNotice] = useState<string | null>(null)
   // Lightbox state — null when closed. Held inline rather than via
   // a global store: nothing else needs to know which image is in
   // the lightbox, and search-view-local state means the modal
@@ -45,16 +49,19 @@ export function SearchView() {
     async (q: string) => {
       if (!project || !q.trim()) {
         setResults([])
+        setVectorNotice(null)
         return
       }
       setSearching(true)
       setHasSearched(true)
       try {
-        const found = await searchWiki(normalizePath(project.path), q)
-        setResults(found)
+        const outcome = await searchWiki(normalizePath(project.path), q)
+        setResults(outcome.results)
+        setVectorNotice(outcome.vectorUnavailableReason ?? null)
       } catch (err) {
         console.error("Search failed:", err)
         setResults([])
+        setVectorNotice(null)
       } finally {
         setSearching(false)
       }
@@ -197,6 +204,15 @@ export function SearchView() {
             className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
+        {vectorNotice && (
+          <div
+            role="status"
+            className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
+          >
+            <div>{t("search.vectorDegradedNotice")}</div>
+            <div className="mt-0.5 opacity-75">{vectorNotice}</div>
+          </div>
+        )}
       </div>
 
       {/*
