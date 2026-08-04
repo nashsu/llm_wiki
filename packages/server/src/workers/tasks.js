@@ -10,6 +10,7 @@
 // persist.
 
 import { preprocessFile } from "../commands/preprocess.js"
+import { extractImageCommands } from "../commands/extractImages.js"
 
 export const workerTasks = {
   /**
@@ -21,6 +22,32 @@ export const workerTasks = {
   async preprocess(args) {
     const result = await preprocessFile({ path: args.filePath })
     return result
+  },
+
+  /**
+   * Extract embedded images from a PDF / Office source file off the main
+   * thread. Wraps the extractImageCommands handlers (same wire shapes the
+   * HTTP command surface uses; Rust camelCase parity — index/relPath/absPath).
+   * args: { command, args } — a single generic envelope (chosen over
+   * per-command tasks so the registry grows one entry, not four):
+   *   command: one of "extract_and_save_pdf_images_cmd",
+   *            "extract_and_save_office_images_cmd",
+   *            "extract_pdf_images_cmd", "extract_office_images_cmd"
+   *   args:    the handler's argument, e.g. { sourcePath, destDir, relTo }
+   *            for the extract_and_save_* pair, or { path } for the
+   *            extract-only pair. Both are plain strings → structured-
+   *            cloneable in both directions.
+   * returns: SavedImage[] ({index,mimeType,page,width,height,relPath,
+   *          absPath,sha256}) for extract_and_save_*, or
+   *          {index,mimeType,page,width,height,dataBase64,sha256}[] records
+   *          for the extract-only commands.
+   */
+  async extractImages(taskArgs) {
+    const { command, args } = taskArgs ?? {}
+    if (!Object.hasOwn(extractImageCommands, command)) {
+      throw new Error(`Unknown image extraction command: ${command}`)
+    }
+    return extractImageCommands[command](args ?? {})
   },
 
   /**

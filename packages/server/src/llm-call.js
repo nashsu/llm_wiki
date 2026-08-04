@@ -35,10 +35,18 @@ function toAnthropicMessages(messages) {
       out.push({ role: "user", content: [{ type: "tool_result", tool_use_id: m.toolCallId, content: m.content }] })
     } else if (m.role === "assistant" && m.toolCalls?.length) {
       const blocks = []
-      if (m.content) blocks.push({ type: "text", text: m.content })
+      // Multimodal array content passes through unchanged (parity with the
+      // OpenAI wire); string content keeps the single text-block behavior.
+      if (m.content) {
+        if (Array.isArray(m.content)) blocks.push(...m.content)
+        else blocks.push({ type: "text", text: m.content })
+      }
       for (const t of m.toolCalls) blocks.push({ type: "tool_use", id: t.id, name: t.name, input: typeof t.args === "string" ? safeParse(t.args) : (t.args ?? {}) })
       out.push({ role: "assistant", content: blocks })
     } else {
+      // String content stays a string; array content (multimodal blocks,
+      // e.g. [{type:"text",…},{type:"image",…}]) passes through unchanged,
+      // exactly as the OpenAI wire does.
       out.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })
     }
   }
