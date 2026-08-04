@@ -1,16 +1,24 @@
 // SQLite connection + migration runner for the v2 server (Phase 2.2).
 //
 // Opens the database at DATA_DIR/server.db with WAL mode for concurrent reads.
-// Runs migrations in order (001-009) on first boot. The sqlite-vec extension is
-// loaded lazily in Phase 2.3 when vector search is implemented.
+// Runs migrations in order on first boot. The sqlite-vec extension (issue #14
+// gap) is loaded eagerly here; platforms without a prebuilt binary degrade to
+// keyword-only retrieval instead of failing.
 
 import path from "node:path"
 import fs from "node:fs"
 import Database from "better-sqlite3"
+import { getLoadablePath } from "sqlite-vec"
 import { DATA_DIR } from "../config.js"
 
 const DB_PATH = path.join(DATA_DIR, "server.db")
 let db = null
+let vecAvailable = false
+
+/** True when the sqlite-vec extension loaded (vector retrieval possible). */
+export function isVecAvailable() {
+  return vecAvailable
+}
 
 /**
  * Get the singleton database connection. Creates the DB and runs migrations on
@@ -23,6 +31,15 @@ export function getDb() {
   db = new Database(DB_PATH)
   db.pragma("journal_mode = WAL")
   db.pragma("foreign_keys = ON")
+  try {
+    db.loadExtension(getLoadablePath())
+    vecAvailable = true
+  } catch (err) {
+    // No prebuilt sqlite-vec binary for this platform: vector surfaces
+    // degrade to keyword retrieval; requests never fail (issue #14 decision).
+    vecAvailable = false
+    console.warn(`[db] sqlite-vec unavailable — keyword-only retrieval: ${err.message}`)
+  }
   runMigrations(db)
   return db
 }
@@ -214,5 +231,21 @@ const MIGRATIONS = [
     // integer surrogate key. Nullable-unique keeps legacy rows valid.
     db.exec(`ALTER TABLE projects ADD COLUMN uuid TEXT`)
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_uuid ON projects(uuid)`)
+  }],
+
+  ["012_vec_chunks_vec0", (db) => {
+    // Issue #14 gap: sqlite-vec backed chunk vectors. Drop the 009 schema-only
+    // placeholder (it never had a writer, so it carries no data). The vec0
+    // virtual table itself is created lazily by the vectorstore module because
+    // its embedding column type — FLOAT[dim] — depends on the configured
+    // embedding provider's dimensionality.
+    db.exec(`DROP TABLE IF EXISTS vec_chunks`)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS vec_meta (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        dim INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
   }],
 ]
