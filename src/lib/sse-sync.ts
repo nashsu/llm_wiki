@@ -17,7 +17,7 @@ import { request } from "@/api/client"
 import { listProjects } from "@/api/projects"
 import { getSettings } from "@/api/settings"
 import { useWikiStore } from "@/stores/wiki-store"
-import { useChatStore } from "@/stores/chat-store"
+import { useChatStore, type MessageReference } from "@/stores/chat-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
@@ -55,8 +55,20 @@ function refreshWiki(): void {
   }
 }
 
+// File-event tree refreshs are trailing-debounced: chat/writes emits several
+// file:* frames per save (one per FILE block plus the post-write image
+// injection), and the tree refresh is idempotent but not free. Only THIS path
+// is debounced — ingest:complete and the version-change reconnect keep their
+// direct refreshWiki behavior.
+const FILE_REFRESH_DEBOUNCE_MS = 400
+let fileRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
 function handleFileEvent(): void {
-  refreshWiki()
+  if (fileRefreshTimer !== null) clearTimeout(fileRefreshTimer)
+  fileRefreshTimer = setTimeout(() => {
+    fileRefreshTimer = null
+    refreshWiki()
+  }, FILE_REFRESH_DEBOUNCE_MS)
 }
 
 // ── current-project identity (UUID → numeric projects-row id) ─────────────
@@ -166,16 +178,95 @@ async function handleIngest(evt: ServerEvent): Promise<void> {
   }
 }
 
+/**
+ * Narrow the wire `references` array of a chat:done payload (server-side
+ * reference objects) into MessageReference entries. Mirrors the kind/source
+ * mapping of chat-panel's backendReferenceToMessageReference so cross-tab
+ * finalized messages match what the owning tab rendered.
+ */
+function toMessageReferences(value: unknown): MessageReference[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const references: MessageReference[] = []
+  for (const item of value) {
+    const ref = asRecord(item)
+    const title = str(ref.title)
+    const path = str(ref.path)
+    if (!title || !path) continue
+    const kind = str(ref.kind)
+    const isWiki = kind === "wiki" || path.startsWith("wiki/")
+    const isWeb = kind === "web" || /^https?:\/\//i.test(path)
+    const isWorkspace = kind === "workspace" || path.startsWith("agent-workspace/")
+    const source =
+      isWorkspace ? "Workspace"
+        : kind === "anytxt" ? "AnyTXT"
+          : isWeb ? "Web"
+            : kind === "source" ? "Source"
+              : kind === "graph" ? "Graph"
+                : undefined
+    const snippet = str(ref.snippet)
+    references.push({
+      title,
+      path,
+      kind: isWiki ? "wiki" : isWorkspace ? "workspace" : "external",
+      ...(source !== undefined ? { source } : {}),
+      ...(isWeb ? { url: path } : {}),
+      ...(snippet !== undefined ? { snippet } : {}),
+    })
+  }
+  return references.length > 0 ? references : undefined
+}
+
+/**
+ * Chat taxonomy frames (chat:delta / chat:toolStart / chat:toolEnd / chat:done).
+ *
+ * Scoping: frames apply only when `payload.sessionId` is a conversation
+ * present in the chat-store — this drops other-project and unknown frames.
+ *
+ * Ownership guard (the double-apply fix): chat-panel tombstones runs it
+ * starts locally in the store's `ownedRunIds`. This tab already renders
+ * those runs via agent-event, so their wire frames are skipped — applying
+ * them again would double tokens and messages. A tab that did NOT start the
+ * run applies chat:delta → appendStreamToken (live preview) and chat:done →
+ * finalizeStreamForConversation (the done frame carries the full content, so
+ * a tab that missed the deltas still finalizes). Tombstones are never
+ * cleared on finalize — only on conversation delete — so they survive the
+ * done-frame race on the shared SSE stream.
+ */
 function handleChat(evt: ServerEvent): void {
   const store = useChatStore.getState()
   const p = asRecord(evt.payload)
-  if (evt.event === "chat:delta") {
-    if (!store.isStreaming) store.setStreaming(true)
-    const token = str(p.token) ?? str(p.delta) ?? str(p.content) ?? ""
-    if (token) store.appendStreamToken(token)
-  } else if (evt.event === "chat:done") {
-    const content = str(p.content) ?? store.streamingContent
-    store.finalizeStream(content)
+  const sessionId = str(p.sessionId)
+  const knownConversation =
+    store.conversations.some((c) => c.id === sessionId) || sessionId === store.activeConversationId
+  if (!sessionId || !knownConversation) return
+
+  const runId = str(p.runId)
+  if (runId && store.ownedRunIds.includes(runId)) return
+
+  switch (evt.event) {
+    case "chat:delta": {
+      // Charter key is `text`; token/delta/content are legacy fallbacks.
+      const token = str(p.text) ?? str(p.token) ?? str(p.delta) ?? str(p.content) ?? ""
+      if (!token) return
+      if (!store.isStreaming) store.setStreaming(true)
+      store.appendStreamToken(token)
+      return
+    }
+    case "chat:done": {
+      // Charter key is `content` (the run's full accumulated text, so a tab
+      // that missed deltas can finalize); fall back to the stream buffer for
+      // content-less frames (parity with the pre-taxonomy handler).
+      const content = str(p.content) ?? store.streamingContent
+      store.finalizeStreamForConversation(sessionId, content, toMessageReferences(p.references))
+      return
+    }
+    case "chat:toolStart":
+    case "chat:toolEnd":
+      // Explicit no-op — taxonomy fidelity on the wire. Tool steps have no
+      // store target today: the owning tab renders them from agent-event,
+      // and cross-tab sync is tokens-only (plans/sse-taxonomy.md, "Known
+      // accepted degradations").
+      return
   }
 }
 
@@ -198,11 +289,14 @@ const LEGACY_EVENT_MAP: Record<string, string> = {
   "settings://changed": "settings:changed",
 }
 
-function dispatch(evt: ServerEvent): void {
+function dispatch(raw: ServerEvent): void {
   // Resolve legacy Tauri-style event names (emitted by the legacy events.js
   // bridge on the v2 bus) to v2 names before dispatching, so events from both
-  // producer generations reach the stores.
-  const name = LEGACY_EVENT_MAP[evt.event] || evt.event
+  // producer generations reach the stores. Handlers receive the RESOLVED
+  // envelope — their internal event-name switches must not have to know the
+  // legacy aliases.
+  const name = LEGACY_EVENT_MAP[raw.event] || raw.event
+  const evt: ServerEvent = name === raw.event ? raw : { event: name, payload: raw.payload }
   switch (name) {
     case "file:created":
     case "file:modified":
@@ -217,6 +311,8 @@ function dispatch(evt: ServerEvent): void {
       break
     case "chat:delta":
     case "chat:done":
+    case "chat:toolStart":
+    case "chat:toolEnd":
       handleChat(evt)
       break
     case "graph:updated":
@@ -282,6 +378,12 @@ export function startSseSync(): void {
 export function stopSseSync(): void {
   started = false
   invalidateProjectResolution()
+  // Drop a pending file-refresh debounce so it cannot fire against a stale
+  // project after disconnect (e.g. project switch).
+  if (fileRefreshTimer !== null) {
+    clearTimeout(fileRefreshTimer)
+    fileRefreshTimer = null
+  }
   if (disconnect) {
     disconnect()
     disconnect = null

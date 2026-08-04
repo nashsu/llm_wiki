@@ -36,6 +36,10 @@ export async function resetProjectState(): Promise<void> {
     retrievalMode: "standard",
     selectedSkills: [],
     disabledSkills: [],
+    // Owned-run tombstones are per-tab/per-project run bookkeeping (SSE
+    // taxonomy stage 6); drop them with the rest of the project state.
+    ownedRunIds: [],
+    ownedRunsByConversation: {},
   })
 
   useReviewStore.setState({

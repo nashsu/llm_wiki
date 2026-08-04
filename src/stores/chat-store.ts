@@ -65,6 +65,16 @@ interface ChatState {
   selectedContextFiles: string[]
   disabledSkills: string[]
 
+  // Owned-run tombstones (SSE taxonomy stage 6): run ids this tab started.
+  // sse-sync skips chat:* wire frames whose runId is tombstoned here — this
+  // tab already renders the run via agent-event, so applying the same frames
+  // again would double tokens / messages. Added when a turn starts, cleared
+  // only on conversation delete (never on finalize) so they survive the
+  // done-frame race on the shared SSE stream.
+  ownedRunIds: string[]
+  /** conversationId → owned run ids; bookkeeping for per-conversation clearing. */
+  ownedRunsByConversation: Record<string, string[]>
+
   // Conversation management
   createConversation: () => string
   deleteConversation: (id: string) => void
@@ -72,6 +82,15 @@ interface ChatState {
   renameConversation: (id: string, title: string) => void
   /** Insert-or-update one conversation entry (server session sync, issue #21). */
   upsertConversation: (conversation: Conversation) => void
+
+  /**
+   * Tombstone a run started from this tab (see ownedRunIds). `conversationId`
+   * defaults to the active conversation — both chat-panel call sites pass it
+   * explicitly.
+   */
+  registerOwnedRun: (runId: string, conversationId?: string) => void
+  /** Drop a conversation's owned-run tombstones (called on conversation delete). */
+  clearOwnedRunsForConversation: (conversationId: string) => void
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
@@ -131,6 +150,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectedSkills: [],
   selectedContextFiles: [],
   disabledSkills: [],
+  ownedRunIds: [],
+  ownedRunsByConversation: {},
 
   createConversation: () => {
     const id = generateConversationId()
@@ -154,7 +175,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return id
   },
 
-  deleteConversation: (id) =>
+  deleteConversation: (id) => {
+    // Owned-run tombstones die with their conversation (SSE taxonomy stage 6).
+    // Frames for a deleted conversation are scope-dropped by sse-sync anyway;
+    // this is the garbage collection that keeps ownedRunIds bounded.
+    get().clearOwnedRunsForConversation(id)
     set((state) => {
       const remaining = state.conversations.filter((c) => c.id !== id)
       const newActiveId =
@@ -167,6 +192,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeConversationId: newActiveId,
         selectedSkills: remaining.find((conversation) => conversation.id === newActiveId)?.selectedSkills ?? [],
         selectedContextFiles: remaining.find((conversation) => conversation.id === newActiveId)?.contextFiles ?? [],
+      }
+    })
+  },
+
+  registerOwnedRun: (runId, conversationId) =>
+    set((state) => {
+      if (state.ownedRunIds.includes(runId)) return state
+      const conversation = conversationId ?? state.activeConversationId
+      return {
+        ownedRunIds: [...state.ownedRunIds, runId],
+        ownedRunsByConversation: conversation
+          ? {
+              ...state.ownedRunsByConversation,
+              [conversation]: [...(state.ownedRunsByConversation[conversation] ?? []), runId],
+            }
+          : state.ownedRunsByConversation,
+      }
+    }),
+
+  clearOwnedRunsForConversation: (conversationId) =>
+    set((state) => {
+      const removed = state.ownedRunsByConversation[conversationId]
+      if (!removed || removed.length === 0) return state
+      const removedSet = new Set(removed)
+      const ownedRunsByConversation = { ...state.ownedRunsByConversation }
+      delete ownedRunsByConversation[conversationId]
+      return {
+        ownedRunIds: state.ownedRunIds.filter((runId) => !removedSet.has(runId)),
+        ownedRunsByConversation,
       }
     }),
 
