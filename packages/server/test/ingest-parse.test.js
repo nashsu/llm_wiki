@@ -1,5 +1,6 @@
 /**
- * Regression suite for the FILE-block parser in `ingest.ts`.
+ * Server port of src/lib/ingest-parse.test.ts — regression suite for the
+ * FILE-block parser in packages/server/src/ingest/parse.js.
  *
  * This started life as a diagnostic harness that documented every
  * silent-drop failure mode (H1/H2/H3/H5/H6) against the naive regex.
@@ -16,6 +17,12 @@
  *
  * A failing test here means the fix regressed — the parser is back
  * to dropping pages without telling anyone.
+ *
+ * Not ported (functions outside this module's assignment):
+ *   - buildGenerationPrompt date test (prompt builder reads the wiki
+ *     store for the output language; belongs to the prompt module port).
+ *   - rewriteIngestPathFromTitleForTargetLanguage (needs the js-yaml
+ *     frontmatter parser; not a dependency of this package).
  */
 import { describe, it, expect } from "vitest"
 import {
@@ -23,15 +30,13 @@ import {
   isSafeIngestPath,
   stampGeneratedFrontmatterDates,
   stampGeneratedLogDate,
-  buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
   buildDeterministicIngestLog,
-  rewriteIngestPathFromTitleForTargetLanguage,
   canonicalizeSourcesField,
   isAppManagedAggregatePath,
   updateBoundedRecentIndexSection,
   filterTruncatedFileRepairOutput,
-} from "./ingest"
+} from "../src/ingest/parse.js"
 
 // ── Happy paths ─────────────────────────────────────────────────────
 
@@ -385,7 +390,7 @@ describe("parseFileBlocks — H6: empty-path blocks", () => {
 // to redirect generated FILE blocks outside the wiki/ tree. Without
 // the path guard, the LLM could be coerced into writing to
 // `../../../etc/passwd` or similar and our writer would happily do it
-// (fs.rs::write_file does no sandboxing — it's a generic command).
+// (the write path does no sandboxing — it's a generic command).
 // These tests pin every traversal vector we've thought of so a
 // regression that loosens the regex shows up immediately.
 
@@ -587,49 +592,6 @@ describe("generated ingest dates", () => {
       .toBe("## [2026-06-07] ingest | Foo")
     expect(stampGeneratedLogDate("## [YYYY-MM-DD] ingest | Foo", "2026-06-07"))
       .toBe("## [2026-06-07] ingest | Foo")
-  })
-
-  it("tells the model the exact current date in the generation prompt", () => {
-    const prompt = buildGenerationPrompt("", "", "", "paper.pdf")
-
-    expect(prompt).toContain("Today's date is")
-    expect(prompt).toContain("Use this exact date")
-    expect(prompt).not.toContain("created: 2026-04-29")
-  })
-})
-
-describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
-  it("uses the CJK page title for generated page filenames when the target language is CJK", () => {
-    const content = [
-      "---",
-      "type: concept",
-      "title: 反硝化除磷技术",
-      "created: 2026-06-18",
-      "---",
-      "",
-      "# 反硝化除磷技术",
-      "",
-      "正文。",
-    ].join("\n")
-
-    expect(
-      rewriteIngestPathFromTitleForTargetLanguage(
-        "wiki/concepts/denitrifying-phosphorus-removal.md",
-        content,
-        "Chinese",
-      ),
-    ).toBe("wiki/concepts/反硝化除磷技术.md")
-  })
-
-  it("does not rewrite source summaries or aggregate pages", () => {
-    const content = "---\ntitle: 反硝化除磷技术\n---\n# 反硝化除磷技术"
-
-    expect(
-      rewriteIngestPathFromTitleForTargetLanguage("wiki/sources/source-slug.md", content, "Chinese"),
-    ).toBe("wiki/sources/source-slug.md")
-    expect(
-      rewriteIngestPathFromTitleForTargetLanguage("wiki/index.md", content, "Chinese"),
-    ).toBe("wiki/index.md")
   })
 })
 

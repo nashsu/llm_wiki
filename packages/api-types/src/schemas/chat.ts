@@ -80,6 +80,20 @@ export const ChatRenameSessionBodySchema = z.object({
   title: z.string().min(1).max(255),
 })
 
+// ── chat "Write to Wiki" (issue #14 P0: server port of executeIngestWrites) ─
+
+export const ChatWritesBodySchema = z.object({
+  sessionId: z.string().min(1),
+  userGuidance: z.string().optional(),
+  sourcePath: z.string().optional(),
+})
+
+export const ChatWritesResponseSchema = z.object({
+  runId: z.string(),
+  sessionId: z.string(),
+  writePrompt: z.string(),
+})
+
 export type ChatRequest = z.infer<typeof ChatRequestSchema>
 export type ChatStartResponse = z.infer<typeof ChatStartResponseSchema>
 export type ChatCancelParams = z.infer<typeof ChatCancelParamsSchema>
@@ -90,3 +104,5 @@ export type ChatSessionListResponse = z.infer<typeof ChatSessionListResponseSche
 export type ChatSessionDetailResponse = z.infer<typeof ChatSessionDetailResponseSchema>
 export type ChatCreateSessionBody = z.infer<typeof ChatCreateSessionBodySchema>
 export type ChatRenameSessionBody = z.infer<typeof ChatRenameSessionBodySchema>
+export type ChatWritesBody = z.infer<typeof ChatWritesBodySchema>
+export type ChatWritesResponse = z.infer<typeof ChatWritesResponseSchema>

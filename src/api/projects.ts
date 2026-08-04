@@ -4,6 +4,8 @@ import { request } from "./client"
 
 export interface Project {
   id: number
+  /** Client UUID backfill (migration 011); null until a UUID lookup binds it. */
+  uuid: string | null
   name: string
   path: string
   owner_id: number | null
@@ -12,8 +14,8 @@ export interface Project {
 }
 
 /** GET /api/v2/projects */
-export function listProjects(): Promise<Project[]> {
-  return request<Project[]>("/api/v2/projects")
+export function listProjects(): Promise<{ projects: Project[] }> {
+  return request<{ projects: Project[] }>("/api/v2/projects")
 }
 
 /** GET /api/v2/projects/:id */

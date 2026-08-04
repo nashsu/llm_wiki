@@ -4,32 +4,22 @@ import { useChatStore } from "@/stores/chat-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useResearchStore } from "@/stores/research-store"
-import { getQueue, pauseQueue } from "./ingest-queue"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
 
-// Dynamic-import mocks: resetProjectState uses `import("@/lib/ingest-queue")`
-// and `import("@/lib/graph-relevance")` at runtime. vi.mock hoists these
-// so the promise resolves to our stub immediately.
-vi.mock("./ingest-queue", async () => {
-  const actual = await vi.importActual<typeof import("./ingest-queue")>("./ingest-queue")
-  return {
-    ...actual,
-    pauseQueue: vi.fn(async () => {}),
-  }
-})
-
+// Dynamic-import mocks: resetProjectState uses `import("@/lib/graph-relevance")`
+// at runtime. vi.mock hoists this so the promise resolves to our stub.
 vi.mock("./graph-relevance", () => ({
   clearGraphCache: vi.fn(),
 }))
 
 import { clearGraphCache } from "./graph-relevance"
 
-const mockPauseQueue = vi.mocked(pauseQueue)
 const mockClearGraphCache = vi.mocked(clearGraphCache)
 
 beforeEach(() => {
-  mockPauseQueue.mockReset()
-  mockPauseQueue.mockImplementation(async () => {})
   mockClearGraphCache.mockReset()
+  // Start each case from a clean server-ingest mirror.
+  useServerIngestStore.setState({ tasks: [], running: false, lastError: null, loadedFor: null })
 })
 
 describe("resetProjectState — Zustand stores", () => {
@@ -115,37 +105,28 @@ describe("resetProjectState — Zustand stores", () => {
     expect(useResearchStore.getState().tasks).toEqual([])
     expect(useResearchStore.getState().panelOpen).toBe(false)
   })
+
+  it("resets the server ingest queue mirror", async () => {
+    useServerIngestStore.setState({
+      tasks: [{ id: 1, project_id: 1, file_path: "raw/sources/a.md", status: "pending", progress: 0, error: null, created_at: 0, attempt_count: 0, not_before: 0, folder_context: "" }],
+      running: true,
+      lastError: null,
+      loadedFor: "proj-uuid",
+    })
+
+    await resetProjectState()
+
+    const ingest = useServerIngestStore.getState()
+    expect(ingest.tasks).toEqual([])
+    expect(ingest.running).toBe(false)
+    expect(ingest.loadedFor).toBeNull()
+  })
 })
 
 describe("resetProjectState — module-level caches are awaited", () => {
-  it("calls pauseQueue before the returned promise resolves", async () => {
-    await resetProjectState()
-    expect(mockPauseQueue).toHaveBeenCalledOnce()
-  })
-
   it("calls clearGraphCache before the returned promise resolves", async () => {
     await resetProjectState()
     expect(mockClearGraphCache).toHaveBeenCalledOnce()
-  })
-
-  it("ordering: when resolve() fires, BOTH module caches are already cleared", async () => {
-    // This is the regression guard against fire-and-forget resets.
-    // By the time the outer await returns, BOTH clears must be done.
-    await resetProjectState()
-    expect(mockPauseQueue).toHaveBeenCalledOnce()
-    expect(mockClearGraphCache).toHaveBeenCalledOnce()
-  })
-
-  it("does not throw when pauseQueue itself throws — logs and continues", async () => {
-    mockPauseQueue.mockImplementationOnce(async () => {
-      throw new Error("boom")
-    })
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
-
-    await expect(resetProjectState()).resolves.toBeUndefined()
-    expect(warnSpy).toHaveBeenCalled()
-    expect(mockClearGraphCache).toHaveBeenCalledOnce() // still runs despite sibling failure
-    warnSpy.mockRestore()
   })
 
   it("does not throw when clearGraphCache itself throws", async () => {
@@ -167,6 +148,3 @@ describe("resetProjectState — leaves unrelated store keys alone", () => {
     expect(useChatStore.getState().maxHistoryMessages).toBe(42)
   })
 })
-
-// Silence the "unused import" warning on getQueue (kept for potential future tests).
-void getQueue

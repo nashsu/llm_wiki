@@ -10,12 +10,12 @@ import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReferen
 import { useWikiStore } from "@/stores/wiki-store"
 import {
   listChatSessions, createChatSession, getChatSession, renameChatSession, deleteChatSession,
+  chatWrites,
   type ChatMessageInfo,
 } from "@/api/chat"
 import { resolveTaskLlmConfig } from "@/lib/llm-task-routing"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
 import { supportsImageInput } from "@/lib/llm-providers"
-import { executeIngestWrites } from "@/lib/ingest"
 import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
@@ -79,6 +79,8 @@ interface BackendAgentEventPayload {
     path?: string
     existedBefore?: boolean
     previousContent?: string
+    /** chat-writes run: project-relative paths written to the wiki. */
+    writtenPaths?: string[]
   }
 }
 
@@ -1591,15 +1593,71 @@ export function ChatPanel() {
   }, [handleSend, activeStreaming])
 
   const handleWriteToWiki = useCallback(async () => {
-    if (!project) return
+    if (!project || activeStreaming) return
     const pp = normalizePath(project.path)
+    const convId = useChatStore.getState().activeConversationId
+    if (!convId) return
     try {
-      await executeIngestWrites(pp, llmConfig, undefined, undefined)
-      await refreshProjectFileTree(pp, { bumpDataVersion: true })
+      // Server-driven Write-to-Wiki (issue #14 P0 stage 9): the server port
+      // of executeIngestWrites builds the write prompt, persists it as the
+      // user row and streams the generation back as agent-event frames.
+      const sourcePath = useChatStore.getState().ingestSource ?? undefined
+      const { runId, writePrompt } = await chatWrites(project.id, {
+        sessionId: convId,
+        ...(sourcePath ? { sourcePath } : {}),
+      })
+
+      // Mirror the local streaming bookkeeping executeIngestWrites did:
+      // user writePrompt row, then a live stream buffer fed by this run's
+      // agent-event frames (messageDelta / wikiWrites / done / error).
+      addMessageToConversation(convId, "user", writePrompt)
+      setStreamingConversationId(convId)
+      setStreaming(true)
+
+      let accumulated = ""
+      let finished = false
+      const unlisten = await listen<BackendAgentEventPayload>("agent-event", (event) => {
+        const payload = event.payload
+        if (payload.sessionId !== convId || payload.runId !== runId) return
+        const agentEvent = payload.event
+        if (agentEvent.type === "messageDelta" && agentEvent.text) {
+          accumulated += agentEvent.text
+          appendStreamToken(agentEvent.text)
+        } else if (agentEvent.type === "wikiWrites") {
+          const writtenPaths = agentEvent.writtenPaths ?? []
+          addMessageToConversation(
+            convId,
+            "system",
+            writtenPaths.length > 0
+              ? `Files written to wiki:\n${writtenPaths
+                  .map((p) => `- ${projectAbsolutePath(pp, p)}`)
+                  .join("\n")}`
+              : "No files were written. The LLM response did not contain valid FILE blocks.",
+          )
+        } else if (agentEvent.type === "error") {
+          if (!finished) {
+            finished = true
+            finalizeStreamForConversation(
+              convId,
+              agentEvent.message ?? "Error generating wiki files",
+            )
+            setStreamingConversationId(null)
+            void unlisten()
+          }
+        } else if (agentEvent.type === "done") {
+          if (!finished) {
+            finished = true
+            finalizeStreamForConversation(convId, accumulated)
+            setStreamingConversationId(null)
+            void unlisten()
+            void refreshProjectFileTree(pp, { bumpDataVersion: true })
+          }
+        }
+      })
     } catch (err) {
       console.error("Failed to write to wiki:", err)
     }
-  }, [project, llmConfig])
+  }, [project, activeStreaming, addMessageToConversation, setStreaming, appendStreamToken, finalizeStreamForConversation])
 
   const hasAssistantMessages = activeMessages.some((m) => m.role === "assistant")
   const showWriteButton = mode === "ingest" && !activeStreaming && hasAssistantMessages

@@ -11,7 +11,8 @@ import {
 } from "@/commands/fs"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import type { LlmConfig } from "@/stores/wiki-store"
-import { enqueueBatch } from "@/lib/ingest-queue"
+import { enqueueByPath } from "@/api/ingest"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
@@ -256,7 +257,31 @@ export async function enqueueSourceIngest(
       ),
     }))
   if (files.length === 0) return []
-  return enqueueBatch(project.id, files)
+
+  // Server-driven ingest (issue #14 P0 stage 9): one REST enqueue per file.
+  // Dedupe is server-side (findLiveIngestTask on project + resolved path);
+  // a deduplicated enqueue returns the live task's id, so the returned id
+  // list keeps the shape callers expect.
+  const pp = normalizePath(project.path)
+  const ids: string[] = []
+  for (const file of files) {
+    try {
+      const res = await enqueueByPath(project.id, projectRelativePath(pp, file.sourcePath), file.folderContext)
+      ids.push(String(res.taskId))
+    } catch (err) {
+      console.error(`[source-lifecycle] failed to enqueue ingest for ${file.sourcePath}:`, err)
+    }
+  }
+  void useServerIngestStore.getState().loadQueue(project.id)
+  return ids
+}
+
+/** Enqueue-by-path takes project-relative paths; strip the project root. */
+function projectRelativePath(projectPath: string, sourcePath: string): string {
+  const normalized = normalizePath(sourcePath)
+  return normalized.startsWith(`${projectPath}/`)
+    ? normalized.slice(projectPath.length + 1)
+    : normalized
 }
 
 export async function importSourceFiles(

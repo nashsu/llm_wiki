@@ -57,8 +57,7 @@ export async function resetProjectState(): Promise<void> {
 
   // Module-level caches — load in parallel and clear each, surfacing any
   // failure instead of swallowing it.
-  const [queueMod, dedupQueueMod, graphMod, fileSyncMod, scheduledImportMod] = await Promise.allSettled([
-    import("@/lib/ingest-queue"),
+  const [dedupQueueMod, graphMod, fileSyncMod, scheduledImportMod] = await Promise.allSettled([
     import("@/lib/dedup-queue"),
     import("@/lib/graph-relevance"),
     import("@/lib/project-file-sync"),
@@ -75,18 +74,13 @@ export async function resetProjectState(): Promise<void> {
     console.warn("[Reset Project State] Failed to load scheduled-import:", scheduledImportMod.reason)
   }
 
-  if (queueMod.status === "fulfilled") {
-    try {
-      // pauseQueue flushes the active project's state to disk (reverting
-      // any processing task to pending) before clearing in-memory state.
-      // Awaiting is required — the disk write must complete before the
-      // new project's restoreQueue reads its own file.
-      await queueMod.value.pauseQueue()
-    } catch (err) {
-      console.warn("[Reset Project State] pauseQueue failed:", err)
-    }
-  } else {
-    console.warn("[Reset Project State] Failed to load ingest-queue:", queueMod.reason)
+  // Server-driven ingest (issue #14 P0 stage 9): the queue lives on the
+  // server; just drop the local mirror so the next project loads fresh.
+  try {
+    const { useServerIngestStore } = await import("@/stores/server-ingest-store")
+    useServerIngestStore.getState().reset()
+  } catch (err) {
+    console.warn("[Reset Project State] server-ingest-store reset failed:", err)
   }
 
   if (dedupQueueMod.status === "fulfilled") {

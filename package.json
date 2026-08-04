@@ -25,7 +25,7 @@
     "dev:web": "vite --config vite.web.config.ts",
     "build:web": "vite build --config vite.web.config.ts",
     "server": "node packages/server/src/index.js",
-    "start:web": "npm run build:web && node packages/server/src/index.js"
+    "start:web": "npm run build:web && node packages/server/src/index-v2.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

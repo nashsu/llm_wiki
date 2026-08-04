@@ -35,10 +35,18 @@ function toAnthropicMessages(messages) {
       out.push({ role: "user", content: [{ type: "tool_result", tool_use_id: m.toolCallId, content: m.content }] })
     } else if (m.role === "assistant" && m.toolCalls?.length) {
       const blocks = []
-      if (m.content) blocks.push({ type: "text", text: m.content })
+      // Multimodal array content passes through unchanged (parity with the
+      // OpenAI wire); string content keeps the single text-block behavior.
+      if (m.content) {
+        if (Array.isArray(m.content)) blocks.push(...m.content)
+        else blocks.push({ type: "text", text: m.content })
+      }
       for (const t of m.toolCalls) blocks.push({ type: "tool_use", id: t.id, name: t.name, input: typeof t.args === "string" ? safeParse(t.args) : (t.args ?? {}) })
       out.push({ role: "assistant", content: blocks })
     } else {
+      // String content stays a string; array content (multimodal blocks,
+      // e.g. [{type:"text",…},{type:"image",…}]) passes through unchanged,
+      // exactly as the OpenAI wire does.
       out.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })
     }
   }
@@ -70,8 +78,10 @@ async function* readSSE(response) {
   if (buf.trim()) yield buf.replace(/\r$/, "")
 }
 
-async function* streamOpenAI({ url, headers, model, messages, tools, signal }) {
+async function* streamOpenAI({ url, headers, model, messages, tools, signal, temperature, maxTokens }) {
   const body = { model, messages: toOpenAIMessages(messages), stream: true, stream_options: { include_usage: false } }
+  if (temperature !== undefined) body.temperature = temperature
+  if (maxTokens !== undefined) body.max_tokens = maxTokens
   if (tools?.length) { body.tools = toOpenAITools(tools); body.tool_choice = "auto" }
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal })
   if (!res.ok) throw new Error(`LLM request failed: ${res.status} ${await res.text().catch(() => "")}`)
@@ -107,8 +117,9 @@ async function* streamOpenAI({ url, headers, model, messages, tools, signal }) {
   }
 }
 
-async function* streamAnthropic({ url, headers, model, messages, tools, signal }) {
-  const body = { model, max_tokens: 8192, messages: toAnthropicMessages(messages), stream: true }
+async function* streamAnthropic({ url, headers, model, messages, tools, signal, temperature, maxTokens }) {
+  const body = { model, max_tokens: maxTokens ?? 8192, messages: toAnthropicMessages(messages), stream: true }
+  if (temperature !== undefined) body.temperature = temperature
   const sys = systemText(messages)
   if (sys) body.system = sys
   if (tools?.length) { body.tools = toAnthropicTools(tools); body.tool_choice = { type: "auto" } }
@@ -136,8 +147,10 @@ async function* streamAnthropic({ url, headers, model, messages, tools, signal }
   }
 }
 
-async function nonStreamOpenAI({ url, headers, model, messages, tools, signal }) {
+async function nonStreamOpenAI({ url, headers, model, messages, tools, signal, temperature, maxTokens }) {
   const body = { model, messages: toOpenAIMessages(messages) }
+  if (temperature !== undefined) body.temperature = temperature
+  if (maxTokens !== undefined) body.max_tokens = maxTokens
   if (tools?.length) { body.tools = toOpenAITools(tools); body.tool_choice = "auto" }
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal })
   if (!res.ok) throw new Error(`LLM request failed: ${res.status} ${await res.text().catch(() => "")}`)
@@ -147,8 +160,9 @@ async function nonStreamOpenAI({ url, headers, model, messages, tools, signal })
   return { content: msg?.content ?? "", toolCalls }
 }
 
-async function nonStreamAnthropic({ url, headers, model, messages, tools, signal }) {
-  const body = { model, max_tokens: 8192, messages: toAnthropicMessages(messages) }
+async function nonStreamAnthropic({ url, headers, model, messages, tools, signal, temperature, maxTokens }) {
+  const body = { model, max_tokens: maxTokens ?? 8192, messages: toAnthropicMessages(messages) }
+  if (temperature !== undefined) body.temperature = temperature
   const sys = systemText(messages)
   if (sys) body.system = sys
   if (tools?.length) { body.tools = toAnthropicTools(tools); body.tool_choice = { type: "auto" } }

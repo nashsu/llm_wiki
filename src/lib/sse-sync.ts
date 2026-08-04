@@ -14,11 +14,14 @@
 
 import { connectEvents, type ServerEvent } from "@/api/events"
 import { request } from "@/api/client"
+import { listProjects } from "@/api/projects"
 import { getSettings } from "@/api/settings"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { normalizePath } from "@/lib/path-utils"
 
 interface HealthResponse {
   ok: boolean
@@ -38,6 +41,10 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
 }
 
+function num(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined
+}
+
 /** Refresh the current project's file tree + graph caches (dataVersion). */
 function refreshWiki(): void {
   const project = useWikiStore.getState().project
@@ -52,19 +59,110 @@ function handleFileEvent(): void {
   refreshWiki()
 }
 
-function handleIngest(evt: ServerEvent): void {
-  const store = useFileSyncStore.getState()
+// ── current-project identity (UUID → numeric projects-row id) ─────────────
+//
+// Ingest events carry the server's numeric projects-row id, but the client
+// only knows WikiProject.id (a UUID). Resolve the mapping once per project
+// via GET /api/v2/projects and cache it at module level; events that cannot
+// be attributed to the current project are dropped rather than applied to
+// the wrong project's stores.
+
+let resolvedForUuid: string | null = null
+let resolvedNumericId: number | null = null
+let resolveInFlight: Promise<number | null> | null = null
+
+function invalidateProjectResolution(): void {
+  resolvedForUuid = null
+  resolvedNumericId = null
+}
+
+async function resolveCurrentNumericProjectId(): Promise<number | null> {
+  const project = useWikiStore.getState().project
+  if (!project) return null
+  if (resolvedForUuid === project.id) return resolvedNumericId
+  if (resolveInFlight) return resolveInFlight
+  resolveInFlight = (async () => {
+    try {
+      const { projects } = await listProjects()
+      const current = useWikiStore.getState().project
+      if (!current) return null
+      const match = projects.find((p) => p.uuid === current.id)
+        ?? projects.find((p) => normalizePath(p.path) === normalizePath(current.path))
+      // Cache only POSITIVE resolutions: a null result (projects row not
+      // materialized yet) must be retried on the next event, otherwise all
+      // ingest frames for this project would be silently dropped until a
+      // project switch / SSE restart.
+      if (match) {
+        resolvedForUuid = current.id
+        resolvedNumericId = match.id
+      }
+      return match?.id ?? null
+    } catch {
+      return null
+    } finally {
+      resolveInFlight = null
+    }
+  })()
+  return resolveInFlight
+}
+
+async function handleIngest(evt: ServerEvent): Promise<void> {
   const p = asRecord(evt.payload)
+  const eventProjectId = num(p.projectId) ?? null
+  const currentNumericId = await resolveCurrentNumericProjectId()
+  // Project filter: events carry the numeric row id; ignore events for other
+  // projects, and drop unattributable events instead of guessing.
+  if (currentNumericId === null || (eventProjectId !== null && eventProjectId !== currentNumericId)) {
+    return
+  }
+
+  const uuid = useWikiStore.getState().project?.id ?? null
+  const fileSync = useFileSyncStore.getState()
+  const ingest = useServerIngestStore.getState()
+  const taskId = num(p.taskId) ?? null
+
+  if (evt.event === "ingest:queued") {
+    if (uuid) void ingest.loadQueue(uuid)
+    return
+  }
+
   if (evt.event === "ingest:progress") {
-    store.setRunning(true)
-    store.setLastError(null)
-  } else if (evt.event === "ingest:complete") {
-    store.setRunning(false)
-    store.setLastError(null)
+    fileSync.setRunning(true)
+    fileSync.setLastError(null)
+    if (taskId !== null) {
+      ingest.patchTask(taskId, {
+        status: "processing",
+        ...(num(p.progress) !== undefined ? { progress: num(p.progress) } : {}),
+      })
+    }
+    ingest.setRunning(true)
+    return
+  }
+
+  if (evt.event === "ingest:complete") {
+    fileSync.setRunning(false)
+    fileSync.setLastError(null)
     refreshWiki()
-  } else if (evt.event === "ingest:error") {
-    store.setRunning(false)
-    store.setLastError(str(p.error) ?? str(p.message) ?? "Ingest failed")
+    if (taskId !== null) ingest.patchTask(taskId, { status: "completed", progress: 100 })
+    // Terminal frame: refresh the authoritative list (completed rows stay).
+    if (uuid) void useServerIngestStore.getState().loadQueue(uuid)
+    return
+  }
+
+  if (evt.event === "ingest:error") {
+    const errorText = str(p.error) ?? str(p.message) ?? "Ingest failed"
+    fileSync.setRunning(false)
+    fileSync.setLastError(errorText)
+    ingest.setLastError(errorText)
+    if (taskId !== null) {
+      ingest.patchTask(taskId, {
+        // The server keeps retryable failures as "pending" (attempt < max);
+        // only the final failure flips the row to "failed".
+        status: str(p.status) === "failed" ? "failed" : "pending",
+        error: errorText,
+      })
+    }
+    if (uuid) void useServerIngestStore.getState().loadQueue(uuid)
   }
 }
 
@@ -111,10 +209,11 @@ function dispatch(evt: ServerEvent): void {
     case "file:deleted":
       handleFileEvent()
       break
+    case "ingest:queued":
     case "ingest:progress":
     case "ingest:complete":
     case "ingest:error":
-      handleIngest(evt)
+      void handleIngest(evt)
       break
     case "chat:delta":
     case "chat:done":
@@ -182,6 +281,7 @@ export function startSseSync(): void {
 /** Close the SSE stream and stop all dispatching. */
 export function stopSseSync(): void {
   started = false
+  invalidateProjectResolution()
   if (disconnect) {
     disconnect()
     disconnect = null

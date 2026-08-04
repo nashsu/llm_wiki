@@ -38,6 +38,7 @@ import ingestRouter from "./api/ingest.js"
 import storeRouter from "./api/store.js"
 import { handleProxy } from "./proxy.js"
 import { generateOpenApiDocument } from "./openapi.js"
+import { startIngestOrchestrator } from "./ingest/orchestrator.js"
 
 // Initialize data directories and database (runs migrations on first boot)
 ensureDataDirs()
@@ -214,6 +215,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`  ▸ API:      /api/v2/* (new) + /api/invoke/* (legacy)`)
     console.log(`  ▸ Web build: ${fs.existsSync(WEB_INDEX) ? WEB_DIST : "MISSING — run: npm run build:web"}\n`)
   })
+  // Server-driven ingest (issue #14 P0): start consuming the ingest queue.
+  // Called ONLY in the boot block — the orchestrator module is import-safe,
+  // so test imports of `app` never start its sweep timer or touch the queue.
+  startIngestOrchestrator()
 }
 
 export { app, server }

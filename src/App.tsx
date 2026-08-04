@@ -478,16 +478,16 @@ function App() {
       useWikiStore.getState().bumpDataVersion()
       await saveLastProject(proj)
 
-      // Restore ingest queue (resume interrupted tasks). Keyed by the
-      // project's stable UUID so the queue still finds the right project
-      // even if the filesystem path changed since the task was enqueued.
-      // Await this before starting file sync: watcher events for raw/sources
-      // may enqueue ingest tasks and require an active project queue.
+      // Load the server-driven ingest queue for this project (issue #14 P0
+      // stage 9). The queue persists server-side (SQLite ingest_queue); the
+      // store just mirrors it. Await this before starting file sync: watcher
+      // events for raw/sources may enqueue ingest tasks and expect the store
+      // to be keyed to the active project.
       try {
-        const { restoreQueue } = await import("@/lib/ingest-queue")
-        await restoreQueue(proj.id, proj.path)
+        const { useServerIngestStore } = await import("@/stores/server-ingest-store")
+        await useServerIngestStore.getState().loadQueue(proj.id)
       } catch (err) {
-        console.error("Failed to restore ingest queue:", err)
+        console.error("Failed to load server ingest queue:", err)
       }
       // Same handshake for the dedup-merge queue.
       import("@/lib/dedup-queue").then(({ restoreQueue }) => {

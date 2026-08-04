@@ -1,7 +1,8 @@
 import { useWikiStore } from "@/stores/wiki-store"
-import { enqueueIngest } from "./ingest-queue"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { getRelativePath } from "@/lib/path-utils"
 
 const POLL_INTERVAL = 3000 // Check every 3 seconds
 let intervalId: ReturnType<typeof setInterval> | null = null
@@ -36,14 +37,12 @@ export function startClipWatcher() {
           await refreshProjectFileTree(project.path, { projectId: project.id })
 
           // Enqueue (not auto-ingest directly) so the task lands in the
-          // persisted queue, shows up in the activity panel, and survives
-          // a UI refresh. Same path used by file imports from sources-view.
-          // Pass the project's stable UUID — the queue looks up the
-          // current filesystem path from the registry at run time.
+          // server's persisted ingest queue, shows up in the activity panel,
+          // and survives a UI refresh. Server-side ingest owns the run
+          // (issue #14 P0 stage 9). The enqueue-by-path route takes a
+          // project-relative path.
           if (hasUsableLlm(store.llmConfig)) {
-            enqueueIngest(project.id, clipFilePath).catch((err) => {
-              console.error("Failed to enqueue web clip:", err)
-            })
+            void useServerIngestStore.getState().enqueue(getRelativePath(clipFilePath, project.path))
           }
         }
       }

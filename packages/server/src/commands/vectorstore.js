@@ -122,7 +122,7 @@ function warnDegraded(op) {
 }
 
 // ── chunk-level vector commands (v2) ──────────────────────────────────────
-async function vectorUpsertChunks({ projectPath, pageId, chunks }) {
+export async function vectorUpsertChunks({ projectPath, pageId, chunks }) {
   validatePageId(pageId)
   if (!chunks || chunks.length === 0) return
   if (!isVecAvailable()) { warnDegraded("vector_upsert_chunks"); return }
@@ -191,7 +191,7 @@ async function vectorSearchChunks({ projectPath, queryEmbedding, topK = 10 }) {
   }))
 }
 
-async function vectorDeletePage({ projectPath, pageId }) {
+export async function vectorDeletePage({ projectPath, pageId }) {
   validatePageId(pageId)
   if (!isVecAvailable()) return
   const db = getDb()
