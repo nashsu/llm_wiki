@@ -223,7 +223,15 @@ registry.registerPath({
   request: {
     params: chatProjectIdParam.extend(chunkedUploadIdParam.shape),
     query: ChunkedUploadChunkQuerySchema,
-    body: { content: { "application/octet-stream": { schema: z.string() } } },
+    body: {
+      content: {
+        "application/octet-stream": {
+          // Raw chunk bytes; `format: binary` so generated clients type the
+          // body as binary rather than a plain string.
+          schema: z.string().openapi({ format: "binary" }),
+        },
+      },
+    },
   },
   responses: {
     200: {
@@ -234,7 +242,9 @@ registry.registerPath({
       description:
         "Offset mismatch (details.received carries the resume point) or chunk overflow",
     },
-    404: { description: "Upload session not found, expired, or other project" },
+    404: {
+      description: "Project or upload session not found, expired, or other project",
+    },
   },
 })
 
@@ -252,7 +262,9 @@ registry.registerPath({
     },
     400: { description: "Upload incomplete (received < fileSize)" },
     403: { description: "destPath escapes the project directory" },
-    404: { description: "Upload session not found, expired, or other project" },
+    404: {
+      description: "Project or upload session not found, expired, or other project",
+    },
   },
 })
 
