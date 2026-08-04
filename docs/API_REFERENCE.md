@@ -62,7 +62,7 @@ upstream provider info). Stable error codes and their HTTP statuses:
 | `FORBIDDEN` | 403 | Authenticated but not allowed (e.g. shell tools disabled). |
 | `NOT_FOUND` | 404 | Resource (project, file, task…) does not exist. |
 | `CONFLICT` | 409 | State conflict (e.g. duplicate project). |
-| `FILE_TOO_LARGE` | 413 | Upload exceeds the size limit (server body limit is 64 MB). |
+| `FILE_TOO_LARGE` | 413 | Upload exceeds the maximum upload size (`LLM_WIKI_MAX_UPLOAD_MB`, default 50 MB) — multipart oversize and oversize chunked-upload `init` alike. |
 | `RATE_LIMITED` | 429 | Too many requests. |
 | `INTERNAL_ERROR` | 500 | Unexpected server error (internals are never leaked). |
 | `UPSTREAM_ERROR` | 502 | An upstream provider (LLM, search API) failed. |
@@ -107,6 +107,9 @@ upstream provider info). Stable error codes and their HTTP statuses:
 | GET | `/files/tree` | Directory tree. Query: `path`, `includeHidden`, `maxDepth`. |
 | GET | `/files/content` | Read a file's text content. Query: `path`. |
 | POST | `/files/upload` | Write a file. JSON body with path + base64 content. |
+| POST | `/files/upload/init` | Open a chunked-upload session (files >10MB). Body `{ "fileName", "fileSize", "destPath" }` → `201 { "uploadId" }`. `fileSize` over the upload cap → `413 FILE_TOO_LARGE`. |
+| PUT | `/files/upload/:uploadId/chunk` | Append one octet-stream chunk. Query: `offset` (must equal the server's byte count) → `{ "received" }`. Offset mismatch → `400` with `details.received` — resume by resending from that byte count. |
+| POST | `/files/upload/:uploadId/complete` | Finalize a fully-received upload: staging → `destPath` (atomic write), emits `file:created`/`file:modified` → `{ "path", "size" }`. Does NOT auto-enqueue; the client enqueues via `POST /ingest` afterwards. |
 | GET | `/files/download` | Download a file as an attachment. Query: `path`. |
 | GET | `/files/raw` | Stream a file with its native content type (for `<img>`/`<a>`). Query: `path`. |
 

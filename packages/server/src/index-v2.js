@@ -39,6 +39,7 @@ import storeRouter from "./api/store.js"
 import { handleProxy } from "./proxy.js"
 import { generateOpenApiDocument } from "./openapi.js"
 import { startIngestOrchestrator } from "./ingest/orchestrator.js"
+import { startChunkedUploadSweeper } from "./uploads/chunked.js"
 
 // Initialize data directories and database (runs migrations on first boot)
 ensureDataDirs()
@@ -219,6 +220,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // Called ONLY in the boot block — the orchestrator module is import-safe,
   // so test imports of `app` never start its sweep timer or touch the queue.
   startIngestOrchestrator()
+  // Chunked-upload TTL sweep (issue #14 P2): drop expired sessions + unlink
+  // their staging files. Same direct-run-only placement as the orchestrator.
+  startChunkedUploadSweeper()
 }
 
 export { app, server }

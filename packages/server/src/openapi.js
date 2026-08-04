@@ -20,6 +20,11 @@ import {
   ChatSessionParamsSchema,
   ChatCreateSessionBodySchema,
   ChatRenameSessionBodySchema,
+  ChunkedUploadInitBodySchema,
+  ChunkedUploadInitResponseSchema,
+  ChunkedUploadChunkQuerySchema,
+  ChunkedUploadChunkResponseSchema,
+  ChunkedUploadCompleteResponseSchema,
 } from "@llm-wiki/api-types"
 
 const registry = new OpenAPIRegistry()
@@ -31,6 +36,10 @@ registry.register("UpdateProject", UpdateProjectSchema)
 registry.register("Error", ErrorEnvelopeSchema)
 const ChatSessionRef = registry.register("ChatSession", ChatSessionSchema)
 const ChatMessageRef = registry.register("ChatMessage", ChatMessageSchema)
+const ChunkedUploadInitRef = registry.register("ChunkedUploadInit", ChunkedUploadInitBodySchema)
+const ChunkedUploadInitResponseRef = registry.register("ChunkedUploadInitResponse", ChunkedUploadInitResponseSchema)
+const ChunkedUploadChunkResponseRef = registry.register("ChunkedUploadChunkResponse", ChunkedUploadChunkResponseSchema)
+const ChunkedUploadCompleteResponseRef = registry.register("ChunkedUploadCompleteResponse", ChunkedUploadCompleteResponseSchema)
 
 // ── register paths ────────────────────────────────────────────────────────
 registry.registerPath({
@@ -178,6 +187,84 @@ registry.registerPath({
   responses: {
     204: { description: "Deleted" },
     404: { description: "Project or session not found" },
+  },
+})
+
+// ── chunked upload paths (issue #14 P2, Decision 15) ─────────────────────
+// Large files (>10MB) take the charter's chunked protocol: init → chunk PUTs
+// → complete. The {id} segment accepts either the integer projects-table id
+// or the client project UUID, so it is described inline rather than with
+// ProjectIdParamSchema (same rationale as the chat routes above).
+const chunkedUploadIdParam = z.object({ uploadId: z.string().min(1) })
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v2/projects/{id}/files/upload/init",
+  summary: "Open a chunked-upload session (large files, issue #14 P2)",
+  request: {
+    params: chatProjectIdParam,
+    body: { content: { "application/json": { schema: ChunkedUploadInitRef } } },
+  },
+  responses: {
+    201: {
+      description: "Session opened",
+      content: { "application/json": { schema: ChunkedUploadInitResponseRef } },
+    },
+    400: { description: "Validation error" },
+    404: { description: "Project not found" },
+    413: { description: "fileSize exceeds the upload cap" },
+  },
+})
+
+registry.registerPath({
+  method: "put",
+  path: "/api/v2/projects/{id}/files/upload/{uploadId}/chunk",
+  summary: "Append one octet-stream chunk (offset must equal server byte count)",
+  request: {
+    params: chatProjectIdParam.extend(chunkedUploadIdParam.shape),
+    query: ChunkedUploadChunkQuerySchema,
+    body: {
+      content: {
+        "application/octet-stream": {
+          // Raw chunk bytes; `format: binary` so generated clients type the
+          // body as binary rather than a plain string.
+          schema: z.string().openapi({ format: "binary" }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Chunk appended; received = total bytes stored so far",
+      content: { "application/json": { schema: ChunkedUploadChunkResponseRef } },
+    },
+    400: {
+      description:
+        "Offset mismatch (details.received carries the resume point) or chunk overflow",
+    },
+    404: {
+      description: "Project or upload session not found, expired, or other project",
+    },
+  },
+})
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v2/projects/{id}/files/upload/{uploadId}/complete",
+  summary: "Finalize the upload: staging → destPath, emits file:created/modified",
+  request: {
+    params: chatProjectIdParam.extend(chunkedUploadIdParam.shape),
+  },
+  responses: {
+    200: {
+      description: "File written into the project",
+      content: { "application/json": { schema: ChunkedUploadCompleteResponseRef } },
+    },
+    400: { description: "Upload incomplete (received < fileSize)" },
+    403: { description: "destPath escapes the project directory" },
+    404: {
+      description: "Project or upload session not found, expired, or other project",
+    },
   },
 })
 
