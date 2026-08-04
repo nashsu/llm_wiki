@@ -37,7 +37,7 @@ flowchart TB
     StoreAPI["/api/store/* (plugin store)"]
     Proxy["/api/proxy (cross-origin LLM/embed/search)"]
     Agent["Chat agent runtime<br/>model↔tool loop (agent.js)"]
-    Workers["Worker pool (CPU offload:<br/>preprocess · embedding · graph)"]
+    Workers["Worker pool (CPU offload: preprocess)"]
     SPA["Static SPA + SPA fallback"]
   end
 
@@ -71,8 +71,8 @@ flowchart TB
   Proxy --> LLM
   Proxy --> EmbProv
   Embed --> Proxy
-  Workers -- "embedding worker" --> EmbProv
-  Workers --> MinerU
+  Orch -- "embedPage (main thread)" --> EmbProv
+  Orch -- "MinerU PDF parse (main thread)" --> MinerU
   APIv2 --> SQLite
   Bridge --> Disk
   Agent --> Disk
@@ -92,10 +92,11 @@ flowchart TB
 **Important division of labor:** all heavy LLM work now runs **server-side** —
 *ingest* in the orchestrator/pipeline (`ingest/llm.js`), *chat* in the agent
 runtime (`agent.js`) (issue #14 P0; the browser pipeline was deleted). The
-server worker pool additionally offloads CPU tasks (binary parsing, embedding
-fetch, graph build). The browser no longer calls LLM providers for ingest; it
-only enqueues sources, watches SSE, and performs a few maintenance flows
-(dedup/re-index) through the legacy bridge.
+server worker pool offloads binary parsing (the `preprocess` task) to a worker
+thread; everything else in the pipeline — MinerU parsing, image extraction,
+embedding fetch, graph builds — runs on the main thread. The browser no longer
+calls LLM providers for ingest; it only enqueues sources, watches SSE, and
+performs a few maintenance flows (dedup/re-index) through the legacy bridge.
 
 ---
 
@@ -103,28 +104,31 @@ only enqueues sources, watches SSE, and performs a few maintenance flows
 
 ### 2a. SQLite — `server.db` (under `LLM_WIKI_DATA_DIR`, `/data` in Docker)
 
-Relational **metadata**. Live schema (12 migrations applied):
+Relational **metadata**. Live schema (13 migrations applied):
 
 | Table | Purpose | Status |
 |---|---|---|
 | `projects` | Registered projects (uuid, name, path, owner) | used |
 | `users` | Local user accounts (username, password_hash) | used |
 | `settings` | Per-user key/value settings | used |
-| `ingest_queue` | Ingest task queue consumed by the server orchestrator (pending → running → complete/failed; attempt_count, error, not_before for retry/usage-limit deferral) | used |
+| `ingest_queue` | Ingest task queue consumed by the server orchestrator (`pending → processing → completed/failed`; attempt_count, error, not_before for retry/usage-limit deferral) | used |
 | `reviews` | Review items (type, title, status) | used |
 | `chat_sessions` | Chat session metadata (uuid, project_id, title, timestamps) | used |
 | `chat_messages` | Chat message history (role, content, references JSON) | used |
-| `graph_nodes` / `graph_edges` | Knowledge-graph cache (path, title, type, link_count; weighted edges) | written when the graph is built |
+| `graph_nodes` / `graph_edges` | Knowledge-graph cache (path, title, type, link_count; weighted edges) | never written — accepted deviation; the graph is rebuilt on demand from `wiki/*.md` (see §7, G13) |
 | `vec_chunks` | Embedding chunks — sqlite-vec **vec0 virtual table** (`chunk_id` PK, `project_id`/`page_id`/`chunk_index`/`chunk_text`/`heading_path`, `embedding FLOAT[dim]`, cosine distance) | used when the sqlite-vec extension loads (see note) |
 | `vec_meta` | Current vector-index dimensionality (single row, `id = 1`) | used to drop/recreate `vec_chunks` when the embedding dimension changes |
 | `_migrations` | Applied migration bookkeeping | used |
 
 > **Note on `vec_chunks`:** embeddings are stored **in SQLite** via the
 > [sqlite-vec](https://github.com/asg017/sqlite-vec) extension (issue #14).
-> Migration `012` replaces the old placeholder table with a vec0 virtual table
-> plus `vec_meta`. The extension is loaded best-effort in `getDb()`; if it
-> fails to load (unsupported platform, extension missing), the server **degrades
-> to keyword-only retrieval** and search responses carry a
+> Migration `012` drops the old placeholder table and creates `vec_meta`; the
+> vec0 virtual table itself is created **lazily** by `ensureVecTable` on the
+> first embedding write, dimensioned by the embedding provider — on a freshly
+> migrated server `vec_chunks` does not exist until the first embed. The
+> extension is loaded best-effort in `getDb()`; if it fails to load
+> (unsupported platform, extension missing), the server **degrades to
+> keyword-only retrieval** and search responses carry a
 > `vectorUnavailableReason` — requests never fail. The legacy per-project
 > `.llm-wiki/vectorstore.json` is no longer written or read; upgrading a project
 > means re-running "Re-index all pages" (or a fresh ingest). Dimension changes
@@ -153,7 +157,6 @@ The actual knowledge-base content:
 │   └── log.md              # append-only ingest log
 └── .llm-wiki/              # per-project app state
     ├── vectorstore.json    # legacy embeddings (pre-sqlite-vec; no longer written or read — re-index to migrate)
-    ├── ingest-queue.json   # desktop-only client-side ingest queue (web uses the server's ingest_queue table)
     ├── ingest-cache.json   # skip-unchanged-source cache
     ├── image-caption-cache.json
     └── history/<hash>.json # file-history snapshots (human + agent edits)
@@ -193,7 +196,7 @@ sequenceDiagram
 
   U->>SPA: drop / upload source
   SPA->>SRV: POST /ingest/upload (multipart) or POST /ingest {filePath}
-  SRV->>FS: write raw/sources/<ts>_<name>_<hex> (upload path)
+  SRV->>FS: write raw/sources/<ts>_<hex8>_<name> (upload path)
   SRV->>DB: INSERT ingest_queue (pending, attempt_count 0)
   SRV-->>SPA: 201 {taskId} + SSE ingest:queued
   SRV->>ORC: kick()
@@ -221,14 +224,14 @@ sequenceDiagram
   ORC->>DB: persist reviews, save ingest cache (only when fully clean)
 
   rect rgb(240,255,240)
-  Note over ORC,EMB: Embeddings (per written page, server embed worker)
+  Note over ORC,EMB: Embeddings (per written page, inline on the server main thread)
   ORC->>EMB: embeddings request (chunked markdown)
   EMB-->>ORC: vectors
   ORC->>DB: INSERT vec_chunks (sqlite-vec vec0, cosine)
   end
 
-  ORC->>DB: UPDATE ingest_queue (complete)
-  ORC-->>SPA: SSE ingest:complete {taskId, writtenPaths}
+  ORC->>DB: UPDATE ingest_queue (completed)
+  ORC-->>SPA: SSE ingest:complete {taskId, pagesCreated}
 ```
 
 ### Stages (server: `ingest/pipeline.js` → `runIngestPipeline`)
@@ -260,8 +263,10 @@ sequenceDiagram
    sanitized); existing pages merged via LLM; `index.md`/`log.md` updated
    deterministically; reviews folded into `.llm-wiki/review.json`
    (`ingest/reviews.js`).
-8. **Embeddings** — `ingest/embed.js` `embedPage` per written page → embed
-   worker → `vec_chunks` (sqlite-vec vec0 in SQLite).
+8. **Embeddings** — `ingest/embed.js` `embedPage` per written page, run
+   **inline on the pipeline's main thread** (plain embedding fetch followed by
+   the `vec_chunks` SQLite upsert; there is no embed worker) → `vec_chunks`
+   (sqlite-vec vec0 in SQLite).
 
 ### Queue semantics
 
@@ -311,9 +316,10 @@ sequenceDiagram
   participant VS as vec_chunks (SQLite) + wiki/
 
   U->>SPA: ask a question
-  SPA->>SRV: POST /projects/:id/chat {message, sessionId, mode, tools, resume?, historyLimit?}
-  SRV->>AG: agentStartTurnStream → runId (returned immediately)
-  SRV-->>SPA: {runId}  (answer streams over SSE agent-event)
+  SPA->>SRV: start turn {message, sessionId?, mode?, tools?, resume?, regenerate?, historyLimit?}
+  Note over SPA,SRV: shipped web client: invoke("agent_start_turn_stream") → legacy<br/>bridge POST /api/invoke/* — REST equivalent: POST /api/v2/projects/:id/chat
+  SRV->>AG: agentStartTurnStream → runId (returned immediately; both entry points converge here)
+  SRV-->>SPA: {runId, sessionId}  (answer streams over SSE agent-event)
 
   AG->>AG: resolve project path (plugin store projectRegistry) + LLM config
   AG->>AG: ensure session row, load prior messages from SQLite, persist user message
@@ -341,8 +347,15 @@ sequenceDiagram
 
 ### How it works
 
-1. **Request** — `api/chat.js` validates the body and calls
-   `agentStartTurnStream`; the `runId` returns immediately and the turn runs
+1. **Request** — two entry points converge on `agentStartTurnStream`
+   (`agent.js`): the shipped web client starts and cancels turns through the
+   legacy bridge (`invoke("agent_start_turn_stream")` /
+   `invoke("agent_cancel_turn")` → the `agent.js` command registry), and
+   `api/chat.js` is the REST equivalent (`POST /api/v2/projects/:id/chat`),
+   validating the body — `{message, sessionId?, mode?, tools?, topK?,
+   includeContent?, skills?, resume?, regenerate?, historyLimit?}` — against
+   the api-types schema. Either way the `runId` returns immediately (echoing
+   the client's `sessionId`, or a server-generated one) and the turn runs
    asynchronously, streaming `agent-event` payloads over SSE. Since the SSE
    taxonomy (issue #14), the same choke points additionally dual-emit the
    chartered `chat:*` frames (`chat:delta` / `chat:toolStart` /
@@ -380,7 +393,10 @@ row is ensured on the first turn of a conversation (client-generated session
 UUID, unique-indexed); the user message is persisted at turn start and the
 assistant message (with its references JSON) at turn completion — never per
 streamed delta, so a cancelled or errored turn leaves just the user message.
-History for the next turn is loaded from `chat_messages` capped at
+A `regenerate: true` re-run drops the session's last user/assistant exchange
+first (`dropLastExchange`), so the re-persisted user message and the fresh
+answer replace the old pair. History for the next turn is loaded from
+`chat_messages` capped at
 `historyLimit` (client setting, default 10; server default 20). The `:id`
 segment accepts either the integer projects-table id or the project UUID; the
 UUID path resolves via the plugin-store registry and materializes the
@@ -400,7 +416,8 @@ message. Session CRUD: list/create/get/rename/delete under
   (`src/lib/ingest.ts`) was deleted; `/api/proxy` still serves desktop-era
   maintenance flows and cross-origin calls.
 - **Vectors live in SQLite via sqlite-vec** (web, issue #14). `vec_chunks` is a
-  sqlite-vec vec0 virtual table loaded best-effort in `getDb()`; if the
+  sqlite-vec vec0 virtual table (created lazily on the first embedding write —
+  the sqlite-vec extension itself is loaded best-effort in `getDb()`); if the
   extension cannot load the server keeps working with keyword-only retrieval
   and answers carry `vectorUnavailableReason`. The legacy
   `.llm-wiki/vectorstore.json` file store is no longer used.
@@ -424,17 +441,24 @@ message. Session CRUD: list/create/get/rename/delete under
   bus with envelope `projectId: null` — attribution rides in the payload,
   exactly like `ingest:*` — and reach both `GET /api/events` and
   `GET /api/v2/events`:
-  - `file:*` at every write path: files upload (a pre-write existence check
-    decides created vs modified), ingest upload, chunked-upload completion
-    (same existence check), maintenance rebuild-index
-    and file-history restore, cancel cleanup (`file:deleted` per unlinked
-    page), chat Write-to-Wiki FILE blocks plus the post-write image
-    injection, and the legacy invoke filesystem writers (no project context
-    there — resolved by longest-prefix match against `projects.path`, null
-    when unresolved). Ingest runs deliberately emit no per-page events (§3).
+  - `file:*` at every API-mediated write path: files upload (a pre-write
+    existence check decides created vs modified), ingest upload,
+    chunked-upload completion (same existence check), maintenance
+    rebuild-index and file-history restore, cancel cleanup (`file:deleted`
+    per unlinked page), chat Write-to-Wiki FILE blocks plus the post-write
+    image injection (created vs modified by the same existence check), and
+    the legacy invoke filesystem writers (no project context there —
+    resolved by longest-prefix match against `projects.path`, null when
+    unresolved). One exception: the chat **agent's** tool writes
+    (`wiki.write_page` / `workspace.write_file` / `workspace.append_file`)
+    write files directly and emit only an `agent-event` `fileChanged` frame
+    (consumed by the active tab alone) — no `file:*`, no `graph:updated` —
+    so other tabs are not invalidated when the agent edits a page. Ingest
+    runs deliberately emit no per-page events (§3).
   - `graph:updated` as ONE aggregate per mutation ("wiki pages changed ⇒
     graph caches stale"; payload `{projectId, nodesChanged, edgesChanged}`)
-    after ingest success/cancel, rebuild-index, and chat writes completion.
+    after ingest success/cancel, rebuild-index, and chat writes completion
+    (agent tool writes emit none — see the `file:*` bullet).
   - `settings:changed` (`{keys}`, host-global) on every `/api/v2/settings`
     write and on writes to the shared store (`app-state.json`) through the
     `/api/store` shim and the legacy server; other store names emit nothing.
@@ -452,8 +476,12 @@ message. Session CRUD: list/create/get/rename/delete under
   the chat store and skips runs the local tab owns (the chat-panel
   tombstones its run ids in the store — the active tab already renders them
   from `agent-event`, so applying them twice would double tokens). Accepted
-  degradations: no server-side file watcher (out-of-band edits are covered
-  by the reconnect full-refresh); the incremental graph tables
+  degradations: the server file watcher (`commands/fileSync.js`) is not
+  auto-started by `index-v2.js` at boot — it runs when the client requests it
+  (`start_project_file_watcher`, default-enabled in the web build) and pushes
+  out-of-band edits over the legacy `file-sync://` / `project://files-changed`
+  frames, and anything a disconnected client missed is covered by the
+  reconnect full-refresh; the incremental graph tables
   (`graph_nodes`/`graph_edges`) stay unwritten, so `edgesChanged` is
   best-effort and the graph is still rebuilt on demand from `wiki/*.md`; the
   charter-shaped `events/sse.js` SSEManager remains dead code (never
@@ -512,14 +540,68 @@ message. Session CRUD: list/create/get/rename/delete under
 | Chunked upload complete | `POST /api/v2/projects/:id/files/upload/:uploadId/complete` | `api/files.js` → `uploads/chunked.js` |
 | Ingest enqueue (existing file) | `POST /api/v2/projects/:id/ingest` | `api/ingest.js` |
 | Ingest queue | `GET /…/ingest/queue`, `POST /…/queue/clear`, `GET /…/queue/:taskId`, `POST /…/queue/:taskId/retry`, `DELETE /…/queue/:taskId` | `api/ingest.js` → `store/ingest-queue.js` + `ingest/orchestrator.js` |
-| Chat turn | `POST /api/v2/projects/:id/chat` | `api/chat.js` → `agent.js` |
+| Chat turn | REST: `POST /api/v2/projects/:id/chat`; the shipped web client uses the legacy bridge `POST /api/invoke/agent_start_turn_stream` | `api/chat.js` / `agent.js` command registry → `agentStartTurnStream` |
 | Chat Write-to-Wiki | `POST /api/v2/projects/:id/chat/writes` | `api/chat.js` (streams `agent-event` frames) |
-| Chat cancel | `POST /api/v2/projects/:id/chat/:runId/cancel` | `api/chat.js` |
+| Chat cancel | REST: `POST /api/v2/projects/:id/chat/:runId/cancel`; the web client uses `POST /api/invoke/agent_cancel_turn` | `api/chat.js` / `agent.js` |
 | Chat sessions | `GET/POST /api/v2/projects/:id/chat/sessions`, `GET/PATCH/DELETE …/:sessionId` | `api/chat.js` → `store/chat-sessions.js` |
 | Search | `POST /api/invoke/search_project` (via bridge) | `commands/search.js` |
 | Embeddings | `POST /api/proxy` + `embedding_fetch` / `vector_upsert_chunks` | `proxy.js`, `commands/search.js`, `commands/vectorstore.js` |
 | Events (SSE) | `GET /api/v2/events` | `api/events.js` |
 | Health | `GET /api/v2/health` | `index-v2.js` |
+
+---
+
+## 7. Accepted deviations
+
+Consciously accepted deviations from the chartered design, consolidated under
+issue #14's closure bar: *implement the gaps with real user value; formally
+accept and document the rest.* The charter stays pristine as the promise; this
+section is the ledger.
+
+### Per-feature degradations
+
+| Deviation | Why accepted | Where documented |
+|---|---|---|
+| **G1** Chunked-upload sessions are in-memory only: a server restart drops them, orphaned staging files are wiped at boot, and the client re-uploads from byte 0 | v1 single-user — a persistence table buys nothing a re-upload doesn't | plans/chunked-upload.md (PR #30); §5 chunked-upload note |
+| **G2** No abort/cancel endpoint for chunked uploads — an abandoned upload leaves its session to the 24h idle-TTL sweep | The charter defines no cancel route; the TTL sweep is sufficient for single-user | plans/chunked-upload.md (PR #30) |
+| **G3** Chunk PUT bodies are buffered per-chunk in process memory (client sends 5MB chunks; the server rejects anything overflowing the declared file size) before appending to staging | Bounded by the chunk size; streaming the last hop adds complexity with no v1 payoff | plans/chunked-upload.md (PR #30) |
+| **G4** No `vectorstore.json` → sqlite-vec migration — upgrading a project means re-running "Re-index all pages" or a fresh ingest | Zero real data existed at cutover; code simplicity wins | issue #14 sqlite-vec decision (PR #27); §2a + §5 |
+| **G5** Vector leg unavailable (extension not loaded / no provider / request failed / dimension mismatch) → search degrades to keyword results with `vectorUnavailableReason`; requests never fail | Retrieval must stay available — degraded over broken | issue #14 sqlite-vec decision (PR #27); §2a, §4 |
+| **G6** Ingest retry cap: 3 attempts, then terminal `failed` (surfaced in UI; manual retry re-arms) | Bounded retry spend; failures are visible and re-armable | plans/server-ingest.md + issue #14 P0 decision (PR #28); §3 queue semantics |
+| **G7** A server restart drops in-flight chat turns — runs live in an in-memory map with no crash recovery; the user message persists (written at turn start), the assistant reply is lost; completed turns are safe | Completed turns are persisted in SQLite; re-asking a question is cheap, unlike re-running a multi-stage ingest | issue #14 P0 scoped crash recovery to `ingest_queue` only (`agent.js` runs map); §3/§4 |
+| **G8** Desktop standalone ingest requires a reachable server (`127.0.0.1:19828`); sidecar packaging is out of scope | v1 is web-first; the desktop thin shell is v2 (Decision 6) | plans/server-ingest.md (PR #28) |
+| **G9** claude-code / codex-cli providers cannot ingest server-side — the orchestrator fails fast at claim ("requires the desktop CLI") | CLI providers need the desktop runtime; there is no server-side equivalent | plans/server-ingest.md (PR #28); `ingest/orchestrator.js` |
+| **G10** Server-side image extraction is JS (pdfjs-dist + pure-JS PNG) and may differ from the desktop's Rust pdfium on exotic PDF rasters | Portability of the server pipeline over exact parity with desktop | plans/server-ingest.md (PR #28) |
+| **G11** MinerU local backend requires co-location; an unreachable or failing MinerU falls back to the built-in pdfium preprocess | MinerU is an optional enhancement, never a hard dependency | plans/server-ingest.md (PR #28); `ingest/pipeline.js` |
+| **G12** The server file watcher (`commands/fileSync.js`) is not auto-started at `index-v2.js` boot — it runs only when a client requests it (`start_project_file_watcher`, default-enabled in the web build); with no connected client, out-of-band edits rely on the reconnect full-refresh | Smart reconnect (charter §8) already covers it with a full refresh; server-side auto-start is churn without user value | plans/sse-taxonomy.md (PR #29); §5 SSE note |
+| **G13** `graph_nodes`/`graph_edges` stay unwritten; the graph is rebuilt on demand from `wiki/*.md`, and `graph:updated.edgesChanged` is best-effort (`0` when unknown) | The incremental graph index is a separate gap; on-demand rebuild is fast enough at v1 scale | plans/sse-taxonomy.md (PR #29); §2a + §5 SSE note |
+| **G14** The charter-shaped `events/sse.js` SSEManager remains dead code (never mounted) | Removal is churn with no user value; the live transport is the `emit()` bridge | plans/sse-taxonomy.md (PR #29); §5 SSE note |
+| **G15** Cross-tab chat sync shows live tokens only — tool-step UI renders in the active tab (`agent-event`) | Taxonomy fidelity on the wire without building a second tool-step renderer | plans/sse-taxonomy.md (PR #29); §5 SSE note |
+| **G16** The client's `ownedRunIds` tombstones grow unbounded within a long-lived conversation (cleared only on conversation delete / project reset) | Tombstones must survive the done-frame race; the O(n) check is fine at v1 turn counts | plans/sse-taxonomy.md (PR #29) |
+| **G17** `@llm-wiki/api-types` is a built workspace dependency of the plain-JS server — Docker/CI must build it before the server and client | Accepted cost of one schema source with zero drift | issue #14 api-types decision (PR #23); §5 |
+
+### Structural deviations from the charter layout (issue #14 — ACCEPT, no code churn)
+
+- Server is plain `.js`, not TypeScript (charter §3) — the churn tax outweighs
+  the v1 payoff; the wire contract is typed via `@llm-wiki/api-types`.
+- Business logic lives in `commands/` + top-level files, not a `core/`
+  directory (charter §3).
+- The web client is root `src/`, not `packages/web/` (charter §3).
+- Projects live at user-chosen absolute paths, not under
+  `/data/projects/<id>/` (charter §4.2).
+- No `packages/desktop/` placeholder — the desktop thin shell is deferred to
+  v2 (Decision 6).
+
+Source for all five: issue #14 "P3 — Structural / cosmetic deviations —
+accepted" decision (2026-08-03).
+
+### V1 scope exclusions (charter Decision 1 + §12; reaffirmed by issue #14)
+
+Self-hosted single-user only. Out of scope for v1: multi-user / shared
+projects, hosted SaaS offering, mobile client, offline mode / service-worker
+caching, WebSocket (SSE is sufficient), a dedicated vector DB (sqlite-vec
+scales to 100K+), CRDT/OT collaborative editing (last-write-wins + file
+history instead), and the desktop thin-shell rewrite (v2).
 
 See [API_REFERENCE.md](./API_REFERENCE.md) for the full endpoint inventory and
 [DEPLOYMENT.md](./DEPLOYMENT.md) for hosting.

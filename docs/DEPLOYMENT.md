@@ -21,15 +21,22 @@ app, so both clients can share one knowledge base.
 
 | Entry | Command | Serves | API surface |
 |---|---|---|---|
+| `packages/server/src/index-v2.js` | `node packages/server/src/index-v2.js` (or `npm run start:web`, which builds the SPA first) | SPA + v2 API + legacy bridge (single process) | `/api/v2/*` incl. `/api/v2/openapi.json`, plus `/api/invoke/*`, `/api/store/*`, `/api/events`, `/api/home` |
 | `packages/server/src/index.js` | `npm run server` | SPA + legacy API | `/api/invoke/*`, `/api/store/*`, `/api/events`, `/api/raw`, `/api/proxy`, `/api/v1/*` |
-| `packages/server/src/index-v2.js` | `npm run start:v2` | API only (Express + Zod) | `/api/v2/*` incl. `/api/v2/openapi.json` |
 
-The web client currently talks to the legacy server (`index.js`) for commands
-and store access, and to `/api/v2/*` for auth, projects, files, search, graph,
-chat, ingest, reviews, settings, and SSE events. For a full deployment run
-**both** entries (on different ports) behind one reverse proxy, or run the
-legacy server alone if you do not need the v2 REST API. See
-[API_REFERENCE.md](./API_REFERENCE.md) for the endpoint inventory.
+The **v2 entry is the primary server**: it serves the SPA, the `/api/v2/*`
+REST API, the SSE stream, and the legacy `/api/invoke/*` bridge in one
+process — and it is the only entry that starts the server-driven ingest
+orchestrator. The web client talks to `/api/v2/*` for auth, projects, files,
+search, graph, chat writes, chat sessions, ingest, reviews, settings, and SSE
+events, and to the legacy bridge for commands and store access; chat turn
+start/cancel currently also goes over the bridge
+(`POST /api/invoke/agent_start_turn_stream` /
+`POST /api/invoke/agent_cancel_turn`). Run the legacy `index.js` entry alone
+only if you deliberately want the pre-v2 surface: it has no `/api/v2/*`
+routes and no ingest orchestrator, so ingest enqueued from the web client
+never runs against it. See [API_REFERENCE.md](./API_REFERENCE.md) for the
+endpoint inventory.
 
 ---
 
@@ -39,11 +46,12 @@ legacy server alone if you do not need the v2 REST API. See
 # 1. Install dependencies (root workspace)
 npm install
 
-# 2. Build the web client into dist-web/
+# 2. Build the api-types schemas, then the web client into dist-web/
+npm run build:api-types
 npm run build:web
 
 # 3. Start the server (serves the SPA + API on 127.0.0.1:19828)
-npm run server
+node packages/server/src/index-v2.js
 ```
 
 Open <http://127.0.0.1:19828>. `npm run start:web` runs steps 2 + 3 in one
@@ -53,84 +61,61 @@ For development with hot reload, run the backend and the Vite dev server in two
 terminals:
 
 ```bash
-npm run server        # terminal 1 — backend on :19828
-npm run dev:web       # terminal 2 — SPA on :1421, proxies /api -> :19828
+node packages/server/src/index-v2.js   # terminal 1 — backend on :19828
+npm run dev:web                        # terminal 2 — SPA on :1421, proxies /api -> :19828
 ```
 
 ---
 
 ## Docker Compose
 
-There is no Dockerfile in the repository yet; the one below is the recommended
-starting point. It builds the web client and runs the legacy server (which
-serves the SPA). Add a second service for `index-v2.js` if you need `/api/v2/*`.
-
-Create `Dockerfile` at the repo root:
-
-```dockerfile
-# ---- build stage ----
-FROM node:20-slim AS build
-WORKDIR /app
-COPY package.json package-lock.json tsconfig*.json ./
-COPY packages ./packages
-COPY mcp-server ./mcp-server
-COPY src ./src
-COPY index.html vite.web.config.ts vite.config.ts ./
-RUN npm ci && npm run build:web
-
-# ---- runtime stage ----
-FROM node:20-slim
-WORKDIR /app
-ENV NODE_ENV=production \
-    LLM_WIKI_HOST=0.0.0.0 \
-    LLM_WIKI_PORT=19828 \
-    LLM_WIKI_DATA_DIR=/data
-COPY --from=build /app /app
-EXPOSE 19828
-VOLUME ["/data"]
-# Mount your wiki project folders into the container and point projects at them.
-CMD ["node", "packages/server/src/index.js"]
-```
-
-Create `docker-compose.yml`:
-
-```yaml
-services:
-  llm-wiki:
-    build: .
-    container_name: llm-wiki
-    restart: unless-stopped
-    ports:
-      - "19828:19828"
-    environment:
-      LLM_WIKI_HOST: "0.0.0.0"
-      LLM_WIKI_PORT: "19828"
-      LLM_WIKI_DATA_DIR: "/data"
-      # Set a token to require authentication (strongly recommended when exposed):
-      # LLM_WIKI_API_TOKEN: "change-me"
-    volumes:
-      - llm-wiki-data:/data            # server state (stores, sqlite)
-      - /path/to/your/wikis:/wikis     # project folders (mount your real paths)
-
-volumes:
-  llm-wiki-data:
-```
+The repository ships a production `Dockerfile` and `docker-compose.yml` at the
+repo root. The Dockerfile is a 3-stage `node:22-slim` build: the builder stage
+installs the full dependency tree and runs
+`npm run build:api-types && npm run build:web` (api-types must build first —
+the server imports the built schemas at runtime), a deps stage produces a
+production-only `node_modules` (better-sqlite3 is compiled from source against
+the runtime ABI), and the runtime stage serves `dist-web/` and runs
+`node packages/server/src/index-v2.js` — SPA + v2 API + legacy bridge in one
+process — on port **3000** with `LLM_WIKI_HOST=0.0.0.0` and
+`LLM_WIKI_DATA_DIR=/data`.
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 docker compose logs -f llm-wiki
 ```
 
+The compose file wires:
+
+| Setting | Value |
+|---|---|
+| `LLM_WIKI_PORT` | `3000` |
+| `LLM_WIKI_AUTH_MODE` | `${LLM_WIKI_AUTH_MODE:-open}` — open by default; set `token` to require the token on all non-public routes |
+| `LLM_WIKI_API_TOKEN` | `${LLM_WIKI_API_TOKEN:-}` — required on all non-public routes once set (auto mode), or always (`token` mode); empty = open local mode |
+| Healthcheck | `curl -f http://localhost:3000/api/v2/health` |
+| Volumes | named volume `wiki-data` → `/data` (SQLite + plugin stores) |
+
+Project folders live on the host filesystem; add a bind mount for every folder
+you want to open as a project:
+
+```yaml
+    volumes:
+      - wiki-data:/data
+      - /path/to/your/wikis:/wikis     # project folders (mount your real paths)
+```
+
+The in-app folder picker browses the *container's* filesystem, so it will show
+the mounted paths.
+
 Notes:
 
-- The server binds `127.0.0.1` by default; inside a container you **must** set
-  `LLM_WIKI_HOST=0.0.0.0` or nothing outside the container can reach it.
-- Project folders live on the host filesystem; bind-mount every folder you want
-  to open as a project. The in-app folder picker browses the *server's*
-  filesystem, so it will show the mounted paths.
-- `better-sqlite3` (used by the v2 server) is a native module; if you run the
-  v2 entry in Docker, build and run on the same architecture (the `node:20-slim`
-  image handles this automatically on amd64/arm64).
+- The server binds `127.0.0.1` by default when run bare; the shipped Dockerfile
+  already sets `LLM_WIKI_HOST=0.0.0.0` so the container is reachable. If you
+  write your own image, set it or nothing outside the container can reach the
+  server.
+- `better-sqlite3` is a native module; the shipped Dockerfile compiles it in
+  the image against the `node:22-slim` ABI, so build and run on the same
+  architecture (automatic on amd64/arm64 with the stock image).
 
 ---
 
@@ -173,7 +158,7 @@ Wants=network-online.target
 Type=simple
 User=llmwiki
 WorkingDirectory=/opt/llm-wiki/app
-ExecStart=/usr/bin/node packages/server/src/index.js
+ExecStart=/usr/bin/node packages/server/src/index-v2.js
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
@@ -193,16 +178,17 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-If you also need the v2 REST API, add a second unit
-(`llm-wiki-v2.service`) with `ExecStart=/usr/bin/node packages/server/src/index-v2.js`
-and a different port (e.g. `LLM_WIKI_PORT=19829`).
+One unit is enough: `index-v2.js` serves the SPA, `/api/v2/*`, and the legacy
+`/api/invoke/*` bridge in the same process, and it alone starts the ingest
+orchestrator. (The legacy `index.js` entry is not a drop-in alternative — it
+has no v2 routes and no ingest orchestrator.)
 
 ```bash
 sudo mkdir -p /opt/llm-wiki/data && sudo chown llmwiki:llmwiki /opt/llm-wiki/data
 sudo systemctl daemon-reload
 sudo systemctl enable --now llm-wiki
 sudo systemctl status llm-wiki
-curl -s http://127.0.0.1:19828/api/health
+curl -s http://127.0.0.1:19828/api/v2/health
 ```
 
 ### 4. nginx reverse proxy
@@ -214,7 +200,11 @@ server {
     listen 80;
     server_name wiki.example.com;
 
-    client_max_body_size 64m;   # matches the server's 64 MB request limit
+    # Headroom for JSON request bodies: the server's express.json limit is
+    # 64 MB. File uploads are capped separately — and lower — by
+    # LLM_WIKI_MAX_UPLOAD_MB (default 50 MB; multipart and chunked alike),
+    # so raising this value does not raise the upload cap.
+    client_max_body_size 64m;
 
     location / {
         proxy_pass http://127.0.0.1:19828;
@@ -261,22 +251,23 @@ nginx.
 
 ## Fly.io
 
-Example `fly.toml` (place at the repo root next to the Dockerfile above):
+Example `fly.toml` (place at the repo root; the build uses the repo's shipped
+Dockerfile):
 
 ```toml
 app = "llm-wiki"
 primary_region = "iad"
 
 [build]
-  # Uses the Dockerfile from the Docker Compose section.
+  # Uses the repository Dockerfile (3-stage build, runs index-v2.js).
 
 [env]
   LLM_WIKI_HOST = "0.0.0.0"
-  LLM_WIKI_PORT = "19828"
+  LLM_WIKI_PORT = "3000"
   LLM_WIKI_DATA_DIR = "/data"
 
 [http_service]
-  internal_port = 19828
+  internal_port = 3000
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
@@ -328,8 +319,8 @@ configures health checks, restarts, and the domain):
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "node packages/server/src/index.js",
-    "healthcheckPath": "/api/health",
+    "startCommand": "node packages/server/src/index-v2.js",
+    "healthcheckPath": "/api/v2/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
@@ -360,7 +351,7 @@ one replica.
 ### Synology DSM (Container Manager)
 
 1. Copy the repo to a shared folder, e.g. `/volume1/docker/llm-wiki`, and build
-   the image (via SSH, using the Dockerfile from the Docker Compose section):
+   the image (via SSH, using the repo's shipped Dockerfile):
 
    ```bash
    sudo docker build -t llm-wiki:local /volume1/docker/llm-wiki
@@ -420,6 +411,7 @@ Home-server tips:
 | `LLM_WIKI_HOST` | `127.0.0.1` | Bind address. Set `0.0.0.0` to expose on the LAN / inside a container. Keep loopback when behind a reverse proxy. |
 | `LLM_WIKI_DATA_DIR` | `~/.llm-wiki-server` | Server-side persistent state (plugin-store JSON, SQLite DB for v2). Point at a volume in containers. |
 | `LLM_WIKI_MAX_UPLOAD_MB` | `50` | Maximum size in MB for a single file upload (multipart and chunked uploads alike; clamped to 1–4096). |
+| `LLM_WIKI_INGEST_CONCURRENCY` | `2` | Ingest orchestrator concurrency cap (clamped 1–16). Only the v2 entry runs the orchestrator. |
 | `LLM_WIKI_WEB_DIST` | `<repo>/dist-web` | Path to the built web client. Only needed if you serve the SPA from a non-default location. |
 | `LLM_WIKI_AUTH_MODE` | unset (auto) | Auth mode (chartered name, §4.5): `none` = always open; `token` = token required on all non-public routes; unset = **auto** (open when no token is configured, required when one is set). `open` is accepted as a synonym of `none` (the docker-compose default). The legacy `AUTH_MODE` variable still works as a deprecated alias; `LLM_WIKI_AUTH_MODE` wins when both are set. |
 | `LLM_WIKI_API_TOKEN` | unset | API token. Required on all non-public endpoints in `token` mode, or in `auto` mode once set (Bearer header, `x-llm-wiki-token` header, or `?token=` query). See [CLIENT_CONFIG.md](./CLIENT_CONFIG.md). |
@@ -445,9 +437,12 @@ soon as one exists.
 
 **Token:** the effective token is `LLM_WIKI_API_TOKEN` (env) if set, otherwise the token
 stored in the shared store's `apiConfig.token` (set via the desktop app's
-Settings → API, or via `/api/v2/settings`). When no token is configured the
-server is open (zero-friction local mode). Setting `apiConfig.allowUnauthenticated = true`
-re-opens the server even when a token exists.
+Settings → API, or via `/api/v2/settings`). In **auto** mode, when no token is
+configured the server is open (zero-friction local mode), and setting
+`apiConfig.allowUnauthenticated = true` re-opens the server even when a token
+exists. In **`token` mode** neither holds: with no token configured the server
+is effectively closed (every non-public route answers `401`), and
+`allowUnauthenticated` is ignored — the token is always required.
 
 ---
 

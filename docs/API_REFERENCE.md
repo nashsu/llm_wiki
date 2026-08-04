@@ -2,12 +2,15 @@
 
 The LLM Wiki server exposes a REST API under `/api/v2/*` (Express + Zod).
 
-> **Full machine-readable spec:** `GET /api/v2/openapi.json` — an
+> **Machine-readable spec:** `GET /api/v2/openapi.json` — an
 > [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) document generated from
-> the Zod schemas (the API's source of truth). Load it into Swagger UI,
-> Postman, or `openapi-generator` for typed clients. This page is a quick
-> human-readable index; the OpenAPI document is authoritative for request and
-> response shapes.
+> the Zod schemas in `@llm-wiki/api-types` (the API's source of truth). Load
+> it into Swagger UI, Postman, or `openapi-generator` for typed clients. The
+> document currently registers the projects CRUD, the chat-session endpoints,
+> and the chunked-upload protocol only; the remaining endpoints are indexed
+> on this page. For the routes it covers, the OpenAPI document is
+> authoritative for request and response shapes. The endpoint itself is
+> auth-gated like any other non-public route.
 
 Base URL: same origin as the web client, or `VITE_API_URL` for remote
 deployments (see [CLIENT_CONFIG.md](./CLIENT_CONFIG.md)).
@@ -16,8 +19,19 @@ deployments (see [CLIENT_CONFIG.md](./CLIENT_CONFIG.md)).
 
 ## Authentication
 
-Every endpoint except the public ones requires the API token **when a token is
-configured**. With no token configured the server is open (local mode).
+Whether a token is required depends on the auth mode (`LLM_WIKI_AUTH_MODE`;
+see [DEPLOYMENT.md — Auth precedence](./DEPLOYMENT.md#auth-precedence)):
+
+- **`token` mode** — every non-public endpoint requires the token. With no
+  token configured the server is effectively **closed**: every non-public
+  route answers `401`.
+- **`none` mode** (`open` is accepted as a synonym) — the server is always
+  open; no token is checked.
+- **auto** (the default when the variable is unset) — open while no token is
+  configured (zero-friction local mode); required as soon as one exists (env
+  `LLM_WIKI_API_TOKEN` or shared-store `apiConfig.token`). Setting
+  `apiConfig.allowUnauthenticated = true` re-opens the server in this mode
+  only — `token` mode ignores it.
 
 Three equivalent ways to present the token:
 
@@ -61,6 +75,7 @@ upstream provider info). Stable error codes and their HTTP statuses:
 | `UNAUTHORIZED` | 401 | Missing or invalid API token. |
 | `FORBIDDEN` | 403 | Authenticated but not allowed (e.g. shell tools disabled). |
 | `NOT_FOUND` | 404 | Resource (project, file, task…) does not exist. |
+| `PROJECT_NOT_FOUND` | 404 | The `:id` segment does not resolve to a known project (numeric id, UUID, and plugin-store registry all missed). Returned by project-scoped routes such as `POST /api/v2/projects/:bogus/chat`. |
 | `CONFLICT` | 409 | State conflict (e.g. duplicate project). |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds the maximum upload size (`LLM_WIKI_MAX_UPLOAD_MB`, default 50 MB) — multipart oversize and oversize chunked-upload `init` alike. |
 | `RATE_LIMITED` | 429 | Too many requests. |
@@ -72,23 +87,25 @@ upstream provider info). Stable error codes and their HTTP statuses:
 
 ## Endpoints by domain
 
-`:id` is the numeric project id. Project-scoped routes are mounted under
-`/api/v2/projects/:id/...`.
+`:id` accepts **either** the numeric projects-table id **or** the project
+UUID (resolution order: numeric id → UUID → plugin-store registry, with the
+projects row materialized on demand for registry-known projects).
+Project-scoped routes are mounted under `/api/v2/projects/:id/...`.
 
-### Meta (public)
+### Meta
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v2/health` | Liveness + version + registered command count. |
-| GET | `/api/v2/version` | Server version, Node version, platform. |
-| GET | `/api/v2/openapi.json` | OpenAPI 3.1 document for the whole API. |
+| GET | `/api/v2/health` | Public. Liveness + version + registered command count. |
+| GET | `/api/v2/version` | Public. Server version, Node version, platform. |
+| GET | `/api/v2/openapi.json` | OpenAPI 3.1 document for the registered routes (see the spec note above). **Not public** — auth-gated like any other non-public endpoint. |
 
 ### Auth
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v2/auth/status` | Public. `{ authRequired, authConfigured, allowUnauthenticated }` — used by the client to decide whether to show the login screen. |
-| POST | `/api/v2/auth/login` | Public. Body `{ "token": "..." }` → `{ "success": true }` or `401 UNAUTHORIZED`. In open mode any token succeeds. |
+| POST | `/api/v2/auth/login` | Public. Body `{ "token": "..." }` → `{ "success": true }` or `401 UNAUTHORIZED`. Any token succeeds only while the server is open (no token configured, or `allowUnauthenticated` set); otherwise the body token is validated against the configured one. |
 
 ### Projects
 
@@ -117,7 +134,7 @@ upstream provider info). Stable error codes and their HTTP statuses:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v2/projects/:id/search` | Hybrid search. Body `{ "query", "topK"? (1–100, default 20), "includeContent"? }` → `{ results: [{ path, score, snippet?, content? }], mode, tokenHits, vectorHits, graphHits }`. |
+| POST | `/api/v2/projects/:id/search` | Hybrid search. Body `{ "query", "topK"? (1–100, default 20), "includeContent"? }` → `{ results: [{ path, score, snippet?, content? }], mode, tokenHits, vectorHits, graphHits, vectorUnavailableReason? }` — `vectorUnavailableReason` is present when the vector leg degraded and the search fell back (see PUSH1 §4). |
 
 ### Graph
 
@@ -129,10 +146,14 @@ upstream provider info). Stable error codes and their HTTP statuses:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v2/projects/:id/chat` | Start a chat turn (streaming response). |
-| POST | `/api/v2/projects/:id/chat/writes` | Chat "Write to Wiki" — generates and writes wiki pages from the conversation. Body `{ "sessionId", "userGuidance"?, "sourcePath"? }` → `{ runId, sessionId, writePrompt }`; streams `agent-event` frames (`messageDelta` / `wikiWrites` / `error` / `done`). |
+| POST | `/api/v2/projects/:id/chat` | Start a chat turn. Body `{ "message", "sessionId"?, "mode"?, "tools"?, "topK"?, "includeContent"?, "skills"?, "resume"?, "regenerate"?, "historyLimit"? }` → immediate `{ runId, sessionId }` (the response is NOT streamed — the answer arrives over SSE `agent-event` + `chat:*` frames; `sessionId` is echoed, server-generated when omitted). `regenerate: true` drops the session's last user/assistant exchange before re-running. |
+| POST | `/api/v2/projects/:id/chat/writes` | Chat "Write to Wiki" — generates and writes wiki pages from the conversation. Body `{ "sessionId", "userGuidance"?, "sourcePath"?, "runId"? }` (`runId`: optional client-generated run id so the owning tab can tombstone it before the response lands; server generates one when absent) → `{ runId, sessionId, writePrompt }`; streams `agent-event` frames (`messageDelta` / `wikiWrites` / `error` / `done`). |
 | POST | `/api/v2/projects/:id/chat/:runId/cancel` | Cancel a running turn. |
-| GET | `/api/v2/projects/:id/chat/sessions/:sessionId` | Get session state/history. |
+| GET | `/api/v2/projects/:id/chat/sessions` | List sessions → `{ sessions }`, most recent first. |
+| POST | `/api/v2/projects/:id/chat/sessions` | Create an empty session. Body `{ "title"? }` → `201 { session }`. |
+| GET | `/api/v2/projects/:id/chat/sessions/:sessionId` | Get session state/history → `{ session, messages }`. |
+| PATCH | `/api/v2/projects/:id/chat/sessions/:sessionId` | Rename a session. Body `{ "title" }` → `{ session }`. |
+| DELETE | `/api/v2/projects/:id/chat/sessions/:sessionId` | Delete a session → `204 No Content` (its messages cascade). |
 
 ### Ingest (`/api/v2/projects/:id/ingest`)
 
@@ -175,7 +196,8 @@ upstream provider info). Stable error codes and their HTTP statuses:
 Settings keys mirror the shared store keys (`llmConfig`, `providerConfigs`,
 `apiConfig`, `recentProjects`, `lastProject`, …). Writing `apiConfig.token`
 sets the auth token; `apiConfig.allowUnauthenticated = true` re-opens the
-server.
+server in **auto** mode only — under `LLM_WIKI_AUTH_MODE=token` the token is
+required regardless of `allowUnauthenticated`.
 
 ### Events (SSE)
 
@@ -187,8 +209,9 @@ server.
 `GET /api/v2/events` and the legacy `GET /api/events` broadcast the same
 frames (one bus, both transports). Fire-and-forget: the server buffers
 nothing; on reconnect the client checks `/api/v2/health` and does a full
-refresh when the version changed. Project attribution rides in
-`payload.projectId` (host-global events carry `null`).
+refresh when the version changed. The wire envelope is exactly
+`{ event, payload }`; project attribution rides in `payload.projectId`
+(host-global events omit the field entirely rather than carrying `null`).
 
 The `ingest:*` frames (`ingest:queued` / `ingest:progress` /
 `ingest:complete` / `ingest:error`) are documented with the queue semantics
@@ -197,16 +220,23 @@ rest of the emitted taxonomy:
 
 | Event | Payload | Emitted when |
 |---|---|---|
-| `file:created` | `{ projectId, path, size? }` | A file was written: files upload, chat Write-to-Wiki FILE blocks, legacy invoke writers. A pre-write existence check decides created vs modified. |
-| `file:modified` | `{ projectId, path, size? }` | An existing file was rewritten: same sites, plus maintenance rebuild-index (`wiki/index.md`), file-history restore, and the chat-writes post-write image injection. |
+| `file:created` | `{ projectId, path, size? }` | A file was written: files upload, ingest upload (the raw source), chunked-upload completion, chat Write-to-Wiki FILE blocks plus newly created post-write media images, legacy invoke writers. A pre-write existence check decides created vs modified. |
+| `file:modified` | `{ projectId, path, size? }` | An existing file was rewritten: same sites (same existence check), plus maintenance rebuild-index (`wiki/index.md`), file-history restore, and rewritten post-write media images. |
 | `file:deleted` | `{ projectId, path }` | A file was removed: ingest cancel cleanup (per actually-unlinked page) and the legacy delete writer. |
 | `graph:updated` | `{ projectId, nodesChanged, edgesChanged }` | Wiki pages changed ⇒ client graph caches are stale. ONE aggregate per mutation batch: ingest success/cancel, rebuild-index, chat Write-to-Wiki completion. `edgesChanged` is best-effort (`0` when unknown). |
-| `settings:changed` | `{ keys }` | Settings written: `/api/v2/settings` writes and shared-store (`app-state.json`) writes via `/api/store` + the legacy server. Host-global (`projectId` null); `keys` is informational — clients refetch settings. |
+| `settings:changed` | `{ keys }` | Settings written: `/api/v2/settings` writes and shared-store (`app-state.json`) writes via `/api/store` + the legacy server. Host-global (the payload carries only `keys`, no `projectId`); `keys` is informational — clients refetch settings. |
 | `chat:delta` | `{ sessionId, runId, projectId, text }` | Streaming token chunk of a chat turn (dual-emitted next to `agent-event`). |
 | `chat:toolStart` | `{ sessionId, runId, projectId, tool, input }` | Agent tool call started. |
 | `chat:toolEnd` | `{ sessionId, runId, projectId, tool, output }` | Agent tool call finished. |
-| `chat:done` | `{ sessionId, runId, projectId, content, references }` | Turn finished. `content` is the run's full accumulated text so a tab that missed the deltas can finalize. Also dual-emitted as a TERMINAL frame when a run fails (`content` = `Error: <message>`, the owning tab's error-finalize text) or is cancelled (`content` empty ⇒ non-owning tabs reset their stream without adding a message), so previewing tabs never stay stuck in streaming state. |
+| `chat:done` | `{ sessionId, runId, projectId, content, references }` | Turn finished. `content` is the run's full accumulated text so a tab that missed the deltas can finalize. Also dual-emitted as a TERMINAL frame when a run fails (`content` = the owning tab's error-finalize text: `Error: <message>` for agent turns, `Error generating wiki files: <message>` for a failed Write-to-Wiki run) or is cancelled (`content` empty ⇒ non-owning tabs reset their stream without adding a message), so previewing tabs never stay stuck in streaming state. |
 | `agent-event` | `{ sessionId, runId, event }` | Pre-taxonomy chat stream consumed by the active tab's chat panel (turns and Write-to-Wiki). `error` / `wikiWrites` / `referenceAdded` / `fileChanged` exist only here — they have no charter equivalent. |
+
+The stream additionally carries the pre-taxonomy **legacy watcher frames**
+`file-sync://changed`, `file-sync://queue-updated`, and
+`project://files-changed`, emitted by the server-side file watcher
+(`commands/fileSync.js`, started on demand by the client — default-enabled in
+the web build). The web client maps `project://files-changed` and
+`file-sync://changed` onto the `file:modified` handling path.
 
 Notes: `path` is project-relative when the emitting site knows the project
 and absolute otherwise (legacy invoke writers resolve their project by
