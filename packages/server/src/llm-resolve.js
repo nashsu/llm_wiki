@@ -84,15 +84,6 @@ export function resolveConfig(preset, override, fallback) {
     maxContextSize, reasoning, requestTimeoutMinutes, customHeaders, ...streamingConfig }
 }
 
-function resolveTaskLlmConfig(fallback, providerConfigs, routing, projectOverride, customPresets) {
-  if (projectOverride?.enabled) return fallback
-  const presetId = routing?.chatPresetId ?? null
-  if (!presetId) return fallback
-  const preset = findLlmPreset(presetId, customPresets)
-  if (!preset) return fallback
-  return resolveConfig(preset, providerConfigs?.[presetId], fallback)
-}
-
 function resolveProjectLlmConfig(globalConfig, providerConfigs, projectOverride, customPresets) {
   if (!projectOverride?.enabled || !projectOverride.presetId) return globalConfig
   const preset = findLlmPreset(projectOverride.presetId, customPresets)
@@ -104,16 +95,48 @@ function resolveProjectLlmConfig(globalConfig, providerConfigs, projectOverride,
   return resolveConfig(preset, override, globalConfig)
 }
 
-/** Read the persisted store snapshot and resolve the effective chat config. */
-export function resolveChatConfig(store) {
+/**
+ * Shared task-routing resolution. `presetKey` selects which routing slot the
+ * task reads ("chatPresetId" | "ingestPresetId") — mirrors the desktop's
+ * resolveTaskLlmConfig(task, …) in src/lib/llm-task-routing.ts. A project
+ * override, when enabled, wins over task routing for both tasks (desktop
+ * parity: the project override IS the fallback the routing would defer to).
+ */
+function resolveTaskConfig(store, presetKey) {
   const llmConfig = store.llmConfig ?? {}
   const providerConfigs = store.providerConfigs ?? {}
   const routing = store.taskModelRouting ?? { chatPresetId: null, ingestPresetId: null }
   const projectOverride = store.projectLlmOverride
   const customPresets = Array.isArray(store.customLlmPresets) ? store.customLlmPresets : []
-  return projectOverride?.enabled
-    ? resolveProjectLlmConfig(llmConfig, providerConfigs, projectOverride, customPresets)
-    : resolveTaskLlmConfig(llmConfig, providerConfigs, routing, projectOverride, customPresets)
+  if (projectOverride?.enabled) {
+    return resolveProjectLlmConfig(llmConfig, providerConfigs, projectOverride, customPresets)
+  }
+  const presetId = routing?.[presetKey] ?? null
+  if (!presetId) return llmConfig
+  const preset = findLlmPreset(presetId, customPresets)
+  return resolveConfig(preset, providerConfigs?.[presetId], llmConfig)
+}
+
+/** Read the persisted store snapshot and resolve the effective chat config. */
+export function resolveChatConfig(store) {
+  return resolveTaskConfig(store, "chatPresetId")
+}
+
+/** Read the persisted store snapshot and resolve the effective ingest config. */
+export function resolveIngestConfig(store) {
+  return resolveTaskConfig(store, "ingestPresetId")
+}
+
+// Providers that operate without an API key (port of src/lib/has-usable-llm.ts):
+// ollama/custom run against local-or-LAN endpoints; claude-code/codex-cli
+// authenticate via local CLI logins (and are rejected by normalizeEndpoint on
+// the web server anyway — guarded separately).
+const PROVIDERS_WITHOUT_KEY = new Set(["ollama", "custom", "claude-code", "codex-cli"])
+
+/** Is this resolved config good enough to make LLM calls? (desktop parity) */
+export function hasUsableLlmConfig(cfg) {
+  if (PROVIDERS_WITHOUT_KEY.has(cfg?.provider)) return true
+  return ((cfg?.apiKey ?? "") + "").trim().length > 0
 }
 
 const DEFAULT_ENDPOINTS = {
