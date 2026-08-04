@@ -296,6 +296,32 @@ describe("failure + retry semantics", () => {
     expect(error[0].payload.status).toBe("failed")
     expect(error[0].payload.error).toBe("LLM not configured — set API key in Settings")
   })
+
+  it("fails terminally for CLI-only providers (claude-code/codex-cli) without invoking the pipeline", async () => {
+    // These providers are "usable" per hasUsableLlmConfig (no key needed) but
+    // have no server transport - they must fail fast AT CLAIM rather than burn
+    // all three attempts inside streamChat (plan §"claude-code/codex-cli").
+    writeStore(SHARED_STORE_NAME, { llmConfig: { provider: "claude-code" } })
+    vi.mocked(runIngestPipeline).mockResolvedValue(successResult())
+    const id = enq(projA.id, "raw/sources/cli-provider.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => q.getIngestTask(id)?.status === "failed")
+
+    const row = q.getIngestTask(id)
+    expect(row.error).toBe("Ingest with this provider requires the desktop CLI")
+    expect(row.attempt_count).toBe(1) // terminal on the first claim, no retries
+    expect(runIngestPipeline).not.toHaveBeenCalled()
+
+    const error = framesOf("ingest:error", id)
+    expect(error.length).toBe(1)
+    expect(error[0].payload).toMatchObject({
+      retryable: false,
+      status: "failed",
+      maxAttempts: 3,
+      error: "Ingest with this provider requires the desktop CLI",
+    })
+  })
 })
 
 describe("cancellation", () => {

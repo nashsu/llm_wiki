@@ -15,19 +15,22 @@
 // OR the client's project UUID (WikiProject.id from .llm-wiki/project.json).
 // The web client only knows the UUID, so resolution mirrors
 // resolveChatProject in api/chat.js: numeric first, then getProjectByUuid,
-// then the app-state projectRegistry fallback (registry → path → row lookup).
-// Unlike the chat routes this middleware never materializes rows — ingest
-// queue rows FK-reference projects(id), so a project that never produced a
-// row simply 404s here instead of being silently created.
+// then the app-state projectRegistry fallback (registry → path). A
+// registry-known project that never produced a row is materialized via
+// ensureProjectRow — chat-route parity: ingest_queue rows FK-reference
+// projects(id), so the queue needs a row to exist; without materialization
+// a returning user's first upload 404s until they happen to use chat.
 
-import { getProject, getProjectByUuid, getProjectByPath } from "../store/projects.js"
+import { getProject, getProjectByUuid, ensureProjectRow } from "../store/projects.js"
 import { resolveProjectRoot } from "../store/project-paths.js"
 import { readStore } from "../store.js"
 import { ApiError, ErrorCode } from "../errors.js"
 
 /**
  * Resolve a projects row from a raw :id param (numeric id or client UUID).
- * Returns undefined when no row matches.
+ * Registry-known projects are materialized via ensureProjectRow (same shape
+ * as resolveChatProject in api/chat.js, including uuid backfill on a
+ * path-matched row). Returns undefined when nothing matches.
  */
 export function resolveProjectByIdentity(rawId) {
   const raw = String(rawId ?? "").trim()
@@ -41,7 +44,9 @@ export function resolveProjectByIdentity(rawId) {
   // Registry fallback: the client UUID may predate the projects row's uuid
   // backfill (rows created via POST /api/v2/projects carry no uuid). The
   // registry maps UUID → current filesystem path; a row for that path is the
-  // same project. Lookup only — no row materialization.
+  // same project — and when no row exists yet, ensureProjectRow creates it
+  // (chat-route parity) so FK-dependent surfaces like the ingest queue work
+  // for registry-only projects.
   const store = readStore("app-state.json")
   const reg = store.projectRegistry ?? {}
   const entry = reg[raw]
@@ -49,7 +54,7 @@ export function resolveProjectByIdentity(rawId) {
     ?? (store.lastProject?.id === raw ? store.lastProject?.path : null)
     ?? Object.values(reg).find((e) => e?.id === raw)?.path
   if (!path) return undefined
-  return getProjectByPath(path)
+  return ensureProjectRow({ uuid: raw, path, name: entry?.name ?? null })
 }
 
 /**

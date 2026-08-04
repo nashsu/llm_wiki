@@ -88,9 +88,15 @@ async function resolveCurrentNumericProjectId(): Promise<number | null> {
       if (!current) return null
       const match = projects.find((p) => p.uuid === current.id)
         ?? projects.find((p) => normalizePath(p.path) === normalizePath(current.path))
-      resolvedForUuid = current.id
-      resolvedNumericId = match?.id ?? null
-      return resolvedNumericId
+      // Cache only POSITIVE resolutions: a null result (projects row not
+      // materialized yet) must be retried on the next event, otherwise all
+      // ingest frames for this project would be silently dropped until a
+      // project switch / SSE restart.
+      if (match) {
+        resolvedForUuid = current.id
+        resolvedNumericId = match.id
+      }
+      return match?.id ?? null
     } catch {
       return null
     } finally {

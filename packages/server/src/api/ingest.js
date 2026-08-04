@@ -88,7 +88,9 @@ router.post("/", validate({ body: IngestEnqueueBodySchema }), async (req, res, n
 
     const live = findLiveIngestTask(req.project.id, absPath)
     if (live) {
-      return res.json({ taskId: live.id, deduplicated: true })
+      // Full SSOT shape (IngestEnqueueResponseSchema requires filePath +
+      // status), plus the deduplicated marker.
+      return res.json({ taskId: live.id, filePath: live.file_path, status: live.status, deduplicated: true })
     }
 
     const taskId = enqueueIngestTask(req.project.id, absPath, { folderContext })

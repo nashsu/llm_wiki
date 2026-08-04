@@ -139,6 +139,15 @@ async function processTask(row) {
       emitIngestError(row, { error: message, retryable: false, maxAttempts: MAX_ATTEMPTS })
       return
     }
+    // Plan §"claude-code/codex-cli providers": fail fast AT CLAIM — the
+    // server has no CLI transport for ingest, so these providers would
+    // otherwise burn all three attempts failing inside streamChat.
+    if (llmConfig.provider === "claude-code" || llmConfig.provider === "codex-cli") {
+      const message = "Ingest with this provider requires the desktop CLI"
+      failIngestTask(row.id, message, { retryable: false })
+      emitIngestError(row, { error: message, retryable: false, maxAttempts: MAX_ATTEMPTS })
+      return
+    }
     const project = getProject(row.project_id)
     if (!project) {
       // Desktop parity (ingest-queue.ts: project gone from the registry).

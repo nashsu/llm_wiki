@@ -137,7 +137,10 @@ export function writeFrontmatterArray(
     "m",
   )
   if (blockRe.test(fmBody)) {
-    const rewritten = fmBody.replace(blockRe, newLine)
+    // The block regex consumes the newline terminating the last list item;
+    // re-emit it when present so the following frontmatter line is not glued
+    // onto the inline array (corrupts the YAML when other fields follow).
+    const rewritten = fmBody.replace(blockRe, (m) => (m.endsWith("\n") ? `${newLine}\n` : newLine))
     return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
   }
 
