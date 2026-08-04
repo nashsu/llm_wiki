@@ -58,6 +58,8 @@ const EXPECTED_SCHEMA_EXPORTS = [
   "IngestTaskSchema",
   "IngestQueueResponseSchema",
   "IngestUploadResponseSchema",
+  "IngestEnqueueBodySchema",
+  "IngestEnqueueResponseSchema",
   // maintenance.js
   "RebuildIndexResponseSchema",
   "ExportBodySchema",
@@ -83,8 +85,8 @@ describe("issue #20 — schema SSOT", () => {
     expect(existsSync(path.resolve("src/schemas"))).toBe(false)
   })
 
-  it("@llm-wiki/api-types exports all 45 runtime schemas (built package)", async () => {
-    expect(EXPECTED_SCHEMA_EXPORTS).toHaveLength(45)
+  it("@llm-wiki/api-types exports all 47 runtime schemas (built package)", async () => {
+    expect(EXPECTED_SCHEMA_EXPORTS).toHaveLength(47)
     const pkg = await import("@llm-wiki/api-types")
     for (const name of EXPECTED_SCHEMA_EXPORTS) {
       expect(pkg[name], `missing export: ${name}`).toBeDefined()

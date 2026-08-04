@@ -248,4 +248,15 @@ const MIGRATIONS = [
       )
     `)
   }],
+
+  ["013_ingest_queue_lifecycle", (db) => {
+    // Issue #14 P0 gap: server-driven ingest. The orchestrator needs attempt
+    // accounting (retry cap 3), scheduling (usage-limit backoff), crash
+    // recovery timestamps, and the folder context the client queue carried.
+    db.exec(`ALTER TABLE ingest_queue ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`)
+    db.exec(`ALTER TABLE ingest_queue ADD COLUMN started_at INTEGER`)
+    db.exec(`ALTER TABLE ingest_queue ADD COLUMN updated_at INTEGER`)
+    db.exec(`ALTER TABLE ingest_queue ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0`)
+    db.exec(`ALTER TABLE ingest_queue ADD COLUMN folder_context TEXT NOT NULL DEFAULT ''`)
+  }],
 ]
