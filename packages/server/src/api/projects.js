@@ -15,6 +15,7 @@ import {
 } from "@llm-wiki/api-types"
 import * as store from "../store/projects.js"
 import { scaffoldWikiProject } from "../commands/project.js"
+import { vectorCommands } from "../commands/vectorstore.js"
 import { ApiError, ErrorCode } from "../errors.js"
 
 const router = Router()
@@ -78,9 +79,19 @@ router.patch(
 )
 
 // DELETE /api/v2/projects/:id — delete
-router.delete("/:id", validate({ params: ProjectIdParamSchema }), (req, res) => {
+//
+// Best-effort cleanup of the shared vec_chunks table (rows are keyed by the
+// project UUID, or the path fallback for rows written before project.json
+// existed) so a deleted project does not leave orphaned embeddings behind.
+// Cleanup must never fail the delete itself.
+router.delete("/:id", validate({ params: ProjectIdParamSchema }), async (req, res) => {
   const { id } = req.validated.params
-  if (!store.deleteProject(id)) throw new ApiError(ErrorCode.NOT_FOUND, "Project not found")
+  const project = store.getProject(id)
+  if (!project) throw new ApiError(ErrorCode.NOT_FOUND, "Project not found")
+  try {
+    await vectorCommands.vector_delete_project({ projectPath: project.path, projectUuid: project.uuid })
+  } catch { /* best-effort vector cleanup */ }
+  store.deleteProject(id)
   res.status(204).end()
 })
 

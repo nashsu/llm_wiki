@@ -5,7 +5,7 @@
 // hybrid. Vector-requested-but-unavailable degrades to keyword with
 // vectorUnavailableReason instead of failing.
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest"
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest"
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -170,5 +170,84 @@ describe.skipIf(!isVecAvailable())("search retrieval modes", () => {
       projectPath: project, query: "zebra", wikiSearchMode: "keyword",
     })
     expect(bare.results.find((x) => x.title === "Alpha")?.content).toBeUndefined()
+  })
+
+  // ── review-fix regressions (PR #27) ────────────────────────────────────
+
+  it("explicit queryEmbedding is honored without an embedding config (desktop parity)", async () => {
+    const r = await searchCommands.search_project({
+      projectPath: project, query: "xylophone concerto", wikiSearchMode: "vector",
+      queryEmbedding: Q, embeddingConfig: null,
+    })
+    expect(r.vectorUnavailableReason).toBeUndefined()
+    expect(r.vectorHits).toBeGreaterThan(0)
+    expect(r.results[0].title).toBe("Alpha")
+  })
+
+  it("fractional topK does not drop the vector leg", async () => {
+    const r = await searchCommands.search_project({
+      projectPath: project, query: "zebra", wikiSearchMode: "hybrid",
+      queryEmbedding: Q, embeddingConfig: EMB_CFG, topK: 2.5,
+    })
+    expect(r.vectorUnavailableReason).toBeUndefined()
+    expect(r.vectorHits).toBeGreaterThan(0)
+  })
+
+  it("vector mode with an empty index degrades to keyword with a reason", async () => {
+    const fresh = mkdtempSync(path.join(tmpdir(), "llmwiki-mode-empty-"))
+    cleanups.push(fresh)
+    mkdirSync(path.join(fresh, ".llm-wiki"), { recursive: true })
+    mkdirSync(path.join(fresh, "wiki"), { recursive: true })
+    writeFileSync(path.join(fresh, ".llm-wiki", "project.json"), JSON.stringify({ id: "mode-empty-project" }))
+    writeFileSync(path.join(fresh, "wiki", "Alpha.md"), "# Alpha\n\nzebra stripes are visually unique patterns\n")
+    const r = await searchCommands.search_project({
+      projectPath: fresh, query: "zebra", wikiSearchMode: "vector",
+      queryEmbedding: Q, embeddingConfig: EMB_CFG,
+    })
+    expect(r.vectorHits).toBe(0)
+    expect(r.vectorUnavailableReason).toMatch(/vector index is empty/i)
+    expect(r.tokenHits).toBeGreaterThan(0) // keyword fallback ran
+    expect(r.results.map((x) => x.title)).toContain("Alpha")
+  })
+
+  it("vector mode degrades to keyword when the vector leg throws mid-retrieval", async () => {
+    const spy = vi.spyOn(vectorCommands, "vector_search_chunks")
+      .mockRejectedValueOnce(new Error("boom"))
+    try {
+      const r = await searchCommands.search_project({
+        projectPath: project, query: "zebra", wikiSearchMode: "vector",
+        queryEmbedding: Q, embeddingConfig: EMB_CFG,
+      })
+      expect(r.vectorHits).toBe(0)
+      expect(r.vectorUnavailableReason).toMatch(/failed during retrieval/i)
+      expect(r.tokenHits).toBeGreaterThan(0) // keyword fallback ran
+      expect(r.results.map((x) => x.title)).toContain("Alpha")
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // LAST in this describe: recreates the vec0 table at a new dimension,
+  // dropping the rows the earlier tests rely on.
+  it("vector mode with a dimension mismatch degrades to keyword with a reason", async () => {
+    const fresh = mkdtempSync(path.join(tmpdir(), "llmwiki-mode-dim-"))
+    cleanups.push(fresh)
+    mkdirSync(path.join(fresh, ".llm-wiki"), { recursive: true })
+    mkdirSync(path.join(fresh, "wiki"), { recursive: true })
+    writeFileSync(path.join(fresh, ".llm-wiki", "project.json"), JSON.stringify({ id: "mode-dim-project" }))
+    writeFileSync(path.join(fresh, "wiki", "Alpha.md"), "# Alpha\n\nzebra stripes are visually unique patterns\n")
+    // Provider switch: 8-dim embeddings recreate the table.
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: fresh, pageId: "Alpha",
+      chunks: [{ chunk_index: 0, chunk_text: "dim8", heading_path: "Alpha", embedding: [0.5, 0.5, 0, 0, 0.5, 0.5, 0, 0] }],
+    })
+    const r = await searchCommands.search_project({
+      projectPath: fresh, query: "zebra", wikiSearchMode: "vector",
+      queryEmbedding: Q, embeddingConfig: EMB_CFG, // 4-dim query vs 8-dim index
+    })
+    expect(r.vectorHits).toBe(0)
+    expect(r.vectorUnavailableReason).toMatch(/dimension does not match/i)
+    expect(r.tokenHits).toBeGreaterThan(0) // keyword fallback ran
+    expect(r.results.map((x) => x.title)).toContain("Alpha")
   })
 })

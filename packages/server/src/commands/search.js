@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { blendGraphResults } from "../graph.js"
-import { vectorCommands } from "./vectorstore.js"
+import { vectorCommands, vectorIndexHealth } from "./vectorstore.js"
 import { isVecAvailable } from "../store/db.js"
 import { readStoreKey } from "../store.js"
 import { SHARED_STORE_NAME } from "../config.js"
@@ -259,24 +259,37 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
   const pagePathsByStem = new Map()
 
   // Decide the vector leg up front so a requested-but-unavailable vector mode
-  // can still fall back to keyword scoring below.
+  // can still fall back to keyword scoring below. An explicit queryEmbedding
+  // (desktop Rust parity, also reachable via the invoke bridge) is honored
+  // even when no server embedding provider is configured.
   const wantVector = retrievalMode !== "keyword"
   let vectorUnavailableReason = null
   let qEmb = null
   if (wantVector) {
+    const hasExplicitEmbedding = Array.isArray(queryEmbedding) && queryEmbedding.length > 0
     if (!isVecAvailable()) {
       vectorUnavailableReason = "Vector search is unavailable on this server (sqlite-vec extension not loaded)"
-    } else if (!embeddingConfig || !embeddingConfig.enabled || !embeddingConfig.endpoint) {
+    } else if (!hasExplicitEmbedding && (!embeddingConfig || !embeddingConfig.enabled || !embeddingConfig.endpoint)) {
       vectorUnavailableReason = "No embedding provider is configured"
     } else {
       qEmb = await resolveQueryEmbedding(query, queryEmbedding, embeddingConfig)
       if (!qEmb) vectorUnavailableReason = "The embedding request failed"
     }
   }
-  const useVector = wantVector && !!qEmb
-  // keyword leg runs in keyword/hybrid modes, and as the fallback when a
-  // vector-mode search degrades.
-  const useKeyword = retrievalMode !== "vector" || !useVector
+  let useVector = wantVector && !!qEmb
+  // Index health gate: an empty index (project never re-indexed since the
+  // sqlite-vec upgrade) or a dimension mismatch (provider switch) must
+  // degrade to keyword results with a reason — not return a silent zero.
+  if (useVector) {
+    const health = vectorIndexHealth({ projectPath, queryEmbedding: qEmb })
+    if (health === "empty") {
+      useVector = false
+      vectorUnavailableReason ??= "The vector index is empty for this project — re-index pages to enable vector search"
+    } else if (health === "dim_mismatch") {
+      useVector = false
+      vectorUnavailableReason ??= "The embedding dimension does not match the vector index — re-index pages to enable vector search"
+    }
+  }
 
   for (const file of files) {
     let content
@@ -285,26 +298,50 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
     const fileName = path.basename(file)
     pagePathsByStem.set(fileStem(rel), rel)
     graphPages.push({ path: rel, title: extractTitle(content, fileName), links: extractWikilinks(content), content })
-    if (!useKeyword) continue
-    if (fileName === "index.md" || fileName === "log.md") continue
-    const title = extractTitle(content, fileName)
-    const titleLower = title.toLowerCase()
-    const bodyLower = content.toLowerCase()
-    let score = 0
-    let titleMatch = false
-    if (qLower && titleLower.includes(qLower)) { score += 100; titleMatch = true }
-    for (const t of tokens) {
-      if (titleLower.includes(t)) { score += 20; titleMatch = true }
-      const occ = bodyLower.split(t).length - 1
-      if (occ > 0) score += Math.min(occ, 20)
+  }
+
+  // The vector leg runs BEFORE keyword scoring so a mid-retrieval failure can
+  // still degrade a vector-mode search to keyword results.
+  // LIMIT binds must be integers: floor topK so fractional values don't throw.
+  const limit = Math.max(1, Math.floor(Number(topK) || 20))
+  let vectorHits = 0
+  let vectorResults = []
+  if (useVector) {
+    try {
+      vectorResults = await searchByEmbeddingServer(projectPath, qEmb, Math.max(limit, 10)) || []
+      vectorHits = vectorResults.length
+    } catch {
+      useVector = false
+      vectorUnavailableReason ??= "Vector search failed during retrieval"
     }
-    if (score <= 0) continue
-    results.push({
-      path: rel, title,
-      snippet: makeSnippet(content, tokens.length ? tokens : [qLower]),
-      titleMatch, score, images: extractImages(content),
-      ...(includeContent ? { content } : {}),
-    })
+  }
+
+  // Keyword leg runs in keyword/hybrid modes, and as the fallback when a
+  // vector-mode search degrades (either the gates above or the catch below).
+  if (retrievalMode !== "vector" || !useVector) {
+    for (const page of graphPages) {
+      const fileName = path.basename(page.path)
+      if (fileName === "index.md" || fileName === "log.md") continue
+      const title = page.title
+      const content = page.content
+      const titleLower = title.toLowerCase()
+      const bodyLower = content.toLowerCase()
+      let score = 0
+      let titleMatch = false
+      if (qLower && titleLower.includes(qLower)) { score += 100; titleMatch = true }
+      for (const t of tokens) {
+        if (titleLower.includes(t)) { score += 20; titleMatch = true }
+        const occ = bodyLower.split(t).length - 1
+        if (occ > 0) score += Math.min(occ, 20)
+      }
+      if (score <= 0) continue
+      results.push({
+        path: page.path, title,
+        snippet: makeSnippet(content, tokens.length ? tokens : [qLower]),
+        titleMatch, score, images: extractImages(content),
+        ...(includeContent ? { content } : {}),
+      })
+    }
   }
 
   // token_rank over keyword-sorted order (path tiebreak, like the desktop).
@@ -312,20 +349,11 @@ async function searchProject({ projectPath, query, topK = 20, includeContent = f
   const tokenRank = new Map()
   keywordSorted.forEach((r, idx) => tokenRank.set(normPath(r.path), idx + 1))
 
-  // vector leg
-  const limit = Math.max(1, topK)
-  let vectorHits = 0
   const vectorRank = new Map()
   const vectorScoreMap = new Map()
-  if (useVector) {
-    try {
-      const vres = await searchByEmbeddingServer(projectPath, qEmb, Math.max(limit, 10))
-      vectorHits = vres.length
-      vres.forEach((vr, idx) => { vectorRank.set(vr.id, idx + 1); vectorScoreMap.set(vr.id, vr.score) })
-      materializeVectorOnly(vres, pagePathsByStem, projectPath, results, includeContent)
-    } catch {
-      // vector search failed; fall back to keyword (+graph) results
-    }
+  if (useVector && vectorResults.length) {
+    vectorResults.forEach((vr, idx) => { vectorRank.set(vr.id, idx + 1); vectorScoreMap.set(vr.id, vr.score) })
+    materializeVectorOnly(vectorResults, pagePathsByStem, projectPath, results, includeContent)
   }
 
   if (vectorHits > 0) applyRrf(results, tokenRank, vectorRank, vectorScoreMap)

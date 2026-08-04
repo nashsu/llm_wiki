@@ -305,10 +305,11 @@ sequenceDiagram
      vec0 table (`MATCH embedding` + `project_id` filter, cosine distance),
    - combined with **reciprocal-rank-fusion** into one ranked list.
    When the vector leg cannot run (extension not loaded, no embedding provider,
-   embedding request failed), search **degrades to keyword results** and the
-   response carries `vectorUnavailableReason` — the request itself never fails.
-   In `vector` mode a failed vector leg also falls back to keyword (with the
-   reason) rather than returning nothing.
+   embedding request failed, or the project's index is empty / dimension-
+   mismatched after a provider switch), search **degrades to keyword results**
+   and the response carries `vectorUnavailableReason` — the request itself never
+   fails. In `vector` mode a failed vector leg also falls back to keyword (with
+   the reason) rather than returning nothing.
 4. **References** — every tool result contributes references (wiki pages,
    sources, graph nodes, web results); they are deduped and attached to the
    final answer, which the UI renders as citations.

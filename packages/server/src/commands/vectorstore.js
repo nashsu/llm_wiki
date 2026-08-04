@@ -21,19 +21,41 @@ const fwd = (p) => p.split(path.sep).join("/")
 
 // ── project identity ──────────────────────────────────────────────────────
 // Stable project key: the UUID persisted in .llm-wiki/project.json, falling
-// back to the normalized path for directories that lack one. Cached per path.
-const projectKeyCache = new Map()
+// back to the normalized path for directories that lack one.
+//
+// Cache discipline: a UUID resolution is stable and cached; a path fallback is
+// NOT trusted across calls — .llm-wiki/project.json may appear later (the
+// client's ensureProjectId writes it on first open), and caching the fallback
+// would strand already-written rows under the path key forever. When the
+// identity flips from path to UUID, rows stored under the old path key are
+// unreachable — drop them best-effort so the shared table can't accumulate
+// orphans.
+const projectKeyCache = new Map() // pathKey -> { key, fromFile }
 function projectKey(projectPath) {
-  const key0 = fwd(projectPath)
-  const cached = projectKeyCache.get(key0)
-  if (cached !== undefined) return cached
-  let key = key0
+  const pathKey = fwd(projectPath)
+  const cached = projectKeyCache.get(pathKey)
+  if (cached && cached.fromFile) return cached.key
+  let fileKey = null
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(projectPath, ".llm-wiki", "project.json"), "utf-8"))
-    if (meta && typeof meta.id === "string" && meta.id.length > 0) key = meta.id
+    if (meta && typeof meta.id === "string" && meta.id.length > 0) fileKey = meta.id
   } catch { /* no project.json → path key */ }
-  projectKeyCache.set(key0, key)
-  return key
+  if (fileKey) {
+    if (cached && cached.key !== fileKey) {
+      try {
+        if (isVecAvailable()) {
+          const db = getDb()
+          if (vecTableExists(db)) {
+            db.prepare(`DELETE FROM vec_chunks WHERE project_id = ?`).run(cached.key)
+          }
+        }
+      } catch { /* cleanup must never break key resolution */ }
+    }
+    projectKeyCache.set(pathKey, { key: fileKey, fromFile: true })
+    return fileKey
+  }
+  projectKeyCache.set(pathKey, { key: pathKey, fromFile: false })
+  return pathKey
 }
 
 function validatePageId(pageId) {
@@ -148,6 +170,9 @@ async function vectorSearchChunks({ projectPath, queryEmbedding, topK = 10 }) {
   // Query embedded by a different provider than the stored chunks: no
   // meaningful comparison — return nothing rather than garbage ranks.
   if (!meta || meta.dim !== queryEmbedding.length) return []
+  // LIMIT binds must be integers: a fractional topK would make SQLite throw
+  // "datatype mismatch", surfacing as a silently-dropped vector leg upstream.
+  const limit = Math.max(1, Math.floor(Number(topK) || 10))
   const rows = db.prepare(`
     SELECT page_id || '#' || chunk_index AS chunk_id,
            page_id, chunk_index, chunk_text, heading_path, distance
@@ -155,7 +180,7 @@ async function vectorSearchChunks({ projectPath, queryEmbedding, topK = 10 }) {
     WHERE embedding MATCH ? AND project_id = ?
     ORDER BY distance
     LIMIT ?
-  `).all(JSON.stringify(queryEmbedding), projectKey(projectPath), Math.max(1, topK))
+  `).all(JSON.stringify(queryEmbedding), projectKey(projectPath), limit)
   return rows.map((r) => ({
     chunk_id: r.chunk_id,
     page_id: r.page_id,
@@ -190,6 +215,45 @@ async function vectorClearChunks({ projectPath }) {
   db.prepare(`DELETE FROM vec_chunks WHERE project_id = ?`).run(projectKey(projectPath))
 }
 
+/**
+ * Best-effort vector cleanup when a project row is deleted. Removes chunks
+ * stored under both the UUID key and the normalized-path key (older rows may
+ * have been written before .llm-wiki/project.json existed). Never throws —
+ * project deletion must not fail because of vector housekeeping.
+ */
+async function vectorDeleteProject({ projectPath, projectUuid }) {
+  if (!isVecAvailable()) return
+  const db = getDb()
+  if (!vecTableExists(db)) return
+  const keys = new Set()
+  if (projectPath) keys.add(projectKey(projectPath))
+  if (projectUuid) keys.add(projectUuid)
+  const del = db.prepare(`DELETE FROM vec_chunks WHERE project_id = ?`)
+  for (const key of keys) del.run(key)
+  if (projectPath) projectKeyCache.delete(fwd(projectPath))
+}
+
+/**
+ * Index health probe used by search before running the vector leg. Returns
+ * null when the index is usable for this query, "empty" when the project has
+ * no rows, or "dim_mismatch" when the stored chunks' dimension differs from
+ * the query embedding's dimension (provider switch without re-index). A
+ * "dim_mismatch" verdict means MATCH would throw, and an "empty" verdict means
+ * the vector leg contributes nothing — both must degrade to keyword search
+ * with a reason instead of returning a silent zero-result response.
+ * Not exposed through the invoke bridge (not in vectorCommands).
+ */
+export function vectorIndexHealth({ projectPath, queryEmbedding }) {
+  if (!isVecAvailable()) return "empty"
+  const db = getDb()
+  if (!vecTableExists(db)) return "empty"
+  const meta = db.prepare(`SELECT dim FROM vec_meta WHERE id = 1`).get()
+  if (Array.isArray(queryEmbedding) && (!meta || meta.dim !== queryEmbedding.length)) return "dim_mismatch"
+  const { n } = db.prepare(`SELECT COUNT(*) AS n FROM vec_chunks WHERE project_id = ?`)
+    .get(projectKey(projectPath))
+  return n > 0 ? null : "empty"
+}
+
 // No-ops kept for contract parity with the desktop (LanceDB housekeeping and
 // legacy-store notice in settings).
 async function vectorOptimizeChunks() { return null }
@@ -200,6 +264,7 @@ export const vectorCommands = {
   vector_upsert_chunks: vectorUpsertChunks,
   vector_search_chunks: vectorSearchChunks,
   vector_delete_page: vectorDeletePage,
+  vector_delete_project: vectorDeleteProject,
   vector_count_chunks: vectorCountChunks,
   vector_clear_chunks: vectorClearChunks,
   vector_optimize_chunks: vectorOptimizeChunks,

@@ -14,7 +14,7 @@ import path from "node:path"
 process.env.LLM_WIKI_DATA_DIR = mkdtempSync(path.join(tmpdir(), "llmwiki-vec-test-"))
 
 const { getDb, isVecAvailable } = await import("../src/store/db.js")
-const { vectorCommands } = await import("../src/commands/vectorstore.js")
+const { vectorCommands, vectorIndexHealth } = await import("../src/commands/vectorstore.js")
 
 // Open the DB (runs migrations + loads the sqlite-vec extension) before the
 // describe.skipIf guards evaluate.
@@ -242,6 +242,79 @@ describe.skipIf(!isVecAvailable())("vectorstore (sqlite-vec)", () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  // ── review-fix regressions (PR #27) ────────────────────────────────────
+
+  it("fractional topK does not throw (LIMIT binds must be integers)", async () => {
+    const proj = makeProject("vec-frack-project")
+    cleanups.push(proj)
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: proj, pageId: "F",
+      chunks: [{ chunk_index: 0, chunk_text: "frack", heading_path: "", embedding: V.a }],
+    })
+    const hits = await vectorCommands.vector_search_chunks({ projectPath: proj, queryEmbedding: V.a, topK: 2.5 })
+    expect(hits.length).toBe(1)
+  })
+
+  it("delete_project removes rows under both the uuid key and the path key", async () => {
+    const proj = makeProject("vec-dp-project")
+    cleanups.push(proj)
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: proj, pageId: "P",
+      chunks: [{ chunk_index: 0, chunk_text: "dp-uuid", heading_path: "", embedding: V.a }],
+    })
+    expect(await vectorCommands.vector_count_chunks({ projectPath: proj })).toBe(1)
+    await vectorCommands.vector_delete_project({ projectPath: proj, projectUuid: "vec-dp-project" })
+    expect(await vectorCommands.vector_count_chunks({ projectPath: proj })).toBe(0)
+
+    // Path-keyed project (no project.json): rows were written under the path key.
+    const bare = mkdtempSync(path.join(tmpdir(), "llmwiki-vec-bare-"))
+    cleanups.push(bare)
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: bare, pageId: "P",
+      chunks: [{ chunk_index: 0, chunk_text: "dp-path", heading_path: "", embedding: V.b }],
+    })
+    expect(await vectorCommands.vector_count_chunks({ projectPath: bare })).toBe(1)
+    await vectorCommands.vector_delete_project({ projectPath: bare })
+    expect(await vectorCommands.vector_count_chunks({ projectPath: bare })).toBe(0)
+  })
+
+  it("projectKey self-heals when project.json appears later (stranded rows dropped)", async () => {
+    const proj = mkdtempSync(path.join(tmpdir(), "llmwiki-vec-flip-"))
+    cleanups.push(proj)
+    mkdirSync(path.join(proj, ".llm-wiki"), { recursive: true })
+    // No project.json yet → rows are keyed by the normalized path.
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: proj, pageId: "P",
+      chunks: [{ chunk_index: 0, chunk_text: "flip-before", heading_path: "", embedding: V.a }],
+    })
+    expect(await vectorCommands.vector_count_chunks({ projectPath: proj })).toBe(1)
+    // The client's ensureProjectId writes project.json on first open → identity
+    // flips to the uuid; stranded path-key rows must be dropped, not leaked.
+    writeFileSync(path.join(proj, ".llm-wiki", "project.json"), JSON.stringify({ id: "vec-flip-uuid" }))
+    expect(await vectorCommands.vector_count_chunks({ projectPath: proj })).toBe(0)
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: proj, pageId: "P",
+      chunks: [{ chunk_index: 0, chunk_text: "flip-after", heading_path: "", embedding: V.a }],
+    })
+    const db = getDb()
+    const rows = db.prepare(`SELECT project_id, chunk_text FROM vec_chunks`).all()
+      .filter((r) => r.chunk_text === "flip-before" || r.chunk_text === "flip-after")
+    expect(rows).toEqual([{ project_id: "vec-flip-uuid", chunk_text: "flip-after" }])
+  })
+
+  it("vectorIndexHealth reports usable / empty / dim_mismatch", async () => {
+    const proj = makeProject("vec-health-project")
+    cleanups.push(proj)
+    expect(vectorIndexHealth({ projectPath: proj, queryEmbedding: V.a })).toBe("empty")
+    await vectorCommands.vector_upsert_chunks({
+      projectPath: proj, pageId: "H",
+      chunks: [{ chunk_index: 0, chunk_text: "health", heading_path: "", embedding: V.a }],
+    })
+    expect(vectorIndexHealth({ projectPath: proj, queryEmbedding: V.a })).toBeNull()
+    expect(vectorIndexHealth({ projectPath: proj, queryEmbedding: [0.5, 0.5, 0, 0, 0.5, 0.5, 0, 0] }))
+      .toBe("dim_mismatch")
   })
 })
 
