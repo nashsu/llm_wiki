@@ -452,7 +452,7 @@ async function callEmbedding(cfg, input) {
   return json.data.map((d) => d.embedding)
 }
 
-async function embeddingFetch({ text, cfg, maxRetries = 3 }) {
+export async function embeddingFetch({ text, cfg, maxRetries = 3 }) {
   let lastErr
   for (let attempt = 0; attempt < Math.max(1, maxRetries); attempt++) {
     try { const [vec] = await callEmbedding(cfg, text); return vec }
@@ -461,7 +461,7 @@ async function embeddingFetch({ text, cfg, maxRetries = 3 }) {
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }
 
-async function embeddingFetchBatch({ texts, cfg }) {
+export async function embeddingFetchBatch({ texts, cfg }) {
   if (!texts || texts.length === 0) return []
   return await callEmbedding(cfg, texts)
 }
