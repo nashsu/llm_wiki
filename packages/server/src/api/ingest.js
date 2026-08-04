@@ -32,14 +32,16 @@ import { kickIngestOrchestrator, cancelIngestTask } from "../ingest/orchestrator
 import { emit } from "../events.js"
 import { EventTypes } from "../events/bus.js"
 import { ApiError, ErrorCode } from "../errors.js"
+import { MAX_UPLOAD_BYTES } from "../config.js"
 
 const router = Router({ mergeParams: true })
 
-// Multipart upload: hold the file in memory (≤50MB), write it ourselves so we
-// control the destination (raw/sources/) and filename sanitization.
+// Multipart upload: hold the file in memory (≤ MAX_UPLOAD_BYTES, env
+// LLM_WIKI_MAX_UPLOAD_MB — issue #14 P2), write it ourselves so we control
+// the destination (raw/sources/) and filename sanitization.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_BYTES },
 })
 
 // POST /api/v2/projects/:id/ingest/upload — multipart field "file"

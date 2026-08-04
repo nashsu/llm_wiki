@@ -24,6 +24,18 @@ export const HOST = process.env.LLM_WIKI_HOST || "127.0.0.1"
 export const WEB_DIST =
   process.env.LLM_WIKI_WEB_DIST || path.resolve(import.meta.dirname, "..", "..", "..", "dist-web")
 
+// Maximum size for a single file upload — applies to the multipart route
+// (POST /ingest/upload) and to each chunked-upload session's declared
+// fileSize alike (issue #14 P2). Override in MB with LLM_WIKI_MAX_UPLOAD_MB
+// (default 50, clamped to 1..4096).
+function parseMaxUploadMb() {
+  const raw = Number(process.env.LLM_WIKI_MAX_UPLOAD_MB)
+  if (!Number.isFinite(raw)) return 50
+  return Math.min(4096, Math.max(1, Math.floor(raw)))
+}
+
+export const MAX_UPLOAD_BYTES = parseMaxUploadMb() * 1024 * 1024
+
 // ── Shared desktop store discovery ────────────────────────────────────────
 // The desktop (Tauri) app persists its plugin-store (`app-state.json`) inside
 // its per-app data directory, keyed by the bundle identifier in
