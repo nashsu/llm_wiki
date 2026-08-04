@@ -153,6 +153,21 @@ interface EmbeddingConfig {
 }
 
 /**
+ * Global retrieval mode (issue #14 sqlite-vec gap). Governs every RAG
+ * surface — search UI and the chat agent's wiki.search — and is enforced
+ * server-side: persisted as the top-level `wikiSearchMode` key in
+ * app-state.json, which the web server reads on every search. The desktop
+ * Rust backend ignores unknown top-level keys, and the "hybrid" default
+ * preserves pre-existing behavior on both clients.
+ *
+ * - keyword: keyword + graph expansion (no embeddings used)
+ * - vector:  vector + graph expansion (degrades to keyword with a notice
+ *            when no embedding provider is configured)
+ * - hybrid:  keyword + vector + graph (default)
+ */
+export type WikiSearchMode = "keyword" | "vector" | "hybrid"
+
+/**
  * Image-captioning settings (Phase 4 of the multimodal-images plan).
  *
  * Decoupled from `llmConfig` because vision-capable endpoints are
@@ -416,6 +431,8 @@ interface WikiState {
   projectLlmOverride: ProjectLlmOverride
   searchApiConfig: SearchApiConfig
   embeddingConfig: EmbeddingConfig
+  /** Global retrieval mode; enforced by the server (see WikiSearchMode). */
+  wikiSearchMode: WikiSearchMode
   multimodalConfig: MultimodalConfig
   outputLanguage: OutputLanguage
   proxyConfig: ProxyConfig
@@ -447,6 +464,7 @@ interface WikiState {
   setProjectLlmOverride: (config: ProjectLlmOverride) => void
   setSearchApiConfig: (config: SearchApiConfig) => void
   setEmbeddingConfig: (config: EmbeddingConfig) => void
+  setWikiSearchMode: (mode: WikiSearchMode) => void
   setMultimodalConfig: (config: MultimodalConfig) => void
   setOutputLanguage: (lang: OutputLanguage) => void
   setProxyConfig: (config: ProxyConfig) => void
@@ -577,6 +595,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     model: "",
   },
 
+  wikiSearchMode: "hybrid",
+
   multimodalConfig: {
     // Off by default — captioning is a non-trivial token spend
     // (one VLM call per extracted image), and silently turning it
@@ -656,6 +676,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProjectLlmOverride: (projectLlmOverride) => set({ projectLlmOverride }),
   setSearchApiConfig: (searchApiConfig) => set({ searchApiConfig }),
   setEmbeddingConfig: (embeddingConfig) => set({ embeddingConfig }),
+  setWikiSearchMode: (wikiSearchMode) => set({ wikiSearchMode }),
   setMultimodalConfig: (multimodalConfig) => set({ multimodalConfig }),
   setOutputLanguage: (outputLanguage) => set({ outputLanguage }),
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),

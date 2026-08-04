@@ -25,6 +25,19 @@ interface BackendSearchResponse {
   tokenHits: number
   vectorHits: number
   graphHits?: number
+  /**
+   * Present when the vector leg was requested (retrieval mode vector/hybrid)
+   * but could not run — no embedding provider, sqlite-vec unavailable, embed
+   * request failed. The results are still valid (keyword-degraded); the
+   * search view surfaces this as an inline notice (issue #14).
+   */
+  vectorUnavailableReason?: string
+}
+
+/** What searchWiki resolves to: results plus retrieval health signals. */
+export interface SearchWikiOutcome {
+  results: SearchResult[]
+  vectorUnavailableReason?: string
 }
 
 const STOP_WORDS = new Set([
@@ -62,8 +75,8 @@ export function tokenizeQuery(query: string): string[] {
 export async function searchWiki(
   projectPath: string,
   query: string,
-): Promise<SearchResult[]> {
-  if (!query.trim()) return []
+): Promise<SearchWikiOutcome> {
+  if (!query.trim()) return { results: [] }
   const pp = normalizePath(projectPath)
   const embCfg = useWikiStore.getState().embeddingConfig
 
@@ -76,8 +89,13 @@ export async function searchWiki(
     embeddingConfig: embCfg,
   })
 
-  return response.results.map((result) => ({
-    ...result,
-    path: `${pp}/${normalizePath(result.path).replace(/^\/+/, "")}`,
-  }))
+  return {
+    results: response.results.map((result) => ({
+      ...result,
+      path: `${pp}/${normalizePath(result.path).replace(/^\/+/, "")}`,
+    })),
+    ...(response.vectorUnavailableReason
+      ? { vectorUnavailableReason: response.vectorUnavailableReason }
+      : {}),
+  }
 }

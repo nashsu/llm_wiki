@@ -72,7 +72,8 @@ flowchart TB
   APIv2 --> SQLite
   Bridge --> Disk
   Agent --> Disk
-  IngestDrv -- "writes wiki/*.md, vectorstore.json" --> Disk
+  IngestDrv -- "writes wiki/*.md" --> Disk
+  Bridge -- "vector_upsert_chunks (sqlite-vec)" --> SQLite
   StoreAPI --> Plugin
 ```
 
@@ -82,7 +83,7 @@ flowchart TB
 |---|---|---|
 | **Browser SPA** | UI; holds app state; **drives the ingest LLM pipeline client-side**; renders streaming chat; computes embeddings via the proxy. | `src/` (views, `src/lib/ingest.ts`, `src/lib/embedding.ts`, `src/lib/llm-client.ts`) |
 | **Node server** | Serves the SPA; exposes the API; runs the **chat agent loop server-side**; auth; SQLite access; CPU-offload worker pool; cross-origin proxy. | `packages/server/src/index-v2.js`, `api/*`, `agent.js`, `store/db.js`, `workers/` |
-| **Persistence** | SQLite (relational metadata), project files on disk (actual content + vectors), plugin store (config). | see §2 |
+| **Persistence** | SQLite (relational metadata + embedding vectors via sqlite-vec), project files on disk (actual content), plugin store (config). | see §2 |
 | **External** | LLM, embedding model, MinerU PDF extraction, web/AnyTXT search. | configured in plugin store / env |
 
 **Important division of labor:** the heavy LLM work for *ingest* runs in the
@@ -96,7 +97,7 @@ the agent runtime. Both call the same external LLM providers.
 
 ### 2a. SQLite — `server.db` (under `LLM_WIKI_DATA_DIR`, `/data` in Docker)
 
-Relational **metadata**. Live schema (11 migrations applied):
+Relational **metadata**. Live schema (12 migrations applied):
 
 | Table | Purpose | Status |
 |---|---|---|
@@ -108,12 +109,20 @@ Relational **metadata**. Live schema (11 migrations applied):
 | `chat_sessions` | Chat session metadata (uuid, project_id, title, timestamps) | used |
 | `chat_messages` | Chat message history (role, content, references JSON) | used |
 | `graph_nodes` / `graph_edges` | Knowledge-graph cache (path, title, type, link_count; weighted edges) | written when the graph is built |
-| `vec_chunks` | Embedding chunks (chunk_text, heading_path, embedding BLOB) | **schema-only — no writer** (see note) |
+| `vec_chunks` | Embedding chunks — sqlite-vec **vec0 virtual table** (`chunk_id` PK, `project_id`/`page_id`/`chunk_index`/`chunk_text`/`heading_path`, `embedding FLOAT[dim]`, cosine distance) | used when the sqlite-vec extension loads (see note) |
+| `vec_meta` | Current vector-index dimensionality (single row, `id = 1`) | used to drop/recreate `vec_chunks` when the embedding dimension changes |
 | `_migrations` | Applied migration bookkeeping | used |
 
-> **Note on `vec_chunks`:** the table exists for the desktop/LanceDB path, but on
-> the **web server embeddings are NOT stored in SQLite**. They live as JSON in
-> `<project>/.llm-wiki/vectorstore.json` (cosine-ranked). See §3/§4.
+> **Note on `vec_chunks`:** embeddings are stored **in SQLite** via the
+> [sqlite-vec](https://github.com/asg017/sqlite-vec) extension (issue #14).
+> Migration `012` replaces the old placeholder table with a vec0 virtual table
+> plus `vec_meta`. The extension is loaded best-effort in `getDb()`; if it
+> fails to load (unsupported platform, extension missing), the server **degrades
+> to keyword-only retrieval** and search responses carry a
+> `vectorUnavailableReason` — requests never fail. The legacy per-project
+> `.llm-wiki/vectorstore.json` is no longer written or read; upgrading a project
+> means re-running "Re-index all pages" (or a fresh ingest). Dimension changes
+> (different embedding model) drop and recreate the table via `vec_meta`.
 
 > **Note on `chat_*`:** chat history **is persisted to SQLite** (issue #21).
 > Sessions are created lazily on the first turn of a conversation (keyed by the
@@ -137,7 +146,7 @@ The actual knowledge-base content:
 │   ├── index.md            # deterministic wiki index
 │   └── log.md              # append-only ingest log
 └── .llm-wiki/              # per-project app state
-    ├── vectorstore.json    # ★ embeddings (chunk text + vectors), cosine search
+    ├── vectorstore.json    # legacy embeddings (pre-sqlite-vec; no longer written or read — re-index to migrate)
     ├── ingest-queue.json   # client-side ingest queue
     ├── ingest-cache.json   # skip-unchanged-source cache
     ├── image-caption-cache.json
@@ -148,7 +157,10 @@ The actual knowledge-base content:
 
 Configuration shared with the desktop app when co-located (resolved by
 `store.js`; overridable via `LLM_WIKI_STORE_FILE` / `LLM_WIKI_NO_SHARE`):
-LLM provider config, embedding config, search/AnyTXT config, the API auth token
+LLM provider config, embedding config, the **global retrieval mode**
+(`wikiSearchMode` — `keyword` / `vector` / `hybrid`, enforced server-side on
+every search; the desktop Rust backend ignores this key), search/AnyTXT config,
+the API auth token
 (`apiConfig.token`), and the project registry (`projectRegistry` — maps project
 id → path, used by the chat agent to locate a project on disk).
 
@@ -166,6 +178,7 @@ sequenceDiagram
   participant SPA as Browser SPA
   participant SRV as Node server
   participant FS as Project disk
+  participant DB as SQLite (server.db)
   participant LLM as LLM provider
   participant EMB as Embedding provider
 
@@ -200,7 +213,7 @@ sequenceDiagram
   EMB-->>SRV: vectors
   SRV-->>SPA: vectors
   SPA->>SRV: vector_upsert_chunks
-  SRV->>FS: write .llm-wiki/vectorstore.json
+  SRV->>DB: INSERT vec_chunks (sqlite-vec vec0, cosine)
   end
 ```
 
@@ -219,17 +232,20 @@ sequenceDiagram
    pages merged via LLM (`page-merge.ts`); `index.md`/`log.md` updated
    deterministically.
 8. **Embeddings** — `embedPage` per written page → chunk → `embedding_fetch` →
-   `vector_upsert_chunks` → `vectorstore.json`.
+   `vector_upsert_chunks` → `vec_chunks` (sqlite-vec vec0 in SQLite).
 
 **Artifacts:** disk (`raw/sources/`, `wiki/*.md`, `wiki/media/`,
-`.llm-wiki/vectorstore.json` + caches) and SQLite (`ingest_queue`).
+`.llm-wiki/` caches) and SQLite (`ingest_queue`, `vec_chunks`).
 
 ---
 
 ## 4. Dataflow — Q&A / Chat (question → grounded answer)
 
-Chat runs a **server-side agentic model↔tool loop**. Retrieval is **hybrid**:
-keyword scoring + vector cosine search, fused with reciprocal-rank-fusion (RRF).
+Chat runs a **server-side agentic model↔tool loop**. Retrieval is **hybrid** by
+default: keyword scoring + vector cosine search, fused with
+reciprocal-rank-fusion (RRF). The retrieval mode is configurable
+(`wikiSearchMode`: `keyword` / `vector` / `hybrid`) and resolved **server-side**
+so it applies to the search UI, the chat agent, and the v1/v2 API alike.
 
 ```mermaid
 sequenceDiagram
@@ -239,7 +255,7 @@ sequenceDiagram
   participant SRV as Node server
   participant AG as Agent loop (agent.js)
   participant LLM as LLM provider
-  participant VS as vectorstore.json + wiki/
+  participant VS as vec_chunks (SQLite) + wiki/
 
   U->>SPA: ask a question
   SPA->>SRV: POST /projects/:id/chat {message, sessionId, mode, tools, resume?, historyLimit?}
@@ -282,11 +298,17 @@ sequenceDiagram
    call the LLM → if it returns tool calls, execute them and feed observations
    back → until the model answers with no further tool calls.
 3. **Retrieval** — the `wiki.search` tool calls `search_project`
-   (`commands/search.js`), which is **hybrid**:
-   - **keyword** scoring (title/body token matches), and
-   - **vector** search — `vector_search_chunks` over `.llm-wiki/vectorstore.json`
-     (cosine similarity),
+   (`commands/search.js`). The **retrieval mode** is resolved server-side:
+   explicit request param → plugin store `wikiSearchMode` → default `hybrid`.
+   - **keyword** scoring (title/body token matches + graph expansion), and
+   - **vector** search — `vector_search_chunks` over the sqlite-vec `vec_chunks`
+     vec0 table (`MATCH embedding` + `project_id` filter, cosine distance),
    - combined with **reciprocal-rank-fusion** into one ranked list.
+   When the vector leg cannot run (extension not loaded, no embedding provider,
+   embedding request failed), search **degrades to keyword results** and the
+   response carries `vectorUnavailableReason` — the request itself never fails.
+   In `vector` mode a failed vector leg also falls back to keyword (with the
+   reason) rather than returning nothing.
 4. **References** — every tool result contributes references (wiki pages,
    sources, graph nodes, web results); they are deduped and attached to the
    final answer, which the UI renders as citations.
@@ -317,9 +339,16 @@ message. Session CRUD: list/create/get/rename/delete under
   (`streamChat`); chat LLM calls run **server-side** (`agent.js`). Both target
   the same configured providers. Cross-origin browser calls go through
   `/api/proxy`.
-- **Vectors live on disk, not in SQLite** (web). `vectorstore.json` is the
-  source of truth for embeddings on the web server; the `vec_chunks` SQLite
-  table is a no-writer placeholder for the desktop/LanceDB path.
+- **Vectors live in SQLite via sqlite-vec** (web, issue #14). `vec_chunks` is a
+  sqlite-vec vec0 virtual table loaded best-effort in `getDb()`; if the
+  extension cannot load the server keeps working with keyword-only retrieval
+  and answers carry `vectorUnavailableReason`. The legacy
+  `.llm-wiki/vectorstore.json` file store is no longer used.
+- **Retrieval mode is a server-enforced setting.** `wikiSearchMode`
+  (`keyword` / `vector` / `hybrid`, default `hybrid`) is stored in the shared
+  plugin store and resolved server-side on every search, so the search UI, the
+  chat agent, and the v1/v2 endpoints all honor it without client-side wiring.
+  Settings → Embeddings exposes the selector.
 - **Chat is persisted (web).** Sessions and messages live in SQLite
   (`chat_sessions`/`chat_messages`, issue #21); the server owns history in the
   web build, and the desktop build keeps its client-held history re-send and

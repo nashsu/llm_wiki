@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig, WikiSearchMode } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -177,6 +177,28 @@ export async function saveEmbeddingConfig(config: EmbeddingConfig): Promise<void
 export async function loadEmbeddingConfig(): Promise<EmbeddingConfig | null> {
   const store = await getStore()
   return (await store.get<EmbeddingConfig>(EMBEDDING_KEY)) ?? null
+}
+
+// Global retrieval mode (issue #14 sqlite-vec gap). KEY MUST stay
+// `wikiSearchMode` — the web server's STORE_KEYS allowlist
+// (packages/server/src/config.js) reads this exact top-level key from
+// the same app-state.json and enforces it on every search. The desktop
+// Rust backend ignores unknown top-level keys, which is fine: this is a
+// web-server concern.
+const WIKI_SEARCH_MODE_KEY = "wikiSearchMode"
+const WIKI_SEARCH_MODES = new Set(["keyword", "vector", "hybrid"])
+
+export async function saveWikiSearchMode(mode: WikiSearchMode): Promise<void> {
+  const store = await getStore()
+  await store.set(WIKI_SEARCH_MODE_KEY, mode)
+}
+
+export async function loadWikiSearchMode(): Promise<WikiSearchMode | null> {
+  const store = await getStore()
+  const saved = await store.get<string>(WIKI_SEARCH_MODE_KEY)
+  return typeof saved === "string" && WIKI_SEARCH_MODES.has(saved)
+    ? (saved as WikiSearchMode)
+    : null
 }
 
 const MULTIMODAL_KEY = "multimodalConfig"

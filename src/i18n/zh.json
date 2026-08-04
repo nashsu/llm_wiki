@@ -340,6 +340,7 @@
     "fromSource": "来源：{{source}}",
     "jumpToSource": "跳转到来源文档",
     "noResults": "未找到相关结果",
+    "vectorDegradedNotice": "向量搜索暂不可用——当前仅显示关键词搜索结果。",
     "startSearching": "输入关键词搜索 Wiki 页面"
   },
   "lint": {
@@ -569,6 +570,11 @@
         "description": "启用语义搜索。支持 OpenAI 兼容的 /v1/embeddings endpoint、Google Gemini 原生 embedContent endpoint，以及火山方舟 / 豆包 embedding endpoint。本地模型（如 LM Studio、Ollama embedding）不需要 API Key。",
         "enableLabel": "启用向量搜索",
         "enableHint": "关掉后搜索只走 token 匹配。",
+        "retrievalMode": "检索模式",
+        "retrievalModeHint": "作用于所有 Wiki 搜索入口（包括聊天 Agent）。由 Web 服务端强制执行；未配置 embedding provider 或向量索引不可用时，vector/hybrid 模式会回退为关键词搜索并给出提示。",
+        "modeKeyword": "关键词",
+        "modeVector": "向量",
+        "modeHybrid": "混合",
         "endpoint": "Endpoint",
         "endpointHint": "OpenAI 兼容示例：http://127.0.0.1:1234/v1/embeddings。Gemini 示例：https://generativelanguage.googleapis.com/v1beta，模型填 gemini-embedding-001。火山方舟示例：https://ark.cn-beijing.volces.com/api/v3，模型填 doubao-embedding-vision。",
         "apiKey": "API Key（可选）",

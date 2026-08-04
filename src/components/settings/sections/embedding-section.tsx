@@ -200,6 +200,40 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
         </button>
       </div>
 
+      {/* Global retrieval mode (issue #14 sqlite-vec gap). Shown even
+          when embeddings are disabled: keyword mode is a legitimate
+          choice on its own, and the server enforces the saved mode the
+          moment an embedding provider gets configured. */}
+      <div className="space-y-2 rounded-lg border p-3">
+        <div>
+          <Label>{t("settings.sections.embedding.retrievalMode")}</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("settings.sections.embedding.retrievalModeHint")}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {([
+            ["keyword", t("settings.sections.embedding.modeKeyword")],
+            ["vector", t("settings.sections.embedding.modeVector")],
+            ["hybrid", t("settings.sections.embedding.modeHybrid")],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setDraft("wikiSearchMode", value)}
+              aria-pressed={draft.wikiSearchMode === value}
+              className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                draft.wikiSearchMode === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border hover:bg-accent"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {draft.embeddingEnabled && (
         <>
           <div className="space-y-2">

@@ -38,6 +38,12 @@ export interface SettingsDraft {
   embeddingBatchSize: number
   /** Extra HTTP headers to send on every embedding request. Empty = none. */
   embeddingExtraHeaders: Record<string, string>
+  /**
+   * Global retrieval mode enforced by the web server (issue #14
+   * sqlite-vec gap). keyword = keyword+graph, vector = vector+graph,
+   * hybrid = all three. Persisted as `wikiSearchMode` in app-state.json.
+   */
+  wikiSearchMode: "keyword" | "vector" | "hybrid"
 
   // Multimodal (image captioning at ingest time)
   multimodalEnabled: boolean
