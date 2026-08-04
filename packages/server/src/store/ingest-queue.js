@@ -147,6 +147,23 @@ export function failIngestTask(taskId, error, { retryable = false, notBefore = 0
   }
 }
 
+/**
+ * Usage-limit backoff (desktop parity, ingest-queue.ts:792-806): a provider
+ * usage limit is not the task's fault, so it must NOT consume an attempt —
+ * the claim's attempt_count increment is rolled back (never below 0). The row
+ * returns to 'pending' with the pause message + a not_before backoff; the
+ * orchestrator's sweep re-claims it once the backoff expires.
+ */
+export function deferIngestTaskForUsageLimit(taskId, error, notBefore) {
+  const db = getDb()
+  db.prepare(`
+    UPDATE ingest_queue
+    SET status = 'pending', error = ?, not_before = ?,
+        attempt_count = MAX(0, attempt_count - 1), updated_at = ?
+    WHERE id = ?
+  `).run(error ?? null, notBefore, Date.now(), taskId)
+}
+
 /** Manual retry of a failed task: resets attempts + error, back to pending. */
 export function retryIngestTask(taskId) {
   const db = getDb()

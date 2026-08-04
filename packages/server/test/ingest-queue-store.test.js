@@ -190,3 +190,57 @@ describe("ingest queue lifecycle (migration 013)", () => {
     expect(q.findLiveIngestTask(projA.id, "raw/sources/dedupe.md")).toBeUndefined()
   })
 })
+
+describe("deferIngestTaskForUsageLimit (usage limits do not consume attempts)", () => {
+  // The crash-recovery test above intentionally leaves a pending row behind;
+  // start from a clean queue so claims below are deterministic.
+  beforeAll(() => {
+    getDb().prepare("DELETE FROM ingest_queue").run()
+  })
+
+  it("rolls the claim's attempt increment back and parks the row until not_before", () => {
+    const id = enq(projA.id, "raw/sources/usage-1.md")
+    q.claimNextIngestTask(NOW) // attempt_count → 1
+    expect(q.getIngestTask(id).attempt_count).toBe(1)
+
+    q.deferIngestTaskForUsageLimit(id, "Paused after provider usage limit: quota", NOW + 900_000)
+    const row = q.getIngestTask(id)
+    expect(row.status).toBe("pending")
+    expect(row.attempt_count).toBe(0) // attempt NOT consumed
+    expect(row.error).toBe("Paused after provider usage limit: quota")
+    expect(row.not_before).toBe(NOW + 900_000)
+
+    // Deferred: not claimable before the backoff, claimable after.
+    expect(q.claimNextIngestTask(NOW)).toBeNull()
+    const reclaimed = q.claimNextIngestTask(NOW + 900_001)
+    expect(reclaimed.id).toBe(id)
+    expect(reclaimed.attempt_count).toBe(1)
+    q.completeIngestTask(id)
+  })
+
+  it("never drives attempt_count below zero when called without a prior claim", () => {
+    const id = enq(projA.id, "raw/sources/usage-2.md")
+    q.deferIngestTaskForUsageLimit(id, "Paused after provider usage limit: 429", NOW + 60_000)
+    const row = q.getIngestTask(id)
+    expect(row.attempt_count).toBe(0)
+    expect(row.status).toBe("pending")
+    q.deleteIngestTask(id)
+  })
+
+  it("preserves the attempt accounting across repeated usage-limit pauses", () => {
+    const id = enq(projA.id, "raw/sources/usage-3.md")
+    q.claimNextIngestTask(NOW) // attempt 1
+    q.deferIngestTaskForUsageLimit(id, "pause 1", NOW + 1_000)
+    const c2 = q.claimNextIngestTask(NOW + 1_001) // attempt 1 again (rolled back)
+    expect(c2.id).toBe(id)
+    expect(c2.attempt_count).toBe(1)
+    q.deferIngestTaskForUsageLimit(id, "pause 2", NOW + 2_000)
+    expect(q.getIngestTask(id).attempt_count).toBe(0)
+    // Still fully retryable: a normal retryable failure now consumes attempt 1…
+    q.claimNextIngestTask(NOW + 2_001)
+    q.failIngestTask(id, "boom", { retryable: true })
+    expect(q.getIngestTask(id).attempt_count).toBe(1)
+    q.failIngestTask(id, "boom terminal", { retryable: false })
+    expect(q.getIngestTask(id).status).toBe("failed")
+  })
+})
