@@ -61,12 +61,16 @@ Resolved in this order by `packages/server/src/auth/config.js`:
 2. `apiConfig.token` in the shared plugin-store (set in the desktop app under
    Settings → API, or via `PUT /api/v2/settings/apiConfig`).
 
-Auth posture:
+Auth posture (default **auto** mode — `LLM_WIKI_AUTH_MODE` unset; see
+[DEPLOYMENT.md](./DEPLOYMENT.md) for the `none`/`token` modes):
 
 - **No token configured** → the server is **open**; every request passes
   (zero-friction local mode).
 - **Token configured** → every non-public endpoint requires the token, unless
   `apiConfig.allowUnauthenticated` is `true` (explicitly re-opened).
+- Under `LLM_WIKI_AUTH_MODE=token` the token is required regardless — with no
+  token configured the server is closed, and `allowUnauthenticated` is
+  ignored; under `LLM_WIKI_AUTH_MODE=none` (or `open`) it is always open.
 
 Public endpoints that never require a token: `/api/v2/health`,
 `/api/v2/version`, `/api/v2/auth/status`, `/api/v2/auth/login`.
@@ -97,8 +101,10 @@ if (token) headers.set("Authorization", `Bearer ${token}`)
 
 ## Login flow
 
-The login screen (`src/components/LoginScreen.tsx`) gates the app shell. The
-flow, driven by `src/lib/connection.ts` and `src/api/auth.ts`:
+In the web build, `src/main.tsx` mounts the login screen
+(`src/components/LoginScreen.tsx`) unconditionally in front of the app; the
+flow is driven by that component and `src/api/auth.ts`
+(`getAuthStatus` / `login`):
 
 1. **On load**, the client calls `GET /api/v2/auth/status` (public):
 
@@ -106,8 +112,11 @@ flow, driven by `src/lib/connection.ts` and `src/api/auth.ts`:
    { "authRequired": true, "authConfigured": true, "allowUnauthenticated": false }
    ```
 
-2. **If `authRequired` is `false`** (open server, or a stored token already
-   exists) the login screen skips itself and enters the app immediately.
+2. **If `authRequired` is `false`** (the server is open) the login screen
+   skips itself and enters the app immediately. The skip depends ONLY on the
+   server's answer — a token already stored in `localStorage` never causes a
+   skip (nothing auto-submits it), and `authRequired` is purely server-side:
+   it never reflects any individual client's stored token.
 
 3. **If `authRequired` is `true`**, the token form is shown. The user pastes
    the server token (the one from the desktop app's Settings → API, or
@@ -130,14 +139,11 @@ flow, driven by `src/lib/connection.ts` and `src/api/auth.ts`:
    rotate the token itself (env var or `apiConfig.token`) to invalidate all
    clients.
 
-Connection state helper (`getConnectionState()` in `src/lib/connection.ts`):
-
-```ts
-connected = !status.authRequired || hasToken
-```
-
-i.e. you are "connected" when the server does not enforce auth, or when a token
-is already stored.
+There is no separate connection-state module — the gate is exactly the check
+above: `!status.authRequired` skips the form, otherwise the form shows. The
+stored token's only job is request auth: `getToken()` (in `src/api/client.ts`)
+attaches it as a Bearer header on outgoing API/SSE requests; startup code
+never reads it to decide whether to show the login screen.
 
 ---
 
