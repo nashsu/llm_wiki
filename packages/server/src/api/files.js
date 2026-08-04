@@ -67,10 +67,13 @@ router.post("/upload", validate({ body: FileUploadBodySchema }), async (req, res
     // (plans/sse-taxonomy.md). A directory here fails the write below, so
     // only an existing FILE counts as "existed".
     const existed = await fsp.stat(absPath).then((s) => s.isFile(), () => false)
+    // suppressFileEvents: this route emits its own frame below (project-
+    // relative path + size + req.projectId), and the stage-3 writer-level
+    // emit must not duplicate it (plans/sse-taxonomy.md stage 3).
     if (encoding === "base64") {
-      await dispatch("write_file_base64", { path: absPath, base64: content })
+      await dispatch("write_file_base64", { path: absPath, base64: content, suppressFileEvents: true })
     } else {
-      await dispatch("write_file", { path: absPath, contents: content })
+      await dispatch("write_file", { path: absPath, contents: content, suppressFileEvents: true })
     }
     // Attribution rides in the payload (emit() bridge envelope keeps
     // projectId null — same shape as ingest:*).

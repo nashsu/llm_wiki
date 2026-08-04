@@ -46,6 +46,41 @@ export function getProjectByPath(path) {
   return getDb().prepare("SELECT * FROM projects WHERE path = ?").get(path)
 }
 
+/** Strip trailing "/" separators, preserving the root "/" itself. */
+function trimTrailingSeparators(p) {
+  let out = p
+  while (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1)
+  return out
+}
+
+/**
+ * Longest-prefix match from an absolute filesystem path to a projects row
+ * (plans/sse-taxonomy.md stage 3). Legacy invoke writers have no project
+ * context, so file:* attribution resolves here. Matching is case-sensitive
+ * POSIX ("/" separator) and boundary-aware: a candidate row matches only
+ * when the path equals the project root or continues past it with a "/",
+ * so /a/b never claims /a/bc/x. Trailing separators are normalized on both
+ * sides. Returns the row with the longest matching path, or null when no
+ * project claims the path.
+ * @param {string} absPath
+ * @returns {object|null} the projects row, or null when unresolved
+ */
+export function findProjectByPathPrefix(absPath) {
+  if (typeof absPath !== "string" || !absPath) return null
+  const target = trimTrailingSeparators(absPath)
+  let best = null
+  let bestLen = -1
+  for (const row of listProjects()) {
+    if (typeof row.path !== "string" || !row.path) continue
+    const p = trimTrailingSeparators(row.path)
+    if ((target === p || target.startsWith(`${p}/`)) && p.length > bestLen) {
+      best = row
+      bestLen = p.length
+    }
+  }
+  return best
+}
+
 /**
  * Resolve-or-create a project row (issue #21). Chat persistence needs a
  * projects FK target, but projects registered through the legacy flow only

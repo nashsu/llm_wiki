@@ -393,6 +393,15 @@ router.post(
             )
             if (savedImages.length > 0) {
               await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+              // The injection rewrote wiki/sources/<slug>.md AFTER the
+              // FILE-block emit loop above — emit file:modified so the
+              // trees refresh for the rewrite too (plans/sse-taxonomy.md
+              // stage 3). Attribution as in the loop: emit() bridge keeps
+              // the envelope projectId null; it rides in the payload.
+              emit(EventTypes.FILE_MODIFIED, {
+                projectId: req.projectId,
+                path: `wiki/sources/${sourceSummarySlug}.md`,
+              })
             }
             // DEVIATION from the client: it deletes the extraction promise
             // from its module map in `finally` here. The server's images.js

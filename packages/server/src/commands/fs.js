@@ -5,6 +5,9 @@ import crypto from "node:crypto"
 import { recordFileVersion, listFileHistory, restoreFileHistory } from "./fileHistory.js"
 import { preprocessFile as preprocessBinary } from "./preprocess.js"
 import { markAppWrite } from "../appwrite.js"
+import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
+import { findProjectByPathPrefix } from "../store/projects.js"
 
 // Node port of the filesystem Tauri commands (src-tauri/src/commands/fs.rs).
 // Paths are normalized to forward slashes on the way out so the TS layer
@@ -14,6 +17,29 @@ const fwd = (p) => p.split(path.sep).join("/")
 
 function assertAbsoluteFsPath(op, p) {
   if (!path.isAbsolute(p)) throw new Error(`${op} requires an absolute path, got: ${p}`)
+}
+
+// ── SSE file:* emission (plans/sse-taxonomy.md stage 3) ──────────────────
+// Legacy invoke writers have no project context, so attribution resolves by
+// longest-prefix match against projects.path (null when unresolved); the
+// payload path is the path as given (the one exception is
+// createMissingWikiPage, which reports its returned project-relative path).
+// Emission is explicit and independent of markAppWrite (which only keeps the
+// filesystem watchers quiet). Routes that emit their own richer frame for
+// the same write (api/files.js upload: project-relative path + size) pass
+// suppressFileEvents so a single write produces exactly ONE frame.
+function emitFileEvent(type, absPath, extra) {
+  try {
+    const project = findProjectByPathPrefix(absPath)
+    emit(type, {
+      projectId: project ? project.id : null,
+      path: absPath,
+      ...(extra ?? {}),
+    })
+  } catch (err) {
+    // Emission must never break the write itself.
+    console.warn(`[fs] file event emission failed for ${absPath}: ${err.message}`)
+  }
 }
 
 const MIME_BY_EXT = {
@@ -70,24 +96,41 @@ async function readFile({ path: p, extractImages }) {
   return buf.toString("utf-8")
 }
 
-async function writeFile({ path: p, contents }) {
+async function writeFile({ path: p, contents, suppressFileEvents = false }) {
   assertAbsoluteFsPath("writeFile", p)
+  // Pre-write existence decides created vs modified (plans/sse-taxonomy.md).
+  const existed = fs.existsSync(p)
   await fsp.mkdir(path.dirname(p), { recursive: true })
   recordFileVersion(p, "baseline", "before.human.write")
   await fsp.writeFile(p, contents ?? "", "utf-8")
   recordFileVersion(p, "human", "human.write")
   markAppWrite(p)
+  if (!suppressFileEvents) {
+    emitFileEvent(existed ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, p, {
+      size: Buffer.byteLength(contents ?? "", "utf-8"),
+    })
+  }
 }
 
-async function writeFileBase64({ path: p, base64 }) {
+async function writeFileBase64({ path: p, base64, suppressFileEvents = false }) {
   assertAbsoluteFsPath("writeFileBase64", p)
+  const existed = fs.existsSync(p)
   await fsp.mkdir(path.dirname(p), { recursive: true })
-  await fsp.writeFile(p, Buffer.from(base64, "base64"))
+  const buf = Buffer.from(base64, "base64")
+  await fsp.writeFile(p, buf)
   markAppWrite(p)
+  if (!suppressFileEvents) {
+    emitFileEvent(existed ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, p, {
+      size: buf.length,
+    })
+  }
 }
 
-async function writeFileAtomic({ path: p, contents }) {
+async function writeFileAtomic({ path: p, contents, suppressFileEvents = false }) {
   assertAbsoluteFsPath("writeFileAtomic", p)
+  // Existence is checked BEFORE the rename onto the final path (rename
+  // silently replaces the target).
+  const existed = fs.existsSync(p)
   await fsp.mkdir(path.dirname(p), { recursive: true })
   recordFileVersion(p, "baseline", "before.human.write")
   const tmp = `${p}.${process.pid}.${Date.now()}.tmp`
@@ -95,6 +138,12 @@ async function writeFileAtomic({ path: p, contents }) {
   await fsp.rename(tmp, p)
   recordFileVersion(p, "human", "human.write")
   markAppWrite(p)
+  if (!suppressFileEvents) {
+    // ONE frame for the final path after the rename — the .tmp never emits.
+    emitFileEvent(existed ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, p, {
+      size: Buffer.byteLength(contents ?? "", "utf-8"),
+    })
+  }
 }
 
 async function listDirectory({ path: p, includeHidden, maxDepth }) {
@@ -106,12 +155,15 @@ async function listDirectory({ path: p, includeHidden, maxDepth }) {
   return buildTree(p, 0, md, inc)
 }
 
-async function copyFile({ source, destination }) {
+async function copyFile({ source, destination, suppressFileEvents = false }) {
   await fsp.mkdir(path.dirname(destination), { recursive: true })
   await fsp.copyFile(source, destination)
+  if (!suppressFileEvents) {
+    emitFileEvent(EventTypes.FILE_CREATED, destination)
+  }
 }
 
-async function copyDirectory({ source, destination }) {
+async function copyDirectory({ source, destination, suppressFileEvents = false }) {
   const created = []
   await fsp.mkdir(destination, { recursive: true })
   created.push(fwd(destination))
@@ -131,6 +183,12 @@ async function copyDirectory({ source, destination }) {
     }
   }
   await walk(source, destination)
+  if (!suppressFileEvents) {
+    // file:created per created path — the same list the command returns.
+    for (const createdPath of created) {
+      emitFileEvent(EventTypes.FILE_CREATED, createdPath)
+    }
+  }
   return created
 }
 
@@ -141,11 +199,15 @@ async function preprocessFile(args) {
   return preprocessBinary(args)
 }
 
-async function deleteFile({ path: p }) {
+async function deleteFile({ path: p, suppressFileEvents = false }) {
   const stat = await fsp.lstat(p).catch(() => null)
   if (!stat) return
   if (stat.isDirectory()) await fsp.rm(p, { recursive: true, force: true })
   else await fsp.rm(p, { force: true })
+  if (!suppressFileEvents) {
+    // Only on an ACTUAL removal: a missing path no-ops above and emits nothing.
+    emitFileEvent(EventTypes.FILE_DELETED, p)
+  }
 }
 
 async function createDirectory({ path: p }) {
@@ -178,7 +240,7 @@ async function readFileAsBase64({ path: p }) {
   return { base64: buf.toString("base64"), mimeType: MIME_BY_EXT[ext] || "application/octet-stream" }
 }
 
-async function applyTextSelectionEdit({ projectPath, filePath, prefix, selectedText, suffix, replacement }) {
+async function applyTextSelectionEdit({ projectPath, filePath, prefix, selectedText, suffix, replacement, suppressFileEvents = false }) {
   const project = fs.realpathSync(projectPath)
   const file = fs.realpathSync(filePath)
   if (!file.startsWith(project) || !fs.statSync(file).isFile()) {
@@ -194,6 +256,12 @@ async function applyTextSelectionEdit({ projectPath, filePath, prefix, selectedT
   await fsp.writeFile(file, updated, "utf-8")
   recordFileVersion(file, "agent", "agent.selection_edit")
   markAppWrite(file)
+  if (!suppressFileEvents) {
+    // Target pre-existence is enforced above ⇒ always file:modified.
+    emitFileEvent(EventTypes.FILE_MODIFIED, filePath, {
+      size: Buffer.byteLength(updated, "utf-8"),
+    })
+  }
   return updated
 }
 
@@ -215,7 +283,7 @@ function safeMissingPageStem(title) {
   return [...stem].slice(0, 120).join("")
 }
 
-async function createMissingWikiPage({ projectPath, title, content }) {
+async function createMissingWikiPage({ projectPath, title, content, suppressFileEvents = false }) {
   const project = fs.realpathSync(projectPath)
   let t = (title || "").trim()
   if (!t || [...t].length > 200) throw new Error("Missing-link page title must contain 1 to 200 characters")
@@ -238,7 +306,12 @@ async function createMissingWikiPage({ projectPath, title, content }) {
   await fsp.writeFile(target, body, { encoding: "utf-8", flag: "wx" })
   recordFileVersion(target, "agent", "wiki.missing_link.create")
   markAppWrite(target)
-  return fwd(path.relative(project, target))
+  const rel = fwd(path.relative(project, target))
+  if (!suppressFileEvents) {
+    // Created, reported with the returned project-relative path.
+    emitFileEvent(EventTypes.FILE_CREATED, projectPath, { path: rel, size: Buffer.byteLength(body, "utf-8") })
+  }
+  return rel
 }
 
 function collectRelatedPages(dir, sourceName, results) {
