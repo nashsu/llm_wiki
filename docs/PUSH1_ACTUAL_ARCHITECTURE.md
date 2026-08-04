@@ -237,7 +237,10 @@ sequenceDiagram
    `raw/sources/` with a collision-safe `<ts>_<hex8>_<name>` filename; the
    enqueue-by-path route re-ingests existing files (deduped against live
    tasks). Both insert `ingest_queue`, emit `ingest:queued`, and kick the
-   orchestrator.
+   orchestrator. The upload cap is env-configurable (`LLM_WIKI_MAX_UPLOAD_MB`,
+   default 50MB; oversize answers `413 FILE_TOO_LARGE`). Files >10MB arrive
+   through the chunked-upload protocol (§5) and join this stage when the client
+   enqueues the completed file via the same enqueue-by-path route.
 2. **Claim loop** — `ingest/orchestrator.js`: concurrency cap
    (`LLM_WIKI_INGEST_CONCURRENCY`, default 2, clamp 1–16), FIFO with
    per-project serialization, boot recovery (`resetInterruptedTasks`) and a
@@ -422,7 +425,8 @@ message. Session CRUD: list/create/get/rename/delete under
   exactly like `ingest:*` — and reach both `GET /api/events` and
   `GET /api/v2/events`:
   - `file:*` at every write path: files upload (a pre-write existence check
-    decides created vs modified), ingest upload, maintenance rebuild-index
+    decides created vs modified), ingest upload, chunked-upload completion
+    (same existence check), maintenance rebuild-index
     and file-history restore, cancel cleanup (`file:deleted` per unlinked
     page), chat Write-to-Wiki FILE blocks plus the post-write image
     injection, and the legacy invoke filesystem writers (no project context
@@ -461,6 +465,28 @@ message. Session CRUD: list/create/get/rename/delete under
   primary wins when both are set; unset (**auto**) → open when no token is
   configured, required once a token is set (env `LLM_WIKI_API_TOKEN` or
   plugin-store `apiConfig.token`).
+- **Chunked upload for large files** (issue #14, charter §4.8). Files >10MB
+  take the three-step protocol under `/api/v2/projects/:id/files/upload/…`:
+  `POST …/upload/init {fileName, fileSize, destPath}` → `201 {uploadId}`,
+  `PUT …/upload/:uploadId/chunk?offset=N` (octet-stream) → `{received}`,
+  `POST …/upload/:uploadId/complete` → `{path, size}` — the charter shapes
+  verbatim; files ≤10MB stay on the single-shot multipart `POST /ingest/upload`.
+  The client sends 5MB chunks with per-chunk retry and offset-resume: an offset
+  that does not equal the server's byte count answers 400 `VALIDATION_ERROR`
+  with `details.received`, and the client resumes from that count. Sessions
+  live in an in-memory Map (`uploads/chunked.js`; a server restart drops them —
+  accepted degradation, the client re-uploads) with a 24h idle TTL swept by a
+  timer started from the index-v2 boot block, and chunk bytes accumulate in
+  staging files under `LLM_WIKI_DATA_DIR/upload-staging/` so half-written data
+  never appears in the project tree. Completion resolves `destPath` via
+  `safeJoin`, lands the file through the repo's same-dir tmp+rename
+  atomic-write convention, and emits `file:created`/`file:modified` (added to
+  the SSE `file:*` write-site list above). `complete` does NOT auto-enqueue — the response carries `{path, size}`
+  with no taskId, and the client enqueues via `POST /ingest` (enqueue-by-path).
+  The overall upload cap is `LLM_WIKI_MAX_UPLOAD_MB` (default 50MB, previously
+  a hardcoded literal): init answers `413 FILE_TOO_LARGE` on an oversize
+  `fileSize`, and the multipart route's multer oversize error now maps to the
+  same `413 FILE_TOO_LARGE` instead of the scrubbed 500 it fell through to.
 - **API contract is a single source of truth** (`packages/api-types`, issue #20).
   The Zod schemas in `packages/api-types/src/schemas/` define the wire format
   once: the server (plain JS) imports the **built** schemas to validate requests,
@@ -481,6 +507,9 @@ message. Session CRUD: list/create/get/rename/delete under
 | Flow | Endpoint | Handler |
 |---|---|---|
 | Ingest upload | `POST /api/v2/projects/:id/ingest/upload` | `api/ingest.js` |
+| Chunked upload init | `POST /api/v2/projects/:id/files/upload/init` | `api/files.js` → `uploads/chunked.js` |
+| Chunked upload chunk | `PUT /api/v2/projects/:id/files/upload/:uploadId/chunk` | `api/files.js` → `uploads/chunked.js` |
+| Chunked upload complete | `POST /api/v2/projects/:id/files/upload/:uploadId/complete` | `api/files.js` → `uploads/chunked.js` |
 | Ingest enqueue (existing file) | `POST /api/v2/projects/:id/ingest` | `api/ingest.js` |
 | Ingest queue | `GET /…/ingest/queue`, `POST /…/queue/clear`, `GET /…/queue/:taskId`, `POST /…/queue/:taskId/retry`, `DELETE /…/queue/:taskId` | `api/ingest.js` → `store/ingest-queue.js` + `ingest/orchestrator.js` |
 | Chat turn | `POST /api/v2/projects/:id/chat` | `api/chat.js` → `agent.js` |

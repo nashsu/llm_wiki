@@ -419,6 +419,7 @@ Home-server tips:
 | `LLM_WIKI_PORT` | `19828` | HTTP port for the server (SPA + API). |
 | `LLM_WIKI_HOST` | `127.0.0.1` | Bind address. Set `0.0.0.0` to expose on the LAN / inside a container. Keep loopback when behind a reverse proxy. |
 | `LLM_WIKI_DATA_DIR` | `~/.llm-wiki-server` | Server-side persistent state (plugin-store JSON, SQLite DB for v2). Point at a volume in containers. |
+| `LLM_WIKI_MAX_UPLOAD_MB` | `50` | Maximum size in MB for a single file upload (multipart and chunked uploads alike; clamped to 1–4096). |
 | `LLM_WIKI_WEB_DIST` | `<repo>/dist-web` | Path to the built web client. Only needed if you serve the SPA from a non-default location. |
 | `LLM_WIKI_AUTH_MODE` | unset (auto) | Auth mode (chartered name, §4.5): `none` = always open; `token` = token required on all non-public routes; unset = **auto** (open when no token is configured, required when one is set). `open` is accepted as a synonym of `none` (the docker-compose default). The legacy `AUTH_MODE` variable still works as a deprecated alias; `LLM_WIKI_AUTH_MODE` wins when both are set. |
 | `LLM_WIKI_API_TOKEN` | unset | API token. Required on all non-public endpoints in `token` mode, or in `auto` mode once set (Bearer header, `x-llm-wiki-token` header, or `?token=` query). See [CLIENT_CONFIG.md](./CLIENT_CONFIG.md). |
