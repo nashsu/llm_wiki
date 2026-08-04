@@ -406,6 +406,9 @@ describe("cancellation", () => {
     expect(ok).toBe(true)
     await waitFor(() => orch.activeIngestTaskCount() === 0)
     expect(frames.filter((f) => f.type === "file:deleted")).toHaveLength(0)
+    // Nothing was actually unlinked ⇒ no graph:updated aggregate either
+    // (plans/sse-taxonomy.md stage 4).
+    expect(frames.filter((f) => f.type === "graph:updated")).toHaveLength(0)
   })
 
   it("cancel of a pending row just deletes it", async () => {
@@ -422,6 +425,81 @@ describe("cancellation", () => {
 
     // Cancelling a missing task reports false.
     expect(await orch.cancelIngestTask(999_999)).toBe(false)
+  })
+})
+
+describe("graph:updated emission (taxonomy stage 4)", () => {
+  it("processTask success emits ONE aggregate graph:updated after ingest:complete", async () => {
+    vi.mocked(runIngestPipeline).mockImplementation(async (task, env) => {
+      env.onFileWritten("wiki/concepts/graph-one.md")
+      env.onFileWritten("wiki/concepts/graph-two.md")
+      env.onFileWritten("wiki/log.md")
+      return successResult([
+        "wiki/concepts/graph-one.md",
+        "wiki/concepts/graph-two.md",
+        "wiki/log.md",
+      ])
+    })
+    const id = enq(projA.id, "raw/sources/graph-success.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => q.getIngestTask(id)?.status === "completed")
+
+    // ONE aggregate frame for the whole task — nodesChanged =
+    // result.writtenPaths.length; the orchestrator only holds paths (page
+    // contents stream straight to disk), so edgesChanged is unknown ⇒ 0.
+    const graph = frames.filter((f) => f.type === "graph:updated")
+    expect(graph).toHaveLength(1)
+    expect(graph[0].projectId).toBeNull() // emit() bridge envelope
+    expect(graph[0].payload).toEqual({
+      projectId: projA.id,
+      nodesChanged: 3,
+      edgesChanged: 0,
+    })
+
+    // The aggregate rides the bus AFTER the task's ingest:complete frame.
+    const completeIdx = frames.findIndex((f) => f.type === "ingest:complete")
+    expect(completeIdx).toBeGreaterThanOrEqual(0)
+    expect(frames.indexOf(graph[0])).toBeGreaterThan(completeIdx)
+  })
+
+  it("cancel cleanup emits ONE graph:updated with nodesChanged = pages actually unlinked", async () => {
+    const relOne = "wiki/concepts/graph-a.md"
+    const relTwo = "wiki/concepts/graph-b.md"
+    for (const rel of [relOne, relTwo]) {
+      const full = path.join(projA.path, rel)
+      mkdirSync(path.dirname(full), { recursive: true })
+      writeFileSync(full, "---\ntitle: cancelled\n---\n# cancelled page\n")
+    }
+
+    vi.mocked(runIngestPipeline).mockImplementation((task, env) => {
+      env.onFileWritten(relOne)
+      env.onFileWritten(relTwo)
+      env.onFileWritten("wiki/index.md") // structural ⇒ skipped by cleanup
+      return new Promise((resolve, reject) => {
+        env.signal.addEventListener("abort", () => reject(new Error("Ingest cancelled")), { once: true })
+      })
+    })
+    const id = enq(projA.id, "raw/sources/graph-cancel.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => orch.activeIngestTaskCount() === 1)
+
+    // cancelIngestTask awaits the cleanup, so the aggregate frame has
+    // already been published when it resolves.
+    expect(await orch.cancelIngestTask(id)).toBe(true)
+    await waitFor(() => orch.activeIngestTaskCount() === 0)
+
+    const graph = frames.filter((f) => f.type === "graph:updated")
+    expect(graph).toHaveLength(1)
+    expect(graph[0].projectId).toBeNull()
+    expect(graph[0].payload).toEqual({
+      projectId: projA.id,
+      nodesChanged: 2, // two pages unlinked; structural index.md skipped
+      edgesChanged: 0,
+    })
+    // file:deleted parity: one frame per successful unlink, same two pages.
+    expect(frames.filter((f) => f.type === "file:deleted")).toHaveLength(2)
   })
 })
 

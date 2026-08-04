@@ -55,6 +55,16 @@ function extractWikilinks(content) {
   return out
 }
 
+/**
+ * Count [[wikilink]] occurrences in page content. Best-effort `edgesChanged`
+ * source for `graph:updated` frames (plans/sse-taxonomy.md stage 4) at sites
+ * that have the written page content in hand.
+ */
+export function countWikilinks(content) {
+  if (!content) return 0
+  return (String(content).match(new RegExp(WIKILINK_RE.source, "g")) ?? []).length
+}
+
 function extractFrontmatterList(content, key) {
   const normalized = content.replace(/\r\n/g, "\n")
   if (!normalized.startsWith("---\n")) return []

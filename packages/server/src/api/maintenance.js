@@ -39,6 +39,16 @@ router.post("/rebuild-index", async (req, res, next) => {
       path: "wiki/index.md",
       ...(size != null ? { size } : {}),
     })
+    // graph:updated (plans/sse-taxonomy.md stage 4): the rebuild re-reads
+    // every wiki page to regenerate the index, so graph caches are stale
+    // project-wide. nodesChanged = the page total it processed; edgesChanged
+    // = the wikilinks it counted across those pages while reading them
+    // (best-effort — the site has the content in hand).
+    emit(EventTypes.GRAPH_UPDATED, {
+      projectId: req.projectId,
+      nodesChanged: result.pages ?? 0,
+      edgesChanged: result.links ?? 0,
+    })
     res.json(result)
   } catch (err) {
     next(err)

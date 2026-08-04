@@ -1,4 +1,6 @@
 // Stage 2 of plans/sse-taxonomy.md: file:* emission on the v2 routes.
+// Stage 4 extends the maintenance surface: rebuild-index also emits ONE
+// aggregate graph:updated ({ projectId, nodesChanged, edgesChanged }).
 //
 // All frames ride the legacy emit() bridge, so the bus envelope keeps
 // projectId: null and attribution rides in payload.projectId (same shape as
@@ -48,12 +50,15 @@ let projectId
 let frames = []
 /** ingest:queued envelopes (parity check: the pre-existing emit survives). */
 let queuedFrames = []
+/** graph:updated envelopes (stage 4). */
+let graphFrames = []
 let unsubscribe = null
 
 beforeAll(async () => {
   unsubscribe = eventBus.subscribe((env) => {
     if (FILE_EVENT_TYPES.has(env.type)) frames.push(env)
     else if (env.type === EventTypes.INGEST_QUEUED) queuedFrames.push(env)
+    else if (env.type === EventTypes.GRAPH_UPDATED) graphFrames.push(env)
   })
   const res = await request(app)
     .post("/api/v2/projects")
@@ -70,6 +75,7 @@ afterAll(() => {
 beforeEach(() => {
   frames = []
   queuedFrames = []
+  graphFrames = []
 })
 
 /** All file:* frames ride the emit() bridge: envelope projectId stays null. */
@@ -165,7 +171,18 @@ describe("api/ingest.js POST /upload", () => {
 })
 
 describe("api/maintenance.js", () => {
-  it("POST /rebuild-index emits ONE file:modified for wiki/index.md", async () => {
+  it("POST /rebuild-index emits ONE file:modified for wiki/index.md + ONE graph:updated", async () => {
+    // Seed a page carrying wikilinks so the rebuild's best-effort edge count
+    // (wikilinks across the processed page contents) is non-zero.
+    const linked =
+      "---\ntype: concept\ntitle: Linked\n---\n# Linked\nSee [[new-idea]] and [[new-idea|the idea]].\n"
+    await request(app)
+      .post(uploadUrl())
+      .send({ path: "wiki/concepts/linked.md", content: linked })
+      .expect(200)
+    frames = []
+    graphFrames = []
+
     const res = await request(app)
       .post(`/api/v2/projects/${projectId}/maintenance/rebuild-index`)
     expect(res.status).toBe(200)
@@ -176,6 +193,18 @@ describe("api/maintenance.js", () => {
     expect(frame.payload.projectId).toBe(projectId)
     expect(frame.payload.path).toBe("wiki/index.md")
     expect(frame.payload.size).toBeGreaterThan(0)
+
+    // Stage 4: ONE aggregate graph:updated — nodesChanged = the rebuild's
+    // processed page total (new-idea + linked); edgesChanged = the wikilinks
+    // counted across those pages while reading them (linked.md carries two).
+    expect(graphFrames).toHaveLength(1)
+    const graph = graphFrames[0]
+    expect(graph.type).toBe(EventTypes.GRAPH_UPDATED)
+    expect(graph.projectId).toBeNull()
+    expect(graph.payload.projectId).toBe(projectId)
+    expect(graph.payload.nodesChanged).toBe(res.body.pages)
+    expect(graph.payload.nodesChanged).toBeGreaterThanOrEqual(2)
+    expect(graph.payload.edgesChanged).toBe(2)
   })
 
   it("POST /file-history/restore emits file:modified for the restored path", async () => {

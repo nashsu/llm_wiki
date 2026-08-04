@@ -93,6 +93,7 @@ const writesUrl = () => `/api/v2/projects/${projectId}/chat/writes`
 function watchEvents(sessionId) {
   const frames = []        // agent-event payloads { sessionId, runId, event }
   const fileEvents = []    // { type, payload } file:created / file:modified
+  const graphEvents = []   // graph:updated envelopes (taxonomy stage 4)
   let resolveDone
   const donePromise = new Promise((resolve) => { resolveDone = resolve })
   const unsub = eventBus.subscribe((env) => {
@@ -103,11 +104,14 @@ function watchEvents(sessionId) {
       if (p.event?.type === "done") resolveDone()
     } else if (env.type === "file:created" || env.type === "file:modified") {
       fileEvents.push({ type: env.type, payload: env.payload })
+    } else if (env.type === "graph:updated") {
+      graphEvents.push(env)
     }
   })
   return {
     frames,
     fileEvents,
+    graphEvents,
     events: () => frames.map((f) => f.event),
     async waitDone(timeoutMs = 5000) {
       await Promise.race([
@@ -314,6 +318,82 @@ describe("POST /:id/chat/writes — happy path", () => {
     expect(byPath["wiki/sources/doc.md"]).toBe("file:created")
     for (const e of watcher.fileEvents) {
       expect(e.payload.projectId).toBe(projectId)
+    }
+  })
+
+  it("emits ONE aggregate graph:updated when the writes complete", async () => {
+    await watcher.waitDone()
+    // Stage 4 (plans/sse-taxonomy.md): one frame per run — nodesChanged =
+    // FILE blocks written; the scripted blocks carry no [[wikilinks]], so
+    // the best-effort edgesChanged is 0.
+    expect(watcher.graphEvents).toHaveLength(1)
+    const graph = watcher.graphEvents[0]
+    expect(graph.projectId).toBeNull() // emit() bridge envelope
+    expect(graph.payload).toEqual({
+      projectId,
+      nodesChanged: 3,
+      edgesChanged: 0,
+    })
+  })
+})
+
+describe("POST /:id/chat/writes — graph:updated edge counting (stage 4)", () => {
+  it("counts [[wikilinks]] across written FILE-block contents as edgesChanged", async () => {
+    const sessionId = "conv_writes_graph_edges"
+    const hubContent = [
+      "---",
+      "type: concept",
+      "title: Hub",
+      "---",
+      "",
+      "# Hub",
+      "",
+      "See [[alpha]] and [[beta|B]], plus [[alpha]] again.",
+      "",
+    ].join("\n")
+    const output = [
+      "---FILE: wiki/concepts/hub.md---",
+      hubContent,
+      "---END FILE---",
+    ].join("\n")
+    streamChatMock.mockImplementationOnce(async (_c, _m, opts = {}) => {
+      opts.onToken?.(output)
+      return output
+    })
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+
+      expect(watcher.graphEvents).toHaveLength(1)
+      const graph = watcher.graphEvents[0]
+      expect(graph.projectId).toBeNull()
+      expect(graph.payload).toEqual({
+        projectId,
+        nodesChanged: 1, // one FILE block written
+        edgesChanged: 3, // [[alpha]] + [[beta|B]] + [[alpha]]
+      })
+      expect(existsSync(path.join(PROJECT_DIR, "wiki", "concepts", "hub.md"))).toBe(true)
+    } finally {
+      watcher.unsub()
+    }
+  })
+
+  it("emits no graph:updated when the output contains no FILE blocks", async () => {
+    const sessionId = "conv_writes_graph_none"
+    streamChatMock.mockImplementationOnce(async () => "No files generated — nothing to write.")
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+      // Nothing was written ⇒ no graph change ⇒ no frame.
+      expect(watcher.graphEvents).toHaveLength(0)
+    } finally {
+      watcher.unsub()
     }
   })
 })

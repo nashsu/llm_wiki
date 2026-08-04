@@ -32,6 +32,7 @@ import {
   isListingPath,
 } from "../ingest/write.js"
 import { sourceIdentityForPath, sourceSummarySlugFromIdentity } from "../ingest/identity.js"
+import { countWikilinks } from "../graph.js"
 import {
   imageExtractionKey,
   extractSourceImagesOnceByKey,
@@ -178,12 +179,16 @@ function buildWritePrompt({ userGuidance, schema, index, activeSourceIdentity, a
 // FILE-block writes with the client's NAIVE executeIngestWrites semantics
 // (NOT writeFileBlocks: no merge, no truncation repair, no sanitization
 // beyond the path guards — byte-identical to ingest.ts ~3330-3374).
-// Returns { writtenPaths, existedBefore }: written project-relative paths
-// plus whether each target existed before the write (the server-only bit —
-// it drives the file:created vs file:modified event below).
+// Returns { writtenPaths, existedBefore, edgesChanged }: written
+// project-relative paths, whether each target existed before the write (the
+// server-only bit — it drives the file:created vs file:modified event
+// below), and a best-effort wikilink count across the written block contents
+// (the route's graph:updated edgesChanged — this function has the content in
+// hand; plans/sse-taxonomy.md stage 4).
 async function writeChatWikiBlocks({ pp, accumulated, activeSourceIdentity, activeSourceSummaryPath }) {
   const writtenPaths = []
   const existedBefore = new Map()
+  let edgesChanged = 0
   const matches = accumulated.matchAll(FILE_BLOCK_REGEX)
 
   for (const match of matches) {
@@ -225,12 +230,16 @@ async function writeChatWikiBlocks({ pp, accumulated, activeSourceIdentity, acti
         await writeFileEnsuringDirs(fullPath, content)
       }
       writtenPaths.push(relativePath)
+      // Best-effort edge count for graph:updated: wikilinks in the block
+      // content this write put on disk (log appends contribute their own
+      // block; canonicalizeSourcesField only touches the sources field).
+      edgesChanged += countWikilinks(content)
     } catch (err) {
       console.error(`Failed to write ${fullPath}:`, err)
     }
   }
 
-  return { writtenPaths, existedBefore }
+  return { writtenPaths, existedBefore, edgesChanged }
 }
 
 // POST /api/v2/projects/:id/chat/writes - run the chat "Write to Wiki" flow.
@@ -355,7 +364,7 @@ router.post(
         // Persist the completed assistant message (client finalizeStream).
         chatStore.appendMessage(session.id, "assistant", accumulated)
 
-        const { writtenPaths, existedBefore } = await writeChatWikiBlocks({
+        const { writtenPaths, existedBefore, edgesChanged } = await writeChatWikiBlocks({
           pp,
           accumulated,
           activeSourceIdentity,
@@ -374,6 +383,19 @@ router.post(
           emit(existedBefore.get(rel) ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, {
             projectId: req.projectId,
             path: rel,
+          })
+        }
+
+        // ONE aggregate graph:updated per run once the writes complete
+        // (plans/sse-taxonomy.md stage 4): nodesChanged = FILE blocks
+        // written; edgesChanged = wikilinks counted across the written block
+        // contents (writeChatWikiBlocks had them in hand). Nothing written
+        // (no FILE blocks in the output) ⇒ no graph change ⇒ no frame.
+        if (writtenPaths.length > 0) {
+          emit(EventTypes.GRAPH_UPDATED, {
+            projectId: req.projectId,
+            nodesChanged: writtenPaths.length,
+            edgesChanged,
           })
         }
 

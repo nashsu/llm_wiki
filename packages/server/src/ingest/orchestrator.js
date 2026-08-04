@@ -182,6 +182,15 @@ async function processTask(row) {
       warnings: result.warnings,
       durationMs: result.durationMs ?? (Date.now() - t0),
     })
+    // ONE aggregate graph:updated per successful task (plans/sse-taxonomy.md
+    // stage 4): wiki pages changed ⇒ client graph caches are stale. The
+    // orchestrator only holds written PATHS (the pipeline streams page
+    // contents straight to disk), so edgesChanged is unknown ⇒ 0.
+    emit(EventTypes.GRAPH_UPDATED, {
+      projectId: row.project_id,
+      nodesChanged: result.writtenPaths.length,
+      edgesChanged: 0,
+    })
   } catch (err) {
     const cancelled = err?.message === "Ingest cancelled" && !getIngestTask(row.id)
     if (cancelled) return // cancelIngestTask already deleted + cleaned up
@@ -233,9 +242,12 @@ function isStructuralWikiPath(filePath) {
  * swallowed — cleanup must never throw into the cancel flow. Each
  * SUCCESSFUL unlink publishes file:deleted (project-relative path, row's
  * project_id as payload attribution) so sse-sync refreshes trees
- * (plans/sse-taxonomy.md stage 2).
+ * (plans/sse-taxonomy.md stage 2). Returns the number of wiki pages (.md)
+ * actually unlinked — the caller folds that into ONE aggregate graph:updated
+ * frame (stage 4).
  */
 async function cleanupWrittenFiles(projectPath, filePaths, projectId) {
+  let nodesUnlinked = 0
   for (const filePath of filePaths) {
     if (isStructuralWikiPath(filePath)) continue
     const fullPath = isAbsolute(filePath) ? filePath : join(projectPath, filePath)
@@ -253,6 +265,7 @@ async function cleanupWrittenFiles(projectPath, filePaths, projectId) {
         // Project-relative, forward-slashed (isStructuralWikiPath parity).
         path: relative(projectPath, fullPath).replaceAll("\\", "/"),
       })
+      if (fullPath.endsWith(".md")) nodesUnlinked += 1
     }
     if (fullPath.endsWith(".md")) {
       const pageId = basename(fullPath).replace(/\.md$/, "")
@@ -265,6 +278,7 @@ async function cleanupWrittenFiles(projectPath, filePaths, projectId) {
       }
     }
   }
+  return nodesUnlinked
 }
 
 /**
@@ -282,7 +296,20 @@ export async function cancelIngestTask(taskId) {
     deleteIngestTask(taskId)
     entry.controller.abort()
     const project = getProject(row.project_id)
-    if (project?.path) await cleanupWrittenFiles(project.path, entry.writtenPaths, row.project_id)
+    if (project?.path) {
+      const nodesUnlinked = await cleanupWrittenFiles(project.path, entry.writtenPaths, row.project_id)
+      // ONE aggregate graph:updated for the cancel cleanup (stage 4):
+      // nodesChanged = pages actually unlinked above (structural pages are
+      // skipped and failed unlinks don't count); edgesChanged unknown ⇒ 0.
+      // Nothing changed on disk ⇒ no frame.
+      if (nodesUnlinked > 0) {
+        emit(EventTypes.GRAPH_UPDATED, {
+          projectId: row.project_id,
+          nodesChanged: nodesUnlinked,
+          edgesChanged: 0,
+        })
+      }
+    }
   } else {
     deleteIngestTask(taskId)
   }
