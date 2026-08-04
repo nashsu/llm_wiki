@@ -21,6 +21,7 @@ import {
 } from "@/lib/source-lifecycle"
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { DropZone } from "@/components/DropZone"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
 
@@ -325,6 +326,21 @@ export function SourcesView() {
           </Button>
         </div>
       </div>
+
+      {/* Drag-drop ingest surface (plans/chunked-upload.md stage 4): mounted
+          between the header and the tree, per the plans/server-ingest.md
+          intent. project.id is the client UUID — DropZone resolves the
+          numeric projects-row id internally for its SSE filter. */}
+      {project && (
+        <div className="border-b px-4 py-3">
+          <DropZone
+            projectId={project.id}
+            onUploadComplete={() => {
+              void loadSources()
+            }}
+          />
+        </div>
+      )}
 
       <Dialog open={urlDialogOpen} onOpenChange={setUrlDialogOpen}>
         <DialogContent className="sm:max-w-lg">

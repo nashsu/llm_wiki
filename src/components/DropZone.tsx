@@ -8,12 +8,20 @@ import {
   XCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { getQueue, uploadForIngest, type IngestTask } from "@/api/ingest"
+import { getQueue, type IngestTask } from "@/api/ingest"
 import { connectEvents } from "@/api/events"
+import { listProjects } from "@/api/projects"
 import { attachRelativePath, extractDroppedFiles } from "@/lib/folder-drop"
+import { uploadFileAuto } from "@/lib/chunked-upload"
 
 export interface DropZoneProps {
-  projectId: number
+  /**
+   * Numeric projects-row id OR client project UUID — upload/queue API calls
+   * accept either (projectLookup middleware). SSE ingest frames carry the
+   * NUMERIC id, so when a UUID is passed it is resolved once via
+   * GET /api/v2/projects for the event filter below.
+   */
+  projectId: number | string
   onUploadComplete?: () => void
   className?: string
 }
@@ -66,6 +74,33 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
   const inputRef = useRef<HTMLInputElement | null>(null)
   const entrySeq = useRef(0)
 
+  // Numeric projects-row id for the SSE filter below (ingest frames carry the
+  // server's numeric id). Resolved once per projectId value when a UUID is
+  // passed; resolution failure leaves it null and the filter falls back to
+  // comparing against the raw prop (numeric prop uses itself directly).
+  const [numericProjectId, setNumericProjectId] = useState<number | null>(
+    typeof projectId === "number" ? projectId : null,
+  )
+  useEffect(() => {
+    if (typeof projectId === "number") {
+      setNumericProjectId(projectId)
+      return
+    }
+    let cancelled = false
+    listProjects()
+      .then(({ projects }) => {
+        if (cancelled) return
+        const match = projects.find((p) => p.uuid === projectId)
+        if (match) setNumericProjectId(match.id)
+      })
+      .catch(() => {
+        /* tolerate: the SSE filter falls back to the raw prop */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
+
   const patchEntry = useCallback((id: string, patch: Partial<UploadEntry>) => {
     setEntries((prev) => prev.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)))
   }, [])
@@ -79,7 +114,15 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
   const uploadOne = useCallback(
     async (file: File, id: string) => {
       try {
-        const res = await uploadForIngest(projectId, file)
+        // Size-dispatched upload (charter §4.8): small files take the
+        // one-shot multipart route, large files the chunked protocol — both
+        // resolve with the enqueue response carrying taskId.
+        const res = await uploadFileAuto(projectId, file, {
+          onProgress: (sent, total) => {
+            const percent = total > 0 ? Math.min(100, Math.round((sent / total) * 100)) : 100
+            patchEntry(id, { progress: percent })
+          },
+        })
         patchEntry(id, { status: "queued", progress: 100, taskId: res.taskId })
       } catch (err) {
         patchEntry(id, { status: "error", error: errorMessage(err) })
@@ -159,14 +202,17 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
   )
 
   // Server-side progress over SSE. Envelope payloads are untyped, so parse
-  // defensively; events for other projects are ignored.
+  // defensively; events for other projects are ignored. Frames carry the
+  // NUMERIC projects-row id, so compare against the resolved numeric id
+  // (falls back to the raw prop when resolution failed / is pending).
+  const sseProjectId = numericProjectId ?? projectId
   useEffect(() => {
     const disconnect = connectEvents((evt) => {
       const payload = evt.payload as
         | { projectId?: number; taskId?: number; progress?: number; error?: string }
         | null
       if (!payload || typeof payload !== "object") return
-      if (typeof payload.projectId === "number" && payload.projectId !== projectId) return
+      if (typeof payload.projectId === "number" && payload.projectId !== sseProjectId) return
       const taskId = typeof payload.taskId === "number" ? payload.taskId : null
       if (taskId === null) return
 
@@ -184,7 +230,7 @@ export function DropZone({ projectId, onUploadComplete, className }: DropZonePro
       }
     })
     return disconnect
-  }, [projectId, patchByTaskId])
+  }, [sseProjectId, patchByTaskId])
 
   // Poll the queue as a fallback: covers browsers without SSE support and
   // tasks whose progress events were missed (e.g. stream reconnecting).

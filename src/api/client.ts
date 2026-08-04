@@ -86,7 +86,12 @@ export function resolveUrl(
   return `${getBaseUrl()}${path}${buildQuery(query)}`
 }
 
-async function parseError(res: Response): Promise<ApiError> {
+/**
+ * Parse a non-2xx response's `{ error: { code, message, details } }` envelope
+ * into an ApiError. Exported for raw-fetch call sites that bypass request()
+ * but still need envelope-aware errors (e.g. chunked-upload chunk PUTs).
+ */
+export async function parseError(res: Response): Promise<ApiError> {
   let body: ApiErrorBody = {
     code: "INTERNAL_ERROR",
     message: `Request failed (${res.status})`,
