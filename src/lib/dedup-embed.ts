@@ -4,9 +4,10 @@
  * The original `runDuplicateDetection` (dedup-runner.ts) sends EVERY entity /
  * concept summary to the LLM in one prompt — which times out on large wikis
  * (~1000 pages → 30-min backstop → "request cancelled"). This module instead
- * uses a vector store (the turbovecdb HTTP service) to generate duplicate
- * CANDIDATES cheaply, then runs the SAME LLM detector (`detectDuplicateGroups`,
- * same prompt + parsing + notDuplicates whitelist) on the small candidate set.
+ * uses a vector store (turbovecdb's native `turbovecdb-service` HTTP layer,
+ * `python -m turbovecdb.service`) to generate duplicate CANDIDATES cheaply, then
+ * runs the SAME LLM detector (`detectDuplicateGroups`, same prompt + parsing +
+ * notDuplicates whitelist) on the small candidate set.
  *
  * Three lanes (to control "chaff" — false groups from embedding similarity ≠
  * duplication; see scripts/dedup_prototype/FINDINGS.md):
@@ -46,6 +47,13 @@ export interface EmbeddingDedupOptions {
   signal?: AbortSignal
   onProgress?: (message: string) => void
 }
+
+/**
+ * Collection name used for all services requests. turbovecdb-service requires a
+ * `collection` field on every request; llm_wiki keeps all page embeddings in a
+ * single per-project collection (one vector per wiki page).
+ */
+export const SERVICE_COLLECTION = "pages"
 
 // ── Tuning knobs ──────────────────────────────────────────────────────────
 /** Pages with less prose than this are "thin" → excluded from the embedding
@@ -369,14 +377,14 @@ export async function runEmbeddingDuplicateDetection(
   // Rebuild the index from scratch each scan so deleted/edited pages don't
   // leave stale vectors. (Incremental upsert-by-content-hash is a later step.)
   onProgress?.("Indexing embeddings…")
-  await servicePost(serviceUrl, "/clear", { db_path: dbPath }, signal)
-  await servicePost(serviceUrl, "/upsert", { db_path: dbPath, items }, signal)
+  await servicePost(serviceUrl, "/v1/clear", { db_path: dbPath, collection: SERVICE_COLLECTION }, signal)
+  await servicePost(serviceUrl, "/v1/upsert", { db_path: dbPath, collection: SERVICE_COLLECTION, items }, signal)
 
   onProgress?.("Finding candidate duplicates…")
   const { pairs } = await servicePost<{ pairs: { a: string; b: string }[] }>(
     serviceUrl,
-    "/candidate_pairs",
-    { db_path: dbPath, threshold, k },
+    "/v1/candidate_pairs",
+    { db_path: dbPath, collection: SERVICE_COLLECTION, threshold, k },
     signal,
   )
   const clusters = clusterPairs(pairs)

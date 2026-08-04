@@ -1,3 +1,0 @@
-# turbovecdb-service depends only on turbovecdb (stdlib for everything else).
-# turbovecdb pulls its own deps transitively: turbovec, numpy, filelock.
-turbovecdb>=0.1.0

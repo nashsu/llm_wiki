@@ -49,11 +49,11 @@ for sub,typ in (("wiki/entities","entity"),("wiki/concepts","concept")):
 recs=list(recs.values())
 print(f"rich pages: {len(recs)}")
 
-# 2. upsert + candidate pairs via live service
-DB=tempfile.mkdtemp(prefix="e2e_")
-post(SVC,"/clear",{"db_path":DB})
-post(SVC,"/upsert",{"db_path":DB,"items":[{"id":r["pid"],"vector":cache[sha(r["embed"])],"type":r["type"],"title":r["title"]} for r in recs]})
-pairs=post(SVC,"/candidate_pairs",{"db_path":DB,"threshold":0.15,"k":6})["pairs"]
+# 2. upsert + candidate pairs via live service (v1 protocol, collection required)
+DB=tempfile.mkdtemp(prefix="e2e_"); COLL="pages"
+post(SVC,"/v1/clear",{"db_path":DB,"collection":COLL})
+post(SVC,"/v1/upsert",{"db_path":DB,"collection":COLL,"items":[{"id":r["pid"],"vector":cache[sha(r["embed"])],"type":r["type"],"title":r["title"]} for r in recs]})
+pairs=post(SVC,"/v1/candidate_pairs",{"db_path":DB,"collection":COLL,"threshold":0.15,"k":6})["pairs"]
 print(f"candidate pairs: {len(pairs)}")
 
 # 3. union-find clusters
