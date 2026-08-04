@@ -683,7 +683,15 @@ export function ChatPanel() {
       })
     }
   }, [buildGeneratedOutputPreview, project])
-  const activeStreaming = Boolean(isStreaming && activeConversationId && streamingConversationId === activeConversationId)
+  // streamingConversationId is only set when THIS tab starts a run. A
+  // store-level stream with no local owner is a cross-tab run surfaced by
+  // sse-sync (chat:delta / chat:done, SSE taxonomy stage 6) — attribute it
+  // to the active conversation so its live preview renders. Runs this tab
+  // owns keep their exact-conversation attribution.
+  const activeStreaming = Boolean(
+    isStreaming && activeConversationId &&
+    (streamingConversationId === null || streamingConversationId === activeConversationId),
+  )
   const activeAgentEvents = activeStreaming ? agentEvents : []
   const lastMessage = activeMessages[activeMessages.length - 1]
   const latestGeneratedOutputMessage = [...activeMessages]
@@ -879,6 +887,10 @@ export function ChatPanel() {
       let finalized = false
       const runId = ++runIdRef.current
       const backendRunId = `ui-${Date.now()}-${runId}`
+      // SSE taxonomy stage 6: tombstone this locally-created run id so
+      // sse-sync skips its chat:* wire frames — this tab renders the run
+      // via agent-event, and applying both would double the tokens.
+      useChatStore.getState().registerOwnedRun(backendRunId, convId)
 
       try {
         const controller = new AbortController()
@@ -1602,8 +1614,21 @@ export function ChatPanel() {
       // of executeIngestWrites builds the write prompt, persists it as the
       // user row and streams the generation back as agent-event frames.
       const sourcePath = useChatStore.getState().ingestSource ?? undefined
-      const { runId, writePrompt } = await chatWrites(project.id, {
+      // Generate the run id CLIENT-side (same ui-… shape as handleSend) and
+      // tombstone it BEFORE the invoke (PR #29 review round 2, tombstone
+      // race): the server starts emitting chat:delta as soon as the async
+      // run is scheduled, which races the POST response — registering a
+      // server-generated id only after the response would let a first delta
+      // double-apply tokens in this tab. The route echoes this id back as
+      // the response runId.
+      const runId = `ui-${Date.now()}-${++runIdRef.current}`
+      // SSE taxonomy stage 6: tombstone the run id — this tab renders the
+      // run via the agent-event listener below, so sse-sync must skip its
+      // chat:* wire frames (see handleSend).
+      useChatStore.getState().registerOwnedRun(runId, convId)
+      const { writePrompt } = await chatWrites(project.id, {
         sessionId: convId,
+        runId,
         ...(sourcePath ? { sourcePath } : {}),
       })
 

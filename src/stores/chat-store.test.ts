@@ -18,6 +18,8 @@ describe("chat-store conversation isolation", () => {
       selectedSkills: [],
       selectedContextFiles: [],
       disabledSkills: [],
+      ownedRunIds: [],
+      ownedRunsByConversation: {},
     })
   })
 
@@ -165,5 +167,73 @@ describe("chat-store conversation isolation", () => {
     expect(useChatStore.getState().messages[0].contextFiles).toEqual([
       "/project/wiki/overview.md",
     ])
+  })
+})
+
+describe("chat-store owned-run tombstones (SSE taxonomy stage 6)", () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      isStreaming: false,
+      streamingContent: "",
+      ownedRunIds: [],
+      ownedRunsByConversation: {},
+    })
+  })
+
+  it("registerOwnedRun records the run id without duplicates", () => {
+    const conversationId = useChatStore.getState().createConversation()
+    useChatStore.getState().registerOwnedRun("ui-1", conversationId)
+    useChatStore.getState().registerOwnedRun("ui-1", conversationId)
+    useChatStore.getState().registerOwnedRun("ui-2", conversationId)
+
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-1", "ui-2"])
+  })
+
+  it("registerOwnedRun without a conversation id falls back to the active conversation", () => {
+    const conversationId = useChatStore.getState().createConversation()
+    useChatStore.getState().registerOwnedRun("ui-9")
+
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-9"])
+    // The fallback association must make the tombstone clearable per conversation.
+    useChatStore.getState().clearOwnedRunsForConversation(conversationId)
+    expect(useChatStore.getState().ownedRunIds).toEqual([])
+  })
+
+  it("clearOwnedRunsForConversation removes only that conversation's runs", () => {
+    const first = useChatStore.getState().createConversation()
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().registerOwnedRun("ui-1", first)
+    useChatStore.getState().registerOwnedRun("ui-2", second)
+
+    useChatStore.getState().clearOwnedRunsForConversation(first)
+
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-2"])
+
+    // Clearing again is a no-op.
+    useChatStore.getState().clearOwnedRunsForConversation(first)
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-2"])
+  })
+
+  it("deleteConversation clears the deleted conversation's owned runs", () => {
+    const first = useChatStore.getState().createConversation()
+    const second = useChatStore.getState().createConversation()
+    useChatStore.getState().registerOwnedRun("ui-1", first)
+    useChatStore.getState().registerOwnedRun("ui-2", second)
+
+    useChatStore.getState().deleteConversation(first)
+
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-2"])
+  })
+
+  it("tombstones survive finalizeStreamForConversation (done-frame race)", () => {
+    const conversationId = useChatStore.getState().createConversation()
+    useChatStore.getState().registerOwnedRun("ui-1", conversationId)
+
+    useChatStore.getState().finalizeStreamForConversation(conversationId, "done text")
+
+    expect(useChatStore.getState().ownedRunIds).toEqual(["ui-1"])
   })
 })

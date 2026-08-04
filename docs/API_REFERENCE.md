@@ -181,6 +181,36 @@ server.
 | GET | `/api/v2/events` | Global server-sent-events stream. Each `message` carries a JSON envelope `{ event, payload }`. A `: ping` comment heartbeat is sent every 25 s to survive proxies. |
 | GET | `/api/v2/events/count` | Diagnostic: number of connected SSE clients → `{ clients }`. |
 
+`GET /api/v2/events` and the legacy `GET /api/events` broadcast the same
+frames (one bus, both transports). Fire-and-forget: the server buffers
+nothing; on reconnect the client checks `/api/v2/health` and does a full
+refresh when the version changed. Project attribution rides in
+`payload.projectId` (host-global events carry `null`).
+
+The `ingest:*` frames (`ingest:queued` / `ingest:progress` /
+`ingest:complete` / `ingest:error`) are documented with the queue semantics
+in [PUSH1_ACTUAL_ARCHITECTURE.md §3](./PUSH1_ACTUAL_ARCHITECTURE.md). The
+rest of the emitted taxonomy:
+
+| Event | Payload | Emitted when |
+|---|---|---|
+| `file:created` | `{ projectId, path, size? }` | A file was written: files upload, chat Write-to-Wiki FILE blocks, legacy invoke writers. A pre-write existence check decides created vs modified. |
+| `file:modified` | `{ projectId, path, size? }` | An existing file was rewritten: same sites, plus maintenance rebuild-index (`wiki/index.md`), file-history restore, and the chat-writes post-write image injection. |
+| `file:deleted` | `{ projectId, path }` | A file was removed: ingest cancel cleanup (per actually-unlinked page) and the legacy delete writer. |
+| `graph:updated` | `{ projectId, nodesChanged, edgesChanged }` | Wiki pages changed ⇒ client graph caches are stale. ONE aggregate per mutation batch: ingest success/cancel, rebuild-index, chat Write-to-Wiki completion. `edgesChanged` is best-effort (`0` when unknown). |
+| `settings:changed` | `{ keys }` | Settings written: `/api/v2/settings` writes and shared-store (`app-state.json`) writes via `/api/store` + the legacy server. Host-global (`projectId` null); `keys` is informational — clients refetch settings. |
+| `chat:delta` | `{ sessionId, runId, projectId, text }` | Streaming token chunk of a chat turn (dual-emitted next to `agent-event`). |
+| `chat:toolStart` | `{ sessionId, runId, projectId, tool, input }` | Agent tool call started. |
+| `chat:toolEnd` | `{ sessionId, runId, projectId, tool, output }` | Agent tool call finished. |
+| `chat:done` | `{ sessionId, runId, projectId, content, references }` | Turn finished. `content` is the run's full accumulated text so a tab that missed the deltas can finalize. Also dual-emitted as a TERMINAL frame when a run fails (`content` = `Error: <message>`, the owning tab's error-finalize text) or is cancelled (`content` empty ⇒ non-owning tabs reset their stream without adding a message), so previewing tabs never stay stuck in streaming state. |
+| `agent-event` | `{ sessionId, runId, event }` | Pre-taxonomy chat stream consumed by the active tab's chat panel (turns and Write-to-Wiki). `error` / `wikiWrites` / `referenceAdded` / `fileChanged` exist only here — they have no charter equivalent. |
+
+Notes: `path` is project-relative when the emitting site knows the project
+and absolute otherwise (legacy invoke writers resolve their project by
+longest-prefix match against the registered projects; `projectId` is `null`
+when unresolved). Chat taxonomy frames are scoped client-side by `sessionId`
+and skipped for runs the receiving tab started itself.
+
 ---
 
 ## Legacy bridge (deprecated)

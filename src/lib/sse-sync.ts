@@ -17,10 +17,11 @@ import { request } from "@/api/client"
 import { listProjects } from "@/api/projects"
 import { getSettings } from "@/api/settings"
 import { useWikiStore } from "@/stores/wiki-store"
-import { useChatStore } from "@/stores/chat-store"
+import { useChatStore, type MessageReference } from "@/stores/chat-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
 import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { loadOutputLanguage } from "@/lib/project-store"
 import { normalizePath } from "@/lib/path-utils"
 
 interface HealthResponse {
@@ -55,8 +56,20 @@ function refreshWiki(): void {
   }
 }
 
+// File-event tree refreshs are trailing-debounced: chat/writes emits several
+// file:* frames per save (one per FILE block plus the post-write image
+// injection), and the tree refresh is idempotent but not free. Only THIS path
+// is debounced — ingest:complete and the version-change reconnect keep their
+// direct refreshWiki behavior.
+const FILE_REFRESH_DEBOUNCE_MS = 400
+let fileRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
 function handleFileEvent(): void {
-  refreshWiki()
+  if (fileRefreshTimer !== null) clearTimeout(fileRefreshTimer)
+  fileRefreshTimer = setTimeout(() => {
+    fileRefreshTimer = null
+    refreshWiki()
+  }, FILE_REFRESH_DEBOUNCE_MS)
 }
 
 // ── current-project identity (UUID → numeric projects-row id) ─────────────
@@ -166,16 +179,152 @@ async function handleIngest(evt: ServerEvent): Promise<void> {
   }
 }
 
+/**
+ * Narrow the wire `references` array of a chat:done payload (server-side
+ * reference objects) into MessageReference entries. Mirrors the kind/source
+ * mapping of chat-panel's backendReferenceToMessageReference so cross-tab
+ * finalized messages match what the owning tab rendered.
+ */
+function toMessageReferences(value: unknown): MessageReference[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const references: MessageReference[] = []
+  for (const item of value) {
+    const ref = asRecord(item)
+    const title = str(ref.title)
+    const path = str(ref.path)
+    if (!title || !path) continue
+    const kind = str(ref.kind)
+    const isWiki = kind === "wiki" || path.startsWith("wiki/")
+    const isWeb = kind === "web" || /^https?:\/\//i.test(path)
+    const isWorkspace = kind === "workspace" || path.startsWith("agent-workspace/")
+    const source =
+      isWorkspace ? "Workspace"
+        : kind === "anytxt" ? "AnyTXT"
+          : isWeb ? "Web"
+            : kind === "source" ? "Source"
+              : kind === "graph" ? "Graph"
+                : undefined
+    const snippet = str(ref.snippet)
+    // Mirror chat-panel's backendReferenceToMessageReference exactly: it maps
+    // knowledgeContext.relatedTo → graphRelations, so cross-tab finalized
+    // messages carry the same reference metadata the owning tab rendered.
+    const relatedTo = asRecord(ref.knowledgeContext).relatedTo
+    const graphRelations = Array.isArray(relatedTo)
+      ? relatedTo.filter((item): item is string => typeof item === "string")
+      : undefined
+    references.push({
+      title,
+      path,
+      kind: isWiki ? "wiki" : isWorkspace ? "workspace" : "external",
+      ...(source !== undefined ? { source } : {}),
+      ...(isWeb ? { url: path } : {}),
+      ...(snippet !== undefined ? { snippet } : {}),
+      ...(graphRelations !== undefined && graphRelations.length > 0 ? { graphRelations } : {}),
+    })
+  }
+  return references.length > 0 ? references : undefined
+}
+
+/**
+ * Chat taxonomy frames (chat:delta / chat:toolStart / chat:toolEnd / chat:done).
+ *
+ * Scoping: frames apply only when `payload.sessionId` is a conversation
+ * present in the chat-store — this drops other-project and unknown frames.
+ *
+ * Conversation lock (the foreign-conversation leak fix): the chat store has
+ * ONE global stream buffer, so once a conversation is previewing through
+ * this layer, frames for any OTHER conversation are dropped — foreign deltas
+ * would render live under the wrong conversation, and a foreign chat:done
+ * would clear isStreaming/streamingContent mid-flight for the streaming run
+ * (including an owned run this tab renders via agent-event). The lock is
+ * adopted on the first applied delta and released by the streaming
+ * conversation's chat:done (or stopSseSync).
+ *
+ * Ownership guard (the double-apply fix): chat-panel tombstones runs it
+ * starts locally in the store's `ownedRunIds`. This tab already renders
+ * those runs via agent-event, so their wire frames are skipped — applying
+ * them again would double tokens and messages. A tab that did NOT start the
+ * run applies chat:delta → appendStreamToken (live preview) and chat:done →
+ * finalizeStreamForConversation (the done frame carries the full content, so
+ * a tab that missed the deltas still finalizes). A chat:done with empty
+ * content is the terminal dual of a CANCELLED run: streaming resets without
+ * a message (parity with the owning tab's abort-like catch path). Tombstones
+ * are never cleared on finalize — only on conversation delete — so they
+ * survive the done-frame race on the shared SSE stream.
+ */
+// Which conversation currently owns the global stream preview (see above).
+let streamingConversationId: string | null = null
+
 function handleChat(evt: ServerEvent): void {
   const store = useChatStore.getState()
   const p = asRecord(evt.payload)
-  if (evt.event === "chat:delta") {
-    if (!store.isStreaming) store.setStreaming(true)
-    const token = str(p.token) ?? str(p.delta) ?? str(p.content) ?? ""
-    if (token) store.appendStreamToken(token)
-  } else if (evt.event === "chat:done") {
-    const content = str(p.content) ?? store.streamingContent
-    store.finalizeStream(content)
+  const sessionId = str(p.sessionId)
+  const knownConversation =
+    store.conversations.some((c) => c.id === sessionId) || sessionId === store.activeConversationId
+  if (!sessionId || !knownConversation) return
+
+  const runId = str(p.runId)
+  if (runId && store.ownedRunIds.includes(runId)) return
+
+  switch (evt.event) {
+    case "chat:delta": {
+      // Charter key is `text`; token/delta/content are legacy fallbacks.
+      const token = str(p.text) ?? str(p.token) ?? str(p.delta) ?? str(p.content) ?? ""
+      if (!token) return
+      // Conversation lock: only the conversation that owns the current
+      // preview may append tokens. When nothing is previewing yet AND the
+      // global buffer is free, adopt the frame's conversation. If the buffer
+      // is busy with an owned run (this tab streams via agent-event, so
+      // streamingConversationId is null while store.isStreaming is true),
+      // foreign deltas are dropped instead of clobbering it.
+      if (streamingConversationId === null) {
+        if (store.isStreaming) return
+        streamingConversationId = sessionId
+      } else if (streamingConversationId !== sessionId) {
+        return
+      }
+      if (!store.isStreaming) store.setStreaming(true)
+      store.appendStreamToken(token)
+      return
+    }
+    case "chat:done": {
+      // Conversation lock: only the streaming conversation may finalize or
+      // reset the global stream state. A late done for another conversation
+      // is dropped wholesale — it must not clear an active preview (or an
+      // owned run's buffer). With no conversation previewing, a done still
+      // finalizes when the buffer is free: it carries the full content, so a
+      // tab that missed every delta (e.g. reconnected mid-run) still records
+      // the message.
+      if (streamingConversationId !== null) {
+        if (streamingConversationId !== sessionId) return
+      } else if (store.isStreaming) {
+        return
+      }
+      streamingConversationId = null
+      // Charter key is `content` (the run's full accumulated text, so a tab
+      // that missed deltas can finalize); fall back to the stream buffer for
+      // content-less frames (parity with the pre-taxonomy handler).
+      const content = str(p.content) ?? store.streamingContent
+      if (content === "") {
+        // Terminal dual of a CANCELLED run (the server's error site duals a
+        // textless terminal chat:done): end the preview without adding a
+        // message — parity with the owning tab's abort-like catch path, which
+        // resets streaming and discards the buffer. Without this frame a
+        // non-owning tab would stay stuck in isStreaming forever (its send
+        // paths are locked while streaming).
+        if (store.isStreaming) store.setStreaming(false)
+        return
+      }
+      store.finalizeStreamForConversation(sessionId, content, toMessageReferences(p.references))
+      return
+    }
+    case "chat:toolStart":
+    case "chat:toolEnd":
+      // Explicit no-op — taxonomy fidelity on the wire. Tool steps have no
+      // store target today: the owning tab renders them from agent-event,
+      // and cross-tab sync is tokens-only (plans/sse-taxonomy.md, "Known
+      // accepted degradations").
+      return
   }
 }
 
@@ -183,6 +332,25 @@ function handleSettingsChanged(): void {
   // Warm the settings cache; consumers re-read on next access. Errors are
   // non-fatal — the next reconnect retries.
   void getSettings().catch(() => {})
+  // The refetch alone leaves the Zustand mirrors of shared settings stale in
+  // this tab (they hydrate at boot / on save only). Invalidate them so a
+  // change made in another tab, the desktop app, or the API is reflected
+  // without a reload (charter §4.7: settings:changed drives store
+  // invalidation; plans/sse-taxonomy.md).
+  void applySyncedSettings().catch(() => {})
+}
+
+/**
+ * Re-read the settings mirrored in the Zustand stores through the app's
+ * normal settings read path (plugin-store → server). A per-project output
+ * language wins over the host-global key (settings-dialog write shape);
+ * neither present falls back to "auto" (boot parity, App.tsx).
+ */
+async function applySyncedSettings(): Promise<void> {
+  const projectId = useWikiStore.getState().project?.id
+  const projectOverride = projectId ? await loadOutputLanguage(projectId) : null
+  const lang = projectOverride ?? (await loadOutputLanguage()) ?? "auto"
+  useWikiStore.getState().setOutputLanguage(lang)
 }
 
 /** Legacy Tauri-style event names → v2 names (events.js bridge). */
@@ -198,11 +366,14 @@ const LEGACY_EVENT_MAP: Record<string, string> = {
   "settings://changed": "settings:changed",
 }
 
-function dispatch(evt: ServerEvent): void {
+function dispatch(raw: ServerEvent): void {
   // Resolve legacy Tauri-style event names (emitted by the legacy events.js
   // bridge on the v2 bus) to v2 names before dispatching, so events from both
-  // producer generations reach the stores.
-  const name = LEGACY_EVENT_MAP[evt.event] || evt.event
+  // producer generations reach the stores. Handlers receive the RESOLVED
+  // envelope — their internal event-name switches must not have to know the
+  // legacy aliases.
+  const name = LEGACY_EVENT_MAP[raw.event] || raw.event
+  const evt: ServerEvent = name === raw.event ? raw : { event: name, payload: raw.payload }
   switch (name) {
     case "file:created":
     case "file:modified":
@@ -217,6 +388,8 @@ function dispatch(evt: ServerEvent): void {
       break
     case "chat:delta":
     case "chat:done":
+    case "chat:toolStart":
+    case "chat:toolEnd":
       handleChat(evt)
       break
     case "graph:updated":
@@ -282,6 +455,15 @@ export function startSseSync(): void {
 export function stopSseSync(): void {
   started = false
   invalidateProjectResolution()
+  // Release the chat preview lock: on reconnect, frames belong to whatever
+  // conversation streams first again.
+  streamingConversationId = null
+  // Drop a pending file-refresh debounce so it cannot fire against a stale
+  // project after disconnect (e.g. project switch).
+  if (fileRefreshTimer !== null) {
+    clearTimeout(fileRefreshTimer)
+    fileRefreshTimer = null
+  }
   if (disconnect) {
     disconnect()
     disconnect = null

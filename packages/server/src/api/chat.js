@@ -15,6 +15,7 @@ import { getProject, getProjectByUuid, ensureProjectRow } from "../store/project
 import { safeJoin } from "../store/project-paths.js"
 import { readStore } from "../store.js"
 import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 import { resolveChatConfig, hasUsableLlmConfig } from "../llm-resolve.js"
 import { streamChat } from "../ingest/llm.js"
 import { languageRule } from "../ingest/prompts.js"
@@ -31,6 +32,7 @@ import {
   isListingPath,
 } from "../ingest/write.js"
 import { sourceIdentityForPath, sourceSummarySlugFromIdentity } from "../ingest/identity.js"
+import { countWikilinks } from "../graph.js"
 import {
   imageExtractionKey,
   extractSourceImagesOnceByKey,
@@ -134,8 +136,25 @@ router.post("/:id/chat/:runId/cancel", validate({ params: ChatCancelParamsSchema
 
 const AGENT_EVENT = "agent-event"
 
-function emitAgentEvent(sessionId, runId, event) {
+function emitAgentEvent(sessionId, runId, event, projectId = null) {
   emit(AGENT_EVENT, { sessionId, runId, event })
+  // SSE taxonomy dual emission (plans/sse-taxonomy.md stage 5): messageDelta
+  // → chat:delta, done → chat:done, at the same choke point, so a tab that
+  // does not consume agent-event can sync the run. agent-event stays
+  // byte-identical; attribution rides in the payload (emit() bridge keeps the
+  // envelope projectId null). wikiWrites/referenceAdded/fileChanged/error
+  // have NO charter equivalent and stay agent-event-only — the error site's
+  // companion done carries no text, so the text gate keeps it agent-event
+  // too (parity with agentStartTurnStream's error site); the error site ADDS
+  // a terminal chat:done dual below so previewing tabs can leave streaming
+  // state. done's content is the run's accumulated full text so a tab that
+  // missed deltas can finalize.
+  if (projectId == null || !event) return
+  if (event.type === "messageDelta") {
+    emit(EventTypes.CHAT_DELTA, { sessionId, runId, projectId, text: event.text })
+  } else if (event.type === "done" && typeof event.text === "string") {
+    emit(EventTypes.CHAT_DONE, { sessionId, runId, projectId, content: event.text, references: event.references ?? [] })
+  }
 }
 
 // Byte-identical port of the writePrompt assembly in
@@ -177,12 +196,16 @@ function buildWritePrompt({ userGuidance, schema, index, activeSourceIdentity, a
 // FILE-block writes with the client's NAIVE executeIngestWrites semantics
 // (NOT writeFileBlocks: no merge, no truncation repair, no sanitization
 // beyond the path guards — byte-identical to ingest.ts ~3330-3374).
-// Returns { writtenPaths, existedBefore }: written project-relative paths
-// plus whether each target existed before the write (the server-only bit —
-// it drives the file:created vs file:modified event below).
+// Returns { writtenPaths, existedBefore, edgesChanged }: written
+// project-relative paths, whether each target existed before the write (the
+// server-only bit — it drives the file:created vs file:modified event
+// below), and a best-effort wikilink count across the written block contents
+// (the route's graph:updated edgesChanged — this function has the content in
+// hand; plans/sse-taxonomy.md stage 4).
 async function writeChatWikiBlocks({ pp, accumulated, activeSourceIdentity, activeSourceSummaryPath }) {
   const writtenPaths = []
   const existedBefore = new Map()
+  let edgesChanged = 0
   const matches = accumulated.matchAll(FILE_BLOCK_REGEX)
 
   for (const match of matches) {
@@ -224,12 +247,16 @@ async function writeChatWikiBlocks({ pp, accumulated, activeSourceIdentity, acti
         await writeFileEnsuringDirs(fullPath, content)
       }
       writtenPaths.push(relativePath)
+      // Best-effort edge count for graph:updated: wikilinks in the block
+      // content this write put on disk (log appends contribute their own
+      // block; canonicalizeSourcesField only touches the sources field).
+      edgesChanged += countWikilinks(content)
     } catch (err) {
       console.error(`Failed to write ${fullPath}:`, err)
     }
   }
 
-  return { writtenPaths, existedBefore }
+  return { writtenPaths, existedBefore, edgesChanged }
 }
 
 // POST /api/v2/projects/:id/chat/writes - run the chat "Write to Wiki" flow.
@@ -242,7 +269,7 @@ router.post(
   validate({ body: ChatWritesBodySchema }),
   async (req, res, next) => {
     try {
-      const { sessionId, userGuidance, sourcePath } = req.validated.body
+      const { sessionId, userGuidance, sourcePath, runId: clientRunId } = req.validated.body
 
       const store = readStore("app-state.json")
       const llmConfig = resolveChatConfig(store)
@@ -321,7 +348,15 @@ router.post(
         .filter(Boolean)
         .join("\n\n")
 
-      const runId = crypto.randomUUID()
+      // Use the client-supplied runId when provided (PR #29 review round 2,
+      // tombstone race): the owning tab registers its owned-run tombstone
+      // BEFORE this request resolves, so sse-sync skips the run's chat:*
+      // frames from the very first delta. With a server-generated id the
+      // tombstone lands only with the POST response while the async run
+      // already streams — a first delta before registration double-applies
+      // tokens in the owning tab. Server-generated fallback keeps callers
+      // that don't send one.
+      const runId = clientRunId ?? crypto.randomUUID()
 
       // Run asynchronously; the route returns the runId immediately and the
       // UI awaits the "done" event on the SSE stream (agentStartTurnStream
@@ -335,7 +370,7 @@ router.post(
             {
               onToken: (token) => {
                 accumulated += token
-                emitAgentEvent(sessionId, runId, { type: "messageDelta", text: token })
+                emitAgentEvent(sessionId, runId, { type: "messageDelta", text: token }, req.projectId)
               },
             },
           )
@@ -346,31 +381,58 @@ router.post(
           const message = err instanceof Error ? err.message : String(err)
           const finalText = `Error generating wiki files: ${message}`
           try { chatStore.appendMessage(session.id, "assistant", finalText) } catch { /* best effort */ }
-          emitAgentEvent(sessionId, runId, { type: "error", message: finalText })
-          emitAgentEvent(sessionId, runId, { type: "done" })
+          emitAgentEvent(sessionId, runId, { type: "error", message: finalText }, req.projectId)
+          emitAgentEvent(sessionId, runId, { type: "done" }, req.projectId)
+          // Terminal chat:done dual (review fix): a tab previewing this write
+          // run via chat:delta has no agent-event consumer, so without a
+          // terminal frame its isStreaming stays true forever. Content mirrors
+          // the owning tab's error finalize (agentEvent.message = finalText).
+          // Direct emit keeps the agent-event stream byte-identical.
+          emit(EventTypes.CHAT_DONE, {
+            sessionId,
+            runId,
+            projectId: req.projectId,
+            content: finalText,
+            references: [],
+          })
           return
         }
 
         // Persist the completed assistant message (client finalizeStream).
         chatStore.appendMessage(session.id, "assistant", accumulated)
 
-        const { writtenPaths, existedBefore } = await writeChatWikiBlocks({
+        const { writtenPaths, existedBefore, edgesChanged } = await writeChatWikiBlocks({
           pp,
           accumulated,
           activeSourceIdentity,
           activeSourceSummaryPath,
         })
 
-        emitAgentEvent(sessionId, runId, { type: "wikiWrites", writtenPaths })
+        emitAgentEvent(sessionId, runId, { type: "wikiWrites", writtenPaths }, req.projectId)
 
-        // File events so sse-sync refreshes file trees. api/files.js does
-        // not emit on writes; the stable file event names live on the bus
-        // (EventTypes.FILE_CREATED / FILE_MODIFIED) and sse-sync's
-        // handleFileEvent refreshes the project tree for both.
+        // File events so sse-sync refreshes file trees. chat/writes writes
+        // its FILE blocks itself (writeChatWikiBlocks, not via the
+        // /files/upload route), so it emits its own frames; the stable file
+        // event names live on the bus (EventTypes.FILE_CREATED /
+        // FILE_MODIFIED) and sse-sync's handleFileEvent refreshes the
+        // project tree for both.
         for (const rel of writtenPaths) {
-          emit(existedBefore.get(rel) ? "file:modified" : "file:created", {
+          emit(existedBefore.get(rel) ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, {
             projectId: req.projectId,
             path: rel,
+          })
+        }
+
+        // ONE aggregate graph:updated per run once the writes complete
+        // (plans/sse-taxonomy.md stage 4): nodesChanged = FILE blocks
+        // written; edgesChanged = wikilinks counted across the written block
+        // contents (writeChatWikiBlocks had them in hand). Nothing written
+        // (no FILE blocks in the output) ⇒ no graph change ⇒ no frame.
+        if (writtenPaths.length > 0) {
+          emit(EventTypes.GRAPH_UPDATED, {
+            projectId: req.projectId,
+            nodesChanged: writtenPaths.length,
+            edgesChanged,
           })
         }
 
@@ -389,7 +451,22 @@ router.post(
               sourceSummarySlug,
             )
             if (savedImages.length > 0) {
-              await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+              const injection = await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+              // The injection rewrites wiki/sources/<slug>.md AFTER the
+              // FILE-block emit loop above — emit a file:* frame so the
+              // trees refresh for the rewrite too (plans/sse-taxonomy.md
+              // stage 3). Emit only when the injection ACTUALLY wrote: it
+              // swallows its own write errors and reports null then (PR #29
+              // review round 2). created-vs-modified follows pre-write
+              // existence: the stub branch CREATES the page. Attribution as
+              // in the loop: emit() bridge keeps the envelope projectId
+              // null; it rides in the payload.
+              if (injection) {
+                emit(injection.created ? EventTypes.FILE_CREATED : EventTypes.FILE_MODIFIED, {
+                  projectId: req.projectId,
+                  path: injection.path,
+                })
+              }
             }
             // DEVIATION from the client: it deletes the extraction promise
             // from its module map in `finally` here. The server's images.js
@@ -404,7 +481,7 @@ router.post(
           }
         }
 
-        emitAgentEvent(sessionId, runId, { type: "done", text: accumulated })
+        emitAgentEvent(sessionId, runId, { type: "done", text: accumulated }, req.projectId)
       })()
 
       res.json({ runId, sessionId, writePrompt })

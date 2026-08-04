@@ -4,6 +4,7 @@
 // projectLookup middleware (middleware/project-lookup.js).
 
 import { Router } from "express"
+import fsp from "node:fs/promises"
 import { validate } from "../middleware/validate.js"
 import {
   FileTreeQuerySchema,
@@ -14,6 +15,8 @@ import {
 } from "@llm-wiki/api-types"
 import { safeJoin } from "../store/project-paths.js"
 import { dispatch } from "../invoke.js"
+import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 import { ApiError, ErrorCode } from "../errors.js"
 
 const router = Router({ mergeParams: true })
@@ -60,11 +63,25 @@ router.post("/upload", validate({ body: FileUploadBodySchema }), async (req, res
   try {
     const { path: relPath, content, encoding } = req.validated.body
     const absPath = safeJoin(req.projectRoot, relPath)
+    // Pre-write existence check decides created vs modified
+    // (plans/sse-taxonomy.md). A directory here fails the write below, so
+    // only an existing FILE counts as "existed".
+    const existed = await fsp.stat(absPath).then((s) => s.isFile(), () => false)
+    // suppressFileEvents: this route emits its own frame below (project-
+    // relative path + size + req.projectId), and the stage-3 writer-level
+    // emit must not duplicate it (plans/sse-taxonomy.md stage 3).
     if (encoding === "base64") {
-      await dispatch("write_file_base64", { path: absPath, base64: content })
+      await dispatch("write_file_base64", { path: absPath, base64: content, suppressFileEvents: true })
     } else {
-      await dispatch("write_file", { path: absPath, contents: content })
+      await dispatch("write_file", { path: absPath, contents: content, suppressFileEvents: true })
     }
+    // Attribution rides in the payload (emit() bridge envelope keeps
+    // projectId null — same shape as ingest:*).
+    emit(existed ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, {
+      projectId: req.projectId,
+      path: relPath,
+      size: Buffer.byteLength(content, encoding === "base64" ? "base64" : "utf-8"),
+    })
     res.json({ success: true, path: relPath })
   } catch (err) {
     next(err)

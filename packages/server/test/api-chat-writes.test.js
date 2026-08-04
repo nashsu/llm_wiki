@@ -93,6 +93,8 @@ const writesUrl = () => `/api/v2/projects/${projectId}/chat/writes`
 function watchEvents(sessionId) {
   const frames = []        // agent-event payloads { sessionId, runId, event }
   const fileEvents = []    // { type, payload } file:created / file:modified
+  const graphEvents = []   // graph:updated envelopes (taxonomy stage 4)
+  const chatEvents = []    // chat:* envelopes (taxonomy stage 5 dual emission)
   let resolveDone
   const donePromise = new Promise((resolve) => { resolveDone = resolve })
   const unsub = eventBus.subscribe((env) => {
@@ -103,11 +105,18 @@ function watchEvents(sessionId) {
       if (p.event?.type === "done") resolveDone()
     } else if (env.type === "file:created" || env.type === "file:modified") {
       fileEvents.push({ type: env.type, payload: env.payload })
+    } else if (env.type === "graph:updated") {
+      graphEvents.push(env)
+    } else if (env.type === "chat:delta" || env.type === "chat:toolStart" || env.type === "chat:toolEnd" || env.type === "chat:done") {
+      if ((env.payload?.sessionId ?? null) !== sessionId) return
+      chatEvents.push(env)
     }
   })
   return {
     frames,
     fileEvents,
+    graphEvents,
+    chatEvents,
     events: () => frames.map((f) => f.event),
     async waitDone(timeoutMs = 5000) {
       await Promise.race([
@@ -258,6 +267,37 @@ describe("POST /:id/chat/writes — happy path", () => {
     expect(done.text).toBe(scriptedOutput)
   })
 
+  it("dual-emits chat:delta + chat:done taxonomy frames alongside agent-event (stage 5)", async () => {
+    await watcher.waitDone()
+    const runId = response.body.runId
+    // agent-event frames stay byte-identical AND the charter chat:* frames
+    // ride the same bus: per messageDelta a chat:delta, then ONE chat:done
+    // after the done agent-event. chat/writes runs no tool steps, so no
+    // chat:toolStart/chat:toolEnd frames.
+    expect(watcher.chatEvents.map((e) => e.type)).toEqual([
+      "chat:delta", "chat:delta", "chat:delta", "chat:done",
+    ])
+    const deltas = watcher.chatEvents.filter((e) => e.type === "chat:delta")
+    for (const d of deltas) {
+      expect(d.projectId).toBeNull() // emit() bridge envelope
+      expect(d.payload).toEqual({ sessionId, runId, projectId, text: d.payload.text })
+    }
+    // Delta texts reconstruct the full streamed output (token parity with
+    // the messageDelta agent-event frames).
+    expect(deltas.map((d) => d.payload.text).join("")).toBe(scriptedOutput)
+    // chat:done carries the accumulated full text so a tab that missed the
+    // deltas can finalize; chat/writes has no references.
+    const done = watcher.chatEvents.find((e) => e.type === "chat:done")
+    expect(done.projectId).toBeNull()
+    expect(done.payload).toEqual({
+      sessionId,
+      runId,
+      projectId,
+      content: scriptedOutput,
+      references: [],
+    })
+  })
+
   it("persists user writePrompt + assistant output as session rows", async () => {
     await watcher.waitDone()
     const messages = chatStore.listMessages(sessionId)
@@ -314,6 +354,82 @@ describe("POST /:id/chat/writes — happy path", () => {
     expect(byPath["wiki/sources/doc.md"]).toBe("file:created")
     for (const e of watcher.fileEvents) {
       expect(e.payload.projectId).toBe(projectId)
+    }
+  })
+
+  it("emits ONE aggregate graph:updated when the writes complete", async () => {
+    await watcher.waitDone()
+    // Stage 4 (plans/sse-taxonomy.md): one frame per run — nodesChanged =
+    // FILE blocks written; the scripted blocks carry no [[wikilinks]], so
+    // the best-effort edgesChanged is 0.
+    expect(watcher.graphEvents).toHaveLength(1)
+    const graph = watcher.graphEvents[0]
+    expect(graph.projectId).toBeNull() // emit() bridge envelope
+    expect(graph.payload).toEqual({
+      projectId,
+      nodesChanged: 3,
+      edgesChanged: 0,
+    })
+  })
+})
+
+describe("POST /:id/chat/writes — graph:updated edge counting (stage 4)", () => {
+  it("counts [[wikilinks]] across written FILE-block contents as edgesChanged", async () => {
+    const sessionId = "conv_writes_graph_edges"
+    const hubContent = [
+      "---",
+      "type: concept",
+      "title: Hub",
+      "---",
+      "",
+      "# Hub",
+      "",
+      "See [[alpha]] and [[beta|B]], plus [[alpha]] again.",
+      "",
+    ].join("\n")
+    const output = [
+      "---FILE: wiki/concepts/hub.md---",
+      hubContent,
+      "---END FILE---",
+    ].join("\n")
+    streamChatMock.mockImplementationOnce(async (_c, _m, opts = {}) => {
+      opts.onToken?.(output)
+      return output
+    })
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+
+      expect(watcher.graphEvents).toHaveLength(1)
+      const graph = watcher.graphEvents[0]
+      expect(graph.projectId).toBeNull()
+      expect(graph.payload).toEqual({
+        projectId,
+        nodesChanged: 1, // one FILE block written
+        edgesChanged: 3, // [[alpha]] + [[beta|B]] + [[alpha]]
+      })
+      expect(existsSync(path.join(PROJECT_DIR, "wiki", "concepts", "hub.md"))).toBe(true)
+    } finally {
+      watcher.unsub()
+    }
+  })
+
+  it("emits no graph:updated when the output contains no FILE blocks", async () => {
+    const sessionId = "conv_writes_graph_none"
+    streamChatMock.mockImplementationOnce(async () => "No files generated — nothing to write.")
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+      // Nothing was written ⇒ no graph change ⇒ no frame.
+      expect(watcher.graphEvents).toHaveLength(0)
+    } finally {
+      watcher.unsub()
     }
   })
 })
@@ -404,6 +520,20 @@ describe("POST /:id/chat/writes — stream error path", () => {
       expect(events[0].message).toBe("Error generating wiki files: provider exploded")
       expect(events[1]).toEqual({ type: "done" })
 
+      // Stage 5 kept the error frames agent-event-only; the review fix (PR
+      // #29 round 1) adds a TERMINAL chat:done dual so a tab previewing the
+      // write run via chat:delta can leave streaming state. Content mirrors
+      // the owning tab's error finalize (agentEvent.message = finalText).
+      expect(watcher.chatEvents.map((e) => e.type)).toEqual(["chat:done"])
+      expect(watcher.chatEvents[0].projectId).toBeNull() // emit() bridge envelope
+      expect(watcher.chatEvents[0].payload).toMatchObject({
+        sessionId,
+        projectId,
+        content: "Error generating wiki files: provider exploded",
+        references: [],
+      })
+      expect(typeof watcher.chatEvents[0].payload.runId).toBe("string")
+
       // Client parity: onError finalizeStream persists the error text as the
       // assistant message, right after the user writePrompt row.
       const messages = chatStore.listMessages(sessionId)
@@ -411,6 +541,65 @@ describe("POST /:id/chat/writes — stream error path", () => {
         ["user", res.body.writePrompt],
         ["assistant", "Error generating wiki files: provider exploded"],
       ])
+    } finally {
+      watcher.unsub()
+    }
+  })
+})
+
+describe("POST /:id/chat/writes — client-supplied runId (tombstone race fix)", () => {
+  // PR #29 review round 2: the owning tab generates the runId, tombstones it
+  // BEFORE this route responds, and sends it in the body. The route must use
+  // it verbatim for the response and for every emitted frame — a
+  // server-generated id would only reach the tab with the response, racing
+  // the first chat:delta frames (double-applied tokens).
+  it("uses the client-provided runId for the response and all emitted frames", async () => {
+    const sessionId = "conv_writes_client_runid"
+    const clientRunId = "ui-1754321000000-42"
+    streamChatMock.mockImplementationOnce(async (_c, _m, opts = {}) => {
+      opts.onToken?.("hello tokens")
+      return "hello tokens"
+    })
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app)
+        .post(writesUrl())
+        .send({ sessionId, runId: clientRunId })
+      expect(res.status).toBe(200)
+      // The response echoes the client-supplied id, so the pre-registered
+      // tombstone matches the frames the async run emits.
+      expect(res.body.runId).toBe(clientRunId)
+      expect(res.body.sessionId).toBe(sessionId)
+      await watcher.waitDone()
+
+      expect(watcher.frames.length).toBeGreaterThan(0)
+      for (const frame of watcher.frames) {
+        expect(frame.runId).toBe(clientRunId)
+      }
+      expect(watcher.chatEvents.length).toBeGreaterThan(0)
+      for (const env of watcher.chatEvents) {
+        expect(env.payload.runId).toBe(clientRunId)
+      }
+    } finally {
+      watcher.unsub()
+    }
+  })
+
+  it("falls back to a server-generated runId when the body omits it", async () => {
+    const sessionId = "conv_writes_server_runid"
+    streamChatMock.mockImplementationOnce(async () => "No files generated.")
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      expect(res.body.runId).toBeTypeOf("string")
+      expect(res.body.runId.length).toBeGreaterThan(0)
+      await watcher.waitDone()
+      for (const frame of watcher.frames) {
+        expect(frame.runId).toBe(res.body.runId)
+      }
     } finally {
       watcher.unsub()
     }

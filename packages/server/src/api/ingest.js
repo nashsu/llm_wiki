@@ -30,6 +30,7 @@ import {
 import { safeJoin } from "../store/project-paths.js"
 import { kickIngestOrchestrator, cancelIngestTask } from "../ingest/orchestrator.js"
 import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 import { ApiError, ErrorCode } from "../errors.js"
 
 const router = Router({ mergeParams: true })
@@ -58,6 +59,14 @@ router.post("/upload", upload.single("file"), async (req, res, next) => {
     await fsp.writeFile(filePath, req.file.buffer)
 
     const taskId = enqueueIngestTask(req.project.id, filePath)
+    // Taxonomy (plans/sse-taxonomy.md stage 2): the raw/sources file just
+    // landed — timestamp+random name means it is always a creation. Emitted
+    // alongside ingest:queued so sse-sync refreshes the project tree.
+    emit(EventTypes.FILE_CREATED, {
+      projectId: req.project.id,
+      path: path.relative(req.project.path, filePath),
+      size: req.file.buffer.length,
+    })
     emit("ingest:queued", { projectId: req.project.id, taskId, filePath, fileName })
     kickIngestOrchestrator()
 

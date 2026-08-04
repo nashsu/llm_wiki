@@ -20,8 +20,16 @@ import {
 } from "../store.js"
 import { SHARED_STORE_NAME } from "../config.js"
 import { ApiError, ErrorCode } from "../errors.js"
+import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 
 const router = Router()
+
+// Settings are host-global (projectId null on the wire). The client refetches
+// settings on any settings:changed; `keys` is informational (plans/sse-taxonomy.md).
+function emitSettingsChanged(keys) {
+  emit(EventTypes.SETTINGS_CHANGED, { keys })
+}
 
 // GET /api/v2/settings — read all settings
 router.get("/", (req, res, next) => {
@@ -37,6 +45,7 @@ router.post("/", validate({ body: SettingWriteManyBodySchema }), (req, res, next
   try {
     const { values } = req.validated.body
     writeStore(SHARED_STORE_NAME, values)
+    emitSettingsChanged(Object.keys(values))
     res.json({ written: Object.keys(values).length })
   } catch (err) {
     next(err)
@@ -66,6 +75,7 @@ router.put(
       const { key } = req.validated.params
       const { value } = req.validated.body
       writeStoreKey(SHARED_STORE_NAME, key, value)
+      emitSettingsChanged([key])
       res.json({ key, value })
     } catch (err) {
       next(err)
@@ -79,6 +89,7 @@ router.delete("/:key", validate({ params: SettingKeyParamSchema }), (req, res, n
     const { key } = req.validated.params
     const existed = deleteStoreKey(SHARED_STORE_NAME, key)
     if (!existed) throw new ApiError(ErrorCode.NOT_FOUND, `Setting '${key}' not found`)
+    emitSettingsChanged([key])
     res.status(204).end()
   } catch (err) {
     next(err)

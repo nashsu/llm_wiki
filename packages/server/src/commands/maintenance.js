@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
+import { countWikilinks } from "../graph.js"
 
 // Node port of src-tauri/src/commands/project_maintenance.rs: project archive
 // export/import (zip) and wiki index rebuild. Uses jszip (already a project
@@ -103,6 +104,9 @@ function frontmatterValue(content, key) {
 async function rebuildWikiIndex({ projectPath }) {
   const wiki = path.join(projectPath, "wiki")
   const groups = new Map()
+  // Best-effort graph edge tally across the pages the rebuild reads, so the
+  // route can report edgesChanged in its graph:updated frame (stage 4).
+  let links = 0
   const walk = async (dir) => {
     let entries
     try { entries = await fsp.readdir(dir, { withFileTypes: true }) } catch { return }
@@ -113,6 +117,7 @@ async function rebuildWikiIndex({ projectPath }) {
       const stem = entry.name.replace(/\.md$/i, "")
       if (["index", "overview", "log"].includes(stem.toLowerCase())) continue
       const content = await fsp.readFile(full, "utf-8")
+      links += countWikilinks(content)
       const kind = frontmatterValue(content, "type") || "other"
       const title = frontmatterValue(content, "title") || stem
       const target = fwd(path.relative(wiki, full)).replace(/\.md$/i, "")
@@ -136,7 +141,7 @@ async function rebuildWikiIndex({ projectPath }) {
   const tmp = path.join(wiki, ".index.md.rebuild.tmp")
   await fsp.writeFile(tmp, output, "utf-8")
   await fsp.rename(tmp, indexPath)
-  return { pages: count, groups: groups.size }
+  return { pages: count, groups: groups.size, links }
 }
 
 export const maintenanceCommands = {

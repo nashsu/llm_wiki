@@ -4,6 +4,7 @@
 // (better-sqlite3 is synchronous), per the worker-thread model in
 // V1_CHARTERED_ARCHITECTURE.md §4.4.
 
+import path from "node:path"
 import { getDb } from "./db.js"
 
 export function listProjects() {
@@ -44,6 +45,45 @@ export function getProjectByUuid(uuid) {
 /** Look a project up by its root path (unique per migration 003). */
 export function getProjectByPath(path) {
   return getDb().prepare("SELECT * FROM projects WHERE path = ?").get(path)
+}
+
+/** Strip trailing "/" separators, preserving the root "/" itself. */
+function trimTrailingSeparators(p) {
+  let out = p
+  while (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1)
+  return out
+}
+
+/**
+ * Longest-prefix match from an absolute filesystem path to a projects row
+ * (plans/sse-taxonomy.md stage 3). Legacy invoke writers have no project
+ * context, so file:* attribution resolves here. The input is path.normalize'd
+ * FIRST, so ".." segments are collapsed before matching — otherwise
+ * /data/projA/../projB/x.md would attribute to projA (the raw prefix) even
+ * though the write resolves into projB (PR #29 review round 2). Symlinks stay
+ * unresolved by design: this is a lexical match only, no realpath. Matching
+ * is case-sensitive POSIX ("/" separator) and boundary-aware: a candidate row
+ * matches only when the path equals the project root or continues past it
+ * with a "/", so /a/b never claims /a/bc/x. Trailing separators are
+ * normalized on both sides. Returns the row with the longest matching path,
+ * or null when no project claims the path.
+ * @param {string} absPath
+ * @returns {object|null} the projects row, or null when unresolved
+ */
+export function findProjectByPathPrefix(absPath) {
+  if (typeof absPath !== "string" || !absPath) return null
+  const target = trimTrailingSeparators(path.normalize(absPath))
+  let best = null
+  let bestLen = -1
+  for (const row of listProjects()) {
+    if (typeof row.path !== "string" || !row.path) continue
+    const p = trimTrailingSeparators(row.path)
+    if ((target === p || target.startsWith(`${p}/`)) && p.length > bestLen) {
+      best = row
+      bestLen = p.length
+    }
+  }
+  return best
 }
 
 /**

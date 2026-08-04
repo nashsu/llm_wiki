@@ -272,6 +272,17 @@ sequenceDiagram
   deleted) and removes the pages' embeddings.
 - **Progress:** every stage emits `ingest:progress` SSE frames with
   `{projectId, taskId, stage, detail}`; the client filters by project.
+- **File/graph events around the run** (issue #14 SSE taxonomy): the upload
+  route emits `file:created` for the raw source it just wrote. A successful
+  run emits ONE aggregate `graph:updated` — `{projectId, nodesChanged,
+  edgesChanged: 0}`, edges unknown because the orchestrator only tracks
+  written paths — right after `ingest:complete`. Cancel cleanup emits
+  `file:deleted` per actually-unlinked page (structural pages skipped, as
+  above) plus one aggregate `graph:updated` when anything was removed.
+  Per-page `file:*` events are **deliberately not emitted during the
+  pipeline run**: `ingest:complete` (which carries `pagesCreated` and
+  already refreshes the client tree) plus the aggregate subsume them, so one
+  ingest costs one tree refresh instead of N.
 
 **Artifacts:** disk (`raw/sources/`, `wiki/*.md`, `wiki/media/`,
 `.llm-wiki/` caches) and SQLite (`ingest_queue`, `vec_chunks`).
@@ -329,7 +340,11 @@ sequenceDiagram
 
 1. **Request** — `api/chat.js` validates the body and calls
    `agentStartTurnStream`; the `runId` returns immediately and the turn runs
-   asynchronously, streaming `agent-event` payloads over SSE.
+   asynchronously, streaming `agent-event` payloads over SSE. Since the SSE
+   taxonomy (issue #14), the same choke points additionally dual-emit the
+   chartered `chat:*` frames (`chat:delta` / `chat:toolStart` /
+   `chat:toolEnd` / `chat:done`) so a tab that did not start the run can
+   sync it too; `agent-event` stays byte-identical (see §5).
 2. **Agent loop** (`agent.js` → `runLoop`, max 8 iterations) — builds the
    message list (system prompt + **server-loaded history** + the question),
    selects tools (`wiki.search`, `wiki.read_page`, `source.search`,
@@ -397,6 +412,49 @@ message. Session CRUD: list/create/get/rename/delete under
   file persistence untouched.
 - **Single-process server.** `index-v2.js` serves the SPA, the v2 REST API, and
   the legacy `/api/invoke/*` bridge in one process — no second service needed.
+- **SSE event taxonomy is emitted end-to-end** (issue #14, charter §4.7). The
+  full chartered taxonomy — `file:created/modified/deleted`, `graph:updated`,
+  `settings:changed`, `chat:delta/toolStart/toolEnd/done` — is now published
+  at the mutation sites alongside the pre-existing `ingest:*` frames, so
+  multiple tabs/devices stay in sync without polling. All frames ride the
+  legacy `emit()` bridge (`events.js`), which republishes onto the internal
+  bus with envelope `projectId: null` — attribution rides in the payload,
+  exactly like `ingest:*` — and reach both `GET /api/events` and
+  `GET /api/v2/events`:
+  - `file:*` at every write path: files upload (a pre-write existence check
+    decides created vs modified), ingest upload, maintenance rebuild-index
+    and file-history restore, cancel cleanup (`file:deleted` per unlinked
+    page), chat Write-to-Wiki FILE blocks plus the post-write image
+    injection, and the legacy invoke filesystem writers (no project context
+    there — resolved by longest-prefix match against `projects.path`, null
+    when unresolved). Ingest runs deliberately emit no per-page events (§3).
+  - `graph:updated` as ONE aggregate per mutation ("wiki pages changed ⇒
+    graph caches stale"; payload `{projectId, nodesChanged, edgesChanged}`)
+    after ingest success/cancel, rebuild-index, and chat writes completion.
+  - `settings:changed` (`{keys}`, host-global) on every `/api/v2/settings`
+    write and on writes to the shared store (`app-state.json`) through the
+    `/api/store` shim and the legacy server; other store names emit nothing.
+  - `chat:*` dual-emitted next to the byte-identical `agent-event` frames
+    (§4) so tabs that did not start a run can still sync it. Failed and
+    cancelled runs dual a TERMINAL `chat:done` (`Error: <message>` on
+    failure, empty content on cancel) so previewing tabs always leave
+    streaming state — a non-owning tab has no `agent-event` consumer to
+    reset it otherwise.
+  The client sync layer (`src/lib/sse-sync.ts`) dispatches each frame to the
+  store that owns the state: `file:*` refreshes the project file tree
+  (trailing-debounced ~400 ms — one chat save emits several frames),
+  `graph:updated` bumps the graph `dataVersion`, `settings:changed`
+  refetches settings, and `chat:*` applies only to conversations present in
+  the chat store and skips runs the local tab owns (the chat-panel
+  tombstones its run ids in the store — the active tab already renders them
+  from `agent-event`, so applying them twice would double tokens). Accepted
+  degradations: no server-side file watcher (out-of-band edits are covered
+  by the reconnect full-refresh); the incremental graph tables
+  (`graph_nodes`/`graph_edges`) stay unwritten, so `edgesChanged` is
+  best-effort and the graph is still rebuilt on demand from `wiki/*.md`; the
+  charter-shaped `events/sse.js` SSEManager remains dead code (never
+  mounted; removal is churn with no user value); cross-tab chat sync shows
+  live tokens but not tool-step UI (`agent-event` only, active tab).
 - **Auth** (`auth/config.js`): `LLM_WIKI_AUTH_MODE` is the chartered primary
   (`none` → open, `token` → required, `open` normalized to `none`; the
   docker-compose default), `AUTH_MODE` a deprecated warn-once alias — the

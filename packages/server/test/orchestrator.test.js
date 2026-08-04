@@ -366,6 +366,15 @@ describe("cancellation", () => {
     expect(removePageEmbedding).toHaveBeenCalledTimes(1)
     expect(removePageEmbedding).toHaveBeenCalledWith(projA.path, "cancel-me")
 
+    // Taxonomy stage 2 (plans/sse-taxonomy.md): cleanup emits file:deleted
+    // per SUCCESSFUL unlink — exactly one frame here (structural index/log
+    // are skipped), project-relative path, row's project_id as payload
+    // attribution (emit() bridge keeps the envelope projectId null).
+    const deleted = frames.filter((f) => f.type === "file:deleted")
+    expect(deleted).toHaveLength(1)
+    expect(deleted[0].projectId).toBeNull()
+    expect(deleted[0].payload).toEqual({ projectId: projA.id, path: rel })
+
     // Terminal frame so live clients update.
     const error = framesOf("ingest:error", id)
     const cancelFrame = error.find((f) => f.payload.error === "Cancelled")
@@ -376,6 +385,30 @@ describe("cancellation", () => {
       status: "failed",
       retryable: false,
     })
+  })
+
+  it("cancel cleanup emits file:deleted only for SUCCESSFUL unlinks", async () => {
+    // The pipeline claims it wrote a page that never reached disk (abort
+    // raced the write): unlink fails ⇒ NO file:deleted frame, and the
+    // cleanup still swallows the error (cancel must never throw).
+    vi.mocked(runIngestPipeline).mockImplementation((task, env) => {
+      env.onFileWritten("wiki/concepts/never-written.md")
+      return new Promise((resolve, reject) => {
+        env.signal.addEventListener("abort", () => reject(new Error("Ingest cancelled")), { once: true })
+      })
+    })
+    const id = enq(projA.id, "raw/sources/ghost-source.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => orch.activeIngestTaskCount() === 1)
+
+    const ok = await orch.cancelIngestTask(id)
+    expect(ok).toBe(true)
+    await waitFor(() => orch.activeIngestTaskCount() === 0)
+    expect(frames.filter((f) => f.type === "file:deleted")).toHaveLength(0)
+    // Nothing was actually unlinked ⇒ no graph:updated aggregate either
+    // (plans/sse-taxonomy.md stage 4).
+    expect(frames.filter((f) => f.type === "graph:updated")).toHaveLength(0)
   })
 
   it("cancel of a pending row just deletes it", async () => {
@@ -392,6 +425,95 @@ describe("cancellation", () => {
 
     // Cancelling a missing task reports false.
     expect(await orch.cancelIngestTask(999_999)).toBe(false)
+  })
+})
+
+describe("graph:updated emission (taxonomy stage 4)", () => {
+  it("processTask success emits ONE aggregate graph:updated after ingest:complete", async () => {
+    vi.mocked(runIngestPipeline).mockImplementation(async (task, env) => {
+      env.onFileWritten("wiki/concepts/graph-one.md")
+      env.onFileWritten("wiki/concepts/graph-two.md")
+      env.onFileWritten("wiki/log.md")
+      return successResult([
+        "wiki/concepts/graph-one.md",
+        "wiki/concepts/graph-two.md",
+        "wiki/log.md",
+      ])
+    })
+    const id = enq(projA.id, "raw/sources/graph-success.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => q.getIngestTask(id)?.status === "completed")
+
+    // ONE aggregate frame for the whole task — nodesChanged =
+    // result.writtenPaths.length; the orchestrator only holds paths (page
+    // contents stream straight to disk), so edgesChanged is unknown ⇒ 0.
+    const graph = frames.filter((f) => f.type === "graph:updated")
+    expect(graph).toHaveLength(1)
+    expect(graph[0].projectId).toBeNull() // emit() bridge envelope
+    expect(graph[0].payload).toEqual({
+      projectId: projA.id,
+      nodesChanged: 3,
+      edgesChanged: 0,
+    })
+
+    // The aggregate rides the bus AFTER the task's ingest:complete frame.
+    const completeIdx = frames.findIndex((f) => f.type === "ingest:complete")
+    expect(completeIdx).toBeGreaterThanOrEqual(0)
+    expect(frames.indexOf(graph[0])).toBeGreaterThan(completeIdx)
+  })
+
+  it("success without written paths emits NO graph:updated (gated on writtenPaths.length > 0)", async () => {
+    // Parity with the cancel-cleanup and chat/writes emit sites: nothing
+    // written ⇒ no graph change ⇒ no frame (PR #29 review round 2). The task
+    // itself still completes normally.
+    vi.mocked(runIngestPipeline).mockResolvedValue(successResult([]))
+    const id = enq(projA.id, "raw/sources/graph-empty.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => q.getIngestTask(id)?.status === "completed")
+
+    expect(framesOf("ingest:complete", id)).toHaveLength(1)
+    expect(frames.filter((f) => f.type === "graph:updated")).toHaveLength(0)
+  })
+
+  it("cancel cleanup emits ONE graph:updated with nodesChanged = pages actually unlinked", async () => {
+    const relOne = "wiki/concepts/graph-a.md"
+    const relTwo = "wiki/concepts/graph-b.md"
+    for (const rel of [relOne, relTwo]) {
+      const full = path.join(projA.path, rel)
+      mkdirSync(path.dirname(full), { recursive: true })
+      writeFileSync(full, "---\ntitle: cancelled\n---\n# cancelled page\n")
+    }
+
+    vi.mocked(runIngestPipeline).mockImplementation((task, env) => {
+      env.onFileWritten(relOne)
+      env.onFileWritten(relTwo)
+      env.onFileWritten("wiki/index.md") // structural ⇒ skipped by cleanup
+      return new Promise((resolve, reject) => {
+        env.signal.addEventListener("abort", () => reject(new Error("Ingest cancelled")), { once: true })
+      })
+    })
+    const id = enq(projA.id, "raw/sources/graph-cancel.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => orch.activeIngestTaskCount() === 1)
+
+    // cancelIngestTask awaits the cleanup, so the aggregate frame has
+    // already been published when it resolves.
+    expect(await orch.cancelIngestTask(id)).toBe(true)
+    await waitFor(() => orch.activeIngestTaskCount() === 0)
+
+    const graph = frames.filter((f) => f.type === "graph:updated")
+    expect(graph).toHaveLength(1)
+    expect(graph[0].projectId).toBeNull()
+    expect(graph[0].payload).toEqual({
+      projectId: projA.id,
+      nodesChanged: 2, // two pages unlinked; structural index.md skipped
+      edgesChanged: 0,
+    })
+    // file:deleted parity: one frame per successful unlink, same two pages.
+    expect(frames.filter((f) => f.type === "file:deleted")).toHaveLength(2)
   })
 })
 
