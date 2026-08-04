@@ -17,6 +17,28 @@
  * from any environment without crashing at module load.
  */
 
+import { isProxyActive, type ProxyConfig } from "./proxy-config"
+import { useWikiStore } from "@/stores/wiki-store"
+
+interface ProxyDangerSettings {
+  acceptInvalidCerts: true
+  acceptInvalidHostnames: true
+}
+
+/** Only expose the dangerous plugin setting for an explicitly enabled,
+ * valid proxy. Older persisted configs omit the new field and stay safe. */
+export function getProxyDangerSettings(
+  config: ProxyConfig,
+): ProxyDangerSettings | undefined {
+  if (!isProxyActive(config) || config.ignoreSslCertificateErrors !== true) {
+    return undefined
+  }
+  return {
+    acceptInvalidCerts: true,
+    acceptInvalidHostnames: true,
+  }
+}
+
 let pluginFetchPromise: Promise<typeof globalThis.fetch> | null = null
 
 /**
@@ -45,7 +67,21 @@ export function getHttpFetch(): Promise<typeof globalThis.fetch> {
       pluginFetchPromise = Promise.resolve(globalThis.fetch.bind(globalThis))
     } else {
       pluginFetchPromise = import("@tauri-apps/plugin-http")
-        .then((m) => m.fetch as unknown as typeof globalThis.fetch)
+        .then((m) => {
+          const pluginFetch = m.fetch
+          return (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const proxyConfig = useWikiStore.getState().proxyConfig
+            const danger = getProxyDangerSettings(proxyConfig)
+            if (danger) {
+              const pluginInit = {
+                ...init,
+                danger,
+              }
+              return pluginFetch(input, pluginInit)
+            }
+            return pluginFetch(input, init)
+          }) as typeof globalThis.fetch
+        })
         .catch(() => globalThis.fetch.bind(globalThis))
     }
   }

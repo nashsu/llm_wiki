@@ -138,7 +138,7 @@ impl AgentLlmProvider for LlmClient {
 
 impl LlmClient {
     pub fn new(config: LlmConfig) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
+        let client = crate::proxy::configure_http_client(reqwest::Client::builder())
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .map_err(|err| format!("Failed to build LLM HTTP client: {err}"))?;

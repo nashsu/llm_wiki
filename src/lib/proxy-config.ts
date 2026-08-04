@@ -8,8 +8,8 @@
  * those up automatically and routes every outbound HTTP request
  * through the configured proxy.
  *
- * Changes apply on app restart; the UI surfaces a "Restart now"
- * button so users don't have to do it manually.
+ * Changes are also sent to Rust on Save so newly-created HTTP clients
+ * observe the proxy and TLS policy without an app restart.
  *
  * v1 supports HTTP and HTTPS proxies only. SOCKS5 needs a reqwest
  * cargo feature flag and is deferred.
@@ -31,12 +31,19 @@ export interface ProxyConfig {
    * get sent to the external proxy and fail.
    */
   bypassLocal: boolean
+  /**
+   * Accept invalid/expired TLS certificates for outbound requests while
+   * the proxy is active. This is intentionally opt-in because it disables
+   * server certificate verification and exposes traffic to interception.
+   */
+  ignoreSslCertificateErrors?: boolean
 }
 
 export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
   enabled: false,
   url: "",
   bypassLocal: true,
+  ignoreSslCertificateErrors: false,
 }
 
 /**

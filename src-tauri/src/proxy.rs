@@ -13,12 +13,20 @@
 //! Cost is one duplicated key name (`proxyConfig`) — see
 //! src/lib/project-store.ts for the matching write site.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_BYPASS_LIST: &str =
     "localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,*.local";
+
+// reqwest clients are created in several modules. Keep the live, effective
+// TLS policy in one process-wide flag so every newly-built client observes a
+// settings change without an app restart.
+static IGNORE_SSL_CERTIFICATE_ERRORS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProxyConfig {
@@ -28,6 +36,8 @@ pub struct ProxyConfig {
     pub url: String,
     #[serde(default = "default_true", rename = "bypassLocal")]
     pub bypass_local: bool,
+    #[serde(default, rename = "ignoreSslCertificateErrors")]
+    pub ignore_ssl_certificate_errors: bool,
 }
 
 // Hand-written Default impl so its `bypass_local` matches what
@@ -43,6 +53,7 @@ impl Default for ProxyConfig {
             enabled: false,
             url: String::new(),
             bypass_local: true,
+            ignore_ssl_certificate_errors: false,
         }
     }
 }
@@ -90,6 +101,7 @@ pub fn apply_proxy_env(config: &ProxyConfig) -> String {
     let invalid_scheme = !url.starts_with("http://") && !url.starts_with("https://");
 
     if !config.enabled || url.is_empty() || invalid_scheme {
+        IGNORE_SSL_CERTIFICATE_ERRORS.store(false, Ordering::Relaxed);
         clear_proxy_env();
         return if !config.enabled {
             "disabled".to_string()
@@ -102,6 +114,8 @@ pub fn apply_proxy_env(config: &ProxyConfig) -> String {
         };
     }
 
+    IGNORE_SSL_CERTIFICATE_ERRORS.store(config.ignore_ssl_certificate_errors, Ordering::Relaxed);
+
     std::env::set_var("HTTP_PROXY", url);
     std::env::set_var("HTTPS_PROXY", url);
     if config.bypass_local {
@@ -112,10 +126,21 @@ pub fn apply_proxy_env(config: &ProxyConfig) -> String {
         std::env::remove_var("NO_PROXY");
     }
     format!(
-        "enabled ({}, bypass_local={})",
+        "enabled ({}, bypass_local={}, ignore_ssl_certificate_errors={})",
         redact_url(url),
-        config.bypass_local
+        config.bypass_local,
+        config.ignore_ssl_certificate_errors
     )
+}
+
+/// Apply the current proxy TLS policy to a newly-created reqwest client.
+/// Certificate verification can only be disabled while a valid proxy is
+/// active; disabling or invalidating the proxy resets the flag above.
+pub fn configure_http_client(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let ignore_errors = IGNORE_SSL_CERTIFICATE_ERRORS.load(Ordering::Relaxed);
+    builder
+        .danger_accept_invalid_certs(ignore_errors)
+        .danger_accept_invalid_hostnames(ignore_errors)
 }
 
 /// Strip embedded basic-auth credentials from a URL before logging.
@@ -210,6 +235,7 @@ mod tests {
                 enabled: false,
                 url: "http://x:1".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert!(s.contains("disabled"));
             assert!(std::env::var("HTTP_PROXY").is_err());
@@ -224,6 +250,7 @@ mod tests {
                 enabled: true,
                 url: "http://127.0.0.1:7890".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert_eq!(
                 std::env::var("HTTP_PROXY").unwrap(),
@@ -248,6 +275,7 @@ mod tests {
                 enabled: true,
                 url: "http://x:1".into(),
                 bypass_local: false,
+                ignore_ssl_certificate_errors: false,
             });
             // The stale value must be cleared so the user's intent
             // (everything goes through the proxy) is honored.
@@ -262,6 +290,7 @@ mod tests {
                 enabled: true,
                 url: "socks5://x:1".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert!(std::env::var("HTTP_PROXY").is_err());
         });
@@ -274,6 +303,7 @@ mod tests {
                 enabled: true,
                 url: "   ".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert!(std::env::var("HTTP_PROXY").is_err());
         });
@@ -291,6 +321,7 @@ mod tests {
                 enabled: true,
                 url: "http://127.0.0.1:7890".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert_eq!(
                 std::env::var("HTTP_PROXY").unwrap(),
@@ -301,6 +332,7 @@ mod tests {
                 enabled: false,
                 url: "http://127.0.0.1:7890".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert!(std::env::var("HTTP_PROXY").is_err());
             assert!(std::env::var("HTTPS_PROXY").is_err());
@@ -319,11 +351,13 @@ mod tests {
                 enabled: true,
                 url: "http://127.0.0.1:7890".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             apply_proxy_env(&ProxyConfig {
                 enabled: true,
                 url: "socks5://x:1".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: true,
             });
             assert!(std::env::var("HTTP_PROXY").is_err());
         });
@@ -336,6 +370,7 @@ mod tests {
                 enabled: true,
                 url: "https://proxy.corp:443".into(),
                 bypass_local: false,
+                ignore_ssl_certificate_errors: false,
             });
             assert_eq!(
                 std::env::var("HTTPS_PROXY").unwrap(),
@@ -376,6 +411,7 @@ mod tests {
                 enabled: true,
                 url: "http://secretuser:secretpass@proxy.corp:8080".into(),
                 bypass_local: true,
+                ignore_ssl_certificate_errors: false,
             });
             assert!(!summary.contains("secretpass"));
             assert!(!summary.contains("secretuser"));
@@ -398,9 +434,14 @@ mod tests {
             default_via_trait.bypass_local, default_via_serde.bypass_local,
             "Default trait and serde-default must agree on bypass_local",
         );
+        assert_eq!(
+            default_via_trait.ignore_ssl_certificate_errors,
+            default_via_serde.ignore_ssl_certificate_errors,
+        );
         // And both should be the safe default: bypass on, proxy off.
         assert!(!default_via_trait.enabled);
         assert!(default_via_trait.bypass_local);
+        assert!(!default_via_trait.ignore_ssl_certificate_errors);
     }
 
     #[test]
@@ -412,6 +453,35 @@ mod tests {
         assert!(cfg.enabled);
         assert_eq!(cfg.url, "http://x:1");
         assert!(!cfg.bypass_local);
+        assert!(!cfg.ignore_ssl_certificate_errors);
+    }
+
+    #[test]
+    fn ssl_errors_can_only_be_ignored_while_proxy_is_active() {
+        isolated(|| {
+            apply_proxy_env(&ProxyConfig {
+                enabled: true,
+                url: "http://127.0.0.1:7890".into(),
+                bypass_local: true,
+                ignore_ssl_certificate_errors: true,
+            });
+            assert!(IGNORE_SSL_CERTIFICATE_ERRORS.load(Ordering::Relaxed));
+
+            apply_proxy_env(&ProxyConfig {
+                enabled: false,
+                url: "http://127.0.0.1:7890".into(),
+                bypass_local: true,
+                ignore_ssl_certificate_errors: true,
+            });
+            assert!(!IGNORE_SSL_CERTIFICATE_ERRORS.load(Ordering::Relaxed));
+        });
+    }
+
+    #[test]
+    fn parses_camelcase_ssl_error_field() {
+        let json = r#"{"enabled":true,"url":"http://x:1","ignoreSslCertificateErrors":true}"#;
+        let cfg: ProxyConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.ignore_ssl_certificate_errors);
     }
 
     #[test]

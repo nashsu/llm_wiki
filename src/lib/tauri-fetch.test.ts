@@ -14,7 +14,50 @@
  * run crash with "window is not defined").
  */
 import { describe, it, expect } from "vitest"
-import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
+import {
+  getHttpFetch,
+  getProxyDangerSettings,
+  isFetchNetworkError,
+} from "./tauri-fetch"
+
+describe("getProxyDangerSettings", () => {
+  it("enables the bypass only for an active proxy with explicit opt-in", () => {
+    expect(
+      getProxyDangerSettings({
+        enabled: true,
+        url: "http://127.0.0.1:7890",
+        bypassLocal: true,
+        ignoreSslCertificateErrors: true,
+      }),
+    ).toEqual({ acceptInvalidCerts: true, acceptInvalidHostnames: true })
+  })
+
+  it("stays safe for disabled, invalid, and legacy proxy configs", () => {
+    expect(
+      getProxyDangerSettings({
+        enabled: false,
+        url: "http://127.0.0.1:7890",
+        bypassLocal: true,
+        ignoreSslCertificateErrors: true,
+      }),
+    ).toBeUndefined()
+    expect(
+      getProxyDangerSettings({
+        enabled: true,
+        url: "not-a-url",
+        bypassLocal: true,
+        ignoreSslCertificateErrors: true,
+      }),
+    ).toBeUndefined()
+    expect(
+      getProxyDangerSettings({
+        enabled: true,
+        url: "http://127.0.0.1:7890",
+        bypassLocal: true,
+      }),
+    ).toBeUndefined()
+  })
+})
 
 describe("getHttpFetch — Node fallback", () => {
   it("returns a callable function under Node (typeof window === undefined)", async () => {
