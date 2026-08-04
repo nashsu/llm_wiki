@@ -463,6 +463,20 @@ describe("graph:updated emission (taxonomy stage 4)", () => {
     expect(frames.indexOf(graph[0])).toBeGreaterThan(completeIdx)
   })
 
+  it("success without written paths emits NO graph:updated (gated on writtenPaths.length > 0)", async () => {
+    // Parity with the cancel-cleanup and chat/writes emit sites: nothing
+    // written ⇒ no graph change ⇒ no frame (PR #29 review round 2). The task
+    // itself still completes normally.
+    vi.mocked(runIngestPipeline).mockResolvedValue(successResult([]))
+    const id = enq(projA.id, "raw/sources/graph-empty.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => q.getIngestTask(id)?.status === "completed")
+
+    expect(framesOf("ingest:complete", id)).toHaveLength(1)
+    expect(frames.filter((f) => f.type === "graph:updated")).toHaveLength(0)
+  })
+
   it("cancel cleanup emits ONE graph:updated with nodesChanged = pages actually unlinked", async () => {
     const relOne = "wiki/concepts/graph-a.md"
     const relTwo = "wiki/concepts/graph-b.md"

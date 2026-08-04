@@ -171,6 +171,23 @@ describe("findProjectByPathPrefix (resolver)", () => {
     expect(findProjectByPathPrefix(path.join(ROOT, "ALPHA", "x.md"))).toBeNull()
   })
 
+  it("normalizes '..' segments before prefix matching", () => {
+    // Raw strings on purpose (path.join would normalize them away): the
+    // resolver must agree with where the write actually lands.
+    // /…/alpha/../beta/sub/f.md resolves INTO beta — the raw prefix match
+    // would have attributed it to alpha (PR #29 review round 2).
+    const intoBeta = `${path.join(ROOT, "alpha")}/../beta/sub/f.md`
+    expect(findProjectByPathPrefix(intoBeta)?.id).toBe(projSlash.id)
+    // Traversal that stays inside alpha still matches alpha.
+    const insideAlpha = `${path.join(ROOT, "alpha", "wiki")}/../page.md`
+    expect(findProjectByPathPrefix(insideAlpha)?.id).toBe(projAlpha.id)
+    // Longest-prefix still wins after normalization.
+    const intoNested = `${path.join(ROOT, "alpha", "nested")}/../../alpha/nested/deep/f.md`
+    expect(findProjectByPathPrefix(intoNested)?.id).toBe(projNested.id)
+    // Traversal escaping every registered root resolves to nothing.
+    expect(findProjectByPathPrefix(`${ROOT}/alpha/../../outside/x.md`)).toBeNull()
+  })
+
   it("returns null when nothing matches or the input is unusable", () => {
     expect(findProjectByPathPrefix("/definitely/not/registered")).toBeNull()
     expect(findProjectByPathPrefix("")).toBeNull()
@@ -481,5 +498,62 @@ describe("chat/writes image injection", () => {
     expect(page).toContain("# Doc summary")
     expect(page).toContain("## Embedded Images")
     expect(page).toContain("![](../media/doc/img-1.png)")
+  })
+
+  it("emits file:created when the injection writes a stub page (page did not exist)", async () => {
+    // PR #29 review round 2: created-vs-modified follows pre-write existence.
+    // No FILE blocks land the summary page, so the injection's stub branch
+    // CREATES wiki/sources/doc2.md ⇒ file:created, not file:modified.
+    const stubSessionId = "conv_fswriters_inject_stub"
+    writeFileSync(path.join(PROJ_DIR, "raw", "sources", "doc2.md"), "# Doc2\nHello.\n")
+    streamChatMock.mockImplementationOnce(async () => "No files generated.")
+    extractImagesMock.mockResolvedValueOnce([
+      { relPath: "media/doc2/img-1.png", sha256: "deadbeef", page: 1 },
+    ])
+
+    const watcher = watchEvents(stubSessionId)
+    try {
+      const res = await request(app)
+        .post(`/api/v2/projects/${proj.id}/chat/writes`)
+        .send({ sessionId: stubSessionId, sourcePath: "raw/sources/doc2.md" })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+    } finally {
+      watcher.unsub()
+    }
+
+    const docFrames = watcher.fileEvents.filter((e) => e.payload.path === "wiki/sources/doc2.md")
+    expect(docFrames.map((e) => e.type)).toEqual([EventTypes.FILE_CREATED])
+    expect(docFrames[0].projectId).toBeNull() // emit() bridge envelope
+    expect(docFrames[0].payload.projectId).toBe(proj.id)
+    // The stub really landed on disk.
+    expect(existsSync(path.join(PROJ_DIR, "wiki", "sources", "doc2.md"))).toBe(true)
+  })
+
+  it("emits nothing when the injection fails (swallowed write error)", async () => {
+    // PR #29 review round 2: injectImagesIntoSourceSummary swallows its own
+    // write errors and reports null ⇒ no file:* frame for a write that never
+    // happened. Sabotage: the summary path is a DIRECTORY, so both the read
+    // (→ treated as missing) and the stub write (EISDIR) fail.
+    const failSessionId = "conv_fswriters_inject_fail"
+    writeFileSync(path.join(PROJ_DIR, "raw", "sources", "doc3.md"), "# Doc3\n")
+    mkdirSync(path.join(PROJ_DIR, "wiki", "sources", "doc3.md"), { recursive: true })
+    streamChatMock.mockImplementationOnce(async () => "No files generated.")
+    extractImagesMock.mockResolvedValueOnce([
+      { relPath: "media/doc3/img-1.png", sha256: "deadbeef", page: 1 },
+    ])
+
+    const watcher = watchEvents(failSessionId)
+    try {
+      const res = await request(app)
+        .post(`/api/v2/projects/${proj.id}/chat/writes`)
+        .send({ sessionId: failSessionId, sourcePath: "raw/sources/doc3.md" })
+      expect(res.status).toBe(200)
+      await watcher.waitDone()
+    } finally {
+      watcher.unsub()
+    }
+
+    expect(watcher.fileEvents.filter((e) => e.payload.path === "wiki/sources/doc3.md")).toEqual([])
   })
 })

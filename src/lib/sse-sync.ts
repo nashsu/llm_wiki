@@ -205,6 +205,13 @@ function toMessageReferences(value: unknown): MessageReference[] | undefined {
               : kind === "graph" ? "Graph"
                 : undefined
     const snippet = str(ref.snippet)
+    // Mirror chat-panel's backendReferenceToMessageReference exactly: it maps
+    // knowledgeContext.relatedTo → graphRelations, so cross-tab finalized
+    // messages carry the same reference metadata the owning tab rendered.
+    const relatedTo = asRecord(ref.knowledgeContext).relatedTo
+    const graphRelations = Array.isArray(relatedTo)
+      ? relatedTo.filter((item): item is string => typeof item === "string")
+      : undefined
     references.push({
       title,
       path,
@@ -212,6 +219,7 @@ function toMessageReferences(value: unknown): MessageReference[] | undefined {
       ...(source !== undefined ? { source } : {}),
       ...(isWeb ? { url: path } : {}),
       ...(snippet !== undefined ? { snippet } : {}),
+      ...(graphRelations !== undefined && graphRelations.length > 0 ? { graphRelations } : {}),
     })
   }
   return references.length > 0 ? references : undefined
@@ -222,6 +230,15 @@ function toMessageReferences(value: unknown): MessageReference[] | undefined {
  *
  * Scoping: frames apply only when `payload.sessionId` is a conversation
  * present in the chat-store — this drops other-project and unknown frames.
+ *
+ * Conversation lock (the foreign-conversation leak fix): the chat store has
+ * ONE global stream buffer, so once a conversation is previewing through
+ * this layer, frames for any OTHER conversation are dropped — foreign deltas
+ * would render live under the wrong conversation, and a foreign chat:done
+ * would clear isStreaming/streamingContent mid-flight for the streaming run
+ * (including an owned run this tab renders via agent-event). The lock is
+ * adopted on the first applied delta and released by the streaming
+ * conversation's chat:done (or stopSseSync).
  *
  * Ownership guard (the double-apply fix): chat-panel tombstones runs it
  * starts locally in the store's `ownedRunIds`. This tab already renders
@@ -235,6 +252,9 @@ function toMessageReferences(value: unknown): MessageReference[] | undefined {
  * are never cleared on finalize — only on conversation delete — so they
  * survive the done-frame race on the shared SSE stream.
  */
+// Which conversation currently owns the global stream preview (see above).
+let streamingConversationId: string | null = null
+
 function handleChat(evt: ServerEvent): void {
   const store = useChatStore.getState()
   const p = asRecord(evt.payload)
@@ -251,11 +271,36 @@ function handleChat(evt: ServerEvent): void {
       // Charter key is `text`; token/delta/content are legacy fallbacks.
       const token = str(p.text) ?? str(p.token) ?? str(p.delta) ?? str(p.content) ?? ""
       if (!token) return
+      // Conversation lock: only the conversation that owns the current
+      // preview may append tokens. When nothing is previewing yet AND the
+      // global buffer is free, adopt the frame's conversation. If the buffer
+      // is busy with an owned run (this tab streams via agent-event, so
+      // streamingConversationId is null while store.isStreaming is true),
+      // foreign deltas are dropped instead of clobbering it.
+      if (streamingConversationId === null) {
+        if (store.isStreaming) return
+        streamingConversationId = sessionId
+      } else if (streamingConversationId !== sessionId) {
+        return
+      }
       if (!store.isStreaming) store.setStreaming(true)
       store.appendStreamToken(token)
       return
     }
     case "chat:done": {
+      // Conversation lock: only the streaming conversation may finalize or
+      // reset the global stream state. A late done for another conversation
+      // is dropped wholesale — it must not clear an active preview (or an
+      // owned run's buffer). With no conversation previewing, a done still
+      // finalizes when the buffer is free: it carries the full content, so a
+      // tab that missed every delta (e.g. reconnected mid-run) still records
+      // the message.
+      if (streamingConversationId !== null) {
+        if (streamingConversationId !== sessionId) return
+      } else if (store.isStreaming) {
+        return
+      }
+      streamingConversationId = null
       // Charter key is `content` (the run's full accumulated text, so a tab
       // that missed deltas can finalize); fall back to the stream buffer for
       // content-less frames (parity with the pre-taxonomy handler).
@@ -410,6 +455,9 @@ export function startSseSync(): void {
 export function stopSseSync(): void {
   started = false
   invalidateProjectResolution()
+  // Release the chat preview lock: on reconnect, frames belong to whatever
+  // conversation streams first again.
+  streamingConversationId = null
   // Drop a pending file-refresh debounce so it cannot fire against a stale
   // project after disconnect (e.g. project switch).
   if (fileRefreshTimer !== null) {

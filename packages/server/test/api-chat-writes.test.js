@@ -547,6 +547,65 @@ describe("POST /:id/chat/writes — stream error path", () => {
   })
 })
 
+describe("POST /:id/chat/writes — client-supplied runId (tombstone race fix)", () => {
+  // PR #29 review round 2: the owning tab generates the runId, tombstones it
+  // BEFORE this route responds, and sends it in the body. The route must use
+  // it verbatim for the response and for every emitted frame — a
+  // server-generated id would only reach the tab with the response, racing
+  // the first chat:delta frames (double-applied tokens).
+  it("uses the client-provided runId for the response and all emitted frames", async () => {
+    const sessionId = "conv_writes_client_runid"
+    const clientRunId = "ui-1754321000000-42"
+    streamChatMock.mockImplementationOnce(async (_c, _m, opts = {}) => {
+      opts.onToken?.("hello tokens")
+      return "hello tokens"
+    })
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app)
+        .post(writesUrl())
+        .send({ sessionId, runId: clientRunId })
+      expect(res.status).toBe(200)
+      // The response echoes the client-supplied id, so the pre-registered
+      // tombstone matches the frames the async run emits.
+      expect(res.body.runId).toBe(clientRunId)
+      expect(res.body.sessionId).toBe(sessionId)
+      await watcher.waitDone()
+
+      expect(watcher.frames.length).toBeGreaterThan(0)
+      for (const frame of watcher.frames) {
+        expect(frame.runId).toBe(clientRunId)
+      }
+      expect(watcher.chatEvents.length).toBeGreaterThan(0)
+      for (const env of watcher.chatEvents) {
+        expect(env.payload.runId).toBe(clientRunId)
+      }
+    } finally {
+      watcher.unsub()
+    }
+  })
+
+  it("falls back to a server-generated runId when the body omits it", async () => {
+    const sessionId = "conv_writes_server_runid"
+    streamChatMock.mockImplementationOnce(async () => "No files generated.")
+
+    const watcher = watchEvents(sessionId)
+    try {
+      const res = await request(app).post(writesUrl()).send({ sessionId })
+      expect(res.status).toBe(200)
+      expect(res.body.runId).toBeTypeOf("string")
+      expect(res.body.runId.length).toBeGreaterThan(0)
+      await watcher.waitDone()
+      for (const frame of watcher.frames) {
+        expect(frame.runId).toBe(res.body.runId)
+      }
+    } finally {
+      watcher.unsub()
+    }
+  })
+})
+
 describe("POST /:id/chat/writes — outputLanguage parity", () => {
   // Client parity (src/lib/output-language.ts getOutputLanguage): an
   // explicitly configured outputLanguage wins; "auto" falls back to

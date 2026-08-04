@@ -714,9 +714,17 @@ async function tryReadFile(path) {
  * extracted images are still salvageable, and the rare case where
  * the LLM wrote the source page under a slightly-different slug
  * that didn't match `${sourceBaseName}.md`).
+ *
+ * Returns `{ path, created }` when a write ACTUALLY landed — `path` is the
+ * project-relative summary path, `created` is true when the page did not
+ * exist before the write (stub branch) and false for an in-place rewrite.
+ * Returns null when nothing was written: no images, or the write failed
+ * (errors are swallowed here, so callers gating file:* events on the return
+ * value never emit for a write that didn't happen). Callers that don't care
+ * (pipeline) ignore the return value as before.
  */
 export async function injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages) {
-  if (savedImages.length === 0) return
+  if (savedImages.length === 0) return null
   const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
   const sourceSummaryFullPath = `${pp}/${sourceSummaryPath}`
   console.log(`[ingest:diag] injectImagesIntoSourceSummary: target=${sourceSummaryFullPath}, images=${savedImages.length}`)
@@ -773,10 +781,14 @@ export async function injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSu
     console.log(
       `[ingest:images] injected ${savedImages.length} image reference(s) into ${sourceSummaryPath}`,
     )
+    // Report the actual write (PR #29 review round 2): created-vs-modified
+    // follows pre-write existence — the stub branch above CREATES the page.
+    return { path: sourceSummaryPath, created: !existing }
   } catch (err) {
     console.warn(
       `[ingest:images] failed to append images to ${sourceSummaryPath}:`,
       err instanceof Error ? err.message : err,
     )
+    return null
   }
 }

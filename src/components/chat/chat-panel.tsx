@@ -1614,14 +1614,23 @@ export function ChatPanel() {
       // of executeIngestWrites builds the write prompt, persists it as the
       // user row and streams the generation back as agent-event frames.
       const sourcePath = useChatStore.getState().ingestSource ?? undefined
-      const { runId, writePrompt } = await chatWrites(project.id, {
+      // Generate the run id CLIENT-side (same ui-… shape as handleSend) and
+      // tombstone it BEFORE the invoke (PR #29 review round 2, tombstone
+      // race): the server starts emitting chat:delta as soon as the async
+      // run is scheduled, which races the POST response — registering a
+      // server-generated id only after the response would let a first delta
+      // double-apply tokens in this tab. The route echoes this id back as
+      // the response runId.
+      const runId = `ui-${Date.now()}-${++runIdRef.current}`
+      // SSE taxonomy stage 6: tombstone the run id — this tab renders the
+      // run via the agent-event listener below, so sse-sync must skip its
+      // chat:* wire frames (see handleSend).
+      useChatStore.getState().registerOwnedRun(runId, convId)
+      const { writePrompt } = await chatWrites(project.id, {
         sessionId: convId,
+        runId,
         ...(sourcePath ? { sourcePath } : {}),
       })
-      // SSE taxonomy stage 6: tombstone the server-assigned run id — this
-      // tab renders the run via the agent-event listener below, so sse-sync
-      // must skip its chat:* wire frames (see handleSend).
-      useChatStore.getState().registerOwnedRun(runId, convId)
 
       // Mirror the local streaming bookkeeping executeIngestWrites did:
       // user writePrompt row, then a live stream buffer fed by this run's

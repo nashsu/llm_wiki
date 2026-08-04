@@ -86,6 +86,12 @@ export const ChatWritesBodySchema = z.object({
   sessionId: z.string().min(1),
   userGuidance: z.string().optional(),
   sourcePath: z.string().optional(),
+  // Client-generated run id (PR #29 review round 2, tombstone race): the
+  // owning tab tombstones this id BEFORE the request resolves so sse-sync
+  // skips the run's chat:* frames from the very first delta — a
+  // server-generated id only reaches the tab with the POST response, racing
+  // the frames. Absent ⇒ the server generates one (legacy callers).
+  runId: z.string().min(1).optional(),
 })
 
 export const ChatWritesResponseSchema = z.object({

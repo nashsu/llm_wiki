@@ -269,7 +269,7 @@ router.post(
   validate({ body: ChatWritesBodySchema }),
   async (req, res, next) => {
     try {
-      const { sessionId, userGuidance, sourcePath } = req.validated.body
+      const { sessionId, userGuidance, sourcePath, runId: clientRunId } = req.validated.body
 
       const store = readStore("app-state.json")
       const llmConfig = resolveChatConfig(store)
@@ -348,7 +348,15 @@ router.post(
         .filter(Boolean)
         .join("\n\n")
 
-      const runId = crypto.randomUUID()
+      // Use the client-supplied runId when provided (PR #29 review round 2,
+      // tombstone race): the owning tab registers its owned-run tombstone
+      // BEFORE this request resolves, so sse-sync skips the run's chat:*
+      // frames from the very first delta. With a server-generated id the
+      // tombstone lands only with the POST response while the async run
+      // already streams — a first delta before registration double-applies
+      // tokens in the owning tab. Server-generated fallback keeps callers
+      // that don't send one.
+      const runId = clientRunId ?? crypto.randomUUID()
 
       // Run asynchronously; the route returns the runId immediately and the
       // UI awaits the "done" event on the SSE stream (agentStartTurnStream
@@ -443,16 +451,22 @@ router.post(
               sourceSummarySlug,
             )
             if (savedImages.length > 0) {
-              await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
-              // The injection rewrote wiki/sources/<slug>.md AFTER the
-              // FILE-block emit loop above — emit file:modified so the
+              const injection = await injectImagesIntoSourceSummary(pp, sourceIdentity, sourceSummarySlug, savedImages)
+              // The injection rewrites wiki/sources/<slug>.md AFTER the
+              // FILE-block emit loop above — emit a file:* frame so the
               // trees refresh for the rewrite too (plans/sse-taxonomy.md
-              // stage 3). Attribution as in the loop: emit() bridge keeps
-              // the envelope projectId null; it rides in the payload.
-              emit(EventTypes.FILE_MODIFIED, {
-                projectId: req.projectId,
-                path: `wiki/sources/${sourceSummarySlug}.md`,
-              })
+              // stage 3). Emit only when the injection ACTUALLY wrote: it
+              // swallows its own write errors and reports null then (PR #29
+              // review round 2). created-vs-modified follows pre-write
+              // existence: the stub branch CREATES the page. Attribution as
+              // in the loop: emit() bridge keeps the envelope projectId
+              // null; it rides in the payload.
+              if (injection) {
+                emit(injection.created ? EventTypes.FILE_CREATED : EventTypes.FILE_MODIFIED, {
+                  projectId: req.projectId,
+                  path: injection.path,
+                })
+              }
             }
             // DEVIATION from the client: it deletes the extraction promise
             // from its module map in `finally` here. The server's images.js

@@ -247,6 +247,137 @@ describe("sse-sync chat scoping (SSE taxonomy stage 6)", () => {
     expect(messages[0].role).toBe("assistant")
     expect(messages[0].content).toBe("Error: llm exploded")
   })
+
+  it("maps knowledgeContext.relatedTo into graphRelations (chat-panel reference parity)", async () => {
+    const dispatch = await startSync()
+
+    // chat-panel's backendReferenceToMessageReference maps
+    // knowledgeContext.relatedTo → graphRelations; toMessageReferences must
+    // mirror it so cross-tab finalized messages carry identical metadata.
+    dispatch({
+      event: "chat:done",
+      payload: {
+        sessionId: "conv-1",
+        runId: "srv-run",
+        projectId: 7,
+        content: "answer with refs",
+        references: [
+          {
+            title: "Page",
+            path: "wiki/page.md",
+            kind: "wiki",
+            snippet: "snip",
+            knowledgeContext: { relatedTo: ["wiki/alpha.md", "wiki/beta.md"], tags: ["x"] },
+          },
+          { title: "Plain", path: "wiki/plain.md", kind: "wiki" },
+        ],
+      },
+    })
+
+    const state = useChatStore.getState()
+    const messages = state.messages.filter((m) => m.conversationId === "conv-1")
+    expect(messages).toHaveLength(1)
+    expect(messages[0].references).toEqual([
+      {
+        title: "Page",
+        path: "wiki/page.md",
+        kind: "wiki",
+        snippet: "snip",
+        graphRelations: ["wiki/alpha.md", "wiki/beta.md"],
+      },
+      { title: "Plain", path: "wiki/plain.md", kind: "wiki" },
+    ])
+  })
+})
+
+describe("sse-sync foreign-conversation leak guard (PR #29 review round 2)", () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      conversations: [
+        { id: "conv-1", title: "One", createdAt: 1, updatedAt: 1 },
+        { id: "conv-2", title: "Two", createdAt: 1, updatedAt: 1 },
+      ],
+      activeConversationId: "conv-1",
+    })
+  })
+
+  it("drops deltas for a second conversation while one is streaming; the streaming conversation's done finalizes", async () => {
+    const dispatch = await startSync()
+
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, text: "Hello " } })
+    // Conversation Y streams while conversation X owns the buffer: Y's
+    // tokens must NOT render live under the active conversation.
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, text: "FOREIGN" } })
+
+    let state = useChatStore.getState()
+    expect(state.isStreaming).toBe(true)
+    expect(state.streamingContent).toBe("Hello ")
+
+    // The streaming conversation's own done finalizes (and releases the
+    // lock).
+    dispatch({
+      event: "chat:done",
+      payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, content: "Hello world", references: [] },
+    })
+
+    state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    expect(state.streamingContent).toBe("")
+    expect(state.messages.filter((m) => m.conversationId === "conv-1")).toHaveLength(1)
+    expect(state.messages.filter((m) => m.conversationId === "conv-2")).toHaveLength(0)
+  })
+
+  it("a late done for a non-streaming conversation does not clear active stream state", async () => {
+    const dispatch = await startSync()
+
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, text: "act" } })
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, text: "ive" } })
+
+    // conv-2's run finishes elsewhere; its done must not finalize or reset
+    // the buffer conv-1 is previewing (and adds no message here).
+    dispatch({
+      event: "chat:done",
+      payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, content: "foreign done", references: [] },
+    })
+
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(true)
+    expect(state.streamingContent).toBe("active")
+    expect(state.messages).toEqual([])
+  })
+
+  it("foreign done frames cannot clear an owned run's stream state mid-flight", async () => {
+    const dispatch = await startSync()
+    // This tab owns a run in conv-1 and renders it via agent-event: the
+    // global buffer is busy while sse-sync never adopted a conversation.
+    useChatStore.getState().registerOwnedRun("ui-owned-1", "conv-1")
+    useChatStore.setState({ isStreaming: true, streamingContent: "owned tokens" })
+
+    // The owned run's own frames are tombstone-skipped; a foreign run's
+    // terminal frames must not touch the owned run's buffer.
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, text: "FOREIGN" } })
+    dispatch({ event: "chat:done", payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, content: "" } })
+
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(true)
+    expect(state.streamingContent).toBe("owned tokens")
+    expect(state.messages).toEqual([])
+  })
+
+  it("releases the lock on finalize: a later run of another conversation can adopt the buffer", async () => {
+    const dispatch = await startSync()
+
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, text: "one" } })
+    dispatch({ event: "chat:done", payload: { sessionId: "conv-1", runId: "srv-a", projectId: 7, content: "one", references: [] } })
+
+    dispatch({ event: "chat:delta", payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, text: "two" } })
+    expect(useChatStore.getState().streamingContent).toBe("two")
+    dispatch({ event: "chat:done", payload: { sessionId: "conv-2", runId: "srv-b", projectId: 7, content: "two", references: [] } })
+
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    expect(state.messages.filter((m) => m.conversationId === "conv-2")).toHaveLength(1)
+  })
 })
 
 describe("sse-sync file refresh debounce (SSE taxonomy stage 6)", () => {

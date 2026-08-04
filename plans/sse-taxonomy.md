@@ -133,9 +133,14 @@ Already handled: `file:*` → refreshWiki; `ingest:*` → project-scoped stores;
      chat-store `ownedRunIds` tombstone set (added when the panel begins a
      turn, cleared on conversation delete — never on finalize, to survive the
      done-frame race on the shared SSE stream). sse-sync skips any frame whose
-     `runId` is owned locally. Cross-tab: a tab that did NOT start the run
-     applies `chat:delta` → `appendStreamToken` (live preview) and `chat:done`
-     → `finalizeStreamForConversation(sessionId, content, references)`.
+     `runId` is owned locally. Accepted trade-off: ownedRunIds grows
+     unbounded within a long-lived conversation — tombstones must survive the
+     done-frame race and are only cleared on deleteConversation +
+     resetProjectState, so growth is bounded by conversation lifetime, and
+     the O(n) includes() check is acceptable at v1 turn counts. Cross-tab: a
+     tab that did NOT start the run applies `chat:delta` →
+     `appendStreamToken` (live preview) and `chat:done` →
+     `finalizeStreamForConversation(sessionId, content, references)`.
    - Keys: read charter `text` (delta) / `content` (done), keeping today's
      `token/delta/content` fallbacks.
    - `chat:toolStart/toolEnd`: no store target today — explicit documented

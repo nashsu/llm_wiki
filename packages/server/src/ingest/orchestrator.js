@@ -185,12 +185,16 @@ async function processTask(row) {
     // ONE aggregate graph:updated per successful task (plans/sse-taxonomy.md
     // stage 4): wiki pages changed ⇒ client graph caches are stale. The
     // orchestrator only holds written PATHS (the pipeline streams page
-    // contents straight to disk), so edgesChanged is unknown ⇒ 0.
-    emit(EventTypes.GRAPH_UPDATED, {
-      projectId: row.project_id,
-      nodesChanged: result.writtenPaths.length,
-      edgesChanged: 0,
-    })
+    // contents straight to disk), so edgesChanged is unknown ⇒ 0. Nothing
+    // written ⇒ no graph change ⇒ no frame — gated on writtenPaths.length > 0
+    // for parity with the cancel-cleanup and chat/writes emit sites.
+    if (result.writtenPaths.length > 0) {
+      emit(EventTypes.GRAPH_UPDATED, {
+        projectId: row.project_id,
+        nodesChanged: result.writtenPaths.length,
+        edgesChanged: 0,
+      })
+    }
   } catch (err) {
     const cancelled = err?.message === "Ingest cancelled" && !getIngestTask(row.id)
     if (cancelled) return // cancelIngestTask already deleted + cleaned up
