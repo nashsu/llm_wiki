@@ -8,7 +8,10 @@
 // the client project UUID (WikiProject.id), so callers pass whatever they
 // hold — the web client passes the UUID.
 
+import type { ChatWritesBody, ChatWritesResponse } from "@llm-wiki/api-types"
 import { request } from "./client"
+
+export type { ChatWritesBody, ChatWritesResponse }
 
 export interface ChatTools {
   wiki?: boolean
@@ -96,6 +99,23 @@ export function cancelChat(projectId: number | string, runId: string): Promise<C
     `/api/v2/projects/${projectId}/chat/${encodeURIComponent(runId)}/cancel`,
     { method: "POST" },
   )
+}
+
+/**
+ * POST /api/v2/projects/:id/chat/writes — chat "Write to Wiki" (issue #14
+ * P0). Server port of the deleted executeIngestWrites: builds the write
+ * prompt from the persisted session history, persists it as the user row,
+ * then streams the generation as agent-event frames (messageDelta /
+ * wikiWrites / done / error) keyed by the returned runId.
+ */
+export function chatWrites(
+  projectId: number | string,
+  body: ChatWritesBody,
+): Promise<ChatWritesResponse> {
+  return request<ChatWritesResponse>(`/api/v2/projects/${projectId}/chat/writes`, {
+    method: "POST",
+    json: body,
+  })
 }
 
 /** GET /api/v2/projects/:id/chat/sessions — list sessions, most recent first */

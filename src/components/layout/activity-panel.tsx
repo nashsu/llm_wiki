@@ -1,25 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
-  RotateCcw, X, Clock, TrendingUp, Target, Pause, Play,
+  RotateCcw, X, Clock, TrendingUp, Target,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
+import type { IngestTask } from "@/api/ingest"
 import { normalizePath, getFileName, isAbsolutePath } from "@/lib/path-utils"
-import {
-  getQueue,
-  getQueueSummary,
-  retryTask,
-  retryAllFailedTasks,
-  cancelTask,
-  cancelAllTasks,
-  pauseProcessing,
-  resumeProcessing,
-  type IngestTask,
-} from "@/lib/ingest-queue"
 import {
   ignoreFileChangeTask,
   rescanProjectFiles,
@@ -78,72 +69,63 @@ export function ActivityPanel() {
   const fileSyncTasks = useFileSyncStore((s) => s.tasks)
   const setFileSyncTasks = useFileSyncStore((s) => s.setTasks)
   const fileSyncError = useFileSyncStore((s) => s.lastError)
+  const queueTasks = useServerIngestStore((s) => s.tasks)
+  const projectId = project?.id ?? null
   const [expanded, setExpanded] = useState(false)
-  const [queueTasks, setQueueTasks] = useState<IngestTask[]>(() => [...getQueue()])
   const prevRunningRef = useRef(0)
 
   const runningCount = items.filter((i) => i.status === "running").length
   const hasItems = items.length > 0
 
-  // Poll queue state
+  // Server-driven ingest (issue #14 P0 stage 9): the queue lives in SQLite on
+  // the server. Load it for the active project and keep it fresh with a slow
+  // poll; SSE (sse-sync) patches it live between polls.
   useEffect(() => {
+    if (!projectId) return
+    void useServerIngestStore.getState().loadQueue(projectId)
     const interval = setInterval(() => {
-      setQueueTasks([...getQueue()])
-    }, 1000)
+      void useServerIngestStore.getState().loadQueue(projectId)
+    }, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [projectId])
 
-  const queueSummary = getQueueSummary()
+  const queueSummary = useMemo(() => {
+    const pending = queueTasks.filter((t) => t.status === "pending").length
+    const processing = queueTasks.filter((t) => t.status === "processing").length
+    const failed = queueTasks.filter((t) => t.status === "failed").length
+    const completed = queueTasks.filter((t) => t.status === "completed").length
+    return { pending, processing, failed, completed, total: queueTasks.length }
+  }, [queueTasks])
   const hasQueue = queueSummary.total > 0
-  const shouldResumeQueue =
-    queueSummary.userPaused ||
-    (queueSummary.restoredBacklogWaiting && queueSummary.processing === 0)
   const hasFileSync = fileSyncTasks.length > 0 || Boolean(fileSyncError)
   const fileSyncPending = fileSyncTasks.filter((t) => t.status === "pending").length
   const fileSyncProcessing = fileSyncTasks.filter((t) => t.status === "processing").length
   const fileSyncFailed = fileSyncTasks.filter((t) => t.status === "failed").length
 
-  // All hooks must be before any conditional return.
-  // retryTask / cancelTask / cancelAllTasks all operate on the currently
-  // active project implicitly (via module-scoped state in ingest-queue.ts)
-  // — they take NO projectPath argument. An earlier version passed one in
-  // and the extra arg silently became "taskId", making retry a no-op for
-  // every failed task. Keep this minimal.
-  const handleIngestRetry = useCallback((taskId: string) => {
-    if (!project) return
-    retryTask(taskId)
-  }, [project])
+  // All hooks must be before any conditional return. Queue actions go through
+  // server-ingest-store, which targets the active project and refreshes the
+  // list after each REST call.
+  const handleIngestRetry = useCallback((taskId: number) => {
+    if (!projectId) return
+    void useServerIngestStore.getState().retry(taskId)
+  }, [projectId])
 
   const handleRetryAllFailed = useCallback(() => {
-    if (!project) return
-    void retryAllFailedTasks()
-      .then(() => setQueueTasks([...getQueue()]))
-      .catch((err) => {
-        console.error("[activity-panel] failed to retry failed ingest tasks:", err)
-      })
-  }, [project])
+    if (!projectId) return
+    void useServerIngestStore.getState().retryAllFailed().catch((err) => {
+      console.error("[activity-panel] failed to retry failed ingest tasks:", err)
+    })
+  }, [projectId])
 
-  const handleIngestCancel = useCallback((taskId: string) => {
-    if (!project) return
-    cancelTask(taskId)
-  }, [project])
+  const handleIngestCancel = useCallback((taskId: number) => {
+    if (!projectId) return
+    void useServerIngestStore.getState().cancel(taskId)
+  }, [projectId])
 
-  const handleCancelAll = useCallback(() => {
-    if (!project) return
-    const activeCount = queueSummary.pending + queueSummary.processing
-    if (activeCount === 0) return
-    if (!window.confirm(t("activity.cancelAllConfirm", { count: activeCount }))) return
-    cancelAllTasks()
-  }, [project, queueSummary.pending, queueSummary.processing, t])
-
-  const handleTogglePause = useCallback(() => {
-    if (!project) return
-    if (shouldResumeQueue) {
-      resumeProcessing()
-    } else {
-      pauseProcessing()
-    }
-  }, [project, shouldResumeQueue])
+  const handleClearFinished = useCallback(() => {
+    if (!projectId) return
+    void useServerIngestStore.getState().clearFinished()
+  }, [projectId])
 
   const handleFileSyncRescan = useCallback(() => {
     if (!project) return
@@ -265,44 +247,13 @@ export function ActivityPanel() {
           {hasQueue && (queueSummary.processing > 0 || queueSummary.pending > 0) && (
             <div className="px-3 py-1.5 border-b border-border/50">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1 gap-2">
-                <span>
-                  {queueSummary.paused && queueSummary.processing === 0
-                    ? t("activity.ingestQueuePaused")
-                    : t("activity.ingestQueue")}
-                </span>
+                <span>{t("activity.ingestQueue")}</span>
                 <span className="flex-1 text-right">
                   {t("activity.queueCompleteCount", {
                     done: queueSummary.completed + queueSummary.failed,
                     total: queueSummary.total,
                   })}
                 </span>
-                {(queueSummary.processing > 0 || queueSummary.pending > 0 || queueSummary.paused) && (
-                  <button
-                    onClick={handleTogglePause}
-                    className="flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
-                    title={
-                      shouldResumeQueue
-                        ? t("activity.resumeQueueTitle")
-                        : t("activity.pauseQueueTitle")
-                    }
-                  >
-                    {shouldResumeQueue
-                      ? <Play className="h-2.5 w-2.5" />
-                      : <Pause className="h-2.5 w-2.5" />}
-                    {shouldResumeQueue
-                      ? t("activity.resumeQueue")
-                      : t("activity.pauseQueue")}
-                  </button>
-                )}
-                {queueSummary.pending + queueSummary.processing >= 2 && (
-                  <button
-                    onClick={handleCancelAll}
-                    className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
-                    title={t("activity.cancelAllTitle")}
-                  >
-                    {t("activity.cancelAll")}
-                  </button>
-                )}
                 {queueSummary.failed > 0 && (
                   <button
                     onClick={handleRetryAllFailed}
@@ -340,7 +291,7 @@ export function ActivityPanel() {
             </div>
           )}
 
-          {/* Queue tasks */}
+          {/* Queue tasks (server-driven; pending/processing/failed shown live). */}
           {queueTasks.filter((t) => t.status === "processing").map((task) => (
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
@@ -350,12 +301,21 @@ export function ActivityPanel() {
           {queueTasks.filter((t) => t.status === "failed").map((task) => (
             <QueueRow key={task.id} task={task} onRetry={handleIngestRetry} onCancel={handleIngestCancel} />
           ))}
+          {/* Clear finished (completed/failed) rows from the server queue. */}
+          {hasQueue && queueSummary.completed + queueSummary.failed > 0 && (
+            <button
+              onClick={handleClearFinished}
+              className="w-full px-3 py-1 text-center text-[10px] text-muted-foreground hover:underline"
+            >
+              {t("activity.clearCompleted")}
+            </button>
+          )}
 
           {/* Activity items */}
           {items.map((item) => {
             // Find matching queue task for cancel button
             const matchingTask = item.status === "running"
-              ? queueTasks.find((t) => t.status === "processing" && getFileName(t.sourcePath) === item.title)
+              ? queueTasks.find((t) => t.status === "processing" && getFileName(t.file_path) === item.title)
               : undefined
             return (
               <ActivityRow
@@ -379,9 +339,9 @@ export function ActivityPanel() {
   )
 }
 
-function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id: string) => void; onCancel: (id: string) => void }) {
+function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id: number) => void; onCancel: (id: number) => void }) {
   const { t } = useTranslation()
-  const fileName = getFileName(task.sourcePath)
+  const fileName = getFileName(task.file_path)
 
   return (
     <div className="px-3 py-2 text-xs border-b border-border/50">
@@ -393,8 +353,8 @@ function QueueRow({ task, onRetry, onCancel }: { task: IngestTask; onRetry: (id:
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-medium truncate">{fileName}</div>
-          {task.folderContext && (
-            <div className="text-[10px] text-muted-foreground/70 truncate">{task.folderContext}</div>
+          {task.folder_context && (
+            <div className="text-[10px] text-muted-foreground/70 truncate">{task.folder_context}</div>
           )}
           {task.status === "failed" && task.error && (
             <div className="text-[10px] text-destructive mt-0.5 truncate">{task.error}</div>

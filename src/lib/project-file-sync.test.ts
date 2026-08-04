@@ -83,7 +83,8 @@ const mocks = vi.hoisted(() => {
     writeFile: vi.fn(async () => undefined),
     deleteFile: vi.fn(async () => undefined),
     findRelatedWikiPages: vi.fn(async () => []),
-    enqueueBatch: vi.fn(async () => []),
+    enqueueByPath: vi.fn(async () => ({ taskId: 1, filePath: "", status: "pending" })),
+    loadQueue: vi.fn(async () => undefined),
     removeFromIngestCache: vi.fn(async () => undefined),
     moveIngestCacheEntry: vi.fn(async () => undefined),
     removePageEmbedding: vi.fn(async () => undefined),
@@ -114,8 +115,14 @@ vi.mock("@/commands/fs", () => ({
   findRelatedWikiPages: mocks.findRelatedWikiPages,
 }))
 
-vi.mock("@/lib/ingest-queue", () => ({
-  enqueueBatch: mocks.enqueueBatch,
+vi.mock("@/api/ingest", () => ({
+  enqueueByPath: mocks.enqueueByPath,
+}))
+
+vi.mock("@/stores/server-ingest-store", () => ({
+  useServerIngestStore: {
+    getState: () => ({ loadQueue: mocks.loadQueue }),
+  },
 }))
 
 vi.mock("@/lib/ingest-cache", () => ({
@@ -153,7 +160,7 @@ describe("project file sync", () => {
     mocks.writeFile.mockImplementation(async () => undefined)
     mocks.deleteFile.mockImplementation(async () => undefined)
     mocks.findRelatedWikiPages.mockImplementation(async () => [])
-    mocks.enqueueBatch.mockImplementation(async () => [])
+    mocks.enqueueByPath.mockImplementation(async () => ({ taskId: 1, filePath: "", status: "pending" }))
     mocks.removeFromIngestCache.mockImplementation(async () => undefined)
     mocks.moveIngestCacheEntry.mockImplementation(async () => undefined)
     mocks.removePageEmbedding.mockImplementation(async () => undefined)
@@ -251,9 +258,7 @@ describe("project file sync", () => {
 
     await vi.advanceTimersByTimeAsync(250)
 
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
-      { sourcePath: "raw/sources/report.pdf", folderContext: "" },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("A", "raw/sources/report.pdf", "")
   })
 
   it("migrates an unchanged source move without deleting or re-ingesting it", async () => {
@@ -288,7 +293,7 @@ describe("project file sync", () => {
       "new/report.md",
       expect.any(Map),
     )
-    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.enqueueByPath).not.toHaveBeenCalled()
     expect(mocks.deleteFile).not.toHaveBeenCalled()
   })
 
@@ -313,9 +318,7 @@ describe("project file sync", () => {
     await vi.advanceTimersByTimeAsync(300)
 
     expect(mocks.moveIngestCacheEntry).not.toHaveBeenCalled()
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
-      { sourcePath: "raw/sources/c.md", folderContext: "" },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("A", "raw/sources/c.md", "")
   })
 
   it("does not infer moves for tiny identical files", async () => {
@@ -362,7 +365,7 @@ describe("project file sync", () => {
     await vi.advanceTimersByTimeAsync(300)
 
     expect(mocks.moveIngestCacheEntry).not.toHaveBeenCalled()
-    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.enqueueByPath).not.toHaveBeenCalled()
     expect(mocks.deleteFile).not.toHaveBeenCalled()
   })
 
@@ -398,7 +401,7 @@ describe("project file sync", () => {
 
     await vi.advanceTimersByTimeAsync(250)
 
-    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.enqueueByPath).not.toHaveBeenCalled()
   })
 
   it("manual rescan uses the same source ingest flow when the watcher is stopped", async () => {
@@ -433,9 +436,7 @@ describe("project file sync", () => {
       "/tmp/a",
       expect.objectContaining({ enabled: true, autoIngest: true }),
     )
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
-      { sourcePath: "raw/sources/manual.pdf", folderContext: "" },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("A", "raw/sources/manual.pdf", "")
   })
 
   it("enqueues existing XML when source watch restarts with xml newly allowed", async () => {
@@ -481,9 +482,7 @@ describe("project file sync", () => {
         includeExtensions: expect.arrayContaining(["xml"]),
       }),
     )
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
-      { sourcePath: "raw/sources/existing.xml", folderContext: "" },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("A", "raw/sources/existing.xml", "")
   })
 
   it("does not suppress a retried file-change task that reuses the same id", async () => {
@@ -515,7 +514,7 @@ describe("project file sync", () => {
       tasks: [{ ...baseTask, updatedAt: 1 }],
     })
     await vi.advanceTimersByTimeAsync(300)
-    expect(mocks.enqueueBatch).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(1)
 
     mocks.emit("file-sync://changed", {
       projectId: "A",
@@ -523,7 +522,7 @@ describe("project file sync", () => {
     })
     await vi.advanceTimersByTimeAsync(300)
 
-    expect(mocks.enqueueBatch).toHaveBeenCalledTimes(2)
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(2)
   })
 
   it("manual rescan uses returned changed tasks while the watcher is running", async () => {
@@ -556,9 +555,7 @@ describe("project file sync", () => {
 
     await rescanProjectFileSync(project)
 
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
-      { sourcePath: "raw/sources/watcher-running.pdf", folderContext: "" },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("A", "raw/sources/watcher-running.pdf", "")
   })
 
   it("manual rescan ignores changed tasks after project switch", async () => {
@@ -590,7 +587,7 @@ describe("project file sync", () => {
 
     await rescanProjectFileSync(projectA)
 
-    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.enqueueByPath).not.toHaveBeenCalled()
   })
 
   it("manual rescan refreshes the file tree when no files changed", async () => {
@@ -631,7 +628,7 @@ describe("project file sync", () => {
 
     await rescanProjectFileSync(project, { autoIngest: false } as never)
 
-    expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    expect(mocks.enqueueByPath).not.toHaveBeenCalled()
   })
 
   it("removes an externally deleted raw source from every wiki page sources field", async () => {

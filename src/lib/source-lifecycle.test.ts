@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   getFileSize: vi.fn(),
   listDirectory: vi.fn(),
   preprocessFile: vi.fn(),
-  enqueueBatch: vi.fn(),
+  enqueueByPath: vi.fn(),
+  loadQueue: vi.fn(),
 }))
 
 vi.mock("@/commands/fs", async () => {
@@ -25,8 +26,14 @@ vi.mock("@/commands/fs", async () => {
   }
 })
 
-vi.mock("@/lib/ingest-queue", () => ({
-  enqueueBatch: mocks.enqueueBatch,
+vi.mock("@/api/ingest", () => ({
+  enqueueByPath: mocks.enqueueByPath,
+}))
+
+vi.mock("@/stores/server-ingest-store", () => ({
+  useServerIngestStore: {
+    getState: () => ({ loadQueue: mocks.loadQueue }),
+  },
 }))
 
 import {
@@ -46,7 +53,8 @@ beforeEach(() => {
   mocks.getFileSize.mockResolvedValue(1024)
   mocks.listDirectory.mockResolvedValue([])
   mocks.preprocessFile.mockResolvedValue("")
-  mocks.enqueueBatch.mockResolvedValue(["task"])
+  mocks.enqueueByPath.mockResolvedValue({ taskId: 1, filePath: "raw/sources/x.md", status: "pending" })
+  mocks.loadQueue.mockResolvedValue(undefined)
 })
 
 describe("source-lifecycle path helpers", () => {
@@ -110,12 +118,8 @@ describe("source-lifecycle path helpers", () => {
     expect(mocks.deleteFile).not.toHaveBeenCalled()
     expect(mocks.preprocessFile).toHaveBeenCalledOnce()
     expect(mocks.preprocessFile).toHaveBeenCalledWith("/project/raw/sources/imported/keep.md")
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
-      {
-        sourcePath: "/project/raw/sources/imported/keep.md",
-        folderContext: "imported",
-      },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("p1", "raw/sources/imported/keep.md", "imported")
   })
 
   it("does not import config-like files from hidden tool folders", async () => {
@@ -233,12 +237,8 @@ describe("source-lifecycle path helpers", () => {
     expect(mocks.copyFile).toHaveBeenCalledTimes(1)
     expect(mocks.copyFile).toHaveBeenCalledWith("/external/ready.md", "/project/raw/sources/ready.md")
     expect(mocks.copyFile).not.toHaveBeenCalledWith("/external/drafts/spec.md", expect.anything())
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
-      {
-        sourcePath: "/project/raw/sources/ready.md",
-        folderContext: "",
-      },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("p1", "raw/sources/ready.md", "")
   })
 
   it("allows an explicitly selected ebook with an older watch include-list", async () => {
@@ -289,13 +289,9 @@ describe("source-lifecycle path helpers", () => {
       } as never,
     )
 
-    expect(queued).toEqual(["task"])
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
-      {
-        sourcePath: "/project/raw/sources/notes.md",
-        folderContext: "",
-      },
-    ])
+    expect(queued).toEqual(["1"])
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(1)
+    expect(mocks.enqueueByPath).toHaveBeenCalledWith("p1", "raw/sources/notes.md", "")
   })
 
   it("naturally orders imported folder files before enqueueing ingest tasks", async () => {
@@ -332,19 +328,9 @@ describe("source-lifecycle path helpers", () => {
       "/project/raw/sources/imported/2.md",
       "/project/raw/sources/imported/10.md",
     ])
-    expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
-      {
-        sourcePath: "/project/raw/sources/imported/1.md",
-        folderContext: "imported",
-      },
-      {
-        sourcePath: "/project/raw/sources/imported/2.md",
-        folderContext: "imported",
-      },
-      {
-        sourcePath: "/project/raw/sources/imported/10.md",
-        folderContext: "imported",
-      },
-    ])
+    expect(mocks.enqueueByPath).toHaveBeenCalledTimes(3)
+    expect(mocks.enqueueByPath).toHaveBeenNthCalledWith(1, "p1", "raw/sources/imported/1.md", "imported")
+    expect(mocks.enqueueByPath).toHaveBeenNthCalledWith(2, "p1", "raw/sources/imported/2.md", "imported")
+    expect(mocks.enqueueByPath).toHaveBeenNthCalledWith(3, "p1", "raw/sources/imported/10.md", "imported")
   })
 })

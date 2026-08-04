@@ -10,8 +10,10 @@
 //   - extractGeneratedPageTitle                  (~1439)
 //   - rewriteIngestPathFromTitleForTargetLanguage (~1446)
 //   - buildPageMerger                            (~2908)
-// plus their private helpers (isLogPath, isListingPath,
+// plus their helpers (isLogPath, isListingPath,
 // contentMatchesTargetLanguage, CJK_OUTPUT_LANGUAGES, containsCjk).
+// writeFileEnsuringDirs / isLogPath / isListingPath are exported for the
+// chat "Write to Wiki" route (api/chat.js — executeIngestWrites port).
 //
 // Port deviations (all mandated by the server-ingest assignment):
 //   1. useWikiStore.getState().outputLanguage → an explicit
@@ -74,8 +76,12 @@ export function throwIfIngestAborted(signal) {
  * Rust command creates parent directories before writing
  * (fs::create_dir_all in src-tauri/src/commands/fs.rs::write_file),
  * so this helper must too.
+ *
+ * Exported for the chat "Write to Wiki" route (api/chat.js), which does
+ * the client's NAIVE per-block writes (executeIngestWrites port) instead
+ * of going through writeFileBlocks.
  */
-async function writeFileEnsuringDirs(filePath, contents) {
+export async function writeFileEnsuringDirs(filePath, contents) {
   await mkdir(dirname(filePath), { recursive: true })
   await writeFile(filePath, contents, "utf8")
 }
@@ -122,11 +128,13 @@ function contentMatchesTargetLanguage(content, target) {
   return !detectedIsCjk
 }
 
-function isLogPath(relativePath) {
+// Exported for the chat "Write to Wiki" route (api/chat.js), which needs
+// the log/listing distinctions for the client's naive write semantics.
+export function isLogPath(relativePath) {
   return relativePath === "wiki/log.md" || relativePath.endsWith("/log.md")
 }
 
-function isListingPath(relativePath) {
+export function isListingPath(relativePath) {
   return (
     relativePath === "wiki/index.md" ||
     relativePath.endsWith("/index.md") ||

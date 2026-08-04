@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useServerIngestStore } from "@/stores/server-ingest-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
 import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
@@ -612,13 +613,12 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
 
-      // Full auto-ingest: extract entities, concepts, cross-references from saved content
+      // Full auto-ingest: extract entities, concepts, cross-references from
+      // saved content. Server-driven (issue #14 P0 stage 9) — enqueue the
+      // saved query page; the server pipeline does the extraction.
       const llmConfig = getTaskLlmConfig("ingest")
       if (hasUsableLlm(llmConfig)) {
-        const { autoIngest } = await import("@/lib/ingest")
-        autoIngest(pp, filePath, llmConfig).catch((err) =>
-          console.error("Failed to auto-ingest saved query:", err)
-        )
+        void useServerIngestStore.getState().enqueue(`wiki/queries/${fileName}`)
       }
     } catch (err) {
       console.error("Failed to save to wiki:", err)

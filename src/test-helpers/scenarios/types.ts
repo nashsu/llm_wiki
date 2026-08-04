@@ -96,42 +96,6 @@ export interface EnrichScenario {
 }
 
 /**
- * Ingest scenarios exercise autoIngest end-to-end: a source document plus
- * existing project state, through two LLM calls (analysis + generation),
- * to the files written on disk and the review items injected into the store.
- */
-export interface IngestScenario {
-  name: string
-  description: string
-  /** Project state before ingest runs (purpose.md, schema.md, wiki/*.md). */
-  initialWiki: Record<string, string>
-  /** The source document being ingested. */
-  source: {
-    /** Project-relative path, e.g. "raw/sources/paper.md" */
-    path: string
-    content: string
-  }
-  /** Raw LLM response for stage 1 (analysis). */
-  analysisResponse: string
-  /** Raw LLM response for stage 2 (generation — contains FILE + REVIEW blocks). */
-  generationResponse: string
-  expected: {
-    /** File paths (relative to project root) that must be written. */
-    writtenPaths: string[]
-    /** Substring matches for specific files (path → list of substrings to find). */
-    fileContains?: Record<string, string[]>
-    /**
-     * Expected review items (subset match). Each entry matches if an injected
-     * review has the same type and a title containing titleContains.
-     */
-    reviewsCreated?: Array<{
-      type: "contradiction" | "duplicate" | "missing-page" | "suggestion" | "confirm"
-      titleContains: string
-    }>
-  }
-}
-
-/**
  * Search scenarios exercise searchWiki: a wiki directory plus a query text
  * produces a ranked list of SearchResult entries.
  */

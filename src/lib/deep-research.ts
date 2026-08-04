@@ -1,7 +1,7 @@
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "./anytxt-search"
 import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
 import { streamChat } from "./llm-client"
-import { currentWikiDate } from "./ingest"
+import { currentWikiDate } from "./dates"
 import { writeFile, readFile } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
