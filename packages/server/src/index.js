@@ -4,10 +4,11 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { PORT, HOST, WEB_DIST, ensureDataDirs } from "./config.js"
+import { PORT, HOST, WEB_DIST, SHARED_STORE_NAME, ensureDataDirs } from "./config.js"
 import { dispatch, hasCommand, commandNames } from "./invoke.js"
 import { readStore, writeStore, readStoreKey, writeStoreKey, deleteStoreKey, getStoreDiagnostics } from "./store.js"
-import { addSseClient, clientCount } from "./events.js"
+import { addSseClient, clientCount, emit } from "./events.js"
+import { EventTypes } from "./events/bus.js"
 import { handleProxy } from "./proxy.js"
 import { handleApiV1 } from "./api-v1.js"
 
@@ -34,6 +35,15 @@ function sendJson(res, status, value) {
     "Access-Control-Allow-Origin": "*",
   })
   res.end(body)
+}
+
+// Writes to the shared settings store (app-state.json) are settings changes:
+// emit settings:changed so sse-sync refetches settings in every connected
+// tab. Other store names are not settings and emit nothing
+// (plans/sse-taxonomy.md). Same gate as the v2 shim (api/store.js).
+function emitSettingsChanged(name, keys) {
+  if (name !== SHARED_STORE_NAME) return
+  emit(EventTypes.SETTINGS_CHANGED, { keys })
 }
 
 function readBody(req) {
@@ -153,7 +163,9 @@ const server = http.createServer(async (req, res) => {
             const raw = await readBody(req)
             let value = {}
             try { value = raw.trim() ? JSON.parse(raw) : {} } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return }
-            sendJson(res, 200, writeStore(name, value)); return
+            const merged = writeStore(name, value)
+            emitSettingsChanged(name, value && typeof value === "object" ? Object.keys(value) : [])
+            sendJson(res, 200, merged); return
           }
         } else {
           if (req.method === "GET") {
@@ -164,9 +176,15 @@ const server = http.createServer(async (req, res) => {
             const raw = await readBody(req)
             let value = null
             if (raw.trim()) { try { value = JSON.parse(raw) } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return } }
-            sendJson(res, 200, writeStoreKey(name, key, value)); return
+            const result = writeStoreKey(name, key, value)
+            emitSettingsChanged(name, [key])
+            sendJson(res, 200, result); return
           }
-          if (req.method === "DELETE") { sendJson(res, 200, deleteStoreKey(name, key)); return }
+          if (req.method === "DELETE") {
+            const existed = deleteStoreKey(name, key)
+            emitSettingsChanged(name, [key])
+            sendJson(res, 200, existed); return
+          }
         }
       } catch (err) { sendJson(res, 400, { error: err.message }); return }
     }
