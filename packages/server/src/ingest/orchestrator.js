@@ -25,7 +25,7 @@
 // import time. Everything starts with startIngestOrchestrator(), called only
 // from the index-v2.js boot block — test imports of the app never start it.
 
-import { basename, isAbsolute, join } from "node:path"
+import { basename, isAbsolute, join, relative } from "node:path"
 import { unlink } from "node:fs/promises"
 import { SHARED_STORE_NAME } from "../config.js"
 import { readStore } from "../store.js"
@@ -45,6 +45,7 @@ import { reportIngestProgress, emitIngestComplete, emitIngestError } from "./pro
 import { isUsageLimitError, USAGE_LIMIT_BACKOFF_MS } from "./llm.js"
 import { removePageEmbedding } from "./embed.js"
 import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 
 /** Total attempts before a retryable failure becomes terminal (desktop MAX_RETRIES). */
 export const MAX_ATTEMPTS = 3
@@ -229,16 +230,29 @@ function isStructuralWikiPath(filePath) {
  * (LanceDB cascade → removePageEmbedding; pageId = basename minus ".md",
  * same derivation as the pipeline's embed loop). Structural pages
  * (index/log/overview) are skipped — desktop parity. Per-file errors are
- * swallowed — cleanup must never throw into the cancel flow.
+ * swallowed — cleanup must never throw into the cancel flow. Each
+ * SUCCESSFUL unlink publishes file:deleted (project-relative path, row's
+ * project_id as payload attribution) so sse-sync refreshes trees
+ * (plans/sse-taxonomy.md stage 2).
  */
-async function cleanupWrittenFiles(projectPath, filePaths) {
+async function cleanupWrittenFiles(projectPath, filePaths, projectId) {
   for (const filePath of filePaths) {
     if (isStructuralWikiPath(filePath)) continue
     const fullPath = isAbsolute(filePath) ? filePath : join(projectPath, filePath)
+    let unlinked = false
     try {
       await unlink(fullPath)
+      unlinked = true
     } catch {
-      // file may not exist anymore — non-critical
+      // file may not exist anymore — non-critical; no file:deleted frame
+      // when nothing was actually removed
+    }
+    if (unlinked) {
+      emit(EventTypes.FILE_DELETED, {
+        projectId,
+        // Project-relative, forward-slashed (isStructuralWikiPath parity).
+        path: relative(projectPath, fullPath).replaceAll("\\", "/"),
+      })
     }
     if (fullPath.endsWith(".md")) {
       const pageId = basename(fullPath).replace(/\.md$/, "")
@@ -268,7 +282,7 @@ export async function cancelIngestTask(taskId) {
     deleteIngestTask(taskId)
     entry.controller.abort()
     const project = getProject(row.project_id)
-    if (project?.path) await cleanupWrittenFiles(project.path, entry.writtenPaths)
+    if (project?.path) await cleanupWrittenFiles(project.path, entry.writtenPaths, row.project_id)
   } else {
     deleteIngestTask(taskId)
   }

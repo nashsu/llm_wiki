@@ -6,6 +6,8 @@
 // projectLookup middleware (middleware/project-lookup.js).
 
 import { Router } from "express"
+import fsp from "node:fs/promises"
+import path from "node:path"
 import { validate } from "../middleware/validate.js"
 import {
   ExportBodySchema,
@@ -16,6 +18,8 @@ import {
 import { safeJoin } from "../store/project-paths.js"
 import { dispatch } from "../invoke.js"
 import { listFileHistory, restoreFileHistory } from "../commands/fileHistory.js"
+import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 
 const router = Router({ mergeParams: true })
 
@@ -23,6 +27,18 @@ const router = Router({ mergeParams: true })
 router.post("/rebuild-index", async (req, res, next) => {
   try {
     const result = await dispatch("rebuild_wiki_index", { projectPath: req.projectRoot })
+    // The command writes to a tmp file then renames onto wiki/index.md
+    // (commands/maintenance.js rebuildWikiIndex); emit ONE file:modified for
+    // the final path after that completed (plans/sse-taxonomy.md stage 2).
+    let size
+    try {
+      size = (await fsp.stat(path.join(req.projectRoot, "wiki", "index.md"))).size
+    } catch { /* size is informational; omit when unavailable */ }
+    emit(EventTypes.FILE_MODIFIED, {
+      projectId: req.projectId,
+      path: "wiki/index.md",
+      ...(size != null ? { size } : {}),
+    })
     res.json(result)
   } catch (err) {
     next(err)
@@ -71,6 +87,11 @@ router.post(
       const { path: relPath, entryId } = req.validated.body
       const filePath = safeJoin(req.projectRoot, relPath)
       const content = restoreFileHistory({ projectPath: req.projectRoot, filePath, entryId })
+      emit(EventTypes.FILE_MODIFIED, {
+        projectId: req.projectId,
+        path: relPath,
+        size: Buffer.byteLength(content, "utf-8"),
+      })
       res.json({ ok: true, content })
     } catch (err) {
       next(err)

@@ -15,6 +15,7 @@ import { getProject, getProjectByUuid, ensureProjectRow } from "../store/project
 import { safeJoin } from "../store/project-paths.js"
 import { readStore } from "../store.js"
 import { emit } from "../events.js"
+import { EventTypes } from "../events/bus.js"
 import { resolveChatConfig, hasUsableLlmConfig } from "../llm-resolve.js"
 import { streamChat } from "../ingest/llm.js"
 import { languageRule } from "../ingest/prompts.js"
@@ -363,12 +364,14 @@ router.post(
 
         emitAgentEvent(sessionId, runId, { type: "wikiWrites", writtenPaths })
 
-        // File events so sse-sync refreshes file trees. api/files.js does
-        // not emit on writes; the stable file event names live on the bus
-        // (EventTypes.FILE_CREATED / FILE_MODIFIED) and sse-sync's
-        // handleFileEvent refreshes the project tree for both.
+        // File events so sse-sync refreshes file trees. chat/writes writes
+        // its FILE blocks itself (writeChatWikiBlocks, not via the
+        // /files/upload route), so it emits its own frames; the stable file
+        // event names live on the bus (EventTypes.FILE_CREATED /
+        // FILE_MODIFIED) and sse-sync's handleFileEvent refreshes the
+        // project tree for both.
         for (const rel of writtenPaths) {
-          emit(existedBefore.get(rel) ? "file:modified" : "file:created", {
+          emit(existedBefore.get(rel) ? EventTypes.FILE_MODIFIED : EventTypes.FILE_CREATED, {
             projectId: req.projectId,
             path: rel,
           })

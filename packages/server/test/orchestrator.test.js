@@ -366,6 +366,15 @@ describe("cancellation", () => {
     expect(removePageEmbedding).toHaveBeenCalledTimes(1)
     expect(removePageEmbedding).toHaveBeenCalledWith(projA.path, "cancel-me")
 
+    // Taxonomy stage 2 (plans/sse-taxonomy.md): cleanup emits file:deleted
+    // per SUCCESSFUL unlink — exactly one frame here (structural index/log
+    // are skipped), project-relative path, row's project_id as payload
+    // attribution (emit() bridge keeps the envelope projectId null).
+    const deleted = frames.filter((f) => f.type === "file:deleted")
+    expect(deleted).toHaveLength(1)
+    expect(deleted[0].projectId).toBeNull()
+    expect(deleted[0].payload).toEqual({ projectId: projA.id, path: rel })
+
     // Terminal frame so live clients update.
     const error = framesOf("ingest:error", id)
     const cancelFrame = error.find((f) => f.payload.error === "Cancelled")
@@ -376,6 +385,27 @@ describe("cancellation", () => {
       status: "failed",
       retryable: false,
     })
+  })
+
+  it("cancel cleanup emits file:deleted only for SUCCESSFUL unlinks", async () => {
+    // The pipeline claims it wrote a page that never reached disk (abort
+    // raced the write): unlink fails ⇒ NO file:deleted frame, and the
+    // cleanup still swallows the error (cancel must never throw).
+    vi.mocked(runIngestPipeline).mockImplementation((task, env) => {
+      env.onFileWritten("wiki/concepts/never-written.md")
+      return new Promise((resolve, reject) => {
+        env.signal.addEventListener("abort", () => reject(new Error("Ingest cancelled")), { once: true })
+      })
+    })
+    const id = enq(projA.id, "raw/sources/ghost-source.md")
+
+    orch.startIngestOrchestrator()
+    await waitFor(() => orch.activeIngestTaskCount() === 1)
+
+    const ok = await orch.cancelIngestTask(id)
+    expect(ok).toBe(true)
+    await waitFor(() => orch.activeIngestTaskCount() === 0)
+    expect(frames.filter((f) => f.type === "file:deleted")).toHaveLength(0)
   })
 
   it("cancel of a pending row just deletes it", async () => {
