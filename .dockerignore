@@ -35,3 +35,4 @@ mcp-server
 
 # Docs / planning files (top-level only; the app may import .md content).
 docs
+AGENTS.md
