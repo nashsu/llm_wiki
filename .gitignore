@@ -23,8 +23,8 @@ src-tauri/gen/
 .env.*.local
 
 # Internal docs (not shipped — excluded from the image via .dockerignore,
-# but version-controlled here). AGENTS.md stays local-only.
-AGENTS.md
+# but version-controlled here). AGENTS.md is the canonical agent guide and
+# has been version-controlled since the owner-acceptance-doc change.
 
 # Benchmark and test data (local only)
 tests/
