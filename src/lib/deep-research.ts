@@ -49,6 +49,29 @@ export function noResearchSourcesTaskPatch(sourceErrors: string[]): {
   }
 }
 
+/**
+ * Remove <think>/<thinking> reasoning blocks (including an unclosed trailing
+ * block) from an LLM synthesis, matching exactly what is written to the wiki
+ * page before the References section is appended.
+ */
+export function stripSynthesisThinkBlocks(raw: string): string {
+  return raw
+    .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
+    .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "") // unclosed thinking block
+    .trimStart()
+}
+
+/**
+ * A synthesis is only substantive if it still carries real content once the
+ * reasoning blocks are stripped. An empty result (dropped stream,
+ * thinking-only output, or truncation) would otherwise be saved as a
+ * References-only shell and wrongly mark the task done + resolve the linked
+ * review. See issue #637.
+ */
+export function hasSubstantiveSynthesis(synthesis: string): boolean {
+  return stripSynthesisThinkBlocks(synthesis).trim().length > 0
+}
+
 export function makeDeepResearchFileName(topic: string, now: Date = new Date()): {
   fileName: string
   date: string
@@ -94,7 +117,8 @@ export function resolveReviewForSavedResearch(
   if (
     !task?.sourceReviewId ||
     task.status !== "done" ||
-    task.savedPath !== savedPath
+    task.savedPath !== savedPath ||
+    !hasSubstantiveSynthesis(task.synthesis)
   ) return false
   const review = useReviewStore.getState().items.find((item) => item.id === task.sourceReviewId)
   if (!review || review.resolved) return false
@@ -318,10 +342,21 @@ async function executeResearch(
       .join("\n")
 
     // Strip <think>/<thinking> blocks before saving
-    const cleanedSynthesis = accumulated
-      .replace(/<think(?:ing)?>\s*[\s\S]*?<\/think(?:ing)?>\s*/gi, "")
-      .replace(/<think(?:ing)?>\s*[\s\S]*$/gi, "") // unclosed thinking block
-      .trimStart()
+    const cleanedSynthesis = stripSynthesisThinkBlocks(accumulated)
+
+    // If the model returned no usable content (empty stream, thinking-only
+    // output, or truncation), do not save a References-only shell, mark the
+    // task done, or resolve the linked review. Surface the failure so the user
+    // can retry and the review item stays open. See issue #637.
+    if (!hasSubstantiveSynthesis(cleanedSynthesis)) {
+      updateTaskIfActive(pp, taskId, {
+        status: "error",
+        synthesis: cleanedSynthesis,
+        error: "Research produced no content to save — the model may have hit a timeout or token limit. Please retry.",
+      })
+      if (isActiveProjectPath(pp)) onTaskFinished(pp, llmConfig, searchConfig)
+      return
+    }
 
     const pageContent = [
       "---",

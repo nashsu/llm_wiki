@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { collectResearchSources, makeDeepResearchFileName, noResearchSourcesTaskPatch, resolveReviewForSavedResearch } from "./deep-research"
+import { collectResearchSources, hasSubstantiveSynthesis, makeDeepResearchFileName, noResearchSourcesTaskPatch, resolveReviewForSavedResearch, stripSynthesisThinkBlocks } from "./deep-research"
 import type { SearchApiConfig } from "@/stores/wiki-store"
 import type { WebSearchResult } from "./web-search"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -69,6 +69,33 @@ describe("noResearchSourcesTaskPatch", () => {
   })
 })
 
+describe("hasSubstantiveSynthesis", () => {
+  it("treats non-empty prose as substantive", () => {
+    expect(hasSubstantiveSynthesis("A real overview of the topic.")).toBe(true)
+  })
+
+  it("rejects empty or whitespace-only output", () => {
+    expect(hasSubstantiveSynthesis("")).toBe(false)
+    expect(hasSubstantiveSynthesis("   \n\n  ")).toBe(false)
+  })
+
+  it("rejects a thinking-only response with no visible content", () => {
+    expect(hasSubstantiveSynthesis("<think>let me plan the answer</think>")).toBe(false)
+    expect(hasSubstantiveSynthesis("<thinking>reasoning without an answer")).toBe(false)
+  })
+
+  it("keeps content that follows a thinking block", () => {
+    expect(hasSubstantiveSynthesis("<think>plan</think>\n\nFinal answer.")).toBe(true)
+  })
+})
+
+describe("stripSynthesisThinkBlocks", () => {
+  it("removes closed and unclosed thinking blocks and leading whitespace", () => {
+    expect(stripSynthesisThinkBlocks("<think>plan</think>\n\n## Overview\ntext")).toBe("## Overview\ntext")
+    expect(stripSynthesisThinkBlocks("<thinking>never closed")).toBe("")
+  })
+})
+
 describe("review-linked research", () => {
   const review: ReviewItem = {
     id: "review-1",
@@ -106,6 +133,31 @@ describe("review-linked research", () => {
       resolved: true,
       resolvedAction: "Research saved: wiki/queries/research-topic.md",
     })
+  })
+
+  it("does not resolve the review when the saved synthesis is empty", () => {
+    useWikiStore.setState({ project: { id: "p1", name: "Project", path: "/project" } })
+    useReviewStore.setState({ items: [review] })
+    useResearchStore.setState({
+      tasks: [{
+        id: "research-1",
+        topic: "topic",
+        sourceReviewId: review.id,
+        status: "done",
+        webResults: [],
+        synthesis: "<think>gave up</think>",
+        savedPath: "wiki/queries/research-topic.md",
+        error: null,
+        createdAt: 1,
+      }],
+    })
+
+    expect(resolveReviewForSavedResearch(
+      "/project",
+      "research-1",
+      "wiki/queries/research-topic.md",
+    )).toBe(false)
+    expect(useReviewStore.getState().items[0].resolved).toBe(false)
   })
 
   it("does not resolve another project's review", () => {
