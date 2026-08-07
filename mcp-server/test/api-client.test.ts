@@ -231,3 +231,117 @@ test("API errors include status and server message", async () => {
   const client = new LlmWikiApiClient({ fetchImpl })
   await assert.rejects(() => client.projects(), /LLM Wiki API 401: Unauthorized/)
 })
+
+// ── Ingest control tests ─────────────────────────────────────────────────
+
+test("ingestStatus sends GET and parses summary + tasks", async () => {
+  const calls: Array<{ url: string; method?: string }> = []
+  const fetchImpl = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ url: String(url), method: init?.method })
+    return new Response(JSON.stringify({
+      ok: true,
+      action: "status",
+      projectId: "p1",
+      result: {
+        summary: {
+          pending: 2,
+          processing: 1,
+          failed: 3,
+          cancelled: 0,
+          completed: 5,
+          total: 11,
+          paused: false,
+          userPaused: false,
+          restoredBacklogWaiting: false,
+        },
+        tasks: [
+          { id: "t1", sourcePath: "raw/sources/a.pdf", folderContext: "papers", status: "processing", error: null, retryCount: 0, addedAt: 1700000000 },
+          { id: "t2", sourcePath: "raw/sources/b.md", folderContext: "", status: "failed", error: "LLM error", retryCount: 3, addedAt: 1700000001 },
+        ],
+      },
+    }), { status: 200 })
+  }
+
+  const client = new LlmWikiApiClient({ fetchImpl })
+  const status = await client.ingestStatus("p1")
+
+  assert.equal(calls[0]?.url, "http://127.0.0.1:19828/api/v1/projects/p1/ingest/status")
+  assert.equal(calls[0]?.method, "GET") // GET requests
+  assert.equal(status.summary.pending, 2)
+  assert.equal(status.summary.processing, 1)
+  assert.equal(status.summary.failed, 3)
+  assert.equal(status.summary.paused, false)
+  assert.equal(status.tasks.length, 2)
+  assert.equal(status.tasks[0]?.status, "processing")
+  assert.equal(status.tasks[1]?.error, "LLM error")
+  assert.equal(status.tasks[1]?.retryCount, 3)
+})
+
+test("ingestPause sends POST and parses control response", async () => {
+  const calls: Array<{ url: string; method?: string }> = []
+  const fetchImpl = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ url: String(url), method: init?.method })
+    return new Response(JSON.stringify({
+      ok: true,
+      action: "pause",
+      projectId: "p1",
+      result: {
+        paused: true,
+        summary: { pending: 2, processing: 0, failed: 0, cancelled: 0, completed: 3, total: 5, paused: true, userPaused: true, restoredBacklogWaiting: false },
+      },
+    }), { status: 200 })
+  }
+
+  const client = new LlmWikiApiClient({ fetchImpl })
+  const response = await client.ingestPause("p1")
+
+  assert.equal(calls[0]?.url, "http://127.0.0.1:19828/api/v1/projects/p1/ingest/pause")
+  assert.equal(calls[0]?.method, "POST")
+  assert.equal(response.action, "pause")
+  assert.equal(response.projectId, "p1")
+  assert.equal(response.result.paused, true)
+})
+
+test("ingestResume sends POST and parses control response", async () => {
+  let method = ""
+  const fetchImpl = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    method = init?.method ?? "GET"
+    return new Response(JSON.stringify({
+      ok: true,
+      action: "resume",
+      projectId: "p1",
+      result: {
+        resumed: true,
+        summary: { pending: 2, processing: 0, failed: 0, cancelled: 0, completed: 3, total: 5, paused: false, userPaused: false, restoredBacklogWaiting: false },
+      },
+    }), { status: 200 })
+  }
+
+  const client = new LlmWikiApiClient({ fetchImpl })
+  const response = await client.ingestResume("p1")
+
+  assert.equal(method, "POST")
+  assert.equal(response.result.resumed, true)
+})
+
+test("ingestRetryFailed sends POST and parses requeued count", async () => {
+  let method = ""
+  const fetchImpl = async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    method = init?.method ?? "GET"
+    return new Response(JSON.stringify({
+      ok: true,
+      action: "retry-failed",
+      projectId: "p1",
+      result: {
+        requeued: 3,
+        summary: { pending: 5, processing: 0, failed: 0, cancelled: 0, completed: 3, total: 8, paused: false, userPaused: false, restoredBacklogWaiting: false },
+      },
+    }), { status: 200 })
+  }
+
+  const client = new LlmWikiApiClient({ fetchImpl })
+  const response = await client.ingestRetryFailed("p1")
+
+  assert.equal(method, "POST")
+  assert.equal(response.result.requeued, 3)
+})

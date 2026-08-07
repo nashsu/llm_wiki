@@ -296,6 +296,56 @@ export class LlmWikiApiClient {
     })
   }
 
+  async ingestStatus(projectId = "current"): Promise<ApiIngestStatusResponse> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/ingest/status`)
+    const result = requireObject(json.result, "ingest status result")
+    const summary = requireObject(result.summary, "ingest summary")
+    const tasks = Array.isArray(result.tasks) ? result.tasks : []
+    return {
+      summary: parseIngestSummary(summary),
+      tasks: tasks.map(parseIngestTask),
+    }
+  }
+
+  async ingestPause(projectId = "current"): Promise<ApiIngestControlResponse> {
+    return this.parseIngestControlResponse(
+      await this.request(`/projects/${encodeURIComponent(projectId)}/ingest/pause`, {
+        method: "POST",
+      }),
+      "pause",
+    )
+  }
+
+  async ingestResume(projectId = "current"): Promise<ApiIngestControlResponse> {
+    return this.parseIngestControlResponse(
+      await this.request(`/projects/${encodeURIComponent(projectId)}/ingest/resume`, {
+        method: "POST",
+      }),
+      "resume",
+    )
+  }
+
+  async ingestRetryFailed(projectId = "current"): Promise<ApiIngestControlResponse> {
+    return this.parseIngestControlResponse(
+      await this.request(`/projects/${encodeURIComponent(projectId)}/ingest/retry-failed`, {
+        method: "POST",
+      }),
+      "retry-failed",
+    )
+  }
+
+  private parseIngestControlResponse(
+    json: Record<string, unknown>,
+    action: string,
+  ): ApiIngestControlResponse {
+    const result = requireObject(json.result, `ingest ${action} result`)
+    return {
+      action: typeof json.action === "string" ? json.action : action,
+      projectId: typeof json.projectId === "string" ? json.projectId : "",
+      result,
+    }
+  }
+
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`
     const headers: Record<string, string> = { Accept: "application/json" }
@@ -454,5 +504,72 @@ function parseGraphEdge(value: unknown): ApiGraphEdge {
     source: String(obj.source ?? ""),
     target: String(obj.target ?? ""),
     weight: numberOrUndefined(obj.weight),
+  }
+}
+
+// ── Ingest control ───────────────────────────────────────────────────────
+
+export interface ApiIngestSummary {
+  pending: number
+  processing: number
+  failed: number
+  cancelled: number
+  completed: number
+  total: number
+  paused: boolean
+  userPaused: boolean
+  restoredBacklogWaiting: boolean
+}
+
+export interface ApiIngestTask {
+  id: string
+  sourcePath: string
+  folderContext: string
+  status: "pending" | "processing" | "done" | "failed" | "cancelled"
+  error: string | null
+  retryCount: number
+  addedAt: number
+}
+
+export interface ApiIngestStatusResponse {
+  summary: ApiIngestSummary
+  tasks: ApiIngestTask[]
+}
+
+export interface ApiIngestControlResponse {
+  action: string
+  projectId: string
+  result: Record<string, unknown>
+}
+
+function parseIngestSummary(value: unknown): ApiIngestSummary {
+  const obj = requireObject(value, "ingest summary")
+  return {
+    pending: numberOrUndefined(obj.pending) ?? 0,
+    processing: numberOrUndefined(obj.processing) ?? 0,
+    failed: numberOrUndefined(obj.failed) ?? 0,
+    cancelled: numberOrUndefined(obj.cancelled) ?? 0,
+    completed: numberOrUndefined(obj.completed) ?? 0,
+    total: numberOrUndefined(obj.total) ?? 0,
+    paused: obj.paused === true,
+    userPaused: obj.userPaused === true,
+    restoredBacklogWaiting: obj.restoredBacklogWaiting === true,
+  }
+}
+
+function parseIngestTask(value: unknown): ApiIngestTask {
+  const obj = requireObject(value, "ingest task")
+  const status = obj.status
+  return {
+    id: String(obj.id ?? ""),
+    sourcePath: String(obj.sourcePath ?? ""),
+    folderContext: typeof obj.folderContext === "string" ? obj.folderContext : "",
+    status:
+      status === "pending" || status === "processing" || status === "done" || status === "failed" || status === "cancelled"
+        ? status
+        : "pending",
+    error: typeof obj.error === "string" ? obj.error : null,
+    retryCount: numberOrUndefined(obj.retryCount) ?? 0,
+    addedAt: numberOrUndefined(obj.addedAt) ?? 0,
   }
 }

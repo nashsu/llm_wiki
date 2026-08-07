@@ -16,6 +16,8 @@ import {
   type ApiChatResponse,
   type ApiSearchResult,
   type ApiProject,
+  type ApiIngestStatusResponse,
+  type ApiIngestControlResponse,
 } from "./api-client.js"
 import { VERSION } from "./version.js"
 import { McpProjectBinding, withActiveProject } from "./project-binding.js"
@@ -169,6 +171,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "llm_wiki_ingest_status",
+      description: "Get the current ingest pipeline status for a project: queue counts (pending/processing/failed/cancelled/completed), paused flag, and task list. Useful for monitoring automated ingest progress via MCP.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_ingest_pause",
+      description: "Pause the ingest pipeline for a project. Aborts any in-flight LLM ingest task and stops new pending tasks from starting. Token spend stops immediately. The queue is preserved.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_ingest_resume",
+      description: "Resume the ingest pipeline for a project after a pause. Pending tasks immediately start processing. No-op if already running.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_ingest_retry_failed",
+      description: "Retry all failed ingest tasks for a project. Requeues every failed task back to pending and kicks off processing. Returns the number of tasks requeued and the updated queue summary.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+        },
+        additionalProperties: false,
+      },
+    },
   ],
 }))
 
@@ -267,6 +313,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await assertMcpEnabled()
         const scope = await resolveProjectScope(args)
         return textResult(withActiveProject(JSON.stringify(await client.rescan(scope.id), null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_ingest_status": {
+        await assertMcpEnabled()
+        const scope = await resolveProjectScope(args)
+        const status = await client.ingestStatus(scope.id)
+        return textResult(withActiveProject(formatIngestStatus(status), scope.project, scope.id))
+      }
+      case "llm_wiki_ingest_pause": {
+        await assertMcpEnabled()
+        const scope = await resolveProjectScope(args)
+        const response = await client.ingestPause(scope.id)
+        return textResult(withActiveProject(formatIngestControl(response), scope.project, scope.id))
+      }
+      case "llm_wiki_ingest_resume": {
+        await assertMcpEnabled()
+        const scope = await resolveProjectScope(args)
+        const response = await client.ingestResume(scope.id)
+        return textResult(withActiveProject(formatIngestControl(response), scope.project, scope.id))
+      }
+      case "llm_wiki_ingest_retry_failed": {
+        await assertMcpEnabled()
+        const scope = await resolveProjectScope(args)
+        const response = await client.ingestRetryFailed(scope.id)
+        return textResult(withActiveProject(formatIngestControl(response), scope.project, scope.id))
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`)
@@ -500,6 +570,63 @@ function formatGraph(nodes: ApiGraphNode[], edges: Array<{ source: string; targe
       .slice(0, 30)
       .map((node) => `- ${node.label} (${node.type}, ${node.linkCount ?? 0} links)${node.path ? ` — ${node.path}` : ""}`),
   ]
+  return lines.join("\n")
+}
+
+function formatIngestStatus(status: ApiIngestStatusResponse): string {
+  const { summary, tasks } = status
+  const lines = [
+    "# Ingest pipeline status",
+    "",
+    `Paused: ${summary.paused ? "yes" : "no"}${summary.userPaused ? " (user-paused)" : ""}${summary.restoredBacklogWaiting ? " | restored backlog waiting" : ""}`,
+    "",
+    "## Queue summary",
+    `- Pending: ${summary.pending}`,
+    `- Processing: ${summary.processing}`,
+    `- Failed: ${summary.failed}`,
+    `- Cancelled: ${summary.cancelled}`,
+    `- Completed (this session): ${summary.completed}`,
+    `- Total: ${summary.total}`,
+    "",
+  ]
+  if (tasks.length > 0) {
+    lines.push("## Tasks")
+    tasks.forEach((task, index) => {
+      lines.push(`${index + 1}. [${task.status}] ${task.sourcePath}`)
+      if (task.folderContext) lines.push(`   Folder: ${task.folderContext}`)
+      if (task.error) lines.push(`   Error: ${task.error}`)
+      if (task.retryCount > 0) lines.push(`   Retries: ${task.retryCount}`)
+    })
+    lines.push("")
+  }
+  return lines.join("\n")
+}
+
+function formatIngestControl(response: ApiIngestControlResponse): string {
+  const result = response.result
+  const summary = (result.summary ?? {}) as Record<string, unknown>
+  const lines = [
+    `# Ingest ${response.action}`,
+    "",
+  ]
+  if (typeof result.paused === "boolean") {
+    lines.push(`Paused: ${result.paused ? "yes" : "no"}`)
+  }
+  if (typeof result.resumed === "boolean") {
+    lines.push(`Resumed: ${result.resumed ? "yes" : "no"}`)
+  }
+  if (typeof result.requeued === "number") {
+    lines.push(`Requeued: ${result.requeued} task(s)`)
+  }
+  if (typeof summary.pending === "number") {
+    lines.push("")
+    lines.push("## Queue summary")
+    lines.push(`- Pending: ${summary.pending}`)
+    lines.push(`- Processing: ${summary.processing ?? 0}`)
+    lines.push(`- Failed: ${summary.failed ?? 0}`)
+    lines.push(`- Cancelled: ${summary.cancelled ?? 0}`)
+    lines.push(`- Paused: ${summary.paused ? "yes" : "no"}`)
+  }
   return lines.join("\n")
 }
 
