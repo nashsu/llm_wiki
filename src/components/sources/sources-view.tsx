@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { open } from "@tauri-apps/plugin-dialog"
-import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link } from "lucide-react"
+import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory, readFile } from "@/commands/fs"
+import { listDirectory, openPathInProject, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
@@ -250,6 +250,19 @@ export function SourcesView() {
     }
   }
 
+  async function handleOpenSourceExternally(node: FileNode) {
+    if (!project) return
+    try {
+      await openPathInProject(project.path, node.path)
+    } catch (err) {
+      console.error("Failed to open source externally:", err)
+      window.alert(t("sources.openExternalFailed", {
+        name: node.name,
+        error: String(err),
+      }))
+    }
+  }
+
   async function handleDelete(node: FileNode) {
     if (!project) return
     const pp = normalizePath(project.path)
@@ -440,6 +453,7 @@ export function SourcesView() {
             <SourceTree
               nodes={sources}
               onOpen={handleOpenSource}
+              onOpenExternal={handleOpenSourceExternally}
               onIngest={handleIngest}
               onDelete={handleDelete}
               onDeleteFolder={handleDeleteFolder}
@@ -522,6 +536,7 @@ function flattenVisibleRows(
 function SourceTree({
   nodes,
   onOpen,
+  onOpenExternal,
   onIngest,
   onDelete,
   onDeleteFolder,
@@ -532,6 +547,7 @@ function SourceTree({
 }: {
   nodes: FileNode[]
   onOpen: (node: FileNode) => void
+  onOpenExternal: (node: FileNode) => void
   onIngest: (node: FileNode) => void
   onDelete: (node: FileNode) => void
   onDeleteFolder: (node: FileNode) => void
@@ -663,6 +679,16 @@ function SourceTree({
                 {t(`sources.ingestStatus.${ingestStatus}`)}
               </span>
             </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              title={t("sources.openExternal")}
+              aria-label={t("sources.openExternal")}
+              onClick={() => onOpenExternal(node)}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
