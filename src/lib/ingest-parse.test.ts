@@ -596,6 +596,13 @@ describe("generated ingest dates", () => {
     expect(prompt).toContain("Use this exact date")
     expect(prompt).not.toContain("created: 2026-04-29")
   })
+
+  it("instructs the model to preserve structured source data verbatim", () => {
+    const prompt = buildGenerationPrompt("", "", "", "schema.sql")
+
+    expect(prompt).toContain("Preserve structured source data verbatim")
+    expect(prompt).toContain("DDL")
+  })
 })
 
 describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
