@@ -313,6 +313,20 @@ interface MultimodalConfig {
   apiMode?: CustomApiMode
   /** Max parallel caption requests during ingest. >=1. */
   concurrency: number
+  /** Master switch for the markdown-image localizer. When true,
+   *  remote images in `.md` inputs are downloaded, captioned, and
+   *  the raw-sources copy is rewritten to use local paths. */
+  localizeMarkdownImages: boolean
+  /** Skip VLM captioning for images smaller than this on either
+   *  dimension. Images still download + save locally. Set 0 to
+   *  caption everything. */
+  minImagePixelSize: number
+  /** URL cache TTL in days. On expiry, re-fetch; SHA-stable
+   *  re-fetches cost only bandwidth, not VLM calls. */
+  urlCacheTtlDays: number
+  /** HTTP fetch timeout in milliseconds for image downloads.
+   *  Wraps AbortSignal.timeout(). Not in Phase 1 UI. */
+  imageFetchTimeoutMs: number
 }
 
 /**
@@ -597,6 +611,10 @@ export const useWikiStore = create<WikiState>((set) => ({
     azureApiVersion: "2024-10-21",
     apiMode: "chat_completions",
     concurrency: 4,
+    localizeMarkdownImages: true,
+    minImagePixelSize: 100,
+    urlCacheTtlDays: 45,
+    imageFetchTimeoutMs: 30_000,
   },
 
   outputLanguage: "auto",

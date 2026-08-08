@@ -41,7 +41,7 @@ export function parseImportUrls(input: string): string[] {
   return [...unique]
 }
 
-function isPrivateNetworkHost(hostname: string): boolean {
+export function isPrivateNetworkHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "")
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true
   if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89ab])/i.test(host)) return true
@@ -71,7 +71,7 @@ function isPrivateNetworkHost(hostname: string): boolean {
     || a >= 224
 }
 
-function validateHttpUrl(value: string): URL {
+export function validateHttpUrl(value: string): URL {
   const parsed = new URL(value)
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Unsupported URL scheme: ${value}`)
@@ -87,6 +87,7 @@ export async function fetchImportUrl(
   fetch: typeof globalThis.fetch,
   initialUrl: string,
   signal: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<Response> {
   let current = validateHttpUrl(initialUrl)
   const initialIsPrivate = isPrivateNetworkHost(current.hostname)
@@ -99,6 +100,7 @@ export async function fetchImportUrl(
       redirect: "manual",
       maxRedirections: 0,
       signal,
+      ...(headers ? { headers } : {}),
     }
     const response = await fetch(current.toString(), requestInit)
     if (![301, 302, 303, 307, 308].includes(response.status)) return response
@@ -114,7 +116,7 @@ export async function fetchImportUrl(
   throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`)
 }
 
-function safeSlug(value: string): string {
+export function safeSlug(value: string): string {
   const slug = value
     .normalize("NFKC")
     .replace(/[^\p{L}\p{N}._-]+/gu, "-")

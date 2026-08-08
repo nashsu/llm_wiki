@@ -195,6 +195,10 @@ describe("autoIngest source summary paths", () => {
         ollamaUrl: "",
         customEndpoint: "",
         concurrency: 1,
+        localizeMarkdownImages: true,
+        minImagePixelSize: 100,
+        urlCacheTtlDays: 45,
+        imageFetchTimeoutMs: 30_000,
       },
       embeddingConfig: {
         enabled: false,

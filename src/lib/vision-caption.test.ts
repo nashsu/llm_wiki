@@ -164,13 +164,22 @@ describe("captionImage", () => {
     expect(passedSignal).toBe(ctl.signal)
   })
 
-  it("CAPTION_PROMPT contains the verbatim factual-description directive (regression guard)", () => {
-    // Plan-aligned wording — if these phrases drift, captions
-    // start hallucinating again. Check the load-bearing fragments.
-    expect(CAPTION_PROMPT).toMatch(/factually/)
+  it("CAPTION_PROMPT contains the load-bearing guidance fragments (regression guard)", () => {
+    // Soft-guidance prompt — check the fragments that keep captions
+    // useful: purpose framing, verbatim text rule, no-speculation
+    // constraint, plain-text/single-paragraph format constraint, and
+    // the explicit ban on Markdown formatting (which would corrupt the
+    // surrounding `![alt](url)` since formatImageAlt only escapes `]`).
+    expect(CAPTION_PROMPT).toMatch(/knowledge base/)
     expect(CAPTION_PROMPT).toMatch(/visible text verbatim/)
-    expect(CAPTION_PROMPT).toMatch(/Do NOT speculate/)
-    expect(CAPTION_PROMPT).toMatch(/no markdown/)
+    expect(CAPTION_PROMPT).toMatch(/Do not speculate/)
+    expect(CAPTION_PROMPT).toMatch(/single flowing paragraph/)
+    expect(CAPTION_PROMPT).toMatch(/no Markdown formatting/)
+    // The old speculation + structured-format directives must stay out —
+    // they contradicted the single-paragraph/plain-text contract.
+    expect(CAPTION_PROMPT).not.toMatch(/Mark uncertainty/)
+    expect(CAPTION_PROMPT).not.toMatch(/Mermaid/)
+    expect(CAPTION_PROMPT).not.toMatch(/fenced code block/)
   })
 
   it("uses the no-context prompt when context is empty / whitespace-only", async () => {
@@ -208,7 +217,7 @@ describe("captionImage", () => {
     // Pinned framing sentences from the context-aware prompt:
     expect(promptText).toMatch(/Text before image/)
     expect(promptText).toMatch(/Text after image/)
-    expect(promptText).toMatch(/MAY help describe the image/)
+    expect(promptText).toMatch(/MAY help/)
     expect(promptText).toMatch(/MAY ALSO be unrelated/)
     // The actual context bytes round-trip through the prompt.
     expect(promptText).toContain("Figure 3: Q2 revenue chart")

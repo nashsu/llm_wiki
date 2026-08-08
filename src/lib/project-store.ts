@@ -188,7 +188,39 @@ export async function saveMultimodalConfig(config: MultimodalConfig): Promise<vo
 
 export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
   const store = await getStore()
-  return (await store.get<MultimodalConfig>(MULTIMODAL_KEY)) ?? null
+  const raw = await store.get<MultimodalConfig>(MULTIMODAL_KEY)
+  if (!raw) return null
+  return normalizeMultimodalConfig(raw)
+}
+
+/**
+ * Merge persisted multimodal config with defaults for any fields that
+ * are missing (added in a newer app version than the one that last
+ * saved the config). Without this, upgrading from v0.6.5 → v0.6.6
+ * leaves `localizeMarkdownImages` as `undefined` (falsy), silently
+ * disabling the markdown-image localizer even though the code path
+ * exists and the store default is `true`.
+ *
+ * Mirrors the `normalizeMineruConfig` pattern below.
+ */
+function normalizeMultimodalConfig(config: MultimodalConfig): MultimodalConfig {
+  return {
+    enabled: config.enabled === true,
+    useMainLlm: config.useMainLlm !== false,
+    provider: config.provider ?? "custom",
+    apiKey: config.apiKey ?? "",
+    model: config.model ?? "",
+    ollamaUrl: config.ollamaUrl ?? "http://localhost:11434",
+    customEndpoint: config.customEndpoint ?? "",
+    azureApiVersion: config.azureApiVersion ?? "2024-10-21",
+    azureModelFamily: config.azureModelFamily ?? "auto",
+    apiMode: config.apiMode ?? "chat_completions",
+    concurrency: Math.max(1, Math.min(16, config.concurrency ?? 4)),
+    localizeMarkdownImages: config.localizeMarkdownImages !== false,
+    minImagePixelSize: config.minImagePixelSize ?? 100,
+    urlCacheTtlDays: config.urlCacheTtlDays ?? 45,
+    imageFetchTimeoutMs: config.imageFetchTimeoutMs ?? 30_000,
+  }
 }
 
 const MINERU_KEY = "mineruConfig"

@@ -63,17 +63,29 @@ async function saveCache(projectPath: string, cache: CacheData): Promise<void> {
  * blindly, which surfaced ghost entries in the activity panel — clicking
  * them gave the preview panel a missing file, and the auto-save path then
  * materialized a `[Binary file: ...]` stub at the now-empty location.
+ *
+ * @param projectPath   Absolute path of the project root.
+ * @param sourceFileName Cache key (source identity).
+ * @param hashInput     Opaque string the caller assembles and hashes.
+ *                      Historically just the raw source content. As of
+ *                      the markdown image localizer (v0.6.6), callers
+ *                      compose this to fold behavior-affecting flags
+ *                      into the fingerprint — see `buildIngestHashInput`
+ *                      in `ingest.ts` for the convention:
+ *                        `${content}\n\n---cache-fingerprint---\nlocalize=${flag}\n`
+ *                      This module treats `hashInput` as opaque; only
+ *                      the SHA-256 of it matters here.
  */
 export async function checkIngestCache(
   projectPath: string,
   sourceFileName: string,
-  sourceContent: string,
+  hashInput: string,
 ): Promise<string[] | null> {
   const cache = await loadCache(projectPath)
   const entry = cache.entries[sourceFileName]
   if (!entry) return null
 
-  const currentHash = await sha256(sourceContent)
+  const currentHash = await sha256(hashInput)
   if (entry.hash !== currentHash) return null
 
   const pp = normalizePath(projectPath)
@@ -100,15 +112,19 @@ export async function checkIngestCache(
 
 /**
  * Save ingest result to cache after successful ingest.
+ *
+ * @param hashInput  Same opaque hash input the caller passed to
+ *                   `checkIngestCache`; see that JSDoc for the composition
+ *                   convention.
  */
 export async function saveIngestCache(
   projectPath: string,
   sourceFileName: string,
-  sourceContent: string,
+  hashInput: string,
   filesWritten: string[],
 ): Promise<void> {
   const cache = await loadCache(projectPath)
-  const hash = await sha256(sourceContent)
+  const hash = await sha256(hashInput)
   const newEntries = { ...cache.entries }
   newEntries[sourceFileName] = {
     hash,

@@ -44,6 +44,14 @@ interface CaptionEntry {
   mimeType: string
   model: string
   capturedAt: string
+  /** VLM-generated markdown title (forward-compat: the markdown image
+   *  localizer, Phase 1, writes this when captioning was fresh; other
+   *  writers may leave it undefined). */
+  title?: string
+  /** First URL we saw for this SHA — traceability across dedup hits.
+   *  Populated by the markdown image localizer. Backfilled lazily on
+   *  the first localizer write; older entries may lack it. */
+  originalUrl?: string
 }
 
 type CaptionCache = Record<string, CaptionEntry>

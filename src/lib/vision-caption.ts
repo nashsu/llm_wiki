@@ -39,35 +39,43 @@
  */
 import type { LlmConfig } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage } from "./llm-client"
+import { getLanguagePromptName } from "./language-metadata"
 
 /**
- * The "no surrounding text" prompt — same factual / verbatim /
- * no-speculation framing we've used since Phase 3a. Used when the
- * caller has no context to supply (e.g. a captioning helper called
- * directly without a document, or when context is intentionally
- * disabled). Pinned, not parameterized.
+ * Core caption guidance — soft, adaptive, content-aware.
  *
- * Reasons:
- *   - Factual / no-speculation framing reduces hallucination
- *     ("Describe ... factually" vs. "What is this?"). Ablation
- *     against an early "describe this image" prompt produced
- *     captions like "this appears to be a successful business
- *     metric" for a literal screenshot of a SQL query.
- *
- *   - Verbatim text capture matters for diagrams, slide bullets,
- *     and figure callouts — a vision model will paraphrase OCR
- *     unless told not to.
- *
- *   - 2-4 sentences is the sweet spot empirically: 1 sentence
- *     loses chart-axis detail; 6+ sentences burns tokens AND
- *     produces editorial filler that hurts retrieval relevance.
- *
- *   - "no markdown, no preamble" prevents the caption from breaking
- *     when we splice it as alt text (`![CAPTION](path)` — newlines
- *     or markdown inside CAPTION corrupt the surrounding doc).
+ * Design principles:
+ *   - 5 dimensions as SUGGESTIONS, not a rigid template. The model
+ *     picks what's relevant and skips what isn't.
+ *   - ~300 chars average, 1024 max — expressed as soft guidance,
+ *     not a hard cap. Complex images naturally run longer.
+ *   - Factual / no-speculation framing. An early ablation showed
+ *     that "describe this image" style prompts produce hallucinated
+ *     narratives ("this appears to be a successful business metric"
+ *     for a literal SQL screenshot). Every dimension below asks for
+ *     observable facts, not guesses.
+ *   - Plain text only — no Markdown tables, Mermaid, or fenced code
+ *     blocks. The caption is spliced into `![alt](url)` via
+ *     `formatImageAlt`, which only escapes `]` and newlines; pipes,
+ *     backticks, and other Markdown syntax would corrupt the
+ *     surrounding document.
+ *   - Single paragraph, no line breaks — so `splitCaptionIntoAltAndTitle`
+ *     naturally returns alt=full text, title=undefined.
+ *   - Verbatim text capture: diagrams, slide bullets, and figure
+ *     callouts must be reproduced exactly — a vision model will
+ *     paraphrase OCR unless told not to.
+ *   - Language is appended by the caller (see `captionImage`).
  */
 export const CAPTION_PROMPT =
-  "Describe this image factually for a knowledge-base index. Include: any visible text verbatim, chart axes and values, diagram structure (boxes/arrows/labels), key visual elements. Do NOT speculate or editorialize. 2 to 4 sentences. Output plain text only — no markdown, no preamble."
+  "You are describing an image for a knowledge base, helping someone who cannot see it understand its content and significance.\n\n" +
+  "Consider these aspects as appropriate — not all apply to every image; use your judgment on what matters most:\n" +
+  "• Overall impression: what is this image about, in a sentence or two?\n" +
+  "• Spatial layout: where are key elements positioned (left, center, right, foreground, background)?\n" +
+  "• Visual details: colors, expressions, gestures, textures. Reproduce any visible text verbatim.\n" +
+  "• Atmosphere: lighting, mood, sensory quality that gives the image life.\n" +
+  "• Context: where/when was this likely made, for what purpose? Base this only on visible evidence.\n\n" +
+  "Describe only what is directly observable. Do not speculate about causes, narratives, or intentions beyond what the image explicitly shows.\n\n" +
+  "Aim for around 300 characters; complex images may run longer (up to ~1000). Write as a single flowing paragraph of plain text — no line breaks, no headings, no Markdown formatting (no tables, no code fences, no bullet lists), no preamble like \"This image shows…\". Just describe."
 
 /**
  * Build the prompt that gets used WHEN the caller supplies
@@ -97,9 +105,9 @@ export function buildCaptionPromptWithContext(
     fmt(after),
     "--- End surrounding text ---",
     "",
-    "This surrounding text MAY help describe the image — for example, a sentence like \"Figure 3: Q2 revenue chart\" tells you what the chart actually plots. It MAY ALSO be unrelated body text that just happens to flank the image. Use your judgment: if a passage clearly identifies, references, or labels the image, anchor your caption to it; if not, ignore the surrounding text and describe what you see.",
+    "This surrounding text MAY help — a sentence like \"Figure 3: Q2 revenue chart\" tells you what the chart plots. It MAY ALSO be unrelated body text. Use your judgment: if a passage clearly identifies or labels the image, anchor to it; if not, ignore it.",
     "",
-    "Now describe the image factually for a knowledge-base index. Include: any visible text verbatim, chart axes and values, diagram structure (boxes/arrows/labels), key visual elements. If the surrounding text contains a relevant figure number / caption / referent, incorporate that specifically. Do NOT invent details that aren't visible in the image or directly stated in the surrounding text. 2 to 4 sentences. Output plain text only — no markdown, no preamble.",
+    CAPTION_PROMPT,
   ].join("\n")
 }
 
@@ -134,6 +142,15 @@ export interface CaptionOptions {
    */
   contextBefore?: string
   contextAfter?: string
+  /**
+   * Target output language for the caption (e.g. "Chinese",
+   * "English", "Japanese"). When set, a language directive is
+   * appended to the prompt so the VLM writes alt text in the
+   * wiki's configured language. Pass the raw store value —
+   * `getLanguagePromptName` resolves display names internally.
+   * Omit or pass "auto" to let the model match the image content.
+   */
+  outputLanguage?: string
 }
 
 /**
@@ -170,10 +187,18 @@ export async function captionImage(
   // wastes tokens.
   const before = options?.contextBefore?.trim() ?? ""
   const after = options?.contextAfter?.trim() ?? ""
-  const promptText =
+  let promptText =
     before.length > 0 || after.length > 0
       ? buildCaptionPromptWithContext(before, after)
       : CAPTION_PROMPT
+
+  // Append language directive when the wiki has an explicit output
+  // language. "auto" / undefined → model matches image content.
+  const lang = options?.outputLanguage
+  if (lang && lang !== "auto") {
+    const langName = getLanguagePromptName(lang)
+    promptText += `\n\nWrite your description in ${langName}.`
+  }
 
   const messages: ChatMessage[] = [
     {

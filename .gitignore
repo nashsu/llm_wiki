@@ -49,3 +49,12 @@ pnpm-debug.log*
 # Brainstorm assets (not tracked in source control)
 .superpowers/
 .claude/
+
+# Session / PR intermediate docs (handoff, design plans, PR draft)
+CLAUDE.md
+PR.md
+context.md
+questions.md
+task.md
+walkthrough.md
+plans/markdown-image-localizer*.md

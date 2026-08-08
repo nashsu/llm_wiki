@@ -93,4 +93,43 @@ describe("ingest-cache — checkIngestCache", () => {
     const result = await checkIngestCache("/project", "foo.pdf", "hello")
     expect(result).toBeNull()
   })
+
+  it("treats hashInput as opaque: two distinct inputs → distinct cache buckets even when content overlaps", async () => {
+    // v0.6.6 changed the third parameter's semantics from "sourceContent"
+    // to "hashInput". Callers (e.g. `buildIngestHashInput` in ingest.ts)
+    // compose the string to fold behavior-affecting flags into the
+    // fingerprint. This test asserts that ingest-cache treats the string
+    // as opaque — same first two args, different third arg → cache miss.
+    let persisted = ""
+    mockReadFile.mockImplementation(async () => persisted || JSON.stringify({ entries: {} }))
+    mockWriteFile.mockImplementation(async (_p: string, c: string) => {
+      persisted = c
+    })
+
+    // Save with a "fingerprint-A" composition.
+    await saveIngestCache(
+      "/project",
+      "foo.md",
+      "body content\n\n---cache-fingerprint---\nlocalize=1\n",
+      ["wiki/sources/foo.md"],
+    )
+
+    mockFileExists.mockResolvedValue(true)
+
+    // Same body, different fingerprint suffix → must miss.
+    const missOnFlagChange = await checkIngestCache(
+      "/project",
+      "foo.md",
+      "body content\n\n---cache-fingerprint---\nlocalize=0\n",
+    )
+    expect(missOnFlagChange).toBeNull()
+
+    // Same body, same fingerprint suffix → must hit.
+    const hitOnFlagSame = await checkIngestCache(
+      "/project",
+      "foo.md",
+      "body content\n\n---cache-fingerprint---\nlocalize=1\n",
+    )
+    expect(hitOnFlagSame).toEqual(["wiki/sources/foo.md"])
+  })
 })

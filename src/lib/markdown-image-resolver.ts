@@ -47,7 +47,7 @@ function comparePath(path: string): string {
   return /^[a-zA-Z]:/.test(path) ? path.toLowerCase() : path
 }
 
-function isInsideProject(path: string, projectPath: string): boolean {
+export function isInsideProject(path: string, projectPath: string): boolean {
   const root = comparePath(trimTrailingSlash(normalizePath(projectPath)))
   const candidate = comparePath(trimTrailingSlash(normalizePath(path)))
   return candidate === root || candidate.startsWith(`${root}/`)

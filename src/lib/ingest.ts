@@ -38,6 +38,11 @@ import {
   type SavedImage,
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
+import {
+  localizeMarkdownImages,
+  mergeImageSourcesFrontmatter,
+  type FrontmatterImageEntry,
+} from "@/lib/markdown-image-localizer"
 import type { MultimodalConfig } from "@/stores/wiki-store"
 import { GENERATION_WIKI_TYPES } from "@/lib/wiki-page-types"
 import { computeContextBudget } from "@/lib/context-budget"
@@ -638,6 +643,39 @@ async function appendIngestWarningLog(
   }
 }
 
+/**
+ * Compose the string that gets SHA-256'd for the ingest cache key.
+ *
+ * v0.6.6 folds behavior-affecting config flags into the hashed material
+ * so toggling them invalidates the cache without a signature change on
+ * `checkIngestCache` / `saveIngestCache`. See `ingest-cache.ts` JSDoc.
+ *
+ * Currently folded in: `localizeMarkdownImages` (the markdown image
+ * localizer's master toggle). `minImagePixelSize` and `urlCacheTtlDays`
+ * are deliberately NOT folded in.
+ *
+ * Trade-off for the two omitted flags (read before folding either in):
+ *   - `minImagePixelSize`: lowering it DOES change output — images that
+ *     were previously below threshold (empty alt) now get VLM captions.
+ *     We accept stale cache here on purpose: re-ingesting an entire
+ *     document just to caption a few small images is far more expensive
+ *     than the per-image caption cache, which already keys on SHA-256
+ *     and will fill in captions the next time each image is seen. Users
+ *     who want an immediate full refresh can delete the source page.
+ *   - `urlCacheTtlDays`: only governs re-fetch bandwidth, never the
+ *     emitted markdown or alt text, so it can never change output shape.
+ *
+ * To add a future fingerprint dimension, extend the format string here
+ * — no changes to `ingest-cache.ts` needed.
+ */
+export function buildIngestHashInput(
+  content: string,
+  mmCfg: MultimodalConfig,
+): string {
+  const localize = mmCfg.enabled && mmCfg.localizeMarkdownImages ? "1" : "0"
+  return `${content}\n\n---cache-fingerprint---\nlocalize=${localize}\n`
+}
+
 async function autoIngestImpl(
   projectPath: string,
   sourcePath: string,
@@ -665,6 +703,9 @@ async function autoIngestImpl(
   // ── MinerU preprocessing for PDF files ──
   const lowerExt = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
   const isPdf = lowerExt === "pdf"
+  // Intentionally narrow: `.mdx` and other variants have divergent syntax
+  // (JSX embedding, custom extensions) and are out of scope for Phase 1.
+  const isMarkdown = lowerExt === "md" || lowerExt === "markdown"
   const mineruCfg = useWikiStore.getState().mineruConfig
   let mineruSucceeded = false
   let mineruSavedImages: SavedImage[] = []
@@ -732,6 +773,108 @@ async function autoIngestImpl(
     }
   }
 
+  // ── Hoisted config (Commit 5): pre-Step-0.4 so the localizer gate can
+  //    read `mmCfg.enabled` / `mmCfg.localizeMarkdownImages`. Both were
+  //    previously declared twice inside autoIngestImpl (cache-hit and
+  //    full-pipeline branches). Hoisting collapses the pair. ──
+  const mmCfg = useWikiStore.getState().multimodalConfig
+  const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
+  const shouldLocalize = mmCfg.enabled && mmCfg.localizeMarkdownImages
+
+  // ── Step 0.4: Localize markdown image references (md sources only) ──
+  //
+  // Per the decision matrix (§1): every ![alt](url "title") in the source
+  // gets its bytes localized to wiki/media/, and alt/title filled in by
+  // the VLM when the author left alt empty. Runs on both cache-miss and
+  // cache-hit paths; the working-content propagation below closes the
+  // cache loop so a self-reenqueue is a cache hit.
+  //
+  // Two output forms:
+  //   - workingSourceContent = result.rewrittenSourceMarkdown (raw-form,
+  //     ../../wiki/media/... paths) — written back to raw/sources/<slug>.md
+  //     and used everywhere the raw side reads source content.
+  //   - workingWikiSourceContent = result.rewrittenWikiMarkdown (wiki-
+  //     form, ../media/... paths) — used only when feeding the LLM
+  //     analysis/generation prompts, so the wiki-side output contains
+  //     the correct relative paths from wiki/sources/<slug>.md.
+  //
+  // Also merges the `image_sources:` frontmatter block per §11 lifecycle.
+  //
+  // Failure is non-fatal: any exception falls through with byte-identical
+  // working* variables so the legacy pipeline runs.
+  let workingSourceContent = sourceContent
+  let workingWikiSourceContent = sourceContent
+  let markdownLocalizedImages: SavedImage[] = []
+  // True only when Step 0.4 completed without throwing. The image
+  // gates below use this (not `shouldLocalize`) so a localizer failure
+  // falls back to the legacy extractAndSaveMarkdownImages path instead
+  // of silently dropping all markdown images.
+  let localizerRan = false
+
+  if (isMarkdown && shouldLocalize) {
+    try {
+      const result = await localizeMarkdownImages({
+        projectPath: pp,
+        sourcePath: sp,
+        sourceSummarySlug,
+        markdown: sourceContent,
+        // Pass the RESOLVED caption config (dedicated vision endpoint or
+        // main LLM), not the raw main llmConfig. resolveCaptionConfig
+        // returns null only when mmCfg.enabled is false — impossible
+        // here because shouldLocalize already requires it.
+        llmConfig: captionLlm ?? llmConfig,
+        multimodalConfig: mmCfg,
+        outputLanguage: useWikiStore.getState().outputLanguage,
+        signal,
+        onProgress: (done, total, stage) =>
+          activity.updateItem(activityId, {
+            detail: `${stage === "download" ? "Localizing" : "Captioning"} images... ${done}/${total}`,
+          }),
+      })
+
+      // Build the frontmatter entries per §11. Only remote-http + data-uri
+      // qualify; local-relative and already-localized are excluded. The
+      // localizer builds this mapping internally (it knows the URL kind
+      // per ref) and exposes it as `result.frontmatterEntries`.
+      const frontmatterEntries: FrontmatterImageEntry[] = result.frontmatterEntries
+
+      const withFrontmatter = mergeImageSourcesFrontmatter(
+        result.rewrittenSourceMarkdown,
+        frontmatterEntries,
+      )
+
+      if (withFrontmatter !== sourceContent) {
+        // Write the localized body back to the raw-sources copy. This
+        // will trigger source-watch; the cache-key propagation below
+        // ensures the reenqueued ingest is a cache-hit no-op.
+        await writeFile(sp, withFrontmatter)
+        workingSourceContent = withFrontmatter
+        workingWikiSourceContent = mergeImageSourcesFrontmatter(
+          result.rewrittenWikiMarkdown,
+          frontmatterEntries,
+        )
+      }
+
+      markdownLocalizedImages = result.savedImages
+      localizerRan = true
+      console.log(
+        `[ingest:localizer] "${fileName}": ` +
+          `${result.stats.downloaded}dl ${result.stats.captioned}cap ` +
+          `${result.stats.skippedAuthorAlt}skip-alt ${result.stats.skippedTooSmall}skip-small ` +
+          `${result.stats.skippedNoVlmProvider}skip-nvlm ${result.stats.failed}fail ` +
+          `${result.stats.metadataEmbedded}meta-embed`,
+      )
+    } catch (err) {
+      console.warn(
+        `[ingest:localizer] failed for "${fileName}":`,
+        err instanceof Error ? err.message : err,
+      )
+      // Non-fatal: working* variables stay === sourceContent and
+      // localizerRan stays false, so the legacy
+      // extractAndSaveMarkdownImages path takes over below.
+    }
+  }
+
   // ── Cache check: skip re-ingest if source content hasn't changed ──
   //
   // Image cascade still runs on cache hits. Reason: a user may have
@@ -742,17 +885,25 @@ async function autoIngestImpl(
   // re-running them costs only the extraction time and converges the
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
-  const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent)
+  const cachedFiles = await checkIngestCache(pp, sourceIdentity, buildIngestHashInput(workingSourceContent, mmCfg))
   console.log(`[ingest:diag] cache check for "${sourceIdentity}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
     try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
-      const skipNativePdfImageExtraction = isPdf && hasMineruImageRefs(sourceContent, sourceSummarySlug)
+      const skipNativePdfImageExtraction = isPdf && hasMineruImageRefs(workingSourceContent, sourceSummarySlug)
       let savedImages = skipNativePdfImageExtraction
         ? mineruSavedImages
         : await extractAndSaveSourceImages(pp, sp, sourceSummarySlug)
-      const markdownImages = await extractAndSaveMarkdownImages(pp, sp, sourceContent, sourceSummarySlug)
-      savedImages = [...savedImages, ...markdownImages]
+      // When the localizer ran successfully (Step 0.4), markdown images
+      // are already localized — skip the legacy extractor to avoid
+      // double-copy. On localizer failure localizerRan is false and we
+      // fall back to the legacy path so images aren't dropped.
+      if (!localizerRan) {
+        const markdownImages = await extractAndSaveMarkdownImages(pp, sp, workingSourceContent, sourceSummarySlug)
+        savedImages = [...savedImages, ...markdownImages]
+      } else {
+        savedImages = [...savedImages, ...markdownLocalizedImages]
+      }
       console.log(`[ingest:diag] cache-hit branch: got ${savedImages.length} image(s)`)
       if (savedImages.length > 0) {
         // Caption first (populates the cache), THEN inject — the
@@ -771,16 +922,14 @@ async function autoIngestImpl(
         // doesn't proactively scrub old wiki content. The user
         // would need to delete the wiki/sources/<slug>.md page
         // to start clean.)
-        const mmCfg = useWikiStore.getState().multimodalConfig
         if (!mmCfg.enabled) {
           console.log(
             `[ingest:caption] cache-hit + disabled — skipping caption + safety-net inject (${savedImages.length} image(s) untouched on disk)`,
           )
         } else {
-          const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
           if (captionLlm) {
             try {
-              await captionMarkdownImages(pp, appendSavedImageRefsForCaption(sourceContent, savedImages), captionLlm, {
+              await captionMarkdownImages(pp, appendSavedImageRefsForCaption(workingSourceContent, savedImages), captionLlm, {
                 signal,
                 shouldCaption: (url) =>
                   isSavedImagePromptUrl(pp, sourceSummarySlug, url),
@@ -844,13 +993,20 @@ async function autoIngestImpl(
   activity.updateItem(activityId, { detail: "Extracting embedded images..." })
   console.log(`[ingest:diag] full-pipeline branch: starting image extraction for ${sp}`)
   const skipNativePdfImageExtraction = isPdf && (
-    hasMineruImageRefs(sourceContent, sourceSummarySlug)
+    hasMineruImageRefs(workingSourceContent, sourceSummarySlug)
   )
   let savedImages = skipNativePdfImageExtraction
     ? mineruSavedImages
     : await extractAndSaveSourceImages(pp, sp, sourceSummarySlug)
-  const markdownImages = await extractAndSaveMarkdownImages(pp, sp, sourceContent, sourceSummarySlug)
-  savedImages = [...savedImages, ...markdownImages]
+  // When the localizer ran successfully (Step 0.4), markdown images are
+  // already localized — skip the legacy extractor to avoid double-copy.
+  // On localizer failure localizerRan is false → legacy fallback.
+  if (!localizerRan) {
+    const markdownImages = await extractAndSaveMarkdownImages(pp, sp, workingSourceContent, sourceSummarySlug)
+    savedImages = [...savedImages, ...markdownImages]
+  } else {
+    savedImages = [...savedImages, ...markdownLocalizedImages]
+  }
   console.log(`[ingest:diag] full-pipeline branch: got ${savedImages.length} image(s)`)
   if (savedImages.length > 0) {
     console.log(
@@ -899,15 +1055,13 @@ async function autoIngestImpl(
   // "the curated wiki knowledge".
   let enrichedSourceContent = stripWikiMediaAbsPaths(
     pp,
-    appendSavedImageRefsForCaption(sourceContent, savedImages),
+    appendSavedImageRefsForCaption(workingWikiSourceContent, savedImages),
   )
-  const mmCfg = useWikiStore.getState().multimodalConfig
-  const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
   if (!mmCfg.enabled && savedImages.length > 0) {
     // Strip `![alt](url)` references — match the same regex shape
     // we use elsewhere for image refs. Preserve a single space
     // where the ref used to sit so adjacent words don't fuse.
-    enrichedSourceContent = sourceContent.replace(
+    enrichedSourceContent = workingWikiSourceContent.replace(
       /!\[[^\]]*\]\([^)\s]+\)/g,
       " ",
     )
@@ -1338,12 +1492,15 @@ async function autoIngestImpl(
   // ── Step 5: Save to cache ───────────────────────────────────
   // Skip cache when a write fails or a truncated path remains unrecovered;
   // otherwise the partial result would be replayed without another LLM turn.
+  // Hash is computed over the *working* content (post-localization) so that
+  // re-ingesting the same source with different localizer settings triggers
+  // a fresh pipeline run rather than a stale cache hit.
   if (
     writtenPaths.length > 0 &&
     hardFailures.length === 0 &&
     unrecoveredTruncatedPaths.length === 0
   ) {
-    await saveIngestCache(pp, sourceIdentity, sourceContent, writtenPaths)
+    await saveIngestCache(pp, sourceIdentity, buildIngestHashInput(workingSourceContent, mmCfg), writtenPaths)
     if (longSourceCheckpointPath) {
       await clearLongSourceCheckpoint(longSourceCheckpointPath)
     }

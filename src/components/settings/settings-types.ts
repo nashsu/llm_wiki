@@ -51,6 +51,11 @@ export interface SettingsDraft {
   multimodalAzureModelFamily: AzureModelFamily
   multimodalApiMode: CustomApiMode | undefined
   multimodalConcurrency: number
+  /** Master switch for the markdown-image localizer (v0.6.6). When
+   *  true, remote images in `.md` inputs are downloaded to
+   *  `wiki/media/<slug>/`, captioned by the VLM, and the raw-sources
+   *  copy is rewritten to use local paths. */
+  multimodalLocalizeImages: boolean
 
   // Output preferences
   outputLanguage: string

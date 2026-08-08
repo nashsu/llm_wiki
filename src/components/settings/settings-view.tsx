@@ -150,6 +150,7 @@ function initialDraft(
     multimodalAzureModelFamily: multimodal.azureModelFamily ?? "auto",
     multimodalApiMode: multimodal.apiMode,
     multimodalConcurrency: multimodal.concurrency,
+    multimodalLocalizeImages: multimodal.localizeMarkdownImages,
     outputLanguage,
     maxHistoryMessages,
     proxyEnabled: proxy.enabled,
@@ -394,6 +395,12 @@ export function SettingsView() {
       // going wider than ~16 just queues behind the server's batch
       // slot.
       concurrency: Math.max(1, Math.min(16, draft.multimodalConcurrency || 4)),
+      localizeMarkdownImages: draft.multimodalLocalizeImages,
+      // These fields are not yet in the Settings UI — pass through
+      // the current store values so the required interface is satisfied.
+      minImagePixelSize: multimodalConfig.minImagePixelSize,
+      urlCacheTtlDays: multimodalConfig.urlCacheTtlDays,
+      imageFetchTimeoutMs: multimodalConfig.imageFetchTimeoutMs,
     }
 
     const newProxy = {
