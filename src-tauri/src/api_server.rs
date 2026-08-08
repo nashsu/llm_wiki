@@ -1,15 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -33,12 +34,22 @@ const APP_STATE_CACHE_TTL: Duration = Duration::from_secs(5);
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 const RATE_LIMIT_MAX_REQUESTS: usize = 120;
 const MAX_IN_FLIGHT_REQUESTS: usize = 64;
+/// How long an ingest control request waits for the frontend to respond
+/// before timing out. The frontend listener calls ingest-queue functions
+/// which may be async (e.g. retryAllFailedTasks), so this needs to be
+/// generous enough for a queue save + processNext kickoff.
+const INGEST_API_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// API status: 0=starting, 1=running, 2=port_conflict, 3=error
 static API_STATUS: AtomicU8 = AtomicU8::new(0);
 static IN_FLIGHT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
+/// Pending ingest API requests waiting for a frontend response. The HTTP
+/// handler emits a Tauri event, then blocks on the channel receiver until
+/// the frontend calls the `ingest_api_response` command (which calls
+/// `complete_ingest_api_request`). Keyed by request UUID.
+static INGEST_API_PENDING: OnceLock<Mutex<HashMap<String, mpsc::Sender<Value>>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct CachedAppState {
@@ -289,6 +300,18 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "chat"]) => handle_chat(app, project_id, body),
         (&Method::Post, ["projects", project_id, "chat", session_id, "cancel"]) => {
             handle_cancel_chat(app, project_id, session_id)
+        }
+        (&Method::Get, ["projects", project_id, "ingest", "status"]) => {
+            handle_ingest_control(app, project_id, "status")
+        }
+        (&Method::Post, ["projects", project_id, "ingest", "pause"]) => {
+            handle_ingest_control(app, project_id, "pause")
+        }
+        (&Method::Post, ["projects", project_id, "ingest", "resume"]) => {
+            handle_ingest_control(app, project_id, "resume")
+        }
+        (&Method::Post, ["projects", project_id, "ingest", "retry-failed"]) => {
+            handle_ingest_control(app, project_id, "retry-failed")
         }
         _ => err(404, "Not found"),
     }
@@ -2065,6 +2088,104 @@ fn resolve_link(raw: &str, ids: &BTreeSet<String>) -> Option<String> {
     ids.iter()
         .find(|id| id.to_lowercase() == normalized || id.to_lowercase() == raw.to_lowercase())
         .cloned()
+}
+
+/// Completes a pending ingest API request by sending the frontend's
+/// result through the channel. Called by the `ingest_api_response`
+/// Tauri command when the frontend finishes processing an
+/// `ingest-api://request` event. Returns true if a matching request
+/// was found (so the command can report success to the frontend).
+pub fn complete_ingest_api_request(request_id: &str, result: Value) -> bool {
+    let Some(lock) = INGEST_API_PENDING.get() else {
+        return false;
+    };
+    let Ok(mut map) = lock.lock() else {
+        return false;
+    };
+    if let Some(sender) = map.remove(request_id) {
+        let _ = sender.send(result);
+        true
+    } else {
+        false
+    }
+}
+
+/// Bridge between the HTTP API and the frontend ingest queue. The ingest
+/// queue lives entirely in frontend TypeScript (src/lib/ingest-queue.ts),
+/// so the HTTP handler emits a Tauri event and blocks until the frontend
+/// responds via the `ingest_api_response` command.
+///
+/// `action` is one of "status", "pause", "resume", "retry-failed".
+fn handle_ingest_control(
+    app: &AppHandle,
+    project_id: &str,
+    action: &str,
+) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+
+    let request_id = Uuid::new_v4().to_string();
+    let (tx, rx) = mpsc::channel::<Value>();
+
+    // Register the pending request so the frontend's response can find us.
+    {
+        let map = INGEST_API_PENDING.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert(request_id.clone(), tx);
+        } else {
+            return err(500, "Failed to register ingest API request");
+        }
+    }
+
+    // Emit the event to the frontend webview. The frontend listener
+    // (src/lib/ingest-api-bridge.ts) picks this up, calls the
+    // corresponding ingest-queue function, and responds via the
+    // `ingest_api_response` Tauri command.
+    let payload = json!({
+        "requestId": request_id,
+        "action": action,
+        "projectId": project.id,
+    });
+
+    if app.emit("ingest-api://request", payload).is_err() {
+        // Clean up the pending entry to avoid a stale channel.
+        if let Some(lock) = INGEST_API_PENDING.get() {
+            if let Ok(mut map) = lock.lock() {
+                map.remove(&request_id);
+            }
+        }
+        return err(503, "Failed to dispatch ingest control request to the desktop UI");
+    }
+
+    // Block until the frontend responds or the timeout expires.
+    match rx.recv_timeout(INGEST_API_TIMEOUT) {
+        Ok(result) => {
+            // The frontend may return { "error": "..." } for internal failures.
+            if let Some(err_msg) = result.get("error").and_then(Value::as_str) {
+                return err(500, err_msg);
+            }
+            ok(json!({
+                "ok": true,
+                "action": action,
+                "projectId": project.id,
+                "result": result,
+            }))
+        }
+        Err(_) => {
+            // Timeout — remove the stale entry so it doesn't linger.
+            if let Some(lock) = INGEST_API_PENDING.get() {
+                if let Ok(mut map) = lock.lock() {
+                    map.remove(&request_id);
+                }
+            }
+            err(
+                504,
+                "Ingest control request timed out — the desktop UI may not be visible or no project is open",
+            )
+        }
+    }
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {

@@ -61,6 +61,15 @@ fn api_server_reload_config() -> String {
     .unwrap_or_else(|e| format!("error: {e}"))
 }
 
+/// Frontend → backend response channel for ingest API control requests.
+/// The HTTP API handler emits an `ingest-api://request` event and blocks
+/// until the frontend calls this command with the result. See
+/// `handle_ingest_control` in api_server.rs.
+#[tauri::command]
+fn ingest_api_response(request_id: String, result: serde_json::Value) -> bool {
+    api_server::complete_ingest_api_request(&request_id, result)
+}
+
 #[tauri::command]
 async fn agent_start_turn(
     app: tauri::AppHandle,
@@ -656,6 +665,7 @@ pub fn run() {
             clip_server_status,
             api_server_status,
             api_server_reload_config,
+            ingest_api_response,
             agent_start_turn,
             agent_start_turn_stream,
             agent_cancel_turn,

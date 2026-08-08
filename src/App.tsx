@@ -123,6 +123,15 @@ function App() {
   useEffect(() => {
     setupAutoSave()
     startClipWatcher()
+    // Start the ingest API event bridge so MCP/API clients can control
+    // the ingest queue (pause/resume/status/retry-failed) without the UI.
+    import("@/lib/ingest-api-bridge")
+      .then(({ startIngestApiBridge }) => {
+        startIngestApiBridge().catch((err) =>
+          console.error("Failed to start ingest API bridge:", err),
+        )
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
