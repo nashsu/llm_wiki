@@ -621,6 +621,49 @@ describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
     ).toBe("wiki/concepts/反硝化除磷技术.md")
   })
 
+  it("renames CJK pages under the default auto language by detecting the content language", () => {
+    const content = [
+      "---",
+      "type: concept",
+      "title: 反硝化除磷技术",
+      "created: 2026-06-18",
+      "---",
+      "",
+      "# 反硝化除磷技术",
+      "",
+      "这是一段中文正文，用于检测语言。",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/denitrifying-phosphorus-removal.md",
+        content,
+        "auto",
+      ),
+    ).toBe("wiki/concepts/反硝化除磷技术.md")
+  })
+
+  it("leaves English pages untouched under the default auto language", () => {
+    const content = [
+      "---",
+      "type: concept",
+      "title: Denitrifying phosphorus removal",
+      "---",
+      "",
+      "# Denitrifying phosphorus removal",
+      "",
+      "This is an English body used for language detection.",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/denitrifying-phosphorus-removal.md",
+        content,
+        "auto",
+      ),
+    ).toBe("wiki/concepts/denitrifying-phosphorus-removal.md")
+  })
+
   it("does not rewrite source summaries or aggregate pages", () => {
     const content = "---\ntitle: 反硝化除磷技术\n---\n# 反硝化除磷技术"
 

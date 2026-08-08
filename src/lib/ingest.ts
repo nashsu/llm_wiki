@@ -1461,7 +1461,15 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   content: string,
   targetLang: string | undefined,
 ): string {
-  if (!targetLang || targetLang === "auto" || !CJK_OUTPUT_LANGUAGES.has(targetLang)) {
+  // "auto" (the default output language) means "follow the source", so resolve
+  // it from the page content. Without this, auto short-circuited here and
+  // Chinese/Japanese/Korean pages kept ASCII/pinyin filenames even though
+  // their titles and content were CJK, leaving the vault hard to browse.
+  // See issue #585.
+  const effectiveLang = !targetLang || targetLang === "auto"
+    ? detectLanguage(content)
+    : targetLang
+  if (!CJK_OUTPUT_LANGUAGES.has(effectiveLang)) {
     return relativePath
   }
   if (
@@ -2231,7 +2239,7 @@ export function buildGenerationPrompt(
     "- Preserve subject boundaries: when a source discusses multiple entities/models/products/methods, keep claims, evaluations, limitations, benchmark results, and recommendations attached to the exact subject they describe.",
     "- Do not merge or generalize a claim about one subject into another subject's page solely because they share terms (for example context window size, benchmark name, dataset, architecture, or feature name).",
     "- If a page needs to mention another subject for comparison, write it explicitly as a comparison and cite which source/frontmatter `sources` entry supports that statement.",
-    "- Use kebab-case filenames",
+    "- Use kebab-case for Latin-script filenames; for Chinese/Japanese/Korean titles keep the CJK characters (do NOT romanize to pinyin/romaji or translate to English)",
     "- Derive filenames from the page title in the mandatory output language, but short proper nouns and technical identifiers take precedence: preserve names such as OpenAI, GPT-5, Transformer, CLIP, ImageNet, PyTorch, CUDA, GitHub, arXiv, React, LanceDB, AnyTXT, MinerU, model names, dataset names, tool names, and code identifiers in their standard original form. Do not put raw URLs, citation strings, or full paper titles directly into file paths; convert surrounding descriptive prose to a safe readable title. For Chinese/Japanese/Korean prose titles, keep readable CJK characters in the filename instead of translating the slug to English.",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
