@@ -197,7 +197,73 @@ export async function mergePageContent(
   const todayFn = opts.today ?? defaultToday
   final = setFrontmatterScalar(final, "updated", todayFn())
 
-  return final
+  return stripBodyWikilinkPathPrefixes(final)
+}
+
+/**
+ * Normalize page links after an LLM merge without touching frontmatter,
+ * prose paths, code examples, or Obsidian image/file embeds.
+ *
+ * Project schemas route pages into directories on disk, but cross-page links
+ * use bare slugs. Older page bodies may still contain targets such as
+ * `[[clients/foo-overview]]`; merge prompts intentionally preserve existing
+ * links, so the application must repair those targets deterministically.
+ */
+function stripBodyWikilinkPathPrefixes(content: string): string {
+  const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)
+  if (!frontmatter) return content
+
+  const body = content.slice(frontmatter[0].length)
+  if (!body.includes("[[")) return content
+
+  const fencedParts = body.split(/(```[\s\S]*?```)/g)
+  const normalizedBody = fencedParts
+    .map((part, index) =>
+      index % 2 === 1 ? part : stripWikilinkPrefixesOutsideInlineCode(part),
+    )
+    .join("")
+
+  return `${frontmatter[0]}${normalizedBody}`
+}
+
+function stripWikilinkPrefixesOutsideInlineCode(text: string): string {
+  const inlineParts = text.split(/(`[^`\n]+`)/g)
+  return inlineParts
+    .map((part, index) => index % 2 === 1 ? part : replaceWikilinkPrefixes(part))
+    .join("")
+}
+
+const PAGE_WIKILINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]*))?\]\]/g
+
+function replaceWikilinkPrefixes(text: string): string {
+  return text.replace(
+    PAGE_WIKILINK_RE,
+    (match, rawTarget: string, rawAlias: string | undefined, offset: number) => {
+      if (offset > 0 && text[offset - 1] === "!") return match
+
+      const target = rawTarget.trim()
+      const normalizedTarget = bareWikilinkTarget(target)
+      if (normalizedTarget === target) return match
+
+      const alias = rawAlias === undefined ? "" : `|${rawAlias}`
+      return `[[${normalizedTarget}${alias}]]`
+    },
+  )
+}
+
+function bareWikilinkTarget(target: string): string {
+  if (!target || target.startsWith("#")) return target
+  // URI-like targets are not wiki page paths.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return target
+
+  const fragmentIndex = target.indexOf("#")
+  const pageTarget = fragmentIndex >= 0 ? target.slice(0, fragmentIndex) : target
+  const fragment = fragmentIndex >= 0 ? target.slice(fragmentIndex) : ""
+  const normalizedPath = pageTarget.replace(/\\/g, "/")
+  if (!normalizedPath.includes("/")) return target
+
+  const leaf = normalizedPath.split("/").pop()
+  return leaf ? `${leaf}${fragment}` : target
 }
 
 async function tryBackup(
