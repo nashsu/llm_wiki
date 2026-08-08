@@ -112,10 +112,12 @@ function cloneDb(db: ImportDb): ImportDb {
 
 function isPathInside(path: string, parent: string): boolean {
   const normalizedPath = dbDirectoryKey(path)
-  const normalizedParent = dbDirectoryKey(parent).replace(/\/+$/, "")
+  const parentKey = dbDirectoryKey(parent)
+  const normalizedParent = parentKey === "/" ? parentKey : parentKey.replace(/\/+$/, "")
+  const parentPrefix = normalizedParent === "/" ? "/" : `${normalizedParent}/`
   return (
     normalizedPath === normalizedParent ||
-    normalizedPath.startsWith(`${normalizedParent}/`)
+    normalizedPath.startsWith(parentPrefix)
   )
 }
 
@@ -127,16 +129,46 @@ export function isProjectManagedScheduledImportPath(
   projectPath: string,
   importPath: string,
 ): boolean {
-  const project = normalizePath(projectPath).replace(/\/+$/, "")
-  const root = normalizePath(importPath).replace(/\/+$/, "")
-  return (
-    root === project ||
-    isPathInside(project, root) ||
-    isPathInside(root, projectSubpath(project, "raw")) ||
-    isPathInside(root, projectSubpath(project, "raw/sources")) ||
-    isPathInside(root, projectSubpath(project, "wiki")) ||
-    isPathInside(root, projectSubpath(project, ".llm-wiki"))
-  )
+  return getScheduledImportPathIssue(projectPath, importPath) !== null
+}
+
+export type ScheduledImportPathIssue = "inside-project" | "contains-project"
+
+export function normalizeScheduledImportConfigForProject(
+  projectPath: string,
+  config: ScheduledImportConfig | null,
+): ScheduledImportConfig {
+  if (!config) {
+    return {
+      enabled: false,
+      path: "",
+      interval: 60,
+      lastScan: null,
+    }
+  }
+
+  const path = resolveImportPath(projectPath, config.path)
+  return {
+    ...config,
+    // Older builds could persist the project's own raw/sources directory as
+    // the scheduled-import path. Clear any self-referential value while
+    // retaining a valid external directory for later re-enabling.
+    path: path && !isProjectManagedScheduledImportPath(projectPath, path) ? path : "",
+  }
+}
+
+export function getScheduledImportPathIssue(
+  projectPath: string,
+  importPath: string,
+): ScheduledImportPathIssue | null {
+  const normalizedProject = normalizePath(projectPath)
+  const normalizedRoot = normalizePath(importPath)
+  const project = normalizedProject === "/" ? normalizedProject : normalizedProject.replace(/\/+$/, "")
+  const root = normalizedRoot === "/" ? normalizedRoot : normalizedRoot.replace(/\/+$/, "")
+  if (!project || !root) return null
+  if (isPathInside(root, project)) return "inside-project"
+  if (isPathInside(project, root)) return "contains-project"
+  return null
 }
 
 function notifyManagedScheduledImportPath(project: WikiProject, importRoot: string): void {
@@ -241,7 +273,8 @@ export function shouldSkipScheduledImportConfigFile(path: string): boolean {
 }
 
 export function resolveImportPath(projectPath: string, configPath: string): string {
-  const path = normalizePath(configPath || "raw/sources")
+  const path = normalizePath(configPath.trim())
+  if (!path) return ""
   if (isAbsolutePath(path)) {
     return path
   }

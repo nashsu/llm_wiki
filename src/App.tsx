@@ -94,18 +94,11 @@ function App() {
   async function hydrateScheduledImportAfterOpen(proj: WikiProject): Promise<void> {
     try {
       const savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      const { normalizeScheduledImportConfigForProject } = await import("@/lib/scheduled-import")
       if (!isCurrentProject(proj)) return
-      if (savedScheduledImport) {
-        // Migrate relative path to absolute (backward compatibility)
-        let path = savedScheduledImport.path
-        if (path && !path.startsWith("/") && !path.match(/^[a-zA-Z]:[/\\]/)) {
-          path = `${proj.path}/${path}`
-        }
-        useWikiStore.getState().setScheduledImportConfig({
-          ...savedScheduledImport,
-          path,
-        })
-      }
+      useWikiStore.getState().setScheduledImportConfig(
+        normalizeScheduledImportConfigForProject(proj.path, savedScheduledImport),
+      )
 
       const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
       if (!isCurrentProject(proj)) return
@@ -435,7 +428,7 @@ function App() {
       setActiveView("wiki")
       useWikiStore.getState().setScheduledImportConfig({
         enabled: false,
-        path: `${proj.path}/raw/sources`,
+        path: "",
         interval: 60,
         lastScan: null,
       })

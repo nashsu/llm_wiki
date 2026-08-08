@@ -8,7 +8,7 @@ import { Folder, Play, RefreshCw } from "lucide-react"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 import { useWikiStore } from "@/stores/wiki-store"
 import {
-  isProjectManagedScheduledImportPath,
+  getScheduledImportPathIssue,
   resolveImportPath,
   scanAndImport,
 } from "@/lib/scheduled-import"
@@ -53,14 +53,14 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
   const lastScanDate = scheduledImportConfig.lastScan
     ? new Date(scheduledImportConfig.lastScan).toLocaleString()
     : t("settings.sections.scheduledImport.never", { defaultValue: "Never" })
-  const managedPathSelected = Boolean(
-    project &&
-    draft.scheduledImportPath &&
-    isProjectManagedScheduledImportPath(
-      project.path,
-      resolveImportPath(project.path, draft.scheduledImportPath),
-    ),
-  )
+  const scheduledImportPath = draft.scheduledImportPath.trim()
+  const pathIssue = project && scheduledImportPath
+    ? getScheduledImportPathIssue(
+        project.path,
+        resolveImportPath(project.path, scheduledImportPath),
+      )
+    : null
+  const managedPathSelected = pathIssue !== null
 
   return (
     <div className="space-y-6">
@@ -111,7 +111,9 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
           <Input
             value={draft.scheduledImportPath}
             onChange={(e) => setDraft("scheduledImportPath", e.target.value)}
-            placeholder="raw/sources"
+            placeholder={t("settings.sections.scheduledImport.directoryPlaceholder", {
+              defaultValue: "Select an external folder",
+            })}
             disabled={!draft.scheduledImportEnabled}
             className="flex-1"
           />
@@ -133,11 +135,26 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
               "Choose an external folder outside the current LLM Wiki project. Project folders are already handled by source folder monitoring.",
           })}
         </p>
-        {managedPathSelected && (
+        {!scheduledImportPath && (
+          <p className={`text-xs ${draft.scheduledImportEnabled ? "text-destructive" : "text-muted-foreground"}`}>
+            {t("settings.sections.scheduledImport.pathRequired", {
+              defaultValue: "Choose a directory outside the current project.",
+            })}
+          </p>
+        )}
+        {pathIssue === "inside-project" && (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
-            {t("settings.sections.scheduledImport.managedPathWarning", {
+            {t("settings.sections.scheduledImport.insideProjectWarning", {
               defaultValue:
                 "This path is inside the current LLM Wiki project and is already managed by source folder monitoring. Pick an external folder to avoid duplicate scans.",
+            })}
+          </p>
+        )}
+        {pathIssue === "contains-project" && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+            {t("settings.sections.scheduledImport.containsProjectWarning", {
+              defaultValue:
+                "This path contains the current LLM Wiki project. Pick a folder that does not include the project to avoid scanning project files.",
             })}
           </p>
         )}
