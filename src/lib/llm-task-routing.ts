@@ -1,5 +1,6 @@
 import { findLlmPreset } from "@/components/settings/llm-presets"
 import { resolveConfig } from "@/components/settings/preset-resolver"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
 import type {
   LlmConfig,
   ProjectLlmOverride,
@@ -37,6 +38,18 @@ export function projectLlmProfile(config: LlmConfig): Omit<LlmConfig, "apiKey" |
   return profile
 }
 
+export function hydrateTaskModelRoutingProfile(
+  routing: TaskModelRoutingConfig,
+  fallback: LlmConfig,
+  providerConfigs: ProviderConfigs,
+  customPresets: CustomLlmPreset[] = [],
+): TaskModelRoutingConfig {
+  if (!routing.chatPresetId || routing.chatProfile) return routing
+  const resolved = resolveTaskLlmConfig("chat", fallback, providerConfigs, routing, undefined, customPresets)
+  if (resolved === fallback) return routing
+  return { ...routing, chatProfile: projectLlmProfile(resolved) }
+}
+
 /**
  * Resolve a task-specific provider from the current preset overrides.
  * Routing stores preset ids rather than credential snapshots so API-key,
@@ -52,6 +65,7 @@ export function resolveTaskLlmConfig(
   customPresets: CustomLlmPreset[] = [],
 ): LlmConfig {
   if (projectOverride?.enabled) return fallback
+  if (!hasUsableLlm(fallback)) return fallback
   const presetId = task === "chat" ? routing.chatPresetId : routing.ingestPresetId
   if (!presetId) return fallback
   const preset = findLlmPreset(presetId, customPresets)
