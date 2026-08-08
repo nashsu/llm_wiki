@@ -139,7 +139,7 @@ function PdfPreview({ filePath, content }: { filePath: string; content: string }
         loadingTask = getDocument({ data: decodeBase64(file.base64) })
         loadedDocument = await loadingTask.promise
         if (disposed) {
-          await loadedDocument.destroy()
+          await loadingTask.destroy()
           return
         }
         setDocument(loadedDocument)
@@ -154,7 +154,7 @@ function PdfPreview({ filePath, content }: { filePath: string; content: string }
     return () => {
       disposed = true
       if (loadingTask) void loadingTask.destroy()
-      else if (loadedDocument) void loadedDocument.destroy()
+      else if (loadedDocument) void loadedDocument.cleanup()
     }
   }, [filePath, reloadKey, t])
 
