@@ -882,7 +882,10 @@
           "resumeRestored": "继续合并",
           "notDuplicates": "不是重复",
           "merged": "已合并",
-          "skipped": "已标记为不重复"
+          "skipped": "已标记为不重复",
+          "scanEmbeddings": "扫描（嵌入，测试版）",
+          "serviceUrl": "turbovecdb 服务",
+          "threshold": "τ"
         }
       },
       "changelog": {
