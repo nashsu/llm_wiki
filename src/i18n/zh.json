@@ -97,7 +97,7 @@
   "research": {
     "title": "深度研究",
     "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
-    "activeBadge": "{{running}} 个运行中{{queued, plural, =0 {} other {，{{queued}} 个排队中}}}",
+    "activeBadge": "{{running}} 个运行中，{{queued}} 个排队中",
     "inputPlaceholder": "输入研究主题...",
     "emptyTitle": "还没有研究任务",
     "emptyHint": "在上方输入主题，或在待审阅中点击深度研究",
@@ -203,8 +203,8 @@
     "deleteFileConfirm": "再次点击删除 {{name}}",
     "confirm": "确认",
     "loadingMore": "加载更多资料...",
-    "sourceCount": "{{count}} 个资料",
-    "sourceCount_plural": "{{count}} 个资料"
+    "sourceCount_one": "{{count}} 个资料",
+    "sourceCount_other": "{{count}} 个资料"
   },
   "chat": {
     "selectionEdit": {
@@ -304,8 +304,8 @@
     "generatedOutputs": "生成物",
     "generatedOutput": "生成",
     "openGeneratedOutputFolder": "打开生成物目录",
-    "generatedOutputCount": "{{count}} 个文件",
-    "generatedOutputCount_plural": "{{count}} 个文件",
+    "generatedOutputCount_one": "{{count}} 个文件",
+    "generatedOutputCount_other": "{{count}} 个文件",
     "closeGeneratedOutputs": "关闭生成物列表",
     "closeGeneratedOutputPreview": "关闭生成物预览",
     "closeReferencePreview": "关闭引用预览",
@@ -391,8 +391,8 @@
       "no-outlinks": "无出站链接",
       "semantic": "语义问题"
     },
-    "issues": "{{count}} 个问题",
-    "issues_plural": "{{count}} 个问题"
+    "issues_one": "{{count}} 个问题",
+    "issues_other": "{{count}} 个问题"
   },
   "review": {
     "title": "待审阅",
@@ -687,8 +687,8 @@
         "customSerpApiHint": "自定义 engine 会作为 SerpApi 的 `engine` 参数发送。",
         "testProvider": "测试搜索",
         "testRunning": "测试中...",
-        "testSuccess": "搜索测试成功（{{count}} 条结果）。",
-        "testSuccess_plural": "搜索测试成功（{{count}} 条结果）。",
+        "testSuccess_one": "搜索测试成功（{{count}} 条结果）。",
+        "testSuccess_other": "搜索测试成功（{{count}} 条结果）。",
         "testNoResults": "连接可用，但测试查询没有返回结果。",
         "testFailed": "搜索测试失败：{{message}}",
         "firecrawlIpBlocked": "Firecrawl 匿名搜索已被当前 IP 拦截。请切换其他网页搜索 Provider，或尝试更换网络。",

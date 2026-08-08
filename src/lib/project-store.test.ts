@@ -1,5 +1,51 @@
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { __projectStoreTest } from "./project-store"
+
+const memoryStore = vi.hoisted(() => {
+  const values = new Map<string, unknown>()
+  return {
+    values,
+    store: {
+      get: vi.fn(async (key: string) => values.get(key)),
+      set: vi.fn(async (key: string, value: unknown) => {
+        values.set(key, value)
+      }),
+      delete: vi.fn(async (key: string) => {
+        values.delete(key)
+      }),
+      save: vi.fn(async () => {}),
+    },
+  }
+})
+
+vi.mock("@tauri-apps/plugin-store", () => ({
+  load: vi.fn(async () => memoryStore.store),
+}))
+
+beforeEach(() => {
+  memoryStore.values.clear()
+  vi.clearAllMocks()
+})
+
+describe("project-store UI language persistence", () => {
+  it("restores Korean after a module reload", async () => {
+    const projectStore = await import("./project-store")
+    await projectStore.saveLanguage("ko")
+
+    vi.resetModules()
+    const restartedProjectStore = await import("./project-store")
+
+    expect(await restartedProjectStore.loadLanguage()).toBe("ko")
+  })
+
+  it("keeps Korean when another setting is saved", async () => {
+    const projectStore = await import("./project-store")
+    await projectStore.saveLanguage("ko")
+    await projectStore.saveTheme("dark")
+
+    expect(await projectStore.loadLanguage()).toBe("ko")
+  })
+})
 
 describe("project-store MinerU config normalization", () => {
   it("preserves valid MinerU config values", () => {

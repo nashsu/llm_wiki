@@ -393,7 +393,7 @@ export function LintView() {
           <h2 className="text-sm font-semibold">{t("lint.title")}</h2>
           {showResults && items.length > 0 && (
             <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-              {items.length === 1 ? t("lint.issues", { count: items.length }) : t("lint.issues_plural", { count: items.length })}
+              {t("lint.issues", { count: items.length })}
             </span>
           )}
         </div>
