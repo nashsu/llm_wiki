@@ -1100,7 +1100,7 @@ async fn fetch_embedding_batch(
     if texts.is_empty() || texts.len() > 64 {
         return Err("Embedding batch must contain between 1 and 64 inputs".to_string());
     }
-    if is_google_embedding_config(cfg) || is_doubao_multimodal_embedding_config(cfg) {
+    if is_google_embedding_config(cfg) || is_doubao_multimodal_embedding_config(cfg) || is_tei_embedding_config(cfg) {
         return Err(
             "This embedding provider does not use the OpenAI-compatible batch format".to_string(),
         );
@@ -1231,6 +1231,7 @@ async fn fetch_embedding_once(
 ) -> Result<Vec<f32>, EmbeddingFetchError> {
     let is_google = is_google_embedding_config(cfg);
     let is_doubao_multimodal = is_doubao_multimodal_embedding_config(cfg);
+    let is_tei = is_tei_embedding_config(cfg);
     let endpoint = if is_google {
         google_embedding_endpoint(cfg)
     } else {
@@ -1274,6 +1275,8 @@ async fn fetch_embedding_once(
         google_embedding_body(&cfg.model, text, cfg.output_dimensionality)
     } else if is_doubao_multimodal {
         doubao_multimodal_embedding_body(&cfg.model, text)
+    } else if is_tei {
+        json!({ "inputs": text })
     } else {
         json!({ "model": cfg.model, "input": text })
     };
@@ -1304,7 +1307,7 @@ async fn fetch_embedding_once(
             text.chars().take(200).collect::<String>()
         ))
     })?;
-    parse_embedding_values(&data, is_google, is_doubao_multimodal)
+    parse_embedding_values(&data, is_google, is_doubao_multimodal, is_tei)
         .map_err(EmbeddingFetchError::Other)
 }
 
@@ -1327,6 +1330,7 @@ fn parse_embedding_values(
     data: &Value,
     is_google: bool,
     is_doubao_multimodal: bool,
+    is_tei: bool,
 ) -> Result<Vec<f32>, String> {
     let values = if is_google {
         data.get("embedding")
@@ -1336,6 +1340,22 @@ fn parse_embedding_values(
         data.get("data")
             .and_then(|v| v.get("embedding"))
             .and_then(Value::as_array)
+    } else if is_tei {
+        if let Some(arr) = data.as_array() {
+            if let Some(first) = arr.first() {
+                if first.is_array() {
+                    first.as_array()
+                } else if first.is_number() {
+                    Some(arr)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     } else {
         data.get("data")
             .and_then(Value::as_array)
@@ -1391,6 +1411,10 @@ fn is_reserved_extra_header_name(name: &str) -> bool {
         name.trim().to_ascii_lowercase().as_str(),
         "authorization" | "content-type" | "host" | "content-length" | "origin" | "x-goog-api-key"
     )
+}
+
+fn is_tei_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
+    cfg.endpoint.trim_end_matches('/').to_lowercase().ends_with("/embed")
 }
 
 fn is_google_embedding_config(cfg: &SearchEmbeddingConfig) -> bool {
