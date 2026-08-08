@@ -185,12 +185,13 @@ interface EmbeddingConfig {
  * http(s) URL, the Rust setup hook reads this on app launch and
  * sets HTTP_PROXY / HTTPS_PROXY / NO_PROXY env vars before the
  * reqwest client used by tauri-plugin-http is constructed. Changes
- * apply on app restart only.
+ * Changes are applied live when Settings is saved.
  */
 interface ProxyConfig {
   enabled: boolean
   url: string
   bypassLocal: boolean
+  ignoreSslCertificateErrors?: boolean
 }
 
 interface ScheduledImportConfig {
@@ -605,6 +606,7 @@ export const useWikiStore = create<WikiState>((set) => ({
     enabled: false,
     url: "",
     bypassLocal: true,
+    ignoreSslCertificateErrors: false,
   },
 
   scheduledImportConfig: {

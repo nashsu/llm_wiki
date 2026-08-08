@@ -57,11 +57,12 @@ export interface SettingsDraft {
   maxHistoryMessages: number
 
   // Network — global outbound HTTP proxy. Persisted to app-state.json
-  // and read by the Rust setup hook on app launch (changes apply
-  // after restart). See src/lib/proxy-config.ts.
+  // and read by the Rust setup hook on app launch; Save also applies
+  // changes live. See src/lib/proxy-config.ts.
   proxyEnabled: boolean
   proxyUrl: string
   proxyBypassLocal: boolean
+  proxyIgnoreSslCertificateErrors: boolean
 
   // Scheduled Import
   scheduledImportEnabled: boolean
