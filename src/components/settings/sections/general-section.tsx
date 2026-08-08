@@ -42,6 +42,7 @@ export function GeneralSection({ draft, setDraft }: Props) {
         </p>
       </div>
 
+      {/* ── Autostart ─────────────────────────────── */}
       <label className="flex items-start gap-2">
         <input
           type="checkbox"
@@ -61,6 +62,30 @@ export function GeneralSection({ draft, setDraft }: Props) {
         </div>
       </label>
 
+      {/* ── Auto-process reviews ──────────────────── */}
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={draft.autoProcessReviews}
+          onChange={(e) => setDraft("autoProcessReviews", e.target.checked)}
+          className="mt-0.5 h-4 w-4"
+        />
+        <div className="space-y-1">
+          <span className="text-sm">
+            {t("settings.sections.general.autoProcessReviews", {
+              defaultValue: "Auto-process review items with AI",
+            })}
+          </span>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.general.autoProcessReviewsHint", {
+              defaultValue:
+                "When enabled, review items generated during ingest are automatically processed by the LLM — pages are created, research is queued, or items are skipped as appropriate. Items the AI cannot confidently handle remain in the Review panel for manual review.",
+            })}
+          </p>
+        </div>
+      </label>
+
+      {/* ── Close behavior ────────────────────────── */}
       <div className="space-y-2">
         <Label>{t("settings.sections.general.closeBehavior", { defaultValue: "When closing the window" })}</Label>
         <div className="grid gap-2">

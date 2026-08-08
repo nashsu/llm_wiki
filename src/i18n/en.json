@@ -4,11 +4,21 @@
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
   "common": {
-    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close",
-    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "ignore": "Ignore",
+    "close": "Close",
+    "dismiss": "Dismiss",
+    "loading": "Loading...",
+    "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
-  "errors": { "generic": "Something went wrong" },
+  "layout": {
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar"
+  },
+  "errors": {
+    "generic": "Something went wrong"
+  },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",
     "showDetails": "Show parser details",
@@ -46,10 +56,16 @@
     "rawSources": "Raw Sources",
     "noWikiPages": "No wiki pages yet. Import sources to get started.",
     "typeLabels": {
-      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
-      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
-      "thesis": "Theses", "methodology": "Methodologies",
-      "comparison": "Comparisons", "query": "Queries"
+      "overview": "Overview",
+      "entity": "Entities",
+      "concept": "Concepts",
+      "source": "Sources",
+      "synthesis": "Synthesis",
+      "finding": "Findings",
+      "thesis": "Theses",
+      "methodology": "Methodologies",
+      "comparison": "Comparisons",
+      "query": "Queries"
     }
   },
   "editor": {
@@ -91,13 +107,16 @@
       "createFailed": "The missing page could not be created.",
       "emptyDraftError": "The model returned an empty draft."
     },
-    "frontmatter": { "origin": "Origin", "more": "More" },
+    "frontmatter": {
+      "origin": "Origin",
+      "more": "More"
+    },
     "rawMarkdownEditor": "Raw Markdown editor"
   },
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
-    "activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
+    "activeBadge": "{{running}} active",
     "inputPlaceholder": "Enter a research topic...",
     "emptyTitle": "No research tasks yet",
     "emptyHint": "Enter a topic above or click Deep Research in Review",
@@ -117,7 +136,8 @@
       "saved": "Saved",
       "done": "Done",
       "failed": "Failed"
-    }
+    },
+    "activeBadgeWithQueued": "{{running}} active, {{queued}} queued"
   },
   "project": {
     "createTitle": "Create New Wiki Project",
@@ -406,7 +426,9 @@
     "dismissSelected": "Dismiss selected",
     "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
-    "resolvedDivider": "— Resolved —"
+    "resolvedDivider": "— Resolved —",
+    "autoReviewed": "Auto-reviewed",
+    "autoReviewedHint": "Show only items already processed by auto-review"
   },
   "settings": {
     "title": "Settings",
@@ -458,7 +480,9 @@
         "closeMinimize": "Hide window",
         "closeMinimizeHint": "Keep LLM Wiki running in the background when the window closes. On macOS this matches the normal red close button behavior. If a Linux tray is unavailable, the window is minimized instead of hidden.",
         "closeExit": "Quit app",
-        "closeExitHint": "Exit LLM Wiki immediately when the window closes."
+        "closeExitHint": "Exit LLM Wiki immediately when the window closes.",
+        "autoProcessReviews": "Auto-process review items with AI",
+        "autoProcessReviewsHint": "When enabled, review items generated during ingest are automatically processed by the LLM — pages are created, research is queued, or items are skipped as appropriate. Items the AI cannot confidently handle remain in the Review panel for manual review."
       },
       "skills": {
         "title": "Skills",
@@ -484,7 +508,7 @@
           "activeDefault": "Use active model",
           "hint": "Choose separate models for interactive chat and document ingest. The active model remains the fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Use a project-specific model",
           "provider": "Project provider",
           "selectProvider": "Select a provider",
@@ -1004,12 +1028,25 @@
     "fileSync": "File Sync",
     "rescan": "Rescan",
     "rescanTitle": "Scan project files for external changes",
-    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "changeKinds": {
+      "created": "Created",
+      "modified": "Modified",
+      "deleted": "Deleted"
+    },
     "fileTypes": {
-      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
-      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
-      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
-      "index": "Index", "log": "Log", "file": "File"
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "comparison": "Comparison",
+      "finding": "Finding",
+      "thesis": "Thesis",
+      "methodology": "Methodology",
+      "overview": "Overview",
+      "index": "Index",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {

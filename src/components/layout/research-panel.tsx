@@ -71,7 +71,9 @@ export function ResearchPanel() {
           <span className="text-sm font-semibold">{t("research.title")}</span>
           {(running.length > 0 || queued.length > 0) && (
             <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-              {t("research.activeBadge", { running: running.length, queued: queued.length })}
+              {queued.length > 0
+                  ? t("research.activeBadgeWithQueued", { running: running.length, queued: queued.length })
+                  : t("research.activeBadge", { running: running.length })}
             </span>
           )}
         </div>

@@ -306,11 +306,13 @@ const GENERAL_CONFIG_KEY = "generalConfig"
 export const DEFAULT_GENERAL_CONFIG: GeneralConfig = {
   autostart: false,
   closeBehavior: "minimize",
+  autoProcessReviews: false,
 }
 
 export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): GeneralConfig {
   const closeBehavior = config?.closeBehavior
   return {
+    autoProcessReviews: typeof config?.autoProcessReviews === "boolean" ? config.autoProcessReviews : DEFAULT_GENERAL_CONFIG.autoProcessReviews,
     autostart: typeof config?.autostart === "boolean" ? config.autostart : DEFAULT_GENERAL_CONFIG.autostart,
     closeBehavior:
       closeBehavior === "ask" || closeBehavior === "minimize" || closeBehavior === "exit"
