@@ -13,6 +13,7 @@ import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, load
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { useGlobalShortcut } from "@/hooks/use-global-shortcut"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
@@ -124,6 +125,12 @@ function App() {
     setupAutoSave()
     startClipWatcher()
   }, [])
+
+  // Register global keyboard shortcuts
+  // Cmd+, on macOS or Ctrl+, on Windows/Linux opens settings
+  useGlobalShortcut({
+    ",": () => setActiveView("settings"),
+  })
 
   useEffect(() => {
     // Apply interface zoom globally, including welcome/settings screens. We

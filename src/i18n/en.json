@@ -26,6 +26,7 @@
     "review": "Review",
     "skills": "Skills",
     "settings": "Settings",
+    "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
     "updateAvailableSuffix": " · update"

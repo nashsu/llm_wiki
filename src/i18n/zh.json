@@ -26,6 +26,7 @@
     "review": "待审阅",
     "skills": "Skills",
     "settings": "设置",
+    "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
     "updateAvailableSuffix": " · 有更新"
