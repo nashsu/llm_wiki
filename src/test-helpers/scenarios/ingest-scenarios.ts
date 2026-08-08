@@ -267,4 +267,112 @@ export const ingestScenarios: IngestScenario[] = [
       },
     },
   },
+
+  // 5. drops-llm-index-and-log — index.md / log.md emitted by the LLM
+  //    must be discarded and regenerated deterministically. The index
+  //    is rebuilt from all page frontmatter (existing + new), and the
+  //    log gets one appended line while prior entries are preserved.
+  {
+    name: "drops-llm-index-and-log",
+    description:
+      "Stage 2 emits bogus index.md and log.md FILE blocks alongside real " +
+      "content pages. The runner must DROP both, regenerate index.md from " +
+      "page frontmatter (keeping the pre-existing attention page), and " +
+      "append exactly one deterministic log line without losing the old one.",
+    initialWiki: {
+      "purpose.md": BASIC_PURPOSE,
+      "schema.md": BASIC_SCHEMA,
+      "wiki/index.md": BASIC_INDEX,
+      "wiki/log.md": "# Log\n\n## [2026-01-01] ingest | Old Entry",
+      "wiki/concepts/attention.md": [
+        "---",
+        "type: concept",
+        "title: Attention",
+        "---",
+        "",
+        "# Attention",
+        "",
+        "Attention lets a model weigh different input positions.",
+      ].join("\n"),
+    },
+    source: {
+      path: "raw/sources/rope-paper.md",
+      content: [
+        "# Rotary Position Embedding",
+        "",
+        "RoPE encodes positional information by rotating query/key dimensions.",
+      ].join("\n"),
+    },
+    analysisResponse: [
+      "## Key Concepts",
+      "- Rotary Position Embedding (RoPE)",
+      "",
+      "## Recommendations",
+      "- Create wiki/concepts/rope.md",
+    ].join("\n"),
+    generationResponse: [
+      "---FILE: wiki/concepts/rope.md---",
+      "---",
+      "type: concept",
+      "title: Rotary Position Embedding",
+      "sources: [rope-paper.md]",
+      "---",
+      "",
+      "# Rotary Position Embedding",
+      "",
+      "RoPE rotates pairs of dimensions in query and key vectors.",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/sources/rope-paper.md---",
+      "---",
+      "type: source",
+      "title: \"Source: rope-paper.md\"",
+      "sources: [rope-paper.md]",
+      "---",
+      "",
+      "# Source: rope-paper.md",
+      "",
+      "Paper introducing RoPE.",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/index.md---",
+      "# Index",
+      "LLM_BOGUS_INDEX should never reach disk",
+      "- [[rope]]",
+      "---END FILE---",
+      "",
+      "---FILE: wiki/log.md---",
+      "# Log",
+      "LLM_BOGUS_LOG full rewrite should be discarded",
+      "---END FILE---",
+    ].join("\n"),
+    expected: {
+      // index.md / log.md are NOT in writtenPaths — they're dropped from
+      // the LLM output and regenerated out-of-band.
+      writtenPaths: [
+        "wiki/concepts/rope.md",
+        "wiki/sources/rope-paper.md",
+      ],
+      fileContains: {
+        // Deterministic index: overview frontmatter + both the new page
+        // and the pre-existing attention page.
+        "wiki/index.md": [
+          "type: overview",
+          "# Wiki Index",
+          "[[rope]]",
+          "[[attention]]",
+        ],
+        // Deterministic log: old entry preserved, one new line appended.
+        "wiki/log.md": [
+          "Old Entry",
+          "] ingest |",
+        ],
+      },
+      fileExcludes: {
+        "wiki/index.md": ["LLM_BOGUS_INDEX"],
+        "wiki/log.md": ["LLM_BOGUS_LOG"],
+      },
+      reviewsCreated: [],
+    },
+  },
 ]

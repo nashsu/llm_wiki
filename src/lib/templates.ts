@@ -43,20 +43,11 @@ url: ""
 venue: ""
 \`\`\``
 
-const BASE_INDEX_FORMAT = `\`wiki/index.md\` lists all pages grouped by type. Each entry:
-\`\`\`
-- [[page-slug]] — one-line description
-\`\`\``
+const BASE_INDEX_FORMAT = `\`wiki/index.md\` is generated automatically by LLM Wiki from every page's frontmatter — do not edit it by hand or ask the assistant to write it. Entries are grouped by type as \`- [[page-slug]] — description\`.`
 
-const BASE_LOG_FORMAT = `\`wiki/log.md\` records activity in reverse chronological order:
-\`\`\`
-## YYYY-MM-DD
-
-- Action taken / finding noted
-\`\`\``
+const BASE_LOG_FORMAT = `\`wiki/log.md\` is generated automatically by LLM Wiki — one append-only line per ingest (\`## [YYYY-MM-DD] ingest | Title\`). Do not edit it by hand or ask the assistant to write it.`
 
 const BASE_CROSSREF = `- Use \`[[page-slug]]\` syntax to link between wiki pages
-- Every entity and concept should appear in \`wiki/index.md\`
 - Queries link to the sources and concepts they draw on
 - Synthesis pages cite all contributing sources via \`related:\``
 
