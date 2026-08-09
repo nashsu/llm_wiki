@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useActivityStore } from "@/stores/activity-store"
 import type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"
 import type { StreamCallbacks } from "./llm-client"
 
@@ -50,12 +51,19 @@ function escapePromptContent(text: string): string {
 }
 
 export function buildPrompt(messages: ChatMessage[]): string {
-  return messages
+  const conversation = messages
     .map((message) => {
       const role = message.role.toUpperCase()
       return `<${role}>\n${escapePromptContent(contentToText(message.content))}\n</${role}>`
     })
     .join("\n\n")
+
+  return [
+    conversation,
+    "<OUTPUT_CONTRACT>",
+    "Return only the completed answer in your final agent message. Do not include progress narration, planning updates, hidden reasoning, or tool status in the answer.",
+    "</OUTPUT_CONTRACT>",
+  ].join("\n\n")
 }
 
 type SpawnPayload = Record<string, unknown> & {
@@ -90,7 +98,15 @@ export async function streamCodexCli(
   let unlistenDone: UnlistenFn | undefined
   let finished = false
   let aborted = signal?.aborted ?? false
-  let emittedAgentMessage = false
+  let pendingAgentMessage: string | null = null
+  const activity = useActivityStore.getState()
+  const activityId = activity.addItem({
+    type: "query",
+    title: "Codex CLI synthesis",
+    status: "running",
+    detail: "Waiting for the completed answer…",
+    filesWritten: [],
+  })
   let resolveCompletion: () => void = () => {}
   const completion = new Promise<void>((resolve) => {
     resolveCompletion = resolve
@@ -119,16 +135,23 @@ export async function streamCodexCli(
     resolveCompletion()
   }
 
-  const replayAgentMessagesFromStdout = (stdout: string | undefined) => {
+  const captureAgentMessagesFromStdout = (stdout: string | undefined) => {
     if (!stdout) return
 
     for (const line of stdout.split(/\r?\n/)) {
       const token = parseCodexCliLine(line)
       if (token !== null) {
-        emittedAgentMessage = true
-        onToken(token)
+        pendingAgentMessage = token
       }
     }
+  }
+
+  const captureAgentMessage = (token: string) => {
+    pendingAgentMessage = token
+    const summary = token.replace(/\s+/g, " ").trim()
+    activity.updateItem(activityId, {
+      detail: summary.length > 240 ? `${summary.slice(0, 237)}…` : summary,
+    })
   }
 
   const abortListener = () => {
@@ -146,8 +169,7 @@ export async function streamCodexCli(
     unlistenData = await listen<string>(`codex-cli:${streamId}`, (event) => {
       const token = parseCodexCliLine(event.payload)
       if (token !== null) {
-        emittedAgentMessage = true
-        onToken(token)
+        captureAgentMessage(token)
       } else {
         captureUnparsed(event.payload)
       }
@@ -165,26 +187,38 @@ export async function streamCodexCli(
         const stdout = event.payload?.stdout ?? ""
         if (code !== null && code !== undefined && code !== 0) {
           const details = stderr || stdout.trim() || unparsedLines.join("\n")
-          finishWith(() =>
+          finishWith(() => {
+            activity.updateItem(activityId, { status: "error", detail: details || `Codex CLI exited with code ${code}.` })
             onError(new Error(
               details
                 ? `Codex CLI exited with code ${code}:\n${details}`
                 : `Codex CLI exited with code ${code}. Run \`codex\` in a terminal to inspect the problem.`,
-            )),
-          )
+            ))
+          })
         } else {
-          if (!emittedAgentMessage) replayAgentMessagesFromStdout(stdout)
-          if (!emittedAgentMessage) {
+          if (!pendingAgentMessage) captureAgentMessagesFromStdout(stdout)
+          if (!pendingAgentMessage) {
             const details = stdout.trim() || unparsedLines.join("\n").trim()
-            finishWith(() =>
+            finishWith(() => {
+              activity.updateItem(activityId, { status: "error", detail: "Codex CLI completed without a final answer." })
               onError(new Error(
                 details
                   ? `Codex CLI completed but did not emit an agent_message. Raw output:\n${details}`
                   : "Codex CLI completed but did not emit an agent_message. Run `codex exec --json` in a terminal to inspect the provider output.",
-              )),
-            )
+              ))
+            })
           } else {
-            finishWith(onDone)
+            finishWith(() => {
+              // Codex can emit several completed agent_message records while it
+              // works. They are activity, not assistant turns. Persist and
+              // display only the final completed message.
+              onToken(pendingAgentMessage as string)
+              activity.updateItem(activityId, {
+                status: "done",
+                detail: "Completed; intermediate agent messages stayed in activity.",
+              })
+              onDone()
+            })
           }
         }
       },
@@ -220,6 +254,7 @@ export async function streamCodexCli(
   } catch (err) {
     finishWith(() => {
       const message = err instanceof Error ? err.message : String(err)
+      activity.updateItem(activityId, { status: "error", detail: message })
       if (/not found|No such file|executable file not found/i.test(message)) {
         onError(new Error(
           "Codex CLI not found. Install `codex` with `npm install -g @openai/codex` or pick a different provider.",

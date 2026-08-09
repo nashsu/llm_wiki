@@ -24,6 +24,9 @@ import { parseFrontmatter } from "@/lib/frontmatter"
 import { getFileCategory, getFileExtension, isTextReadable } from "@/lib/file-types"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { summarizeAgentFileChange } from "@/lib/agent-file-activity"
+import { requiresLocalFounderSynthesis } from "@/lib/founder-page"
+import { findLlmPreset } from "@/components/settings/llm-presets"
+import { resolveConfig } from "@/components/settings/preset-resolver"
 
 type InternalChatSendOptions = ChatSendOptions & {
   suppressUserMessage?: boolean
@@ -1116,6 +1119,27 @@ export function ChatPanel() {
           { role: "user", content: userContent },
         ]
 
+        const synthesisConfig = requiresLocalFounderSynthesis(
+          backendReferences,
+          project?.path,
+        )
+          ? (() => {
+              const preset = findLlmPreset("ollama-local", customLlmPresets)
+              if (!preset) {
+                throw new Error("Local-only founder synthesis is unavailable: Ollama preset is missing.")
+              }
+              const config = resolveConfig(
+                preset,
+                providerConfigs["ollama-local"],
+                llmConfig,
+              )
+              if (!config.model.trim()) {
+                throw new Error("Local-only founder synthesis is unavailable: configure an Ollama model first.")
+              }
+              return config
+            })()
+          : llmConfig
+
         let accumulated = ""
         let thinkingOpen = false
 
@@ -1140,7 +1164,7 @@ export function ChatPanel() {
         const streamFinalAnswer = async (reasoningOff: boolean) => {
           let streamError: Error | null = null
           await streamChat(
-            llmConfig,
+            synthesisConfig,
             finalMessages,
             {
               onToken: (token) => {
@@ -1211,7 +1235,7 @@ export function ChatPanel() {
         activeRunIdRef.current = null
       }
     },
-    [project, llmConfig, searchApiConfig, addMessageToConversation, setStreaming, appendStreamToken, finalizeStreamForConversation, createConversation, maxHistoryMessages, t, availableSkills, autoOpenSingleGeneratedOutput],
+    [project, llmConfig, providerConfigs, customLlmPresets, searchApiConfig, addMessageToConversation, setStreaming, appendStreamToken, finalizeStreamForConversation, createConversation, maxHistoryMessages, t, availableSkills, autoOpenSingleGeneratedOutput],
   )
 
   const handleStop = useCallback(() => {

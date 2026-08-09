@@ -159,6 +159,53 @@ describe("streamCodexCli", () => {
     expect(callbacks.onError).not.toHaveBeenCalled()
   })
 
+  it("emits only the last completed agent message as the assistant answer", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamCodexCli(
+      {
+        provider: "codex-cli",
+        apiKey: "",
+        model: "gpt-5.1-codex-mini",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      [{ role: "user", content: "Answer from the retrieved evidence." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => expect(tauriMocks.invoke).toHaveBeenCalledTimes(1))
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(
+      `codex-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "I’m checking the retrieved pages." },
+      }),
+    )
+    expect(callbacks.onToken).not.toHaveBeenCalled()
+
+    tauriMocks.emit(
+      `codex-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "The grounded final answer." },
+      }),
+    )
+    tauriMocks.emit(`codex-cli:${payload.streamId}:done`, { code: 0, stderr: "" })
+    await stream
+
+    expect(callbacks.onToken).toHaveBeenCalledTimes(1)
+    expect(callbacks.onToken).toHaveBeenCalledWith("The grounded final answer.")
+    expect(callbacks.onDone).toHaveBeenCalledTimes(1)
+    expect(callbacks.onError).not.toHaveBeenCalled()
+  })
+
   it("replays agent messages from done stdout when live events were missed", async () => {
     const callbacks = {
       onToken: vi.fn(),
