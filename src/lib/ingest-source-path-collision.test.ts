@@ -690,6 +690,37 @@ describe("autoIngest source summary paths", () => {
     ).toBe(true)
   })
 
+  it("rejects an ingest when a truncated FILE block cannot be repaired", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "",
+      "---FILE: wiki/concepts/incomplete.md---",
+      "---",
+      'title: "Incomplete concept"',
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "",
+      "# Incomplete concept",
+      "",
+      "This response was cut off",
+    ].join("\n")
+    truncatedRepairResponse = ""
+
+    await expect(autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+      undefined,
+      "project-a",
+    )).rejects.toThrow("Ingest incomplete")
+
+    const activity = useActivityStore.getState().items[0]
+    expect(activity.status).toBe("error")
+    expect(activity.detail).toContain("could not be repaired")
+    expect(activity.detail).toContain("wiki/concepts/incomplete.md")
+  })
+
   it("propagates cancellation that happens during the dedicated review stage", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]

@@ -54,12 +54,13 @@ export const API_ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: stri
   { method: "GET", path: "/api/v1/projects/{id}/graph", noteKey: "endpointGraphNote" },
   { method: "POST", path: "/api/v1/projects/{id}/sources/rescan", noteKey: "endpointRescanNote" },
   { method: "POST", path: "/api/v1/projects/{id}/chat", noteKey: "endpointChatNote" },
+  { method: "POST", path: "/api/v1/projects/{id}/chat/{sessionId}/cancel", noteKey: "endpointChatCancelNote" },
 ]
 
 export function ApiServerSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const [showToken, setShowToken] = useState(false)
-  const [copiedField, setCopiedField] = useState<"token" | "curl" | "mcp" | null>(null)
+  const [copiedField, setCopiedField] = useState<"token" | "curl" | "chat" | "mcp" | null>(null)
   const [serverStatus, setServerStatus] = useState<string>("...")
   const [health, setHealth] = useState<ApiHealth | null>(null)
   const [mcpEntryPath, setMcpEntryPath] = useState<string | null>(null)
@@ -123,14 +124,30 @@ export function ApiServerSection({ draft, setDraft }: Props) {
     // header is the recommended auth (never put the token in URL
     // query — it leaks into logs / shell history / Referer).
     const tokenForExample = draft.apiToken || "<your-token>"
-    return `curl -H 'Authorization: Bearer ${tokenForExample}' ${API_SERVER_BASE_URL}/api/v1/projects`
+    return `curl -H "Authorization: Bearer ${tokenForExample}" ${API_SERVER_BASE_URL}/api/v1/projects`
   }, [draft.apiAllowUnauthenticated, draft.apiToken])
+
+  const sampleChatCurl = useMemo(() => {
+    const tokenForExample = health?.tokenSource === "env"
+      ? "$LLM_WIKI_API_TOKEN"
+      : draft.apiToken || "<your-token>"
+    return `curl -N -X POST \\
+  -H "Authorization: Bearer ${tokenForExample}" \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: text/event-stream' \\
+  ${API_SERVER_BASE_URL}/api/v1/projects/current/chat \\
+  -d '{"message":"Summarize this knowledge base.","stream":true}'`
+  }, [draft.apiToken, health?.tokenSource])
 
   const sampleMcpConfig = useMemo(() => {
     if (!mcpEntryPath) return ""
-    const env = draft.apiAllowUnauthenticated
-      ? {}
-      : { LLM_WIKI_API_TOKEN: draft.apiToken || "<your-token>" }
+    const env = health?.tokenSource === "env"
+      ? { LLM_WIKI_API_TOKEN: "<same value as the LLM Wiki process environment>" }
+      : draft.apiToken
+        ? { LLM_WIKI_API_TOKEN: draft.apiToken }
+        : draft.apiAllowUnauthenticated
+          ? {}
+          : { LLM_WIKI_API_TOKEN: "<your-token>" }
     return JSON.stringify(
       {
         mcpServers: {
@@ -144,7 +161,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       null,
       2,
     )
-  }, [draft.apiAllowUnauthenticated, draft.apiToken, mcpEntryPath])
+  }, [draft.apiAllowUnauthenticated, draft.apiToken, health?.tokenSource, mcpEntryPath])
 
   const hasUnsavedApiConfig =
     persistedApiConfig.enabled !== draft.apiEnabled ||
@@ -162,6 +179,16 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       console.error("[api-settings] copy curl failed:", err)
     }
   }, [sampleCurl])
+
+  const handleCopyChatCurl = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(sampleChatCurl)
+      setCopiedField("chat")
+      setTimeout(() => setCopiedField(null), 1500)
+    } catch (err) {
+      console.error("[api-settings] copy streaming chat curl failed:", err)
+    }
+  }, [sampleChatCurl])
 
   const handleCopyMcpConfig = useCallback(async () => {
     if (!mcpEntryPath) return
@@ -334,7 +361,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           </Button>
           <span className="text-[11px] text-muted-foreground">
             {t("settings.sections.apiServer.openHealthHint", {
-              defaultValue: "Opens in your system browser. /health is the only unauthenticated endpoint.",
+              defaultValue: "/health never requires authentication. Other endpoints follow the access mode below, except Agent chat, which always requires a token.",
             })}
           </span>
         </div>
@@ -349,7 +376,7 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t("settings.sections.apiServer.tokenHint", {
               defaultValue:
-                "Required unless unauthenticated access is enabled. Send as `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`. The environment variable LLM_WIKI_API_TOKEN overrides this field if set.",
+                "Send as `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`. Read-oriented endpoints may omit it when unauthenticated access is enabled, but Agent chat and cancellation always require it. The environment variable LLM_WIKI_API_TOKEN overrides this field if set.",
             })}
           </p>
         </div>
@@ -414,14 +441,14 @@ export function ApiServerSection({ draft, setDraft }: Props) {
           {tokenStrength === "missing" && (
             <span className="text-xs text-amber-700 dark:text-amber-400">
               {t("settings.sections.apiServer.tokenMissing", {
-                defaultValue: "No token — every endpoint will return 401",
+                defaultValue: "No token — Agent chat is unavailable and protected endpoints return 401",
               })}
             </span>
           )}
-          {tokenStrength === "unused" && (
+          {tokenStrength === "unused" && health?.tokenSource !== "env" && (
             <span className="text-xs text-amber-700 dark:text-amber-400">
               {t("settings.sections.apiServer.tokenUnused", {
-                defaultValue: "Token is not used while unauthenticated access is enabled",
+                defaultValue: "Read endpoints are open, but Agent chat still uses this token",
               })}
             </span>
           )}
@@ -497,6 +524,53 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       </div>
 
       {/* ── Endpoint catalog ──────────────────────────────────────── */}
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">
+              {t("settings.sections.apiServer.chatTitle", { defaultValue: "Agent chat and streaming" })}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.chatHint", {
+                defaultValue:
+                  "POST a message to /chat. The default response is one JSON document. Set stream: true or send Accept: text/event-stream to receive SSE frames while the Agent works.",
+              })}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={handleCopyChatCurl} disabled={hasUnsavedApiConfig} className="shrink-0 gap-1.5">
+            <Copy className="h-3.5 w-3.5" />
+            {copiedField === "chat"
+              ? t("settings.sections.apiServer.copied", { defaultValue: "Copied" })
+              : t("settings.sections.apiServer.copy", { defaultValue: "Copy" })}
+          </Button>
+        </div>
+        <div className="grid gap-2 text-xs sm:grid-cols-2">
+          <div className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
+            <div className="font-medium">{t("settings.sections.apiServer.chatJsonTitle", { defaultValue: "JSON mode" })}</div>
+            <p className="mt-1 leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.chatJsonHint", { defaultValue: "Omit stream or set it to false. The request returns after the complete Agent turn." })}
+            </p>
+          </div>
+          <div className="rounded-md border border-border/60 bg-background/40 px-3 py-2">
+            <div className="font-medium">{t("settings.sections.apiServer.chatSseTitle", { defaultValue: "SSE mode" })}</div>
+            <p className="mt-1 leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.chatSseHint", { defaultValue: "Frames: meta, incremental agent events, then done, cancelled, or error. done contains the complete aggregate response." })}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {t("settings.sections.apiServer.chatTokenRequired", { defaultValue: "Agent chat and its cancellation endpoint always require a token, even when read endpoints allow unauthenticated access." })}
+          </span>
+        </div>
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-background/60 px-3 py-2 text-[11px] font-mono leading-relaxed">
+          {hasUnsavedApiConfig
+            ? t("settings.sections.apiServer.saveFirstExample", { defaultValue: "Save settings first, then copy an example request." })
+            : sampleChatCurl}
+        </pre>
+      </div>
+
       <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-4">
         <h3 className="text-sm font-semibold">
           {t("settings.sections.apiServer.endpoints", { defaultValue: "Endpoints" })}

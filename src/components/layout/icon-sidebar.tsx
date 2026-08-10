@@ -189,6 +189,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
             </TooltipTrigger>
             <TooltipContent side="right">
               {t("nav.settings")}
+              {t("nav.settingsShortcut")}
               {updateAvailable ? t("nav.updateAvailableSuffix") : ""}
             </TooltipContent>
           </Tooltip>

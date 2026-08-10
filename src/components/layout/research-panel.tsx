@@ -6,7 +6,7 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import {
   Search, Loader2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, X,
-  FileSearch, FileText, Globe2, Send,
+  FileSearch, FileText, Globe2, Send, RotateCcw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useResearchStore, type ResearchTask } from "@/stores/research-store"
@@ -44,6 +44,23 @@ export function ResearchPanel() {
     }
     queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig)
     setInputValue("")
+  }
+
+  function handleRetryResearch(task: ResearchTask) {
+    if (!project) return
+    if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
+      window.alert(t("research.notConfigured"))
+      return
+    }
+    queueResearch(
+      normalizePath(project.path),
+      task.topic,
+      llmConfig,
+      searchApiConfig,
+      task.searchQueries,
+      task.sourceReviewId,
+    )
+    removeTask(task.id)
   }
 
   return (
@@ -96,13 +113,18 @@ export function ResearchPanel() {
         ) : (
           <div className="flex flex-col gap-1 p-2">
             {running.map((task) => (
-              <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} />
+              <ResearchTaskCard
+                key={task.id}
+                task={task}
+                onRemove={removeTask}
+                onRetry={handleRetryResearch}
+              />
             ))}
             {queued.map((task) => (
-              <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} />
+              <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} onRetry={handleRetryResearch} />
             ))}
             {done.map((task) => (
-              <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} />
+              <ResearchTaskCard key={task.id} task={task} onRemove={removeTask} onRetry={handleRetryResearch} />
             ))}
           </div>
         )}
@@ -220,7 +242,15 @@ function SynthesisBlock({ synthesis, isStreaming }: { synthesis: string; isStrea
   )
 }
 
-function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (id: string) => void }) {
+function ResearchTaskCard({
+  task,
+  onRemove,
+  onRetry,
+}: {
+  task: ResearchTask
+  onRemove: (id: string) => void
+  onRetry: (task: ResearchTask) => void
+}) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(
     task.status === "synthesizing" || task.status === "searching"
@@ -321,6 +351,17 @@ function ResearchTaskCard({ task, onRemove }: { task: ResearchTask; onRemove: (i
               <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={handleOpenSaved}>
                 <FileText className="h-3 w-3" />
                 {t("research.open")}
+              </Button>
+            )}
+            {task.status === "error" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[11px] gap-1"
+                onClick={() => onRetry(task)}
+              >
+                <RotateCcw className="h-3 w-3" />
+                {t("research.retry")}
               </Button>
             )}
             {(task.status === "done" || task.status === "error") && (

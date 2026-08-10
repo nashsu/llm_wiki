@@ -26,6 +26,30 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.8",
+    date: "2026-08-07",
+    highlights: {
+      en: [
+        "Integrated AnyDoc document parsing with broader Word, PowerPoint, Excel, OpenDocument, and RTF support, richer structure preservation, safe legacy fallback, and versioned extraction caches.",
+        "Improved large knowledge graph loading, caching, and community analysis performance.",
+        "Added file version history usage and cleanup controls.",
+        "Improved scheduled import cleanup when source files are removed or excluded.",
+        "Fixed incomplete Deep Research output being saved as successful and added retry support.",
+        "Improved GPT-5, OpenAI o-series, and Azure model parameter compatibility.",
+        "Improved existing features and fixed stability and compatibility issues.",
+      ],
+      zh: [
+        "集成 AnyDoc 文档解析，扩展 Word、PowerPoint、Excel、OpenDocument 和 RTF 格式支持，增强结构保留，并支持旧解析器安全回退与解析缓存版本管理。",
+        "优化大型知识图谱的加载、缓存和社区分析性能。",
+        "新增文件版本历史占用查看与清理功能。",
+        "完善定时导入源文件删除或排除后的同步清理。",
+        "修复深度研究内容不完整仍被保存为成功的问题，并支持失败重试。",
+        "改进 GPT-5、OpenAI o 系列及 Azure 模型参数兼容性。",
+        "优化现有功能，并修复稳定性与兼容性问题。",
+      ],
+    },
+  },
+  {
     version: "0.6.6",
     date: "2026-07-27",
     highlights: {

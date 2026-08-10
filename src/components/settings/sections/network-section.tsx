@@ -97,6 +97,29 @@ export function NetworkSection({ draft, setDraft }: Props) {
         </div>
       </label>
 
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={draft.proxyAcceptInvalidCerts}
+          onChange={(e) => setDraft("proxyAcceptInvalidCerts", e.target.checked)}
+          disabled={!draft.proxyEnabled}
+          className="mt-0.5 h-4 w-4"
+        />
+        <div className="space-y-1">
+          <span className="text-sm">
+            {t("settings.sections.network.acceptInvalidCerts", {
+              defaultValue: "Ignore TLS certificate errors",
+            })}
+          </span>
+          <p className="text-xs text-destructive">
+            {t("settings.sections.network.acceptInvalidCertsHelp", {
+              defaultValue:
+                "Use only with a trusted corporate proxy. This disables certificate verification for outbound requests and can expose encrypted traffic to interception.",
+            })}
+          </p>
+        </div>
+      </label>
+
     </div>
   )
 }

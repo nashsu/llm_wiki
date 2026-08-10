@@ -62,8 +62,6 @@ async fn find_codex_command() -> Result<PathBuf, String> {
 fn suppress_windows_console(_cmd: &mut Command) {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         _cmd.creation_flags(CREATE_NO_WINDOW);
     }

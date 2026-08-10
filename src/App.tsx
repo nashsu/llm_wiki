@@ -13,6 +13,7 @@ import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, load
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
+import { useGlobalShortcut } from "@/hooks/use-global-shortcut"
 import { AppLayout } from "@/components/layout/app-layout"
 import { WelcomeScreen } from "@/components/project/welcome-screen"
 import { CreateProjectDialog } from "@/components/project/create-project-dialog"
@@ -93,7 +94,14 @@ function App() {
 
   async function hydrateScheduledImportAfterOpen(proj: WikiProject): Promise<void> {
     try {
-      const savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      let savedScheduledImport = null
+      try {
+        savedScheduledImport = await loadScheduledImportConfig(proj.path)
+      } catch (err) {
+        // A damaged config for the active project must not disable monitors
+        // belonging to every other recent project.
+        console.warn("[startup] failed to load current scheduled import config:", err)
+      }
       if (!isCurrentProject(proj)) return
       if (savedScheduledImport) {
         // Migrate relative path to absolute (backward compatibility)
@@ -105,15 +113,22 @@ function App() {
           ...savedScheduledImport,
           path,
         })
+      } else {
+        useWikiStore.getState().setScheduledImportConfig({
+          enabled: false,
+          path: "",
+          interval: 60,
+          lastScan: null,
+        })
       }
 
       const scheduledImportConfig = useWikiStore.getState().scheduledImportConfig
       if (!isCurrentProject(proj)) return
-      if (scheduledImportConfig.enabled && scheduledImportConfig.path && scheduledImportConfig.interval > 0) {
-        const { startScheduledImport } = await import("@/lib/scheduled-import")
-        if (!isCurrentProject(proj)) return
-        startScheduledImport(proj, scheduledImportConfig)
-      }
+      const { startScheduledImport } = await import("@/lib/scheduled-import")
+      if (!isCurrentProject(proj)) return
+      // Start the global sweep even when this project's own schedule is off;
+      // recently opened projects may still have active folder monitors.
+      startScheduledImport(proj, scheduledImportConfig)
     } catch (err) {
       console.warn("[startup] failed to hydrate scheduled import:", err)
     }
@@ -124,6 +139,15 @@ function App() {
     setupAutoSave()
     startClipWatcher()
   }, [])
+
+  // Register global keyboard shortcuts
+  // Cmd+, on macOS or Ctrl+, on Windows/Linux opens settings
+  useGlobalShortcut({
+    ",": {
+      callback: () => setActiveView("settings"),
+      allowInTextInput: true,
+    },
+  })
 
   useEffect(() => {
     // Apply interface zoom globally, including welcome/settings screens. We

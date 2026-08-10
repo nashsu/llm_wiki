@@ -150,6 +150,20 @@ export interface FileHistoryEntry {
   content: string
 }
 
+export interface FileHistoryStats {
+  bytes: number
+  files: number
+  entries: number
+}
+
+export async function getFileHistoryStats(projectPath: string): Promise<FileHistoryStats> {
+  return invoke<FileHistoryStats>("get_file_history_stats", { projectPath })
+}
+
+export async function clearFileHistory(projectPath: string): Promise<void> {
+  return invoke<void>("clear_file_history", { projectPath })
+}
+
 export async function listFileHistory(projectPath: string, filePath: string): Promise<FileHistoryEntry[]> {
   return invoke<FileHistoryEntry[]>("list_file_history", { projectPath, filePath })
 }

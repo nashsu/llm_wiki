@@ -53,13 +53,83 @@ async function streamViaCodexCli(
   return mod.streamCodexCli(config, messages, callbacks, signal, requestOverrides)
 }
 
-const DECODER = new TextDecoder()
-
-function parseLines(chunk: Uint8Array, buffer: string): [string[], string] {
-  const text = buffer + DECODER.decode(chunk, { stream: true })
+function parseLines(
+  decoder: TextDecoder,
+  chunk: Uint8Array,
+  buffer: string,
+): [string[], string] {
+  const text = buffer + decoder.decode(chunk, { stream: true })
   const lines = text.split("\n")
   const remaining = lines.pop() ?? ""
   return [lines, remaining]
+}
+
+interface EndpointErrorEnvelope {
+  error?: {
+    code?: string | number
+    message?: string
+  } | string
+}
+
+function parseEndpointErrorEnvelope(record: string): Error | null {
+  const payload = record.startsWith("data:")
+    ? record.slice(5).trim()
+    : record
+
+  if (!payload.startsWith("{")) return null
+
+  try {
+    const parsed = JSON.parse(payload) as EndpointErrorEnvelope
+    const message = typeof parsed.error === "string"
+      ? parsed.error
+      : parsed.error?.message
+    if (!message) return null
+
+    const code = typeof parsed.error === "object" && parsed.error?.code !== undefined
+      ? ` ${parsed.error.code}`
+      : ""
+    return new Error(`LLM endpoint error${code}: ${message}`)
+  } catch {
+    return null
+  }
+}
+
+function splitFinalStreamRecords(text: string): string[] {
+  // Some local transports expose a fully buffered SSE body with escaped
+  // record separators. Only split after a complete JSON SSE record; a model
+  // response can legitimately contain the text "\n\ndata:", and splitting
+  // that sequence while it is still inside a JSON string would corrupt it.
+  if (/[\r\n]/.test(text) || !/^\s*data:/.test(text)) {
+    return text.split(/\r?\n/)
+  }
+
+  const records: string[] = []
+  const separator = /(?:\\r)?\\n(?:\\r)?\\n(?=data:)/g
+  let recordStart = 0
+  let match: RegExpExecArray | null
+
+  while ((match = separator.exec(text)) !== null) {
+    const candidate = text.slice(recordStart, match.index).trim()
+    const payload = candidate.startsWith("data:")
+      ? candidate.slice(5).trim()
+      : ""
+    let complete = payload === "[DONE]"
+    if (!complete && payload.startsWith("{")) {
+      try {
+        JSON.parse(payload)
+        complete = true
+      } catch {
+        // The separator-like text is inside an incomplete JSON string.
+      }
+    }
+    if (complete) {
+      records.push(candidate)
+      recordStart = match.index + match[0].length
+    }
+  }
+
+  records.push(text.slice(recordStart))
+  return records
 }
 
 function isRequestCancelledError(err: unknown): boolean {
@@ -248,6 +318,9 @@ export async function streamChat(
   }
 
   const reader = response.body.getReader()
+  // TextDecoder keeps partial multi-byte state, so it must be scoped to this
+  // response rather than shared across concurrent research requests.
+  const decoder = new TextDecoder()
   let lineBuffer = ""
 
   // Diagnostic counters. Some OpenAI-compatible endpoints stream
@@ -273,32 +346,56 @@ export async function streamChat(
       callbacks.onReasoningToken?.(part)
     }
   }
+  const processRecord = (line: string): Error | null => {
+    const trimmed = line.trim()
+    if (!trimmed) return null
+
+    reasoningCharsObserved += countReasoningCharsInLine(trimmed)
+    recordReasoning(trimmed)
+    const token = providerConfig.parseStream(trimmed)
+    if (token !== null) {
+      recordToken(token)
+      return null
+    }
+    return parseEndpointErrorEnvelope(trimmed)
+  }
+  const stopForEndpointError = async (error: Error) => {
+    // An endpoint can emit an error event without closing its SSE response.
+    // Cancel the body so that the transport does not keep the connection and
+    // its buffers alive after the caller has already received the failure.
+    try {
+      await reader.cancel()
+    } catch {
+      // Preserve the endpoint's actionable error if transport cleanup fails.
+    }
+    onError(error)
+  }
 
   try {
     while (true) {
       const { done, value } = await reader.read()
 
       if (done) {
-        if (lineBuffer.trim()) {
-          const trimmed = lineBuffer.trim()
-          reasoningCharsObserved += countReasoningCharsInLine(trimmed)
-          recordReasoning(trimmed)
-          const token = providerConfig.parseStream(trimmed)
-          if (token !== null) recordToken(token)
+        const finalText = lineBuffer + decoder.decode()
+        for (const line of splitFinalStreamRecords(finalText)) {
+          const endpointError = processRecord(line)
+          if (endpointError) {
+            await stopForEndpointError(endpointError)
+            return
+          }
         }
         break
       }
 
-      const [lines, remaining] = parseLines(value, lineBuffer)
+      const [lines, remaining] = parseLines(decoder, value, lineBuffer)
       lineBuffer = remaining
 
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        reasoningCharsObserved += countReasoningCharsInLine(trimmed)
-        recordReasoning(trimmed)
-        const token = providerConfig.parseStream(trimmed)
-        if (token !== null) recordToken(token)
+        const endpointError = processRecord(line)
+        if (endpointError) {
+          await stopForEndpointError(endpointError)
+          return
+        }
       }
     }
 

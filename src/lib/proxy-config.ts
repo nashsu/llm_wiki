@@ -31,12 +31,15 @@ export interface ProxyConfig {
    * get sent to the external proxy and fail.
    */
   bypassLocal: boolean
+  /** Accept invalid TLS certificates for proxied requests. Unsafe by default. */
+  acceptInvalidCerts?: boolean
 }
 
 export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
   enabled: false,
   url: "",
   bypassLocal: true,
+  acceptInvalidCerts: false,
 }
 
 /**

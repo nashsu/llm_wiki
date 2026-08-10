@@ -209,6 +209,7 @@ function normalizeMineruConfig(config: MineruConfig): MineruConfig {
       typeof config.localEndpoint === "string" && config.localEndpoint.trim()
         ? config.localEndpoint.trim()
         : DEFAULT_LOCAL_MINERU_ENDPOINT,
+    localToken: typeof config.localToken === "string" ? config.localToken.trim() : "",
     localBackend: LOCAL_MINERU_BACKENDS.has(config.localBackend ?? "")
       ? config.localBackend
       : "hybrid-engine",

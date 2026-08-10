@@ -1,9 +1,13 @@
 [package]
 name = "llm-wiki"
-version = "0.6.6"
+version = "0.6.8"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
+# AnyDoc and its archive/spreadsheet dependencies require Rust 1.88. Declaring
+# the floor here gives contributors an immediate toolchain error instead of a
+# late, platform-dependent dependency compilation failure.
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -35,6 +39,7 @@ zip = "2"
 calamine = "0.34.0"
 docx-rs = "0.4.20"
 office_oxide = "=0.1.2"
+anydoc = "0.1.6"
 lancedb = "0.27.2"
 # tokio provided by tauri runtime for async commands
 arrow-array = "57"

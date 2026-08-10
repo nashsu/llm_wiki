@@ -80,4 +80,56 @@ describe("buildWikiGraph frontmatter extraction", () => {
     expect(graph.nodes).toHaveLength(1)
     expect(graph.nodes[0]).toMatchObject({ label: "Attention: Architecture", type: "concept" })
   })
+
+  it("resolves case and space variants without dropping links", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockResolvedValue([
+      mdFile("Source.md"),
+      mdFile("target-page.md"),
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("Source.md")
+        ? "# Source\n\n[[Target Page]]"
+        : "# Target",
+    )
+
+    const graph = await buildWikiGraph("/project")
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ source: "Source", target: "target-page" }),
+    ])
+  })
+
+  it("prefers an exact page id when case-folded aliases collide", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockResolvedValue([
+      mdFile("source.md"),
+      mdFile("Foo.md"),
+      mdFile("foo.md"),
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("source.md") ? "# Source\n\n[[foo]]" : "# Target",
+    )
+
+    const graph = await buildWikiGraph("/case-project")
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ source: "source", target: "foo" }),
+    ])
+  })
+
+  it("reuses an unchanged graph by project data version", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockClear()
+    mockReadFile.mockClear()
+    mockListDirectory.mockResolvedValue([mdFile("cached.md")])
+    mockReadFile.mockResolvedValue("# Cached")
+
+    const first = await buildWikiGraph("/cached-project", 42)
+    const second = await buildWikiGraph("/cached-project", 42)
+
+    expect(second).toBe(first)
+    expect(mockListDirectory).toHaveBeenCalledTimes(1)
+    expect(mockReadFile).toHaveBeenCalledTimes(1)
+  })
 })

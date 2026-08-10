@@ -694,13 +694,19 @@ export function GraphView() {
     dismissKey?: string
   } | null>(null)
   const lastLoadedVersion = useRef(-1)
+  const graphLoadRequest = useRef(0)
 
   const loadGraph = useCallback(async () => {
     if (!project) return
+    const requestId = ++graphLoadRequest.current
     setLoading(true)
     setError(null)
     try {
-      const result = await buildWikiGraph(normalizePath(project.path))
+      const result = await buildWikiGraph(
+        normalizePath(project.path),
+        useWikiStore.getState().dataVersion,
+      )
+      if (requestId !== graphLoadRequest.current) return
       setNodes(result.nodes)
       setEdges(result.edges)
       setCommunities(result.communities)
@@ -708,10 +714,11 @@ export function GraphView() {
       setKnowledgeGaps(detectKnowledgeGaps(result.nodes, result.edges, result.communities))
       lastLoadedVersion.current = useWikiStore.getState().dataVersion
     } catch (err) {
+      if (requestId !== graphLoadRequest.current) return
       const message = err instanceof Error ? err.message : "Failed to build graph"
       setError(message)
     } finally {
-      setLoading(false)
+      if (requestId === graphLoadRequest.current) setLoading(false)
     }
   }, [project])
 

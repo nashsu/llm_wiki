@@ -32,7 +32,12 @@ import {
 } from "@/lib/dedup-queue"
 import type { DuplicateGroup } from "@/lib/dedup"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
-import { openProject } from "@/commands/fs"
+import {
+  clearFileHistory,
+  getFileHistoryStats,
+  openProject,
+  type FileHistoryStats,
+} from "@/commands/fs"
 import { addToRecentProjects } from "@/lib/project-store"
 
 interface GroupUiEntry {
@@ -63,6 +68,42 @@ export function MaintenanceSection() {
   const [scanCompleted, setScanCompleted] = useState(false)
   const [projectToolStatus, setProjectToolStatus] = useState<string | null>(null)
   const [projectToolBusy, setProjectToolBusy] = useState(false)
+  const [historyStats, setHistoryStats] = useState<FileHistoryStats | null>(null)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const refreshHistoryStats = useCallback(async () => {
+    if (!project) {
+      setHistoryStats(null)
+      return
+    }
+    try {
+      setHistoryError(null)
+      setHistoryStats(await getFileHistoryStats(project.path))
+    } catch (error) {
+      console.warn("[Maintenance] failed to load file history stats:", error)
+      setHistoryError(String(error))
+      setHistoryStats(null)
+    }
+  }, [project])
+
+  useEffect(() => {
+    void refreshHistoryStats()
+  }, [refreshHistoryStats])
+
+  const handleClearHistory = useCallback(async () => {
+    if (!project || !window.confirm(t("settings.sections.maintenance.history.confirm"))) return
+    setHistoryBusy(true)
+    try {
+      setHistoryError(null)
+      await clearFileHistory(project.path)
+      await refreshHistoryStats()
+    } catch (error) {
+      setHistoryError(String(error))
+    } finally {
+      setHistoryBusy(false)
+    }
+  }, [project, refreshHistoryStats, t])
 
   const handleRebuildIndex = useCallback(async () => {
     if (!project) return
@@ -280,6 +321,36 @@ export function MaintenanceSection() {
 
       <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
         <div className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">
+            {t("settings.sections.maintenance.history.title")}
+          </h3>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.maintenance.history.description")}
+        </p>
+        {historyStats && (
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.maintenance.history.usage", {
+              size: formatBytes(historyStats.bytes),
+              files: historyStats.files,
+              entries: historyStats.entries,
+            })}
+          </p>
+        )}
+        {historyError && <p className="text-xs text-destructive">{historyError}</p>}
+        <Button
+          variant="outline"
+          onClick={() => void handleClearHistory()}
+          disabled={!project || historyBusy || !historyStats || historyStats.files === 0}
+        >
+          {historyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          {t("settings.sections.maintenance.history.clear")}
+        </Button>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <div className="flex items-center gap-2">
           <Wrench className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">
             {t("settings.sections.maintenance.dedup.title", {
@@ -380,6 +451,12 @@ export function MaintenanceSection() {
       })}
     </div>
   )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 // --- helpers ---------------------------------------------------------------

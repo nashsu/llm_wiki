@@ -101,6 +101,27 @@ async function mineruHeaders(token: string): Promise<HeadersInit> {
   }
 }
 
+function localMineruHeaders(token: string | undefined): HeadersInit | undefined {
+  const value = token?.trim()
+  return value ? { Authorization: `Bearer ${value}` } : undefined
+}
+
+type TauriRequestInit = RequestInit & { maxRedirections?: number }
+
+function localMineruRequestInit(
+  token: string | undefined,
+  init: RequestInit = {},
+): TauriRequestInit {
+  return {
+    ...init,
+    headers: localMineruHeaders(token),
+    // plugin-http uses maxRedirections while browser fetch uses redirect.
+    // Set both so credentials never follow an untrusted service redirect.
+    redirect: "manual",
+    maxRedirections: 0,
+  }
+}
+
 function mineruApiErrorMessage(code: number | string | undefined, msg?: string): string {
   const key = String(code ?? "")
   const known: Record<string, string> = {
@@ -696,11 +717,11 @@ async function parseWithLocalMineru(
   if (config.localServerUrl?.trim()) form.append("server_url", config.localServerUrl.trim())
 
   onProgress?.("Uploading to local MinerU...")
-  const submitRes = await httpFetch(`${apiBase}/tasks`, {
+  const submitRes = await httpFetch(`${apiBase}/tasks`, localMineruRequestInit(config.localToken, {
     method: "POST",
     signal,
     body: form,
-  })
+  }))
   if (!submitRes.ok) {
     const text = await submitRes.text().catch(() => "")
     throw new Error(`Local MinerU submit failed: HTTP ${submitRes.status}: ${text}`)
@@ -721,7 +742,9 @@ async function parseWithLocalMineru(
   while (Date.now() - start < LOCAL_POLL_TIMEOUT_MS) {
     throwIfAborted(signal)
 
-    const statusRes = await httpFetch(statusUrl, { signal })
+    const statusRes = await httpFetch(statusUrl, localMineruRequestInit(config.localToken, {
+      signal,
+    }))
     if (!statusRes.ok) {
       throw new Error(`Local MinerU status check failed: HTTP ${statusRes.status}`)
     }
@@ -729,7 +752,9 @@ async function parseWithLocalMineru(
 
     if (status.status === "completed") {
       onProgress?.("Downloading parsed result...")
-      const resultRes = await httpFetch(resultUrl, { signal })
+      const resultRes = await httpFetch(resultUrl, localMineruRequestInit(config.localToken, {
+        signal,
+      }))
       if (!resultRes.ok) {
         throw new Error(`Local MinerU download failed: HTTP ${resultRes.status}`)
       }
@@ -886,16 +911,19 @@ export async function parseWithMineruResult(
  * Test MinerU connectivity.
  *
  * Cloud backend: submits a minimal task to validate the token.
- * Local backend: checks the local service health endpoint (no token needed).
+ * Local backend: checks the local service health endpoint with its optional token.
  */
 export async function testMineruConnection(
   token: string,
-  config?: Pick<MineruConfig, "backend" | "localEndpoint">,
+  config?: Pick<MineruConfig, "backend" | "localEndpoint" | "localToken">,
 ): Promise<void> {
   const httpFetch = await getHttpFetch()
 
   if (config?.backend === "local") {
-    const res = await httpFetch(`${localMineruApiBase(config.localEndpoint)}/health`)
+    const res = await httpFetch(
+      `${localMineruApiBase(config.localEndpoint)}/health`,
+      localMineruRequestInit(config.localToken),
+    )
     if (!res.ok) {
       const text = await res.text().catch(() => "")
       throw new Error(`Local MinerU service unavailable: HTTP ${res.status}: ${text}`)

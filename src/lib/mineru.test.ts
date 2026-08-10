@@ -366,6 +366,7 @@ describe("parseWithMineru", () => {
       enabled: true,
       backend: "local",
       localEndpoint: "http://localhost:9000/custom/",
+      localToken: "local-secret",
       localBackend: "pipeline",
       token: "",
       modelVersion: "pipeline",
@@ -378,6 +379,10 @@ describe("parseWithMineru", () => {
     expect(mockHttpFetch.mock.calls[0]?.[0]).toBe("http://localhost:9000/custom/tasks")
     expect(mockHttpFetch.mock.calls[1]?.[0]).toContain("/tasks/task%2F1")
     expect(mockHttpFetch.mock.calls[2]?.[0]).toContain("/tasks/task%2F1/result")
+    for (const call of mockHttpFetch.mock.calls) {
+      expect(call[1]?.headers).toEqual({ Authorization: "Bearer local-secret" })
+      expect(call[1]).toMatchObject({ redirect: "manual", maxRedirections: 0 })
+    }
   })
 
   it("rejects oversized local-backend files before reading or uploading", async () => {
@@ -789,9 +794,17 @@ describe("testMineruConnection", () => {
   it("checks local health without requiring a cloud token", async () => {
     mockHttpFetch.mockResolvedValueOnce(jsonResponse({ status: "healthy" }))
 
-    await expect(testMineruConnection("", { backend: "local" })).resolves.toBeUndefined()
+    await expect(testMineruConnection("", {
+      backend: "local",
+      localToken: "health-secret",
+    })).resolves.toBeUndefined()
     expect(mockHttpFetch).toHaveBeenCalledWith(
       "http://127.0.0.1:8000/health",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer health-secret" },
+        redirect: "manual",
+        maxRedirections: 0,
+      }),
     )
   })
 

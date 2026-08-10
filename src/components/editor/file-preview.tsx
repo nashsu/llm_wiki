@@ -351,16 +351,27 @@ function extractedTextLabel(filePath: string): string {
     case "doc":
       return "Word DOC (extracted text)"
     case "docx":
+    case "docm":
       return "Word DOCX (extracted text)"
+    case "ppt":
+    case "pps":
+    case "pot":
     case "pptx":
+    case "pptm":
+    case "ppsx":
+    case "ppsm":
       return "PowerPoint (extracted text)"
     case "xls":
     case "xlsx":
+    case "xlsm":
+    case "xlsb":
       return "Spreadsheet (extracted text)"
     case "odt":
     case "ods":
     case "odp":
       return "OpenDocument (extracted text)"
+    case "rtf":
+      return "Rich Text Format (extracted text)"
     default:
       return "Extracted text"
   }

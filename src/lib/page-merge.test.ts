@@ -182,6 +182,58 @@ describe("mergePageContent — LLM merge", () => {
     expect(out).toContain("type: entity")
     expect(out).not.toContain("type: concept")
   })
+
+  it("strips directory prefixes from merged body wikilinks only", async () => {
+    const existing = PAGE(
+      "type: entity\ntitle: Foo",
+      "Existing notes link to [[clients/foo-overview]] and contain enough detail for merging.",
+    )
+    const incoming = PAGE(
+      "type: entity\ntitle: Foo",
+      "Incoming notes add a second detailed observation about the same subject.",
+    )
+    const mergedBody = [
+      "Existing and incoming notes are retained with additional context.",
+      "See [[clients/foo-overview]], [[concepts/bar#Details|Bar details]], and [[windows\\baz]].",
+      "Keep the ordinary path clients/foo-overview unchanged.",
+      "Keep the embed ![[media/charts/plot.png]] unchanged.",
+      "Keep inline code `[[examples/inline-link]]` unchanged.",
+      "Keep multi-backtick code ``[[examples/multi-backtick]]`` unchanged.",
+      "```md",
+      "[[examples/fenced-link]]",
+      "```not-a-closing-fence",
+      "[[examples/still-fenced-link]]",
+      "```",
+      "~~~md",
+      "[[examples/tilde-fenced-link]]",
+      "~~~",
+      "    [[examples/indented-code-link]]",
+      "Keep escaped \\[[examples/escaped-link]] unchanged.",
+      "Keep URI-like [[https://example.com/wiki/page]] targets unchanged.",
+      "Keep attachment [[attachments/report.pdf]] targets unchanged.",
+    ].join("\n")
+    const merger = vi.fn().mockResolvedValue(
+      PAGE("type: entity\ntitle: Foo", mergedBody),
+    )
+
+    const out = await mergePageContent(incoming, existing, merger, baseOpts)
+
+    expect(out).toContain("[[foo-overview]]")
+    expect(out).toContain("[[bar#Details|Bar details]]")
+    expect(out).toContain("[[baz]]")
+    expect(out).not.toContain("[[clients/foo-overview]]")
+    expect(out).toContain("ordinary path clients/foo-overview unchanged")
+    expect(out).toContain("![[media/charts/plot.png]]")
+    expect(out).toContain("`[[examples/inline-link]]`")
+    expect(out).toContain("``[[examples/multi-backtick]]``")
+    expect(out).toContain("[[examples/fenced-link]]")
+    expect(out).toContain("[[examples/still-fenced-link]]")
+    expect(out).toContain("[[examples/tilde-fenced-link]]")
+    expect(out).toContain("    [[examples/indented-code-link]]")
+    expect(out).toContain("\\[[examples/escaped-link]]")
+    expect(out).toContain("[[https://example.com/wiki/page]]")
+    expect(out).toContain("[[attachments/report.pdf]]")
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────

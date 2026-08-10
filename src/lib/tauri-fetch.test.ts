@@ -14,7 +14,59 @@
  * run crash with "window is not defined").
  */
 import { describe, it, expect } from "vitest"
-import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
+import { getHttpFetch, isFetchNetworkError, withProxyTlsSettings } from "./tauri-fetch"
+
+describe("withProxyTlsSettings", () => {
+  it("enables invalid-certificate acceptance only for an active proxy", () => {
+    const init = withProxyTlsSettings(
+      { method: "POST" },
+      {
+        enabled: true,
+        url: "http://proxy.corp:8080",
+        bypassLocal: true,
+        acceptInvalidCerts: true,
+      },
+    )
+    expect(init).toMatchObject({
+      method: "POST",
+      danger: { acceptInvalidCerts: true },
+    })
+  })
+
+  it("does not weaken TLS when the proxy is disabled or invalid", () => {
+    const original = { method: "GET" } as const
+    expect(withProxyTlsSettings(original, {
+      enabled: false,
+      url: "http://proxy.corp:8080",
+      bypassLocal: true,
+      acceptInvalidCerts: true,
+    })).toBe(original)
+    expect(withProxyTlsSettings(original, {
+      enabled: true,
+      url: "not-a-url",
+      bypassLocal: true,
+      acceptInvalidCerts: true,
+    })).toBe(original)
+  })
+
+  it("preserves other plugin danger settings", () => {
+    const init = withProxyTlsSettings(
+      {
+        danger: { acceptInvalidHostnames: true },
+      } as RequestInit & { danger: { acceptInvalidHostnames: boolean } },
+      {
+        enabled: true,
+        url: "https://proxy.corp:443",
+        bypassLocal: false,
+        acceptInvalidCerts: true,
+      },
+    )
+    expect(init?.danger).toEqual({
+      acceptInvalidHostnames: true,
+      acceptInvalidCerts: true,
+    })
+  })
+})
 
 describe("getHttpFetch — Node fallback", () => {
   it("returns a callable function under Node (typeof window === undefined)", async () => {

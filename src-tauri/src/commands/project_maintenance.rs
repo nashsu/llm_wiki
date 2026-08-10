@@ -76,6 +76,47 @@ mod tests {
         let _ = fs::remove_dir_all(target);
         let _ = fs::remove_file(archive);
     }
+
+    #[test]
+    fn export_rejects_lexically_external_destination_that_resolves_inside_project() {
+        let root = temp("export-inside-project");
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let sibling = temp("export-sibling");
+        fs::create_dir_all(&sibling).unwrap();
+        let destination = sibling
+            .join("..")
+            .join(root.file_name().unwrap())
+            .join("wiki/archive.zip");
+
+        assert!(resolve_export_destination(&root, &destination).is_err());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(sibling);
+    }
+
+    #[test]
+    fn export_uses_the_resolved_destination_path() {
+        let source = temp("export-resolved-source");
+        let destination_dir = temp("export-resolved-target");
+        fs::create_dir_all(source.join("wiki")).unwrap();
+        fs::create_dir_all(&destination_dir).unwrap();
+        fs::write(source.join("wiki/index.md"), "# Index").unwrap();
+
+        let destination = destination_dir
+            .join("..")
+            .join(destination_dir.file_name().unwrap())
+            .join("archive.zip");
+        let resolved = destination_dir.canonicalize().unwrap().join("archive.zip");
+        export_project_archive_inner(
+            source.to_string_lossy().into_owned(),
+            destination.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+
+        assert!(resolved.is_file());
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(destination_dir);
+    }
 }
 
 #[tauri::command]
@@ -90,6 +131,27 @@ pub async fn export_project_archive(
     .map_err(|error| format!("Project export task failed: {error}"))?
 }
 
+fn resolve_export_destination(root: &Path, output: &Path) -> Result<PathBuf, String> {
+    let resolved = if output.exists() {
+        output.canonicalize().map_err(|e| e.to_string())?
+    } else {
+        let parent = output
+            .parent()
+            .ok_or_else(|| "Export destination must have a parent directory".to_string())?;
+        let filename = output
+            .file_name()
+            .ok_or_else(|| "Export destination must be a file path".to_string())?;
+        parent
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .join(filename)
+    };
+    if resolved.starts_with(root) {
+        return Err("Export destination must be outside the project directory".into());
+    }
+    Ok(resolved)
+}
+
 fn export_project_archive_inner(project_path: String, destination: String) -> Result<(), String> {
     if !Path::new(&project_path).is_absolute() || !Path::new(&destination).is_absolute() {
         return Err("Project and archive paths must be absolute".into());
@@ -97,10 +159,10 @@ fn export_project_archive_inner(project_path: String, destination: String) -> Re
     let root = PathBuf::from(&project_path)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let output = PathBuf::from(destination);
-    if output.starts_with(&root) {
-        return Err("Export destination must be outside the project directory".into());
-    }
+    // Use the same canonical destination that passed containment validation.
+    // Reusing the unresolved input would separate the checked path from the
+    // path opened for writing and retain avoidable traversal/TOCTOU surface.
+    let output = resolve_export_destination(&root, &PathBuf::from(destination))?;
     let file = File::create(&output).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);

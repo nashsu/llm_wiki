@@ -1107,7 +1107,7 @@ async fn fetch_embedding_batch(
     }
 
     let endpoint = volcengine_embedding_endpoint(cfg);
-    let mut req = reqwest::Client::builder()
+    let mut req = crate::proxy::configure_http_client(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(
             SEARCH_EMBEDDING_TIMEOUT_SECS,
         ))
@@ -1236,7 +1236,7 @@ async fn fetch_embedding_once(
     } else {
         volcengine_embedding_endpoint(cfg)
     };
-    let mut req = reqwest::Client::builder()
+    let mut req = crate::proxy::configure_http_client(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(
             SEARCH_EMBEDDING_TIMEOUT_SECS,
         ))

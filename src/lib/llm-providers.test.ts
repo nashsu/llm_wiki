@@ -621,7 +621,7 @@ describe("reasoning controls", () => {
     expect(body.reasoning_effort).toBe("high")
   })
 
-  it("does not send an undocumented DeepSeek max_reasoning_tokens field", () => {
+  it("omits unsupported custom budgets on DeepSeek V4", () => {
     const cfg = mkConfig({
       provider: "custom",
       model: "deepseek-v4-pro",
@@ -633,7 +633,7 @@ describe("reasoning controls", () => {
       { reasoning: { mode: "custom", budgetTokens: 2048 } },
     ) as Record<string, unknown>
 
-    expect(body.thinking).toEqual({ type: "enabled" })
+    expect(body.thinking).toBeUndefined()
     expect(body.max_reasoning_tokens).toBeUndefined()
   })
 
@@ -744,7 +744,7 @@ describe("reasoning controls", () => {
     expect(body.messages).toEqual([{ role: "user", content: "Hi" }])
   })
 
-  it("disables Qwen3 thinking on OpenAI-compatible local endpoints", () => {
+  it("does not infer Qwen private parameters on generic custom endpoints", () => {
     const cfg = mkConfig({
       provider: "custom",
       model: "Qwen3.5-122B",
@@ -756,7 +756,7 @@ describe("reasoning controls", () => {
       { reasoning: { mode: "off" } },
     ) as Record<string, unknown>
 
-    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false })
+    expect(body.chat_template_kwargs).toBeUndefined()
   })
 
   it("strips temperature for Kimi/Moonshot OpenAI-compatible endpoints", () => {
@@ -807,14 +807,36 @@ describe("reasoning controls", () => {
     expect(body.temperature).toBeUndefined()
   })
 
-  it("maps Gemini reasoning off to thinkingBudget 0", () => {
+  it("omits unsupported reasoning off for Gemini 2.5 Pro", () => {
     const cfg = mkConfig({ provider: "google", model: "gemini-2.5-pro" })
     const body = getProviderConfig(cfg).buildBody(
       [{ role: "user", content: "hi" }],
       { reasoning: { mode: "off" } },
     ) as { generationConfig?: Record<string, unknown> }
 
-    expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
+    expect(body.generationConfig?.thinkingConfig).toBeUndefined()
+  })
+
+  it("uses adaptive thinking and effort for Claude 4.7+", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-opus-4-7" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "high" }, temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "adaptive" })
+    expect(body.output_config).toEqual({ effort: "high" })
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("uses thinkingLevel rather than token budgets for Gemini 3", () => {
+    const cfg = mkConfig({ provider: "google", model: "gemini-3-pro-preview" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "medium" } },
+    ) as { generationConfig?: Record<string, unknown> }
+
+    expect(body.generationConfig?.thinkingConfig).toEqual({ thinkingLevel: "medium" })
   })
 
   it("maps Ollama reasoning off to reasoning_effort none (stops thinking-runaway empty content)", () => {

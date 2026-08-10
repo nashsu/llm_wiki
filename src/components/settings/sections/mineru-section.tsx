@@ -27,6 +27,7 @@ export function MineruSection({ draft, setDraft }: Props) {
       await testMineruConnection(draft.mineruToken.trim(), {
         backend: draft.mineruBackend,
         localEndpoint: draft.mineruLocalEndpoint,
+        localToken: draft.mineruLocalToken.trim(),
       })
       setTestState("success")
     } catch (err) {
@@ -130,28 +131,49 @@ export function MineruSection({ draft, setDraft }: Props) {
           )}
 
           {draft.mineruBackend === "local" && (
-            <div className="space-y-2">
-              <Label htmlFor="mineru-local-endpoint">
-                {t("settings.sections.mineru.localEndpoint", {
-                  defaultValue: "Local service endpoint",
-                })}
-              </Label>
-              <Input
-                id="mineru-local-endpoint"
-                type="url"
-                value={draft.mineruLocalEndpoint}
-                onChange={(e) => {
-                  setDraft("mineruLocalEndpoint", e.target.value)
-                  setTestState("idle")
-                }}
-                placeholder="http://127.0.0.1:8000"
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("settings.sections.mineru.localInfo", {
-                  defaultValue:
-                    "Base URL of an official mineru-api or mineru-router service.",
-                })}
-              </p>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mineru-local-endpoint">
+                  {t("settings.sections.mineru.localEndpoint", {
+                    defaultValue: "Local service endpoint",
+                  })}
+                </Label>
+                <Input
+                  id="mineru-local-endpoint"
+                  type="url"
+                  value={draft.mineruLocalEndpoint}
+                  onChange={(e) => {
+                    setDraft("mineruLocalEndpoint", e.target.value)
+                    setTestState("idle")
+                  }}
+                  placeholder="http://127.0.0.1:8000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.sections.mineru.localInfo", {
+                    defaultValue:
+                      "Base URL of an official mineru-api or mineru-router service.",
+                  })}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mineru-local-token">
+                  {t("settings.sections.mineru.localToken", {
+                    defaultValue: "Local API key (optional)",
+                  })}
+                </Label>
+                <Input
+                  id="mineru-local-token"
+                  type="password"
+                  value={draft.mineruLocalToken}
+                  onChange={(e) => {
+                    setDraft("mineruLocalToken", e.target.value)
+                    setTestState("idle")
+                  }}
+                  placeholder={t("settings.sections.mineru.localTokenHint", {
+                    defaultValue: "Sent as an Authorization: Bearer header",
+                  })}
+                />
+              </div>
             </div>
           )}
 

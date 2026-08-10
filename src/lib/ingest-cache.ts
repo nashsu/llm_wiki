@@ -38,6 +38,12 @@ async function loadCache(projectPath: string): Promise<CacheData> {
   }
 }
 
+/** Source identities with a recorded successful ingest result. */
+export async function listIngestedSourceIdentities(projectPath: string): Promise<string[]> {
+  const cache = await loadCache(projectPath)
+  return Object.keys(cache.entries)
+}
+
 async function saveCache(projectPath: string, cache: CacheData): Promise<void> {
   try {
     await writeFile(cachePath(projectPath), JSON.stringify(cache, null, 2))

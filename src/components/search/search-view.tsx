@@ -193,7 +193,6 @@ export function SearchView() {
               if (e.key === "Enter") doSearch(query)
             }}
             placeholder={t("search.placeholderWithShortcut")}
-            autoFocus
             className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
