@@ -64,6 +64,8 @@ export function SourcesView() {
    *      anchored here is the right scope.
    */
   const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null)
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const [dragCounter, setDragCounter] = useState(0)
 
   // Auto-disarm: 5 seconds without a second click resets the
   // pending state. Prevents a stale armed button from firing if
@@ -141,6 +143,116 @@ export function SourcesView() {
   )
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
+
+  /**
+   * Drag-and-drop event handlers
+   * Track drag state to provide visual feedback during file/folder drops
+   */
+  function handleDragEnter(event: React.DragEvent) {
+    event.preventDefault()
+    setDragCounter((prev) => prev + 1)
+    setIsDraggingOver(true)
+  }
+
+  function handleDragLeave(event: React.DragEvent) {
+    event.preventDefault()
+    setDragCounter((prev) => prev - 1)
+    if (dragCounter <= 1) {
+      setIsDraggingOver(false)
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent) {
+    event.preventDefault()
+    // Allow drop by preventing default behavior
+  }
+
+  async function handleDrop(event: React.DragEvent) {
+    event.preventDefault()
+    setIsDraggingOver(false)
+    setDragCounter(0)
+
+    if (!project || importing) return
+
+    // Extract files from DataTransfer
+    const dataTransfer = event.dataTransfer
+    const items = dataTransfer.items
+
+    if (!items || items.length === 0) return
+
+    // Separate files and folders
+    const filePaths: string[] = []
+    const folderPaths: string[] = []
+
+    // Use DataTransferItemList API for better file/folder detection
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry?.()
+        if (entry) {
+          // @ts-ignore - path is available in Tauri environment
+          const path = item.getAsFile()?.path || entry.fullPath
+          if (entry.isDirectory) {
+            folderPaths.push(path)
+          } else {
+            filePaths.push(path)
+          }
+        } else {
+          // Fallback: use files API
+          const file = item.getAsFile()
+          if (file) {
+            // @ts-ignore - path is available in Tauri environment
+            const path = file.path || file.name
+            filePaths.push(path)
+          }
+        }
+      }
+    }
+
+    // Fallback: if webkitGetAsEntry not available, use files API
+    if (filePaths.length === 0 && folderPaths.length === 0) {
+      const files = dataTransfer.files
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        // @ts-ignore - path is available in Tauri environment
+        const path = file.path || file.name
+        // Try to detect if it's a directory (some environments set this)
+        // @ts-ignore
+        if (file.isDirectory || (file as any).webkitDirectoryEntry) {
+          folderPaths.push(path)
+        } else {
+          filePaths.push(path)
+        }
+      }
+    }
+
+    // Process dropped files and folders through existing import pipeline
+    setImporting(true)
+    try {
+      // Import files first
+      if (filePaths.length > 0) {
+        await importSourceFiles(project, filePaths, llmConfig, sourceWatchConfig)
+      }
+
+      // Then import folders
+      if (folderPaths.length > 0) {
+        for (const folderPath of folderPaths) {
+          try {
+            await importSourceFolder(project, folderPath, llmConfig, sourceWatchConfig)
+          } catch (err) {
+            console.error(`Failed to import folder: ${folderPath}`, err)
+          }
+        }
+      }
+
+      // Refresh the sources view after successful import
+      await loadSources()
+    } catch (err) {
+      console.error('[sources] Failed to import dropped items:', err)
+    } finally {
+      setImporting(false)
+    }
+  }
 
   async function handleRefreshSources() {
     if (!project || refreshing) return
@@ -463,7 +575,17 @@ export function SourcesView() {
         </div>
       )}
 
-      <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+      <ScrollArea
+        className={`min-h-0 flex-1 overflow-hidden transition-colors duration-200 ${
+          isDraggingOver
+            ? 'bg-accent/50 border-2 border-dashed border-primary'
+            : ''
+        }`}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         {refreshError && (
           <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {t("sources.refreshFailed", {
@@ -473,9 +595,20 @@ export function SourcesView() {
           </div>
         )}
         {sources.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
+          <div
+            className={`flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground transition-all duration-200 ${
+              isDraggingOver
+                ? 'bg-primary/10 scale-105 rounded-lg border-2 border-dashed border-primary'
+                : ''
+            }`}
+          >
             <p>{t("sources.noSources")}</p>
             <p>{t("sources.importHint")}</p>
+            {isDraggingOver && (
+              <p className="text-sm font-medium text-primary animate-pulse">
+                {t("sources.dragDropHint")}
+              </p>
+            )}
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleImport}>
                 <Plus className="mr-1 h-4 w-4" />

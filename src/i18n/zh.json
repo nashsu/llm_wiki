@@ -188,6 +188,7 @@
     "refreshFailed": "刷新原始资料失败：{{error}}",
     "openExternal": "用默认应用打开",
     "openExternalFailed": "无法打开「{{name}}」：{{error}}",
+    "dragDropHint": "拖放文件或文件夹到此处导入",
     "ingest": "提取到 Wiki",
     "ingestStatus": {
       "not-ingested": "未摄取",

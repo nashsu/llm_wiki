@@ -188,6 +188,7 @@
     "refreshFailed": "Failed to refresh sources: {{error}}",
     "openExternal": "Open in default app",
     "openExternalFailed": "Failed to open {{name}}: {{error}}",
+    "dragDropHint": "Drop files or folders here to import",
     "ingest": "Ingest",
     "ingestStatus": {
       "not-ingested": "Not ingested",
