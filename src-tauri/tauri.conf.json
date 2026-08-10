@@ -18,7 +18,8 @@
         "resizable": true,
         "fullscreen": false,
         "hiddenTitle": true,
-        "titleBarStyle": "Transparent"
+        "titleBarStyle": "Transparent",
+        "dragDropEnabled": true
       }
     ],
     "security": {

@@ -129,6 +129,10 @@ export async function fileExists(path: string): Promise<boolean> {
   return invoke<boolean>("file_exists", { path })
 }
 
+export async function isDirectory(path: string): Promise<boolean> {
+  return invoke<boolean>("is_directory", { path })
+}
+
 export async function getFileModifiedTime(path: string): Promise<number> {
   return invoke<number>("get_file_modified_time", { path })
 }

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
-import { listDirectory, openPathInProject, readFile } from "@/commands/fs"
+import { isDirectory, listDirectory, openPathInProject, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
 import { normalizePath } from "@/lib/path-utils"
@@ -26,6 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
 import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
 import { getQueue, type IngestTask } from "@/lib/ingest-queue"
+import { importDroppedSourcePaths, subscribeToSourceDrops } from "@/lib/source-drop-import"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
@@ -45,6 +48,9 @@ export function SourcesView() {
   const [ingestingPath, setIngestingPath] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [dropError, setDropError] = useState<string | null>(null)
+  const [dropBusyError, setDropBusyError] = useState<string | null>(null)
+  const [dropListenerError, setDropListenerError] = useState<string | null>(null)
   const [urlDialogOpen, setUrlDialogOpen] = useState(false)
   const [urlInput, setUrlInput] = useState("")
   const [urlError, setUrlError] = useState<string | null>(null)
@@ -65,7 +71,22 @@ export function SourcesView() {
    */
   const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null)
   const [isDraggingOver, setIsDraggingOver] = useState(false)
-  const [dragCounter, setDragCounter] = useState(0)
+  const importingRef = useRef(false)
+  const handleNativeDropRef = useRef<(paths: string[]) => void>(() => undefined)
+
+  const tryStartImport = useCallback(() => {
+    if (importingRef.current) return false
+    importingRef.current = true
+    setDropBusyError(null)
+    setDropError(null)
+    setImporting(true)
+    return true
+  }, [])
+
+  const finishImport = useCallback(() => {
+    importingRef.current = false
+    setImporting(false)
+  }, [])
 
   // Auto-disarm: 5 seconds without a second click resets the
   // pending state. Prevents a stale armed button from firing if
@@ -84,6 +105,7 @@ export function SourcesView() {
       const tree = await listDirectory(`${pp}/raw/sources`, true)
       setSources(filterRawSourceTree(tree))
       setRefreshError(null)
+      setDropError(null)
     } catch (err) {
       setRefreshError(String(err))
       setSources([])
@@ -144,115 +166,55 @@ export function SourcesView() {
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
 
-  /**
-   * Drag-and-drop event handlers
-   * Track drag state to provide visual feedback during file/folder drops
-   */
-  function handleDragEnter(event: React.DragEvent) {
-    event.preventDefault()
-    setDragCounter((prev) => prev + 1)
-    setIsDraggingOver(true)
-  }
-
-  function handleDragLeave(event: React.DragEvent) {
-    event.preventDefault()
-    setDragCounter((prev) => prev - 1)
-    if (dragCounter <= 1) {
-      setIsDraggingOver(false)
-    }
-  }
-
-  function handleDragOver(event: React.DragEvent) {
-    event.preventDefault()
-    // Allow drop by preventing default behavior
-  }
-
-  async function handleDrop(event: React.DragEvent) {
-    event.preventDefault()
-    setIsDraggingOver(false)
-    setDragCounter(0)
-
-    if (!project || importing) return
-
-    // Extract files from DataTransfer
-    const dataTransfer = event.dataTransfer
-    const items = dataTransfer.items
-
-    if (!items || items.length === 0) return
-
-    // Separate files and folders
-    const filePaths: string[] = []
-    const folderPaths: string[] = []
-
-    // Use DataTransferItemList API for better file/folder detection
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      if (item.kind === 'file') {
-        const entry = item.webkitGetAsEntry?.()
-        if (entry) {
-          // @ts-ignore - path is available in Tauri environment
-          const path = item.getAsFile()?.path || entry.fullPath
-          if (entry.isDirectory) {
-            folderPaths.push(path)
-          } else {
-            filePaths.push(path)
-          }
-        } else {
-          // Fallback: use files API
-          const file = item.getAsFile()
-          if (file) {
-            // @ts-ignore - path is available in Tauri environment
-            const path = file.path || file.name
-            filePaths.push(path)
-          }
-        }
-      }
+  const handleNativeDrop = useCallback(async (paths: string[]) => {
+    if (!project) return
+    if (!tryStartImport()) {
+      setDropBusyError(t("sources.dropImportBusy"))
+      return
     }
 
-    // Fallback: if webkitGetAsEntry not available, use files API
-    if (filePaths.length === 0 && folderPaths.length === 0) {
-      const files = dataTransfer.files
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        // @ts-ignore - path is available in Tauri environment
-        const path = file.path || file.name
-        // Try to detect if it's a directory (some environments set this)
-        // @ts-ignore
-        if (file.isDirectory || (file as any).webkitDirectoryEntry) {
-          folderPaths.push(path)
-        } else {
-          filePaths.push(path)
-        }
-      }
-    }
-
-    // Process dropped files and folders through existing import pipeline
-    setImporting(true)
     try {
-      // Import files first
-      if (filePaths.length > 0) {
-        await importSourceFiles(project, filePaths, llmConfig, sourceWatchConfig)
-      }
-
-      // Then import folders
-      if (folderPaths.length > 0) {
-        for (const folderPath of folderPaths) {
-          try {
-            await importSourceFolder(project, folderPath, llmConfig, sourceWatchConfig)
-          } catch (err) {
-            console.error(`Failed to import folder: ${folderPath}`, err)
-          }
-        }
-      }
-
-      // Refresh the sources view after successful import
+      const result = await importDroppedSourcePaths(paths, {
+        isDirectory,
+        importFiles: (filePaths) =>
+          importSourceFiles(project, filePaths, llmConfig, sourceWatchConfig),
+        importFolder: (folderPath) =>
+          importSourceFolder(project, folderPath, llmConfig, sourceWatchConfig),
+      })
       await loadSources()
-    } catch (err) {
-      console.error('[sources] Failed to import dropped items:', err)
+
+      if (result.errors.length > 0) {
+        const error = result.errors.join("; ")
+        console.error("[sources] failed to import dropped items:", error)
+        setDropError(t("sources.dropImportFailed", { error }))
+      } else if (result.importedPaths.length === 0) {
+        setDropError(t("sources.dropImportEmpty"))
+      }
+    } catch (error) {
+      console.error("[sources] failed to import dropped items:", error)
+      setDropError(t("sources.dropImportFailed", { error: String(error) }))
     } finally {
-      setImporting(false)
+      finishImport()
     }
+  }, [finishImport, llmConfig, loadSources, project, sourceWatchConfig, t, tryStartImport])
+
+  handleNativeDropRef.current = (paths) => {
+    void handleNativeDrop(paths)
   }
+
+  useEffect(() => {
+    if (!isTauri()) return
+
+    return subscribeToSourceDrops(getCurrentWindow(), {
+      isActive: () => useWikiStore.getState().activeView === "sources",
+      onDraggingChange: setIsDraggingOver,
+      onDrop: (paths) => handleNativeDropRef.current(paths),
+      onError: (error) => {
+        console.error("[sources] failed to listen for native drag-and-drop:", error)
+        setDropListenerError(t("sources.dropUnavailable", { error: String(error) }))
+      },
+    })
+  }, [t])
 
   async function handleRefreshSources() {
     if (!project || refreshing) return
@@ -270,98 +232,97 @@ export function SourcesView() {
   }
 
   async function handleImport() {
-    if (!project) return
+    if (!project || !tryStartImport()) return
 
-    const selected = await open({
-      multiple: true,
-      title: t("sources.importSourceFiles"),
-      filters: [
-        {
-          name: "Documents",
-          extensions: [
-            "md", "mdx", "txt", "org", "rtf", "pdf",
-            "html", "htm", "xml",
-            "doc", "docx", "docm", "xls", "xlsx", "xlsm", "xlsb",
-            "ppt", "pps", "pot", "pptx", "pptm", "ppsx", "ppsm",
-            "odt", "ods", "odp", "epub", "mobi", "pages", "numbers", "key",
-          ],
-        },
-        {
-          name: "Data",
-          extensions: ["json", "jsonl", "csv", "tsv", "yaml", "yml", "ndjson"],
-        },
-        {
-          name: "Code",
-          extensions: [
-            "py", "js", "ts", "jsx", "tsx", "rs", "go", "java",
-            "c", "cpp", "h", "rb", "php", "swift", "sql", "sh",
-          ],
-        },
-        {
-          name: "Images",
-          extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff", "avif", "heic"],
-        },
-        {
-          name: "Media",
-          extensions: ["mp4", "webm", "mov", "avi", "mkv", "mp3", "wav", "ogg", "flac", "m4a"],
-        },
-        { name: "All Files", extensions: ["*"] },
-      ],
-    })
-
-    if (!selected || selected.length === 0) return
-
-    setImporting(true)
-    const paths = Array.isArray(selected) ? selected : [selected]
     try {
+      const selected = await open({
+        multiple: true,
+        title: t("sources.importSourceFiles"),
+        filters: [
+          {
+            name: "Documents",
+            extensions: [
+              "md", "mdx", "txt", "org", "rtf", "pdf",
+              "html", "htm", "xml",
+              "doc", "docx", "docm", "xls", "xlsx", "xlsm", "xlsb",
+              "ppt", "pps", "pot", "pptx", "pptm", "ppsx", "ppsm",
+              "odt", "ods", "odp", "epub", "mobi", "pages", "numbers", "key",
+            ],
+          },
+          {
+            name: "Data",
+            extensions: ["json", "jsonl", "csv", "tsv", "yaml", "yml", "ndjson"],
+          },
+          {
+            name: "Code",
+            extensions: [
+              "py", "js", "ts", "jsx", "tsx", "rs", "go", "java",
+              "c", "cpp", "h", "rb", "php", "swift", "sql", "sh",
+            ],
+          },
+          {
+            name: "Images",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff", "avif", "heic"],
+          },
+          {
+            name: "Media",
+            extensions: ["mp4", "webm", "mov", "avi", "mkv", "mp3", "wav", "ogg", "flac", "m4a"],
+          },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      })
+
+      if (!selected || selected.length === 0) return
+
+      const paths = Array.isArray(selected) ? selected : [selected]
       await importSourceFiles(project, paths, llmConfig, sourceWatchConfig)
       await loadSources()
     } finally {
-      setImporting(false)
+      finishImport()
     }
   }
 
   async function handleImportFolder() {
-    if (!project) return
+    if (!project || !tryStartImport()) return
 
-    const selected = await open({
-      directory: true,
-      title: t("sources.importSourceFolder"),
-    })
-
-    if (!selected || typeof selected !== "string") return
-
-    setImporting(true)
     try {
+      const selected = await open({
+        directory: true,
+        title: t("sources.importSourceFolder"),
+      })
+
+      if (!selected || typeof selected !== "string") return
+
       await importSourceFolder(project, selected, llmConfig, sourceWatchConfig)
       await loadSources()
     } catch (err) {
       console.error(`Failed to import folder:`, err)
     } finally {
-      setImporting(false)
+      finishImport()
     }
   }
 
   async function handleImportUrls() {
-    if (!project || importing) return
-    let urls: string[]
+    if (!project || !tryStartImport()) return
+
     try {
-      urls = parseImportUrls(urlInput)
-      if (urls.length === 0) throw new Error(t("sources.urlImport.empty"))
-    } catch (error) {
-      setUrlError(error instanceof Error ? error.message : String(error))
-      return
-    }
-    setImporting(true)
-    setUrlError(null)
-    setUrlResults([])
-    try {
+      let urls: string[]
+      try {
+        urls = parseImportUrls(urlInput)
+        if (urls.length === 0) throw new Error(t("sources.urlImport.empty"))
+      } catch (error) {
+        setUrlError(error instanceof Error ? error.message : String(error))
+        return
+      }
+
+      setUrlError(null)
+      setUrlResults([])
       const results = await importSourceUrls(project, urls, llmConfig, sourceWatchConfig)
       setUrlResults(results)
       await loadSources()
       if (results.every((result) => result.path && !result.error)) setUrlInput("")
     } finally {
-      setImporting(false)
+      finishImport()
     }
   }
 
@@ -470,6 +431,8 @@ export function SourcesView() {
     }
   }
 
+  const visibleDropError = dropListenerError ?? dropBusyError ?? dropError
+
   return (
     <TooltipProvider delay={300}>
       <div className="flex h-full flex-col">
@@ -575,17 +538,11 @@ export function SourcesView() {
         </div>
       )}
 
-      <ScrollArea
-        className={`min-h-0 flex-1 overflow-hidden transition-colors duration-200 ${
-          isDraggingOver
-            ? 'bg-accent/50 border-2 border-dashed border-primary'
-            : ''
-        }`}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      >
+      <ScrollArea className={`min-h-0 flex-1 overflow-hidden border-2 border-dashed ${
+        isDraggingOver
+          ? "border-primary/50 bg-primary/10"
+          : "border-transparent"
+      }`}>
         {refreshError && (
           <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {t("sources.refreshFailed", {
@@ -594,27 +551,27 @@ export function SourcesView() {
             })}
           </div>
         )}
+        {visibleDropError && (
+          <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {visibleDropError}
+          </div>
+        )}
         {sources.length === 0 ? (
-          <div
-            className={`flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground transition-all duration-200 ${
-              isDraggingOver
-                ? 'bg-primary/10 scale-105 rounded-lg border-2 border-dashed border-primary'
-                : ''
-            }`}
-          >
+          <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <p>{t("sources.noSources")}</p>
             <p>{t("sources.importHint")}</p>
-            {isDraggingOver && (
-              <p className="text-sm font-medium text-primary animate-pulse">
-                {t("sources.dragDropHint")}
-              </p>
-            )}
+            <p className="text-xs opacity-70">
+              {isDraggingOver
+                ? t("sources.dragDropHint")
+                : t("sources.dragAndDropHint", "or drag and drop files/folders here")
+              }
+            </p>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleImport}>
+              <Button variant="outline" size="sm" onClick={handleImport} disabled={importing}>
                 <Plus className="mr-1 h-4 w-4" />
                 {t("sources.importFiles")}
               </Button>
-              <Button variant="outline" size="sm" onClick={handleImportFolder}>
+              <Button variant="outline" size="sm" onClick={handleImportFolder} disabled={importing}>
                 <Plus className="mr-1 h-4 w-4" />
                 {t("sources.importFolder")}
               </Button>
