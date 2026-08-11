@@ -194,6 +194,47 @@ describe("resolveConfig", () => {
 
     expect(resolved.localCliIsolation).toBe(false)
   })
+  it("exposes Qwen (阿里云百炼 DashScope) as an OpenAI-compatible custom preset", () => {
+    const qwen = LLM_PRESETS.find((preset) => preset.id === "qwen")
+
+    expect(qwen?.provider).toBe("custom")
+    expect(qwen?.baseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1")
+    expect(qwen?.apiMode).toBe("chat_completions")
+    expect(qwen?.defaultModel).toBe("qwen-max")
+    expect(qwen?.suggestedContextSize).toBe(131072)
+    expect(qwen?.suggestedModels).toContain("qwen3-max")
+
+    const resolved = resolveConfig(qwen ?? ({} as LlmPreset), undefined, fallbackConfig())
+    expect(resolved.provider).toBe("custom")
+    expect(resolved.customEndpoint).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1")
+    expect(resolved.model).toBe("qwen-max")
+    expect(resolved.apiMode).toBe("chat_completions")
+  })
+
+  it("exposes 腾讯混元 (Tencent Hunyuan) as an OpenAI-compatible custom preset", () => {
+    const hunyuan = LLM_PRESETS.find((preset) => preset.id === "hunyuan")
+
+    expect(hunyuan?.provider).toBe("custom")
+    expect(hunyuan?.baseUrl).toBe("https://api.hunyuan.cloud.tencent.com/v1")
+    expect(hunyuan?.apiMode).toBe("chat_completions")
+    expect(hunyuan?.defaultModel).toBe("hunyuan-turbo")
+    expect(hunyuan?.suggestedContextSize).toBe(131072)
+    expect(hunyuan?.suggestedModels).toContain("hunyuan-turbo")
+
+    const resolved = resolveConfig(hunyuan ?? ({} as LlmPreset), undefined, fallbackConfig())
+    expect(resolved.provider).toBe("custom")
+    expect(resolved.customEndpoint).toBe("https://api.hunyuan.cloud.tencent.com/v1")
+    expect(resolved.model).toBe("hunyuan-turbo")
+    expect(resolved.apiMode).toBe("chat_completions")
+  })
+
+  it("surfaces the new curated presets through availableLlmPresets", async () => {
+    const { availableLlmPresets } = await import("./llm-presets")
+    const ids = availableLlmPresets().map((preset) => preset.id)
+    expect(ids).toContain("qwen")
+    expect(ids).toContain("hunyuan")
+  })
+
 })
 
 describe("disabledLlmConfig", () => {

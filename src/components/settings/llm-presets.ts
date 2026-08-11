@@ -495,6 +495,52 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 128000,
   },
   {
+    id: "qwen",
+    label: "通义千问 Qwen (Bailian)",
+    hint: "dashscope.aliyuncs.com/compatible-mode",
+    provider: "custom",
+    // Standard DashScope (阿里云百炼) OpenAI-compatible gateway, distinct
+    // from the Coding Plan preset which uses coding.dashscope.aliyuncs.com.
+    // API key issued from the Model Studio console (sk-…). DashScope's
+    // catalog rotates frequently — keep common current picks; any custom id
+    // can still be typed into the free-form input.
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    defaultModel: "qwen-max",
+    apiMode: "chat_completions",
+    suggestedModels: [
+      "qwen-max",
+      "qwen-plus",
+      "qwen-turbo",
+      "qwen-long",
+      "qwen3-max",
+      "qwen3-235b-a22b",
+      "qwen3-32b",
+    ],
+    suggestedContextSize: 131072,
+  },
+  {
+    id: "hunyuan",
+    label: "腾讯混元 (Tencent Hunyuan)",
+    hint: "api.hunyuan.cloud.tencent.com",
+    provider: "custom",
+    // Hunyuan's public OpenAI-compatible gateway. API key issued from the
+    // TencentCloud / 混元大模型 open console. Model catalog rotates
+    // frequently — keep common current picks; any custom id can still be
+    // typed into the free-form input.
+    baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+    defaultModel: "hunyuan-turbo",
+    apiMode: "chat_completions",
+    suggestedModels: [
+      "hunyuan-turbo",
+      "hunyuan-turbos",
+      "hunyuan-pro",
+      "hunyuan-standard",
+      "hunyuan-lite",
+      "hunyuan-k2",
+    ],
+    suggestedContextSize: 131072,
+  },
+  {
     id: "ollama-local",
     label: "Ollama (Local)",
     hint: "Self-hosted llama.cpp / Ollama",
