@@ -175,10 +175,19 @@
     "urlImport": {
       "title": "Import web pages",
       "description": "Enter one HTTP(S) URL per line. Each page is saved as a source and queued for ingest; failed URLs do not stop the rest of the batch.",
+      "youtubeCapability": "Best effort: public YouTube single-video URLs can include an original-language transcript when captions are available. Otherwise, the video is saved as an ordinary web page without a transcript.",
+      "youtubeHint": "YouTube video detected. We'll try to import its original-language captions.",
+      "inputLabel": "Web page URLs",
       "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
       "submit": "Import URLs",
       "empty": "Enter at least one URL.",
-      "imported": "Imported"
+      "imported": "Imported",
+      "results": {
+        "webpage": "Web page imported",
+        "youtubeTranscript": "YouTube video imported with transcript",
+        "youtubeFallback": "YouTube video imported as a web page without a transcript",
+        "failure": "Import failed"
+      }
     },
     "refresh": "Refresh",
     "refreshFolder": "Refresh folder",

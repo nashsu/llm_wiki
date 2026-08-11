@@ -32,7 +32,10 @@ chrono = { version = "0.4", features = ["clock"] }
 tauri-plugin-dialog = "2.7.1"
 pdfium-render = "0.9"
 tauri-plugin-store = "2.4.2"
-tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
+# Preserve the plugin's normal transport stack but omit its default `cookies`
+# feature. The JavaScript shim does not forward fetch's `credentials` option,
+# so a shared cookie jar would make `credentials: "omit"` ineffective.
+tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "macos-system-configuration", "unsafe-headers"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tiny_http = "0.12"
 zip = "2"

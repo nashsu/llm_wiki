@@ -32,7 +32,7 @@
 
 - **Two-Step Chain-of-Thought Ingest** — LLM analyzes first, then generates wiki pages with source traceability and incremental cache
 - **Multimodal Image Ingestion** — extract embedded images from PDFs, generate factual captions with a vision LLM, surface them in image-aware search results with lightbox preview and jump-to-source
-- **Multi-format Document Parsing** — ingest PDF, Office documents, EPUB/MOBI, Org mode, images, media, web clips, and batches of URLs, with built-in, cloud, or local MinerU PDF processing
+- **Multi-format Document Parsing** — ingest PDF, Office documents, EPUB/MOBI, Org mode, images, media, web clips, and batches of URLs, with built-in, cloud, or local MinerU PDF processing. Public YouTube single-video URLs get experimental, best-effort extraction of a transcript from original-language captions when available; without eligible captions or if specialized extraction fails, they fall back to ordinary webpage import without a transcript
 - **Flexible Model Configuration** — configure models per project, route Chat and Ingest independently, and manage custom providers, headers, and streaming output
 - **Source-grounded Retrieval** — use Read Sources Only mode to answer exclusively from original imported material
 - **Project Management & Migration** — export and import complete project archives across devices, and rebuild the Wiki index from existing pages

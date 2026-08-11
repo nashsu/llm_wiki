@@ -175,10 +175,19 @@
     "urlImport": {
       "title": "Importa pagine web",
       "description": "Inserisci un URL HTTP(S) per riga. Ogni pagina viene salvata come fonte e messa in coda per l'elaborazione; gli URL non riusciti non bloccano il resto del gruppo.",
+      "youtubeCapability": "Supporto best effort: per gli URL pubblici di singoli video YouTube, quando sono disponibili i sottotitoli viene importata una trascrizione nella lingua originale; altrimenti il video viene salvato come normale pagina web senza trascrizione.",
+      "youtubeHint": "Video YouTube rilevato. Proveremo a importare i sottotitoli nella lingua originale.",
+      "inputLabel": "URL delle pagine web",
       "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
       "submit": "Importa gli URL",
       "empty": "Inserisci almeno un URL.",
-      "imported": "Importati"
+      "imported": "Importati",
+      "results": {
+        "webpage": "Pagina web importata",
+        "youtubeTranscript": "Video YouTube importato con trascrizione",
+        "youtubeFallback": "Video YouTube importato come pagina web senza trascrizione",
+        "failure": "Importazione non riuscita"
+      }
     },
     "refresh": "Aggiorna",
     "refreshFolder": "Aggiorna la cartella",

@@ -175,10 +175,19 @@
     "urlImport": {
       "title": "导入网页",
       "description": "每行输入一个 HTTP(S) 网址。网页会保存为原始资料并进入提取队列；单个网址失败不会中断整批任务。",
+      "youtubeCapability": "目前以尽力而为方式支持公开的 YouTube 单视频网址：有可用字幕时导入原语种转录，否则保存为不含转录的普通网页。",
+      "youtubeHint": "已检测到 YouTube 视频。将尝试导入其原语种字幕。",
+      "inputLabel": "网页网址",
       "placeholder": "https://example.com/article-one\nhttps://example.com/article-two",
       "submit": "导入网址",
       "empty": "请至少输入一个网址。",
-      "imported": "已导入"
+      "imported": "已导入",
+      "results": {
+        "webpage": "网页已导入",
+        "youtubeTranscript": "已导入 YouTube 视频及转录",
+        "youtubeFallback": "已将 YouTube 视频作为不含转录的普通网页导入",
+        "failure": "导入失败"
+      }
     },
     "refresh": "刷新",
     "refreshFolder": "刷新文件夹",

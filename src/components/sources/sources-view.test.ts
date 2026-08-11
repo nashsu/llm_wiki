@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { FileNode } from "@/types/wiki"
-import { filterSourceTreeByQuery } from "./sources-view"
+import type { UrlImportResult } from "@/lib/url-source-import"
+import {
+  filterSourceTreeByQuery,
+  getUrlImportResultPresentation,
+  hasSupportedYouTubeVideoUrl,
+  shouldClearUrlImportInput,
+} from "./sources-view"
 
 const TREE: FileNode[] = [
   {
@@ -37,5 +43,65 @@ describe("filterSourceTreeByQuery", () => {
 
   it("returns an empty tree when no source matches", () => {
     expect(filterSourceTreeByQuery(TREE, "missing source")).toEqual([])
+  })
+})
+
+describe("hasSupportedYouTubeVideoUrl", () => {
+  it("recognizes supported single-video URLs anywhere in the multiline input", () => {
+    expect(hasSupportedYouTubeVideoUrl([
+      "https://example.com/article",
+      "  https://youtu.be/abcdefghijk  ",
+    ].join("\n"))).toBe(true)
+    expect(hasSupportedYouTubeVideoUrl("https://m.youtube.com/watch?v=abcdefghijk")).toBe(true)
+    expect(hasSupportedYouTubeVideoUrl("https://www.youtube.com/shorts/abcdefghijk")).toBe(true)
+  })
+
+  it("does not hint for unsupported or spoofed YouTube-looking URLs", () => {
+    expect(hasSupportedYouTubeVideoUrl("https://www.youtube.com/channel/UC123")).toBe(false)
+    expect(hasSupportedYouTubeVideoUrl("https://www.youtube.com/playlist?list=PL123")).toBe(false)
+    expect(hasSupportedYouTubeVideoUrl("https://youtube.com.evil.test/watch?v=abcdefghijk")).toBe(false)
+    expect(hasSupportedYouTubeVideoUrl("https://www.youtube.com/watch?v=too-short")).toBe(false)
+    expect(hasSupportedYouTubeVideoUrl("https://example.com/article")).toBe(false)
+  })
+})
+
+describe("getUrlImportResultPresentation", () => {
+  const result = (value: UrlImportResult) => getUrlImportResultPresentation(value)
+
+  it("maps each import outcome to distinct copy and non-error fallback styling", () => {
+    expect(result({ url: "https://example.com", path: "/web.html", outcome: "webpage" }))
+      .toEqual({ messageKey: "sources.urlImport.results.webpage", tone: "success" })
+    expect(result({ url: "https://youtu.be/abcdefghijk", path: "/video.md", outcome: "youtube-transcript" }))
+      .toEqual({ messageKey: "sources.urlImport.results.youtubeTranscript", tone: "success" })
+    expect(result({ url: "https://youtu.be/abcdefghijk", path: "/watch.html", outcome: "youtube-webpage-fallback" }))
+      .toEqual({ messageKey: "sources.urlImport.results.youtubeFallback", tone: "notice" })
+    expect(result({ url: "https://example.com", outcome: "failure", error: "HTTP 500" }))
+      .toEqual({ messageKey: "sources.urlImport.results.failure", tone: "error" })
+  })
+
+  it("keeps a post-save queue failure on the actual error surface", () => {
+    expect(result({
+      url: "https://example.com",
+      path: "/web.html",
+      outcome: "webpage",
+      error: "Saved, but failed to queue ingest",
+    })).toEqual({ messageKey: "sources.urlImport.results.failure", tone: "error" })
+  })
+})
+
+describe("shouldClearUrlImportInput", () => {
+  it("clears after saved webpage fallback but not after a queue error", () => {
+    expect(shouldClearUrlImportInput([{
+      url: "https://youtu.be/abcdefghijk",
+      path: "/watch.html",
+      outcome: "youtube-webpage-fallback",
+    }])).toBe(true)
+
+    expect(shouldClearUrlImportInput([{
+      url: "https://youtu.be/abcdefghijk",
+      path: "/watch.html",
+      outcome: "youtube-webpage-fallback",
+      error: "Saved, but failed to queue ingest",
+    }])).toBe(false)
   })
 })

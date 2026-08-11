@@ -5,12 +5,27 @@ import { getHttpFetch } from "@/lib/tauri-fetch"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { enqueueSourceIngest, getUniqueDestPath } from "@/lib/source-lifecycle"
 import { normalizePath } from "@/lib/path-utils"
+import {
+  importYouTubeUrl,
+  isYouTubeUrl,
+  parseYouTubeVideoUrl,
+  YouTubeSourceError,
+} from "@/lib/youtube-sources"
+
+export { isYouTubeUrl } from "@/lib/youtube-sources"
 
 export const MAX_BATCH_URLS = 50
 const MAX_REDIRECTS = 10
 
+export type UrlImportOutcome =
+  | "webpage"
+  | "youtube-transcript"
+  | "youtube-webpage-fallback"
+  | "failure"
+
 export interface UrlImportResult {
   url: string
+  outcome: UrlImportOutcome
   path?: string
   error?: string
 }
@@ -152,6 +167,74 @@ function attachSourceUrl(url: string, contentType: string, body: string): string
   return `Source URL: ${url}\n\n${body}`
 }
 
+async function withImportTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60_000)
+  try {
+    return await operation(controller.signal)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+interface WebpageArtifact {
+  fileName: string
+  content: string
+}
+
+async function fetchWebpageArtifact(
+  fetch: typeof globalThis.fetch,
+  url: string,
+  signal: AbortSignal,
+  maxBytes: number,
+): Promise<WebpageArtifact> {
+  const response = await fetchImportUrl(fetch, url, signal)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const declaredSize = Number(response.headers.get("content-length") ?? "0")
+  if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
+    throw new Error("Response exceeds the source file size limit")
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  if (bytes.byteLength > maxBytes) throw new Error("Response exceeds the source file size limit")
+  const contentType = response.headers.get("content-type") ?? "text/plain"
+  if (!/(?:text\/|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
+    throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`)
+  }
+  const body = new TextDecoder().decode(bytes)
+  return {
+    fileName: urlSourceFileName(url, contentType, body),
+    content: attachSourceUrl(url, contentType, body),
+  }
+}
+
+async function persistSource(sourceRoot: string, fileName: string, content: string): Promise<string> {
+  const path = await getUniqueDestPath(sourceRoot, fileName)
+  await writeFile(path, content)
+  return path
+}
+
+async function importWebpage(
+  fetch: typeof globalThis.fetch,
+  sourceRoot: string,
+  url: string,
+  maxBytes: number,
+): Promise<string> {
+  const artifact = await withImportTimeout(
+    (signal) => fetchWebpageArtifact(fetch, url, signal, maxBytes),
+  )
+  return persistSource(sourceRoot, artifact.fileName, artifact.content)
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function logYouTubeFallback(url: string, error: unknown): void {
+  const videoId = parseYouTubeVideoUrl(url)?.videoId ?? "unknown"
+  const code = error instanceof YouTubeSourceError ? error.code : "UNKNOWN"
+  console.warn(`YouTube import ${code} for video ${videoId}; using webpage fallback`)
+}
+
 export async function importSourceUrls(
   project: WikiProject,
   urls: string[],
@@ -165,41 +248,49 @@ export async function importSourceUrls(
   const importedPaths: string[] = []
 
   for (const url of urls) {
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 60_000)
-      let response: Response
+    if (isYouTubeUrl(url)) {
+      let artifact
       try {
-        response = await fetchImportUrl(fetch, url, controller.signal)
-      } finally {
-        clearTimeout(timeout)
+        artifact = await withImportTimeout((signal) => importYouTubeUrl(url, {
+          fetch,
+          signal,
+          maxArtifactBytes: maxBytes,
+        }))
+      } catch (error) {
+        logYouTubeFallback(url, error)
+        try {
+          const path = await importWebpage(fetch, sourceRoot, url, maxBytes)
+          importedPaths.push(path)
+          results.push({ url, path, outcome: "youtube-webpage-fallback" })
+        } catch (fallbackError) {
+          results.push({ url, outcome: "failure", error: errorMessage(fallbackError) })
+        }
+        continue
       }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const declaredSize = Number(response.headers.get("content-length") ?? "0")
-      if (Number.isFinite(declaredSize) && declaredSize > maxBytes) {
-        throw new Error("Response exceeds the source file size limit")
+
+      try {
+        const path = await persistSource(sourceRoot, artifact.fileName, artifact.markdown)
+        importedPaths.push(path)
+        results.push({ url, path, outcome: "youtube-transcript" })
+      } catch (error) {
+        results.push({ url, outcome: "failure", error: errorMessage(error) })
       }
-      const bytes = new Uint8Array(await response.arrayBuffer())
-      if (bytes.byteLength > maxBytes) throw new Error("Response exceeds the source file size limit")
-      const contentType = response.headers.get("content-type") ?? "text/plain"
-      if (!/(?:text\/|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
-        throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`)
-      }
-      const body = new TextDecoder().decode(bytes)
-      const fileName = urlSourceFileName(url, contentType, body)
-      const path = await getUniqueDestPath(sourceRoot, fileName)
-      await writeFile(path, attachSourceUrl(url, contentType, body))
+      continue
+    }
+
+    try {
+      const path = await importWebpage(fetch, sourceRoot, url, maxBytes)
       importedPaths.push(path)
-      results.push({ url, path })
+      results.push({ url, path, outcome: "webpage" })
     } catch (error) {
-      results.push({ url, error: error instanceof Error ? error.message : String(error) })
+      results.push({ url, outcome: "failure", error: errorMessage(error) })
     }
   }
 
   try {
     await enqueueSourceIngest(project, importedPaths, llmConfig)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     for (const result of results) {
       if (result.path) result.error = `Saved, but failed to queue ingest: ${message}`
     }

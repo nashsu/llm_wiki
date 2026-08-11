@@ -23,13 +23,58 @@ import {
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { importSourceUrls, parseImportUrls, type UrlImportResult } from "@/lib/url-source-import"
+import {
+  importSourceUrls,
+  isYouTubeUrl,
+  parseImportUrls,
+  type UrlImportResult,
+} from "@/lib/url-source-import"
 import { listIngestedSourceIdentities } from "@/lib/ingest-cache"
 import { getQueue, type IngestTask } from "@/lib/ingest-queue"
 
 const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
 type SourceIngestStatus = "not-ingested" | "ingested" | IngestTask["status"]
+
+const URL_IMPORT_DESCRIPTION_ID = "source-url-import-description"
+const URL_IMPORT_CAPABILITY_ID = "source-url-import-capability"
+const URL_IMPORT_YOUTUBE_HINT_ID = "source-url-import-youtube-hint"
+
+type UrlImportResultPresentation = {
+  messageKey:
+    | "sources.urlImport.results.webpage"
+    | "sources.urlImport.results.youtubeTranscript"
+    | "sources.urlImport.results.youtubeFallback"
+    | "sources.urlImport.results.failure"
+  tone: "success" | "notice" | "error"
+}
+
+export function hasSupportedYouTubeVideoUrl(input: string): boolean {
+  return input
+    .split(/\r?\n/)
+    .some((line) => isYouTubeUrl(line.trim()))
+}
+
+export function getUrlImportResultPresentation(
+  result: UrlImportResult,
+): UrlImportResultPresentation {
+  if (result.error || result.outcome === "failure") {
+    return { messageKey: "sources.urlImport.results.failure", tone: "error" }
+  }
+  switch (result.outcome) {
+    case "webpage":
+      return { messageKey: "sources.urlImport.results.webpage", tone: "success" }
+    case "youtube-transcript":
+      return { messageKey: "sources.urlImport.results.youtubeTranscript", tone: "success" }
+    case "youtube-webpage-fallback":
+      return { messageKey: "sources.urlImport.results.youtubeFallback", tone: "notice" }
+  }
+}
+
+export function shouldClearUrlImportInput(results: readonly UrlImportResult[]): boolean {
+  return results.length > 0
+    && results.every((result) => Boolean(result.path) && !result.error)
+}
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -141,6 +186,10 @@ export function SourcesView() {
   )
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
+  const showYouTubeUrlHint = useMemo(
+    () => hasSupportedYouTubeVideoUrl(urlInput),
+    [urlInput],
+  )
 
   async function handleRefreshSources() {
     if (!project || refreshing) return
@@ -247,7 +296,7 @@ export function SourcesView() {
       const results = await importSourceUrls(project, urls, llmConfig, sourceWatchConfig)
       setUrlResults(results)
       await loadSources()
-      if (results.every((result) => result.path && !result.error)) setUrlInput("")
+      if (shouldClearUrlImportInput(results)) setUrlInput("")
     } finally {
       setImporting(false)
     }
@@ -401,8 +450,16 @@ export function SourcesView() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("sources.urlImport.title")}</DialogTitle>
-            <DialogDescription>{t("sources.urlImport.description")}</DialogDescription>
+            <DialogDescription id={URL_IMPORT_DESCRIPTION_ID}>
+              {t("sources.urlImport.description")}
+            </DialogDescription>
           </DialogHeader>
+          <p
+            id={URL_IMPORT_CAPABILITY_ID}
+            className="rounded-md border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+          >
+            {t("sources.urlImport.youtubeCapability")}
+          </p>
           <textarea
             className="min-h-44 w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={urlInput}
@@ -412,17 +469,50 @@ export function SourcesView() {
               setUrlResults([])
             }}
             placeholder={t("sources.urlImport.placeholder")}
+            aria-label={t("sources.urlImport.inputLabel")}
+            aria-describedby={[
+              URL_IMPORT_DESCRIPTION_ID,
+              URL_IMPORT_CAPABILITY_ID,
+              showYouTubeUrlHint ? URL_IMPORT_YOUTUBE_HINT_ID : null,
+            ].filter(Boolean).join(" ")}
+            aria-invalid={urlError ? true : undefined}
             disabled={importing}
           />
-          {urlError && <p className="text-sm text-destructive">{urlError}</p>}
+          {showYouTubeUrlHint && (
+            <p
+              id={URL_IMPORT_YOUTUBE_HINT_ID}
+              className="text-xs leading-relaxed text-muted-foreground"
+            >
+              {t("sources.urlImport.youtubeHint")}
+            </p>
+          )}
+          {urlError && <p role="alert" className="text-sm text-destructive">{urlError}</p>}
           {urlResults.length > 0 && (
-            <div className="max-h-40 space-y-1 overflow-auto rounded-md border p-2 text-xs">
-              {urlResults.map((result) => (
-                <div key={result.url} className={result.error ? "text-destructive" : "text-muted-foreground"}>
-                  <span className="break-all">{result.url}</span>
-                  <span className="ml-2">{result.error ?? t("sources.urlImport.imported")}</span>
-                </div>
-              ))}
+            <div
+              className="max-h-40 space-y-1 overflow-auto rounded-md border p-2 text-xs"
+              aria-live="polite"
+              aria-relevant="additions text"
+            >
+              {urlResults.map((result) => {
+                const presentation = getUrlImportResultPresentation(result)
+                const className = presentation.tone === "error"
+                  ? "text-destructive"
+                  : presentation.tone === "notice"
+                    ? "text-amber-700 dark:text-amber-400"
+                    : "text-muted-foreground"
+                return (
+                  <div
+                    key={result.url}
+                    role={presentation.tone === "error" ? "alert" : "status"}
+                    className={className}
+                  >
+                    <span className="break-all">{result.url}</span>
+                    <span className="ml-2">
+                      {result.error ?? t(presentation.messageKey)}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           )}
           <DialogFooter>
