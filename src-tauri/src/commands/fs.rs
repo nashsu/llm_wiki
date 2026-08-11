@@ -1643,6 +1643,143 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
     .map_err(|e| format!("copy_file blocking task join error: {e}"))?
 }
 
+fn copy_markdown_image_within_project_inner(
+    project_path: &Path,
+    source_path: &Path,
+    destination_path: &Path,
+) -> Result<u64, String> {
+    require_absolute_path(
+        "copy_markdown_image_within_project project_path",
+        &project_path.to_string_lossy(),
+    )?;
+    require_absolute_path(
+        "copy_markdown_image_within_project source",
+        &source_path.to_string_lossy(),
+    )?;
+    require_absolute_path(
+        "copy_markdown_image_within_project destination",
+        &destination_path.to_string_lossy(),
+    )?;
+    let project = fs::canonicalize(project_path)
+        .map_err(|err| format!("Failed to resolve project path: {err}"))?;
+    if !project.is_dir() {
+        return Err("Markdown image project path must be a directory".to_string());
+    }
+
+    let source = fs::canonicalize(source_path)
+        .map_err(|err| format!("Failed to resolve Markdown image source: {err}"))?;
+    if !source.starts_with(&project) {
+        return Err("Markdown image source must be inside the project".to_string());
+    }
+    let source_metadata = fs::metadata(&source)
+        .map_err(|err| format!("Failed to inspect Markdown image source: {err}"))?;
+    if !source_metadata.is_file() {
+        return Err("Markdown image source must be a regular file".to_string());
+    }
+
+    let relative_destination = destination_path
+        .strip_prefix(project_path)
+        .or_else(|_| destination_path.strip_prefix(&project))
+        .map_err(|_| "Markdown image destination must be inside the project".to_string())?;
+    let mut destination_parts = Vec::new();
+    for component in relative_destination.components() {
+        match component {
+            std::path::Component::Normal(part) => destination_parts.push(part.to_os_string()),
+            std::path::Component::CurDir => {}
+            _ => return Err("Markdown image destination must be inside the project".to_string()),
+        }
+    }
+    let file_name = destination_parts
+        .pop()
+        .ok_or_else(|| "Markdown image destination must include a file name".to_string())?;
+
+    let mut destination_parent = project.clone();
+    for part in destination_parts {
+        let next = destination_parent.join(part);
+        match fs::symlink_metadata(&next) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&next).map_err(|create_err| {
+                    format!(
+                        "Failed to create Markdown image destination directory '{}': {create_err}",
+                        next.display()
+                    )
+                })?;
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Failed to inspect Markdown image destination directory '{}': {err}",
+                    next.display()
+                ))
+            }
+        }
+        let resolved = fs::canonicalize(&next).map_err(|err| {
+            format!(
+                "Failed to resolve Markdown image destination directory '{}': {err}",
+                next.display()
+            )
+        })?;
+        if !resolved.starts_with(&project) {
+            return Err("Markdown image destination must be inside the project".to_string());
+        }
+        if !resolved.is_dir() {
+            return Err("Markdown image destination parent must be a directory".to_string());
+        }
+        destination_parent = resolved;
+    }
+
+    let destination = destination_parent.join(file_name);
+    if !destination.starts_with(&project) {
+        return Err("Markdown image destination must be inside the project".to_string());
+    }
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err("Markdown image destination must not be a symlink".to_string())
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            return Err("Markdown image destination must be a regular file".to_string())
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(format!(
+                "Failed to inspect Markdown image destination '{}': {err}",
+                destination.display()
+            ))
+        }
+    }
+
+    file_sync::mark_app_write_path(&destination);
+    let copied = fs::copy(&source, &destination).map_err(|err| {
+        format!(
+            "Failed to copy Markdown image '{}' to '{}': {err}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    file_sync::mark_app_write_path(&destination);
+    Ok(copied)
+}
+
+#[tauri::command]
+pub async fn copy_markdown_image_within_project(
+    project_path: String,
+    source: String,
+    destination: String,
+) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("copy_markdown_image_within_project", || {
+            copy_markdown_image_within_project_inner(
+                Path::new(&project_path),
+                Path::new(&source),
+                Path::new(&destination),
+            )
+        })
+    })
+    .await
+    .map_err(|err| format!("copy_markdown_image_within_project blocking task join error: {err}"))?
+}
+
 /// Recursively copy a directory, preserving structure.
 /// Returns list of copied file paths (destination paths).
 #[tauri::command]
@@ -2779,6 +2916,125 @@ mod tests {
         );
         assert!(require_absolute_path("write_file", "//server/share/wiki/sources/page.md").is_ok());
         assert!(require_absolute_path("write_file", "C:wiki/sources/page.md").is_err());
+    }
+
+    #[test]
+    fn markdown_image_copy_accepts_a_regular_file_inside_the_project() {
+        let root = make_temp_dir("markdown-image-valid");
+        let source = root.join("raw/sources/assets/image.png");
+        let destination = root.join("wiki/media/guide/image.png");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"image bytes").unwrap();
+
+        let copied =
+            copy_markdown_image_within_project_inner(&root, &source, &destination).unwrap();
+
+        assert_eq!(copied, 11);
+        assert_eq!(fs::read(&destination).unwrap(), b"image bytes");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn markdown_image_copy_rejects_a_source_outside_the_project() {
+        let root = make_temp_dir("markdown-image-outside-source");
+        let outside = make_temp_dir("markdown-image-outside");
+        let source = outside.join("image.png");
+        let destination = root.join("wiki/media/guide/image.png");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&source, b"outside image").unwrap();
+
+        let error =
+            copy_markdown_image_within_project_inner(&root, &source, &destination).unwrap_err();
+
+        assert!(
+            error.contains("source must be inside the project"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn markdown_image_copy_rejects_a_source_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = make_temp_dir("markdown-image-source-symlink");
+        let outside = make_temp_dir("markdown-image-source-target");
+        let outside_source = outside.join("image.png");
+        let source = root.join("raw/sources/image.png");
+        let destination = root.join("wiki/media/guide/image.png");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&outside_source, b"outside image").unwrap();
+        symlink(&outside_source, &source).unwrap();
+
+        let error =
+            copy_markdown_image_within_project_inner(&root, &source, &destination).unwrap_err();
+
+        assert!(
+            error.contains("source must be inside the project"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn markdown_image_copy_rejects_a_destination_parent_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = make_temp_dir("markdown-image-destination-symlink");
+        let outside = make_temp_dir("markdown-image-destination-target");
+        let source = root.join("raw/sources/image.png");
+        let destination_parent = root.join("wiki/media/guide");
+        let destination = destination_parent.join("image.png");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(destination_parent.parent().unwrap()).unwrap();
+        fs::write(&source, b"inside image").unwrap();
+        symlink(&outside, &destination_parent).unwrap();
+
+        let error =
+            copy_markdown_image_within_project_inner(&root, &source, &destination).unwrap_err();
+
+        assert!(
+            error.contains("destination must be inside the project"),
+            "{error}"
+        );
+        assert!(!outside.join("image.png").exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn markdown_image_copy_rejects_an_existing_destination_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = make_temp_dir("markdown-image-destination-file-symlink");
+        let outside = make_temp_dir("markdown-image-destination-file-target");
+        let source = root.join("raw/sources/image.png");
+        let destination = root.join("wiki/media/guide/image.png");
+        let outside_target = outside.join("target.png");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&source, b"inside image").unwrap();
+        fs::write(&outside_target, b"outside image").unwrap();
+        symlink(&outside_target, &destination).unwrap();
+
+        let error =
+            copy_markdown_image_within_project_inner(&root, &source, &destination).unwrap_err();
+
+        assert!(
+            error.contains("destination must not be a symlink"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&outside_target).unwrap(), b"outside image");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     /// Pull the inner sync `copy_recursive` body out from

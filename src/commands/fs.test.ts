@@ -8,7 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
 }))
 
-import { createDirectory, listDirectory, writeFile, writeFileAtomic } from "./fs"
+import {
+  copyMarkdownImageWithinProject,
+  createDirectory,
+  listDirectory,
+  writeFile,
+  writeFileAtomic,
+} from "./fs"
 
 describe("fs command path guards", () => {
   beforeEach(() => {
@@ -33,6 +39,14 @@ describe("fs command path guards", () => {
 
   it("rejects relative directory paths before invoking Tauri", async () => {
     await expect(createDirectory("wiki/sources")).rejects.toThrow(/absolute path/i)
+
+    expect(mocks.invoke).not.toHaveBeenCalled()
+  })
+
+  it("rejects relative paths for project-confined Markdown image copies", async () => {
+    await expect(
+      copyMarkdownImageWithinProject("project", "/project/raw/image.png", "/project/wiki/image.png"),
+    ).rejects.toThrow(/absolute path/i)
 
     expect(mocks.invoke).not.toHaveBeenCalled()
   })

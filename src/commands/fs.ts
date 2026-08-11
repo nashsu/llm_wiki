@@ -98,6 +98,21 @@ export async function copyFile(
   return invoke("copy_file", { source, destination })
 }
 
+export async function copyMarkdownImageWithinProject(
+  projectPath: string,
+  source: string,
+  destination: string,
+): Promise<number> {
+  assertAbsoluteFsPath("copyMarkdownImageWithinProject projectPath", projectPath)
+  assertAbsoluteFsPath("copyMarkdownImageWithinProject source", source)
+  assertAbsoluteFsPath("copyMarkdownImageWithinProject destination", destination)
+  return invoke<number>("copy_markdown_image_within_project", {
+    projectPath,
+    source,
+    destination,
+  })
+}
+
 export async function copyDirectory(
   source: string,
   destination: string

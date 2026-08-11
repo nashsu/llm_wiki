@@ -14,7 +14,7 @@
  * image and the markdown line uses that instead.
  */
 import { invoke } from "@tauri-apps/api/core"
-import { copyFile, createDirectory, fileExists, readFileAsBase64 } from "@/commands/fs"
+import { copyMarkdownImageWithinProject, readFileAsBase64 } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 
 /** Mirrors `commands::extract_images::SavedImage` on the Rust side. */
@@ -58,7 +58,10 @@ function dirname(path: string): string {
 }
 
 function isRemoteOrDataImageRef(raw: string): boolean {
-  return /^(https?:|data:|blob:|file:|tauri:)/i.test(raw)
+  return (
+    /^(https?:|data:|blob:|file:|tauri:)/i.test(raw) ||
+    normalizePath(raw).startsWith("//")
+  )
 }
 
 function cleanMarkdownImageRef(raw: string): string {
@@ -68,6 +71,75 @@ function cleanMarkdownImageRef(raw: string): string {
   } catch {
     return stripped
   }
+}
+
+function lexicalAbsolutePath(path: string): string | null {
+  const normalized = normalizePath(path)
+  let root: string
+  let segments: string[]
+
+  const drive = /^([a-zA-Z]:)\/(.*)$/.exec(normalized)
+  if (drive) {
+    root = `${drive[1]}/`
+    segments = (drive[2] ?? "").split("/")
+  } else if (normalized.startsWith("//")) {
+    const uncSegments = normalized.slice(2).split("/").filter(Boolean)
+    if (uncSegments.length < 2) return null
+    const [server, share, ...rest] = uncSegments
+    if (server === "." || server === ".." || share === "." || share === "..") return null
+    root = `//${server}/${share}`
+    segments = rest
+  } else if (normalized.startsWith("/")) {
+    root = "/"
+    segments = normalized.slice(1).split("/")
+  } else {
+    return null
+  }
+
+  const resolved: string[] = []
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue
+    if (segment === "..") {
+      if (resolved.length === 0) return null
+      resolved.pop()
+      continue
+    }
+    resolved.push(segment)
+  }
+
+  if (resolved.length === 0) return root
+  return `${root}${root.endsWith("/") ? "" : "/"}${resolved.join("/")}`
+}
+
+function isPathInsideProject(projectPath: string, candidate: string): boolean {
+  const caseInsensitive = /^[a-zA-Z]:\//.test(projectPath) || projectPath.startsWith("//")
+  const projectKey = caseInsensitive ? projectPath.toLowerCase() : projectPath
+  const candidateKey = caseInsensitive ? candidate.toLowerCase() : candidate
+  return (
+    candidateKey === projectKey ||
+    candidateKey.startsWith(projectKey.endsWith("/") ? projectKey : `${projectKey}/`)
+  )
+}
+
+export function resolveProjectLocalMarkdownImagePath(
+  projectPath: string,
+  sourcePath: string,
+  rawRef: string,
+): string | null {
+  const ref = cleanMarkdownImageRef(rawRef)
+  if (!ref || isRemoteOrDataImageRef(ref)) return null
+
+  const project = lexicalAbsolutePath(projectPath)
+  const source = lexicalAbsolutePath(sourcePath)
+  if (!project || !source || !isPathInsideProject(project, source)) return null
+
+  const normalizedRef = normalizePath(ref)
+  const isAbsoluteRef =
+    normalizedRef.startsWith("/") || /^[a-zA-Z]:\//.test(normalizedRef)
+  const candidate = lexicalAbsolutePath(
+    isAbsoluteRef ? normalizedRef : `${dirname(source)}/${normalizedRef}`,
+  )
+  return candidate && isPathInsideProject(project, candidate) ? candidate : null
 }
 
 function imageMimeType(path: string): string {
@@ -208,29 +280,21 @@ export async function extractAndSaveMarkdownImages(
 
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
-  const sourceDir = dirname(sp)
   const slug = slugOverride ?? getFileName(sp).replace(/\.[^.]+$/, "")
   const destDir = `${pp}/wiki/media/${slug}`
   const images: SavedImage[] = []
 
-  try {
-    await createDirectory(destDir)
-  } catch (err) {
-    console.warn("[ingest:images] failed to create markdown image directory:", err)
-    return []
-  }
+  const candidates = refs.flatMap((ref) => {
+    const path = resolveProjectLocalMarkdownImagePath(pp, sp, ref)
+    return path ? [{ ref, path }] : []
+  })
+  if (candidates.length === 0) return []
 
-  for (const ref of refs) {
-    const abs = normalizePath(
-      ref.startsWith("/") || /^[a-zA-Z]:/.test(ref) || ref.startsWith("\\\\")
-        ? ref
-        : `${sourceDir}/${ref}`,
-    )
+  for (const { ref, path: abs } of candidates) {
     try {
-      if (!(await fileExists(abs))) continue
       const destName = uniqueDestName(images.length + 1, abs)
       const dest = `${destDir}/${destName}`
-      await copyFile(abs, dest)
+      await copyMarkdownImageWithinProject(pp, abs, dest)
       const sha256 = await sha256OfFile(dest)
       images.push({
         index: images.length + 1,

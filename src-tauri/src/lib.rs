@@ -632,6 +632,7 @@ pub fn run() {
             commands::file_history::clear_file_history,
             commands::fs::list_directory,
             commands::fs::copy_file,
+            commands::fs::copy_markdown_image_within_project,
             commands::fs::copy_directory,
             commands::fs::preprocess_file,
             commands::fs::delete_file,
