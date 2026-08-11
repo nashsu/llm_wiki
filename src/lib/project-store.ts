@@ -85,6 +85,17 @@ export async function loadCustomLlmPresets(): Promise<CustomLlmPreset[]> {
   return normalizeCustomLlmPresets(await store.get<unknown>(CUSTOM_LLM_PRESETS_KEY))
 }
 
+/**
+ * Raw persisted custom-preset value so callers can tell "never saved"
+ * (`null`/`undefined`) apart from "explicitly saved an empty list" (`[]`).
+ * Used to seed default profiles only when the user has never touched the
+ * feature — a deliberately emptied list is respected and not re-seeded.
+ */
+export async function loadCustomLlmPresetsStored(): Promise<unknown> {
+  const store = await getStore()
+  return store.get<unknown>(CUSTOM_LLM_PRESETS_KEY)
+}
+
 function normalizeCustomLlmPresets(value: unknown): CustomLlmPreset[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()

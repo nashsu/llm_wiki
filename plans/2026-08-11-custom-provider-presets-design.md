@@ -1,148 +1,128 @@
-# Add 2 more curated Custom Provider presets (Qwen + Tencent Hunyuan)
+# Add 2 default custom model options (runtime-configurable profiles)
 
-**Status:** Approved for implementation. Branch: current `main` worktree (kept local).
+**Status:** Implemented. Branch: current `main` worktree (kept local).
 
-**Goal:** In Settings → LLM provider configuration, add two more *built-in
-custom-provider* presets — **通义千问 Qwen (阿里云百炼 DashScope)** and
-**腾讯混元 (Tencent Hunyuan)** — so the user can switch custom models with a
-single dropdown click instead of re-editing the Endpoint + model name each time.
-
----
-
-## Why these two
-
-The curated drop-down already covers 15+ custom/OpenAI-compatible providers:
-DeepSeek, Atlas Cloud, Groq, xAI, NVIDIA NIM, Kimi (global/CN/Coding Plan),
-智谱 GLM, MiniMax (global/CN), 阿里百炼 Coding Plan, 小米 MiMo,
-火山引擎 Ark, Ollama Cloud, plus a generic **Custom**.
-
-The two most prominent Chinese GPT-class providers still missing are Qwen
-(DashScope standard OpenAI-compatible endpoint — only the *Coding Plan* variant
-exists today) and Tencent Hunyuan (absent entirely). Both expose stable
-OpenAI-compatible `/v1` endpoints, so they map 1:1 onto the existing
-`provider: "custom"` + `apiMode: "chat_completions"` wire.
-
-> Note on the user's private/vLLM/one-api use case: that need is **already
-> covered** by the existing 添加自定义配置 (custom profiles) feature, which saves
-> up to 50 named profiles each remembering its own Endpoint, model, API key and
-> API mode. This change only extends the *curated* picker to include two more
-> popular public gateways; no new subsystem is introduced.
+**Goal:** In Settings → LLM provider configuration, provide **2 customizable
+model slots** so the user can switch between custom models with a single click
+instead of re-editing the Endpoint + model name each time — while keeping the
+Endpoint and model values **entered by the user at runtime** (no hardcoded
+private endpoints in the build).
 
 ---
 
-## Current relevant code (audit)
+## Context / why this shape
 
-- `src/components/settings/llm-presets.ts` — `LLM_PRESETS: LlmPreset[]`, each
-  entry: `{ id, label, hint, provider, baseUrl, defaultModel, apiMode,
-  suggestedModels, suggestedContextSize }`.
-  - `availableLlmPresets()` merges `LLM_PRESETS` + user custom profiles.
-  - `matchPreset()` reverse-lookup already handles `provider === "custom"` by
-    comparing normalized `baseUrl` + `apiMode`.
-- `src/components/settings/preset-resolver.ts::resolveConfig(preset, override, fallback)`
-  — for `provider === "custom"`, builds `LlmConfig` from
-  `ov.baseUrl ?? preset.baseUrl`, `ov.model ?? preset.defaultModel`, and
-  `ov.apiMode ?? preset.apiMode`. **No dispatch changes needed** — new presets
-  are pure data.
-- `src/components/settings/preset-resolver.test.ts` — unit tests that look up
-  presets by `id` (e.g. `deepseek`, `atlascloud`, `xiaomi-mimo`); pattern to
-  extend.
-- `Provider` union in `llm-presets.ts` — both new presets use the existing
-  `"custom"` member. **No type changes.**
+Two rounds of design were considered and the user chose the second:
+
+1. **Round 1 (superseded):** Two more *curated* presets (通义千问 Qwen +
+   腾讯混元 Hunyuan) hardcoded into `LLM_PRESETS`. Rejected by the user —
+   they wanted to provide their own Endpoint/model at runtime, not use
+   baked-in public gateways. Reverted.
+2. **Round 2 (implemented):** Seed **2 default custom profiles** shown in the
+   picker as empty, ready-to-configure slots. The user fills Endpoint, model,
+   API key and API mode per slot in Settings; each slot persists its own
+   values (`providerConfigs[id]`), so switching between them is instant.
+
+The app already had a mature custom-profiles subsystem (up to 50 named
+profiles, each remembering Endpoint/model/key/API-mode, wired through
+`resolveConfig`, task routing and project overrides). This design just makes
+two such slots appear by default — no new subsystem.
+
+## Current code (audit)
+
+- `src/stores/wiki-store.ts` — `customLlmPresets: CustomLlmPreset[]` (list of
+  `{ id, label }`); per-profile config lives in `providerConfigs[id]`
+  (`ProviderOverride`).
+- `src/lib/project-store.ts` — `saveCustomLlmPresets` /
+  `loadCustomLlmPresets`; `normalizeCustomLlmPresets` validates ids against
+  `/^custom-[A-Za-z0-9-]{1,80}$/`.
+- `src/App.tsx` — boot hydration sets `customLlmPresets` from storage
+  (effect #1) and applies the saved UI language (`i18n.changeLanguage`,
+  effect #2).
+- `src/components/settings/llm-presets.ts` — `availableLlmPresets()` merges
+  curated `LLM_PRESETS` + user custom presets for every dropdown.
+- `src/components/settings/sections/llm-provider-section.tsx` — renders each
+  preset as a row; custom profiles (id starts `custom-`) expose rename/delete
+  and a free-form Endpoint panel.
 
 ## Design
 
-Append two entries to `LLM_PRESETS` (after `volcengine-ark`, before
-`ollama-local`) :
+### 1. Seeding (two default slots)
 
-### 1. Qwen — 阿里云百炼 DashScope (standard OpenAI-compatible)
-
-```ts
-{
-  id: "qwen",
-  label: "通义千问 Qwen (Bailian)",
-  hint: "dashscope.aliyuncs.com/compatible-mode",
-  provider: "custom",
-  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  defaultModel: "qwen-max",
-  apiMode: "chat_completions",
-  // Standard DashScope OpenAI-compatible gateway (unlike the Coding Plan
-  // preset which uses coding.dashscope.aliyuncs.com). Key format sk-…
-  // from the Model Studio console. Catalog rotates; practical subset below,
-  // any id can still be typed into the free-form input.
-  suggestedModels: [
-    "qwen-max",
-    "qwen-plus",
-    "qwen-turbo",
-    "qwen-long",
-    "qwen3-max",
-    "qwen3-235b-a22b",
-    "qwen3-32b",
-  ],
-  suggestedContextSize: 131072,
-},
-```
-
-### 2. Tencent Hunyuan — 腾讯混元
+New helper `defaultCustomLlmPresets()` in
+`src/components/settings/llm-presets.ts`:
 
 ```ts
-{
-  id: "hunyuan",
-  label: "腾讯混元 (Tencent Hunyuan)",
-  hint: "api.hunyuan.cloud.tencent.com",
-  provider: "custom",
-  baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
-  defaultModel: "hunyuan-turbo",
-  apiMode: "chat_completions",
-  // Hunyuan's public OpenAI-compatible gateway. Key issued from the
-  // TencentCloud / 混元 open platform console. Catalog rotates.
-  suggestedModels: [
-    "hunyuan-turbo",
-    "hunyuan-turbos",
-    "hunyuan-pro",
-    "hunyuan-standard",
-    "hunyuan-lite",
-    "hunyuan-k2",
-  ],
-  suggestedContextSize: 131072,
-},
+export function defaultCustomLlmPresetLabel(number: number): string {
+  return i18n.t("settings.sections.llm.customProfiles.defaultName", { number })
+}
+export function defaultCustomLlmPresets(): CustomLlmPreset[] {
+  return [
+    { id: "custom-default-1", label: defaultCustomLlmPresetLabel(1) },
+    { id: "custom-default-2", label: defaultCustomLlmPresetLabel(2) },
+  ]
+}
 ```
 
-### Behavior after the change
+- No Endpoint / model in code — these are placeholders the user configures at
+  runtime (matches "我自己运行的时候再来添加具体的 Endpoint 和模型名").
+- Ids satisfy `normalizeCustomLlmPresets`'s `custom-` regex, so the settings
+  UI and persistence treat them as ordinary user profiles.
+- Labels reuse the existing `settings.sections.llm.customProfiles.defaultName`
+  key → "自定义 Provider 1/2" (zh) / "Custom provider 1/2" (en).
 
-- Both appear in every preset dropdown (provider row list, task routing
-  Chat/Ingest selects, project override provider select) via
-  `availableLlmPresets()` — no UI file changes required.
-- Selecting either pre-fills Endpoint + API mode + suggested model chips;
-  per-preset overrides (key, model, context) are saved in
-  `providerConfigs[id]` and restored on switch.
-- `matchPreset()` will correctly reverse-match these two when the user is on
-  their exact `baseUrl` + `chat_completions` wire.
-- Default `Custom` catch-all and the 添加自定义配置 feature are untouched.
+### 2. Seeding rule (in-memory, first-run only)
+
+In `src/App.tsx` effect #2, right after `i18n.changeLanguage(savedLang)`:
+
+```ts
+const storedCustomPresets = await loadCustomLlmPresetsStored()
+const currentPresets = useWikiStore.getState().customLlmPresets
+if (storedCustomPresets == null && currentPresets.length === 0) {
+  useWikiStore.getState().setCustomLlmPresets(defaultCustomLlmPresets())
+}
+```
+
+- `loadCustomLlmPresetsStored()` (`src/lib/project-store.ts`) returns the raw
+  persisted value so boot can tell **never saved** (`null`/`undefined`) from
+  **explicitly emptied** (`[]`).
+- Seed only when never saved → a fresh/existing install that hasn't touched
+  the feature shows the 2 slots; deleting every profile saves `[]` and is
+  respected (no re-seeding / no resurrection).
+- Not persisted at seed time: any add/rename/delete from Settings persists the
+  full list and takes over; a user who configures slots without renaming is
+  re-seeded with the same ids each launch, so the values saved under
+  `providerConfigs["custom-default-N"]` still resolve.
+- Labels are computed after `i18n.changeLanguage`, so they use the active UI
+  language.
+
+### 3. Runtime flow (already working, no changes)
+
+- Expand a seeded profile → fill **Endpoint** + **模型名** (+ API Key / API
+  模式 if needed) → saved to `providerConfigs[id]`.
+- Switch rows / toggle active → `resolveConfig` restores the saved Endpoint +
+  model instantly. No re-typing.
 
 ## Tests
 
-Extend `src/components/settings/preset-resolver.test.ts`:
-
-1. Resolving `qwen` → `LlmConfig` has `provider: "custom"`,
-   `customEndpoint === "https://dashscope.aliyuncs.com/compatible-mode/v1"`,
-   default model `qwen-max`, `apiMode === "chat_completions"`.
-2. Resolving `hunyuan` → same assertions with the Hunyuan URL / model.
-3. `availableLlmPresets()` contains both new ids.
-
-No i18n changes (preset labels are plain strings, consistent with existing
-presets). No README change (README does not enumerate the curated providers).
+`src/components/settings/preset-resolver.test.ts`:
+- removes the two Round-1 curated-preset tests;
+- adds `describe("defaultCustomLlmPresets")`:
+  1. seeds exactly two profiles with ids `custom-default-1/2`, each matching
+     the `custom-` persistence regex with a non-empty label;
+  2. labels equal `defaultCustomLlmPresetLabel(1)/`(2)` and are distinct.
 
 ## Non-goals
 
-- No private-endpoint presets hardcoded (that stays a user
-  添加自定义配置 concern).
-- No dispatch/wire changes; no `Provider` union change.
-- No new settings scaffolding.
+- No hardcoded private Endpoints / model names in the build.
+- No curated preset added for Qwen/Hunyuan (Round 1 reverted).
+- No changes to dispatch (`llm-providers.ts`), the `Provider` union, task
+  routing, or the settings-UI editing surface.
 
 ## Rollout / verification
 
 - `npm run typecheck`
 - `npm run test:mocks`
-- Manual: dev server → Settings → LLM → two new rows appear and connect-tests
-  run against the selected endpoint.
-- Commit locally (`feat:`); **never push** per repo instructions.
+- Manual (dev): fresh state → Settings → LLM shows "自定义 Provider 1/2";
+  configure Endpoint/model per slot; toggle between them without re-editing.
+- Commit locally with a `feat:` message; **never push** per repo instructions.

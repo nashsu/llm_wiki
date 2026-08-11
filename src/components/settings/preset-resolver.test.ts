@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { LLM_PRESETS } from "./llm-presets"
+import { defaultCustomLlmPresets, defaultCustomLlmPresetLabel } from "./llm-presets"
 import { disabledLlmConfig, resolveConfig } from "./preset-resolver"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -77,8 +78,8 @@ describe("resolveConfig", () => {
 
   it("keeps an explicit provider-level reasoning override", () => {
     const preset: LlmPreset = {
-      id: "qwen",
-      label: "Qwen",
+      id: "local-gateway",
+      label: "Local gateway",
       provider: "custom",
       baseUrl: "http://localhost:8000/v1",
       defaultModel: "Qwen3.5-122B",
@@ -194,47 +195,6 @@ describe("resolveConfig", () => {
 
     expect(resolved.localCliIsolation).toBe(false)
   })
-  it("exposes Qwen (阿里云百炼 DashScope) as an OpenAI-compatible custom preset", () => {
-    const qwen = LLM_PRESETS.find((preset) => preset.id === "qwen")
-
-    expect(qwen?.provider).toBe("custom")
-    expect(qwen?.baseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1")
-    expect(qwen?.apiMode).toBe("chat_completions")
-    expect(qwen?.defaultModel).toBe("qwen-max")
-    expect(qwen?.suggestedContextSize).toBe(131072)
-    expect(qwen?.suggestedModels).toContain("qwen3-max")
-
-    const resolved = resolveConfig(qwen ?? ({} as LlmPreset), undefined, fallbackConfig())
-    expect(resolved.provider).toBe("custom")
-    expect(resolved.customEndpoint).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1")
-    expect(resolved.model).toBe("qwen-max")
-    expect(resolved.apiMode).toBe("chat_completions")
-  })
-
-  it("exposes 腾讯混元 (Tencent Hunyuan) as an OpenAI-compatible custom preset", () => {
-    const hunyuan = LLM_PRESETS.find((preset) => preset.id === "hunyuan")
-
-    expect(hunyuan?.provider).toBe("custom")
-    expect(hunyuan?.baseUrl).toBe("https://api.hunyuan.cloud.tencent.com/v1")
-    expect(hunyuan?.apiMode).toBe("chat_completions")
-    expect(hunyuan?.defaultModel).toBe("hunyuan-turbo")
-    expect(hunyuan?.suggestedContextSize).toBe(131072)
-    expect(hunyuan?.suggestedModels).toContain("hunyuan-turbo")
-
-    const resolved = resolveConfig(hunyuan ?? ({} as LlmPreset), undefined, fallbackConfig())
-    expect(resolved.provider).toBe("custom")
-    expect(resolved.customEndpoint).toBe("https://api.hunyuan.cloud.tencent.com/v1")
-    expect(resolved.model).toBe("hunyuan-turbo")
-    expect(resolved.apiMode).toBe("chat_completions")
-  })
-
-  it("surfaces the new curated presets through availableLlmPresets", async () => {
-    const { availableLlmPresets } = await import("./llm-presets")
-    const ids = availableLlmPresets().map((preset) => preset.id)
-    expect(ids).toContain("qwen")
-    expect(ids).toContain("hunyuan")
-  })
-
 })
 
 describe("disabledLlmConfig", () => {
@@ -263,5 +223,30 @@ describe("disabledLlmConfig", () => {
     expect(cleared.customEndpoint).toBe("http://local.test/v1")
     expect(cleared.provider).toBe("openai")
     expect(hasUsableLlm(cleared)).toBe(false)
+  })
+})
+
+describe("defaultCustomLlmPresets", () => {
+  it("seeds two empty ready-to-configure custom profiles with valid ids", () => {
+    const seeded = defaultCustomLlmPresets()
+
+    expect(seeded).toHaveLength(2)
+    expect(seeded.map((preset) => preset.id)).toEqual(["custom-default-1", "custom-default-2"])
+    for (const preset of seeded) {
+      // Must satisfy normalizeCustomLlmPresets' id + label rules so the
+      // persisted-list loader and settings UI accept them unchanged.
+      expect(preset.id).toMatch(/^custom-[A-Za-z0-9-]{1,80}$/)
+      expect(preset.label.trim()).not.toBe("")
+    }
+  })
+
+  it("labels the seeded profiles with the localized default-name convention", () => {
+    const seeded = defaultCustomLlmPresets()
+    const expected1 = defaultCustomLlmPresetLabel(1)
+    const expected2 = defaultCustomLlmPresetLabel(2)
+
+    expect(seeded[0].label).toBe(expected1)
+    expect(seeded[1].label).toBe(expected2)
+    expect(seeded[0].label).not.toBe(seeded[1].label)
   })
 })

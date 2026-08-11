@@ -9,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadCustomLlmPresetsStored, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -318,6 +318,23 @@ function App() {
         }
         const savedCustomLlmPresets = await loadCustomLlmPresets()
         useWikiStore.getState().setCustomLlmPresets(savedCustomLlmPresets)
+        // Seed two empty "custom profile" slots on first run so the user can
+        // add their own Endpoint + model at runtime instead of hardcoding
+        // them into the build. Runs right after hydration to avoid racing
+        // persisted-state loads; labels are resolved in the active UI
+        // language. Only seeds when the feature was never persisted — an
+        // explicitly emptied list stays empty.
+        try {
+          const storedCustomPresets = await loadCustomLlmPresetsStored()
+          if (storedCustomPresets == null && savedCustomLlmPresets.length === 0) {
+            const savedLang = await loadLanguage()
+            if (savedLang) await i18n.changeLanguage(savedLang)
+            const { defaultCustomLlmPresets } = await import("@/components/settings/llm-presets")
+            useWikiStore.getState().setCustomLlmPresets(defaultCustomLlmPresets())
+          }
+        } catch {
+          // Ignore — Settings still works fine without the seeded profiles.
+        }
         const savedActivePreset = await loadActivePresetId()
         if (savedActivePreset) {
           useWikiStore.getState().setActivePresetId(savedActivePreset)

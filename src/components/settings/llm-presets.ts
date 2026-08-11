@@ -1,4 +1,5 @@
 import type { AzureModelFamily, CustomLlmPreset } from "@/stores/wiki-store"
+import i18n from "@/i18n"
 
 /**
  * Curated LLM provider presets.
@@ -495,52 +496,6 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 128000,
   },
   {
-    id: "qwen",
-    label: "通义千问 Qwen (Bailian)",
-    hint: "dashscope.aliyuncs.com/compatible-mode",
-    provider: "custom",
-    // Standard DashScope (阿里云百炼) OpenAI-compatible gateway, distinct
-    // from the Coding Plan preset which uses coding.dashscope.aliyuncs.com.
-    // API key issued from the Model Studio console (sk-…). DashScope's
-    // catalog rotates frequently — keep common current picks; any custom id
-    // can still be typed into the free-form input.
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-max",
-    apiMode: "chat_completions",
-    suggestedModels: [
-      "qwen-max",
-      "qwen-plus",
-      "qwen-turbo",
-      "qwen-long",
-      "qwen3-max",
-      "qwen3-235b-a22b",
-      "qwen3-32b",
-    ],
-    suggestedContextSize: 131072,
-  },
-  {
-    id: "hunyuan",
-    label: "腾讯混元 (Tencent Hunyuan)",
-    hint: "api.hunyuan.cloud.tencent.com",
-    provider: "custom",
-    // Hunyuan's public OpenAI-compatible gateway. API key issued from the
-    // TencentCloud / 混元大模型 open console. Model catalog rotates
-    // frequently — keep common current picks; any custom id can still be
-    // typed into the free-form input.
-    baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
-    defaultModel: "hunyuan-turbo",
-    apiMode: "chat_completions",
-    suggestedModels: [
-      "hunyuan-turbo",
-      "hunyuan-turbos",
-      "hunyuan-pro",
-      "hunyuan-standard",
-      "hunyuan-lite",
-      "hunyuan-k2",
-    ],
-    suggestedContextSize: 131072,
-  },
-  {
     id: "ollama-local",
     label: "Ollama (Local)",
     hint: "Self-hosted llama.cpp / Ollama",
@@ -595,6 +550,28 @@ export function availableLlmPresets(customPresets: CustomLlmPreset[] = []): LlmP
 
 export function findLlmPreset(id: string, customPresets: CustomLlmPreset[] = []): LlmPreset | undefined {
   return availableLlmPresets(customPresets).find((preset) => preset.id === id)
+}
+
+/**
+ * Default ready-to-configure custom profiles shown on first run. They have
+ * NO hardcoded Endpoint / model: the user fills those in via the expanded
+ * per-profile panel when they open Settings. Each is a real profile backed by
+ * providerConfigs[id], so once configured, switching between the slots
+ * restores the saved Endpoint + model instantly.
+ *
+ * Ids use the `custom-` prefix required by normalizeCustomLlmPresets. They are
+ * only seeded in-memory when nothing has been persisted yet; any add/rename/
+ * delete in the settings UI persists the list and takes over.
+ */
+export function defaultCustomLlmPresetLabel(number: number): string {
+  return i18n.t("settings.sections.llm.customProfiles.defaultName", { number })
+}
+
+export function defaultCustomLlmPresets(): CustomLlmPreset[] {
+  return [
+    { id: "custom-default-1", label: defaultCustomLlmPresetLabel(1) },
+    { id: "custom-default-2", label: defaultCustomLlmPresetLabel(2) },
+  ]
 }
 
 /**
