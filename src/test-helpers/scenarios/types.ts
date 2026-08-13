@@ -120,6 +120,8 @@ export interface IngestScenario {
     writtenPaths: string[]
     /** Substring matches for specific files (path → list of substrings to find). */
     fileContains?: Record<string, string[]>
+    /** Substrings that must NOT appear in specific files (path → forbidden substrings). */
+    fileExcludes?: Record<string, string[]>
     /**
      * Expected review items (subset match). Each entry matches if an injected
      * review has the same type and a title containing titleContains.
