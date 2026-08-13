@@ -139,6 +139,7 @@ export async function webSearch(
   if (
     (
       resolved.provider === "tavily" ||
+      resolved.provider === "exa" ||
       resolved.provider === "serpapi" ||
       resolved.provider === "brave" ||
       resolved.provider === "bocha"

@@ -245,6 +245,23 @@ export async function readFileAsBase64(path: string): Promise<FileBase64> {
   return invoke<FileBase64>("read_file_as_base64", { path })
 }
 
+/**
+ * Extract a compressed mono audio track (mp3) from any audio/video file
+ * via the bundled ffmpeg, returning the path of the temporary file.
+ */
+export async function extractAudioTrack(sourcePath: string): Promise<string> {
+  return invoke<string>("extract_audio_track", { sourcePath })
+}
+
+/**
+ * Download the audio track of a video/audio link (YouTube etc.) via the
+ * bundled yt-dlp, returning the path of the temporary file. Rejects with an
+ * "unsupported URL"-prefixed message when the link is not a media link.
+ */
+export async function downloadMediaUrl(url: string): Promise<string> {
+  return invoke<string>("download_media_url", { url })
+}
+
 export async function createProject(
   name: string,
   path: string,
@@ -284,4 +301,35 @@ export async function apiServerReloadConfig(): Promise<string> {
 
 export async function mcpServerEntryPath(): Promise<string> {
   return invoke<string>("mcp_server_entry_path")
+}
+
+export interface RemoteMcpStatus {
+  running: boolean
+  publicUrl: string | null
+}
+
+export async function remoteMcpStatus(): Promise<RemoteMcpStatus> {
+  return invoke<RemoteMcpStatus>("remote_mcp_status")
+}
+
+export async function remoteMcpStart(args: {
+  httpToken: string
+  approvalPassword: string
+  port: number
+  publicHostname?: string
+  vaultRoot?: string
+  llmWikiApiToken?: string
+}): Promise<void> {
+  return invoke<void>("remote_mcp_start", {
+    httpToken: args.httpToken,
+    approvalPassword: args.approvalPassword,
+    port: args.port,
+    publicHostname: args.publicHostname,
+    vaultRoot: args.vaultRoot,
+    llmWikiApiToken: args.llmWikiApiToken,
+  })
+}
+
+export async function remoteMcpStop(): Promise<void> {
+  return invoke<void>("remote_mcp_stop")
 }

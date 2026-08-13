@@ -1,6 +1,6 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MediaIngestConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -240,6 +240,7 @@ function normalizeZoomLevel(level: unknown): number {
 
 export const __projectStoreTest = {
   normalizeMineruConfig,
+  normalizeMediaIngestConfig,
   normalizeZoomLevel,
   normalizeCustomLlmPresets,
 }
@@ -253,6 +254,32 @@ export async function loadMineruConfig(): Promise<MineruConfig | null> {
   const store = await getStore()
   const config = await store.get<MineruConfig>(MINERU_KEY)
   return config ? normalizeMineruConfig(config) : null
+}
+
+const MEDIA_INGEST_KEY = "mediaIngestConfig"
+
+function normalizeMediaIngestConfig(config: MediaIngestConfig): MediaIngestConfig {
+  return {
+    audioVideoEnabled: config.audioVideoEnabled === true,
+    audioVideoBackend: config.audioVideoBackend === "custom" ? "custom" : "groq",
+    audioVideoToken: typeof config.audioVideoToken === "string" ? config.audioVideoToken.trim() : "",
+    audioVideoCustomEndpoint:
+      typeof config.audioVideoCustomEndpoint === "string" ? config.audioVideoCustomEndpoint.trim() : "",
+    audioVideoCustomToken:
+      typeof config.audioVideoCustomToken === "string" ? config.audioVideoCustomToken.trim() : "",
+    imagesEnabled: config.imagesEnabled === true,
+  }
+}
+
+export async function saveMediaIngestConfig(config: MediaIngestConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(MEDIA_INGEST_KEY, normalizeMediaIngestConfig(config))
+}
+
+export async function loadMediaIngestConfig(): Promise<MediaIngestConfig | null> {
+  const store = await getStore()
+  const config = await store.get<MediaIngestConfig>(MEDIA_INGEST_KEY)
+  return config ? normalizeMediaIngestConfig(config) : null
 }
 
 // IMPORTANT: Keep this key in sync with the Rust setup hook

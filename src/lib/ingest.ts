@@ -1,6 +1,7 @@
 import {
   createDirectory,
   deleteFile,
+  extractAudioTrack,
   fileExists,
   getFileModifiedTime,
   getFileSize,
@@ -9,7 +10,10 @@ import {
   writeFile,
   listDirectory,
 } from "@/commands/fs"
-import { streamChat } from "@/lib/llm-client"
+import { AUDIO_VIDEO_SOURCE_EXTENSIONS, IMAGE_SOURCE_EXTENSIONS } from "@/lib/media-extensions"
+import { transcribeAudio } from "@/lib/media-transcribe"
+import { captionImage } from "@/lib/vision-caption"
+import { streamChat, type ChatMessage, type StreamCallbacks, type RequestOverrides } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { parseWithMineruResult } from "@/lib/mineru"
@@ -276,22 +280,6 @@ interface LongSourcePlan {
   chunked: boolean
   analysis: string
   sourceContext: string
-  checkpointPath?: string
-}
-
-interface LongSourceCheckpoint {
-  version: 1
-  sourceIdentity: string
-  sourceHash: string
-  sourceLength: number
-  sourceBudget: number
-  targetChars: number
-  overlapChars: number
-  chunkTotal: number
-  completedThrough: number
-  globalDigest: string
-  analyses: string[]
-  updatedAt: number
 }
 
 /**
@@ -728,6 +716,91 @@ async function autoIngestImpl(
     }
   }
 
+  // ── Audio/video transcription ──
+  const isAudioVideo = AUDIO_VIDEO_SOURCE_EXTENSIONS.has(lowerExt ?? "")
+  if (isAudioVideo) {
+    const mediaCfg = useWikiStore.getState().mediaIngestConfig
+    if (mediaCfg.audioVideoEnabled) {
+      // `extractAudioTrack` writes a temp mp3 to $TMPDIR/llm-wiki-media-import/.
+      // Nothing else ever reads it after transcription, and %TEMP% on Windows is
+      // never auto-cleared, so delete it in `finally` — success or failure.
+      let audioPath: string | undefined
+      try {
+        const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
+        const cachePath = `${cacheDir}/.cache/${fileName}.txt`
+        activity.updateItem(activityId, { detail: "Extracting audio..." })
+        audioPath = await extractAudioTrack(sp)
+        activity.updateItem(activityId, { detail: "Transcribing audio..." })
+        const transcript = await transcribeAudio(audioPath, mediaCfg, signal)
+        await createDirectory(`${cacheDir}/.cache`)
+        await writeFile(cachePath, transcript)
+        console.log(`[ingest:media] cached transcript for "${fileName}" (${transcript.length} chars)`)
+      } catch (err) {
+        throwIfIngestAborted(signal, activityId)
+        const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
+        console.warn(`[ingest:media] transcription failed for "${fileName}": ${msg}`)
+        activity.updateItem(activityId, { detail: `Transcription failed: ${msg}` })
+      } finally {
+        // Non-fatal: a failed cleanup must not mask the real error.
+        if (audioPath) await deleteFile(audioPath).catch(() => {})
+      }
+    } else {
+      console.warn(`[ingest:media] "${fileName}" is audio/video but mediaIngestConfig.audioVideoEnabled is false — skipping transcription`)
+    }
+  }
+
+  // ── Image captioning ──
+  //
+  // Route through the SAME gate the existing MinerU-embedded-image
+  // captioning already uses (`resolveCaptionConfig`, private to this file,
+  // called for images extracted from PDFs). This codebase treats "caption an
+  // image with an LLM" as ONE feature behind ONE master switch
+  // (`multimodalConfig.enabled`, the separate "Image Captioning" Settings
+  // category, default OFF — a user who disabled it doesn't expect standalone
+  // images to bypass that and get sent to an LLM anyway).
+  // `mediaIngestConfig.imagesEnabled` (this feature's own toggle) controls
+  // whether image FILES are accepted as sources at all;
+  // `multimodalConfig.enabled` controls whether captioning actually runs.
+  // Both must be on for a standalone image to produce a `.cache/*.txt` —
+  // if only the first is on, the image is still accepted as a source but
+  // produces no extracted text, same graceful-degradation outcome as a
+  // failed MinerU parse.
+  const isImageSource = IMAGE_SOURCE_EXTENSIONS.has(lowerExt ?? "")
+  if (isImageSource) {
+    const mediaCfg = useWikiStore.getState().mediaIngestConfig
+    if (mediaCfg.imagesEnabled) {
+      const mmCfg = useWikiStore.getState().multimodalConfig
+      const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
+      if (captionLlm) {
+        try {
+          const cacheDir = sp.substring(0, sp.lastIndexOf("/"))
+          const cachePath = `${cacheDir}/.cache/${fileName}.txt`
+          activity.updateItem(activityId, { detail: "Captioning image..." })
+          const { base64, mimeType } = await readFileAsBase64(sp)
+          const caption = await captionImage(base64, mimeType, captionLlm, signal)
+          await createDirectory(`${cacheDir}/.cache`)
+          await writeFile(cachePath, caption)
+          console.log(`[ingest:media] cached caption for "${fileName}"`)
+        } catch (err) {
+          throwIfIngestAborted(signal, activityId)
+          const msg = trimInlineStatus(err instanceof Error ? err.message : String(err))
+          console.warn(`[ingest:media] captioning failed for "${fileName}": ${msg}`)
+          activity.updateItem(activityId, { detail: `Captioning failed: ${msg}` })
+        }
+      } else {
+        // Two separate toggles gate this, and only one of them lives in the
+        // Media Ingestion section — without a visible signal the user just
+        // sees an empty stub appear with no explanation.
+        console.warn(`[ingest:media] "${fileName}" is an image but Image Captioning (Settings → Image Captioning, multimodalConfig.enabled) is off — skipping captioning`)
+        activity.updateItem(activityId, {
+          detail: "Captioning skipped — enable Settings → Image Captioning",
+        })
+      }
+    } else {
+      console.warn(`[ingest:media] "${fileName}" is an image but mediaIngestConfig.imagesEnabled is false — skipping captioning`)
+    }
+  }
+
   const [sourceContent, schema, purpose, index, overview] = await Promise.all([
     tryReadSourceTextFile(sp),
     tryReadFile(`${pp}/schema.md`),
@@ -985,27 +1058,23 @@ async function autoIngestImpl(
   const sourceBudget = computeIngestSourceBudget(llmConfig.maxContextSize, stableContextLength)
   let sourceContext = enrichedSourceContent
   let precomputedAnalysis = ""
-  let longSourceCheckpointPath: string | undefined
 
   if (enrichedSourceContent.length > sourceBudget) {
-    const longSourcePlan = await analyzeLongSourceInChunks(
-      pp,
+    const longSourcePlan = await analyzeLongSourceInChunksMapReduce(
       llmConfig,
       purpose,
       schema,
       index,
       sourceIdentity,
-      sourceSummarySlug,
       folderContext,
       enrichedSourceContent,
       sourceBudget,
-      activityId,
       signal,
+      (done, total) => activity.updateItem(activityId, { detail: `Analyzing chunk ${done}/${total} (parallel)...` }),
     )
     if (longSourcePlan.chunked) {
       sourceContext = longSourcePlan.sourceContext
       precomputedAnalysis = longSourcePlan.analysis
-      longSourceCheckpointPath = longSourcePlan.checkpointPath
     }
   }
 
@@ -1402,9 +1471,6 @@ async function autoIngestImpl(
     unrecoveredTruncatedPaths.length === 0
   ) {
     await saveIngestCache(pp, sourceIdentity, sourceContent, writtenPaths)
-    if (longSourceCheckpointPath) {
-      await clearLongSourceCheckpoint(longSourceCheckpointPath)
-    }
   } else if (hardFailures.length > 0 || unrecoveredTruncatedPaths.length > 0) {
     console.warn(
       `[ingest] Skipping cache save for "${sourceIdentity}" — ${hardFailures.length} write failure(s), ${unrecoveredTruncatedPaths.length} truncated FILE block(s) still missing.`,
@@ -2703,121 +2769,60 @@ function trimInlineStatus(text: string, maxChars = 240): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars).trimEnd()}...`
 }
 
-function hashTextHex(text: string): string {
-  // 64-bit FNV-1a over UTF-16 code units. This is a stability key, not
-  // a security primitive; validation also checks source length/chunk
-  // shape before resuming a checkpoint.
-  let hash = 0xcbf29ce484222325n
-  const prime = 0x100000001b3n
-  for (let i = 0; i < text.length; i++) {
-    hash ^= BigInt(text.charCodeAt(i))
-    hash = BigInt.asUintN(64, hash * prime)
-  }
-  return hash.toString(16).padStart(16, "0")
-}
-
-function longSourceCheckpointPath(
-  projectPath: string,
-  sourceSummarySlug: string,
-  sourceHash: string,
-): string {
-  return `${normalizePath(projectPath)}/.llm-wiki/ingest-progress/${sourceSummarySlug}-${sourceHash}.json`
-}
-
-function isCompatibleLongSourceCheckpoint(
-  checkpoint: LongSourceCheckpoint,
-  params: {
-    sourceIdentity: string
-    sourceHash: string
-    sourceLength: number
-    sourceBudget: number
-    targetChars: number
-    overlapChars: number
-    chunkTotal: number
-  },
-): boolean {
-  return checkpoint.version === 1
-    && checkpoint.sourceIdentity === params.sourceIdentity
-    && checkpoint.sourceHash === params.sourceHash
-    && checkpoint.sourceLength === params.sourceLength
-    && checkpoint.sourceBudget === params.sourceBudget
-    && checkpoint.targetChars === params.targetChars
-    && checkpoint.overlapChars === params.overlapChars
-    && checkpoint.chunkTotal === params.chunkTotal
-    && checkpoint.completedThrough >= 0
-    && checkpoint.completedThrough <= params.chunkTotal
-    && Array.isArray(checkpoint.analyses)
-    && checkpoint.analyses.length === checkpoint.completedThrough
-}
-
-async function loadLongSourceCheckpoint(
-  checkpointPath: string,
-  params: Parameters<typeof isCompatibleLongSourceCheckpoint>[1],
-): Promise<LongSourceCheckpoint | null> {
-  try {
-    const raw = await readFile(checkpointPath)
-    const parsed = JSON.parse(raw) as LongSourceCheckpoint
-    if (!isCompatibleLongSourceCheckpoint(parsed, params)) return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-async function saveLongSourceCheckpoint(
-  checkpointPath: string,
-  checkpoint: LongSourceCheckpoint,
-): Promise<void> {
-  const dir = checkpointPath.split("/").slice(0, -1).join("/")
-  await createDirectory(dir)
-  await writeFile(checkpointPath, JSON.stringify(checkpoint, null, 2))
-}
-
-async function clearLongSourceCheckpoint(checkpointPath: string): Promise<void> {
-  try {
-    if (await fileExists(checkpointPath)) {
-      await deleteFile(checkpointPath)
-    }
-  } catch {
-    // Best-effort cleanup. A stale checkpoint is ignored if source
-    // hash / chunk shape no longer matches.
-  }
-}
-
 function extractMarkedSection(raw: string, heading: string): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const re = new RegExp(`(?:^|\\n)##\\s+${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i")
   return re.exec(raw)?.[1]?.trim() ?? ""
 }
 
-function buildChunkAnalysisSystemPrompt(
+// ── Map-reduce long-source analysis ─────────────────────────────────
+//
+// Long sources used to be split into chunks and analyzed with the
+// "refine" pattern: each chunk's prompt depended on the previous
+// chunk's digest, so chunks ran strictly sequentially. That's the
+// right choice when narrative order carries meaning, but llm_wiki's
+// ingest generates separate wiki pages per entity/concept, not one
+// flowing narrative — so refine's coherence benefit was mostly wasted
+// while its serial cost (N sequential LLM calls, each paying the
+// CLI-subscription providers' ~16-18s per-call spawn tax) was paid in
+// full on every long book.
+//
+// This is the "map-reduce" replacement: every chunk is analyzed
+// independently and in parallel (map), then a single call merges all
+// per-chunk analyses into one consolidated digest (reduce). N sequential
+// calls become ceil(N / LONG_SOURCE_MAP_CONCURRENCY) sequential batches.
+//
+// Does not persist a resumable checkpoint the way the old refine path
+// did — each map call
+// is independent and cheap to redo, so mid-run interruption is far
+// less costly here than it was for the sequential chain checkpointing
+// was built for.
+const LONG_SOURCE_MAP_CONCURRENCY = 4
+
+function buildChunkMapSystemPrompt(
   purpose: string,
   schema: string,
   index: string,
   sourceContent: string,
 ): string {
   return [
-    "You are analyzing a long source document for a personal wiki.",
+    "You are analyzing one chunk of a long source document for a personal wiki.",
     "Do not output chain-of-thought, hidden reasoning, or a thinking transcript.",
-    "Analyze only the current MAIN CHUNK. Use overlap and digest for context only.",
-    "Keep stable names consistent with the existing wiki and prior digest.",
+    "Analyze ONLY the chunk given below. You do not have access to other chunks — do not assume",
+    "or invent context from parts of the document you cannot see. Use the overlap text only for",
+    "continuity at the chunk boundary.",
     "",
     languageRule(sourceContent),
     "",
-    "Output exactly two markdown sections:",
+    "Output exactly one markdown section:",
     "",
     "## Chunk Analysis",
-    "- Concise summary of the main chunk",
-    "- New or updated entities",
-    "- New or updated concepts",
-    "- Any schema-defined page types beyond entity/concept that the main chunk genuinely supports",
+    "- Concise summary of this chunk",
+    "- Entities mentioned",
+    "- Concepts mentioned",
+    "- Any schema-defined page types beyond entity/concept that this chunk genuinely supports",
     "- Claims, findings, evidence, contradictions",
     "- Open questions or research gaps",
-    "",
-    "## Updated Global Digest",
-    "A compact document-level digest that incorporates this chunk and preserves prior cross-chunk context.",
-    "Keep this digest structured under: Summary, Entities, Concepts, Schema-Typed Candidates, Claims, Evidence, Contradictions, Open Questions, Cross-Chunk Relations.",
-    "Use schema-defined types only when the source actually supports them; never invent goals, habits, journal entries, decisions, or similar user-authored records that are not present in the source.",
     "",
     "Stable project context follows. It changes rarely and should be treated as background:",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
@@ -2826,11 +2831,10 @@ function buildChunkAnalysisSystemPrompt(
   ].filter(Boolean).join("\n")
 }
 
-function buildChunkAnalysisUserPrompt(
+function buildChunkMapUserPrompt(
   sourceIdentity: string,
   folderContext: string | undefined,
   chunk: SourceChunk,
-  globalDigest: string,
 ): string {
   return [
     `Source file: ${sourceIdentity}`,
@@ -2838,31 +2842,86 @@ function buildChunkAnalysisUserPrompt(
     `Chunk: ${chunk.index}/${chunk.total}`,
     chunk.headingPath ? `Heading path: ${chunk.headingPath}` : "",
     "",
-    "## Current Global Digest",
-    globalDigest || "(No prior digest yet.)",
+    chunk.overlapBefore ? "## Previous Overlap Context (for continuity only, do not re-summarize)\n" + chunk.overlapBefore : "",
     "",
-    chunk.overlapBefore ? "## Previous Overlap Context\n" + chunk.overlapBefore : "",
-    "",
-    "## MAIN CHUNK TO ANALYZE",
+    "## CHUNK TO ANALYZE",
     chunk.main,
     "",
-    "Return only the two requested sections. Do not repeat overlap-only facts unless the main chunk supports them.",
+    "Return only the one requested section.",
   ].filter(Boolean).join("\n")
 }
 
-async function analyzeLongSourceInChunks(
-  projectPath: string,
+function buildReduceSystemPrompt(purpose: string, schema: string, index: string): string {
+  return [
+    "You are merging independent chunk analyses of one long source document into a single",
+    "consolidated digest for a personal wiki. The chunks were analyzed in isolation from each",
+    "other and are given to you in original document order — reconcile them into one coherent",
+    "picture, resolving obvious duplicate entities/concepts across chunks into a single entry.",
+    "Do not output chain-of-thought, hidden reasoning, or a thinking transcript.",
+    "",
+    "Output exactly one markdown section:",
+    "",
+    "## Final Global Digest",
+    "Structured under: Summary, Entities, Concepts, Schema-Typed Candidates, Claims, Evidence,",
+    "Contradictions, Open Questions, Cross-Chunk Relations.",
+    "Use schema-defined types only when the source actually supports them; never invent goals,",
+    "habits, journal entries, decisions, or similar user-authored records not present in the source.",
+    "",
+    "Stable project context follows. It changes rarely and should be treated as background:",
+    purpose ? `## Wiki Purpose\n${purpose}` : "",
+    schema ? `## Wiki Schema\n${schema}` : "",
+    index ? `## Current Wiki Index\n${trimLongText(index, 40_000)}` : "",
+  ].filter(Boolean).join("\n")
+}
+
+/** streamChat signature used by the map-reduce phases — same type as the real function, narrowed to a standalone alias so tests can inject a stub. */
+type ChunkStreamChatFn = (
+  llmConfig: LlmConfig,
+  messages: ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+) => Promise<void>
+
+async function runChunkStream(
+  streamFn: ChunkStreamChatFn,
+  llmConfig: LlmConfig,
+  systemPrompt: string,
+  userPrompt: string,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  let raw = ""
+  let hadError: Error | null = null
+  await streamFn(
+    llmConfig,
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    {
+      onToken: (token) => { raw += token },
+      onDone: () => {},
+      onError: (err) => { hadError = err },
+    },
+    signal,
+    { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
+  )
+  if (hadError) throw hadError
+  return raw
+}
+
+export async function analyzeLongSourceInChunksMapReduce(
   llmConfig: LlmConfig,
   purpose: string,
   schema: string,
   index: string,
   sourceIdentity: string,
-  sourceSummarySlug: string,
   folderContext: string | undefined,
   sourceContent: string,
   sourceBudget: number,
-  activityId: string,
   signal?: AbortSignal,
+  onProgress?: (done: number, total: number) => void,
+  streamFn: ChunkStreamChatFn = streamChat,
 ): Promise<LongSourcePlan> {
   const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
   const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
@@ -2871,89 +2930,38 @@ async function analyzeLongSourceInChunks(
     return { chunked: false, analysis: "", sourceContext: sourceContent }
   }
 
-  const activity = useActivityStore.getState()
-  const systemPrompt = buildChunkAnalysisSystemPrompt(purpose, schema, index, sourceContent)
-  const sourceHash = hashTextHex(sourceContent)
-  const checkpointPath = longSourceCheckpointPath(projectPath, sourceSummarySlug, sourceHash)
-  const checkpointParams = {
-    sourceIdentity,
-    sourceHash,
-    sourceLength: sourceContent.length,
-    sourceBudget,
-    targetChars,
-    overlapChars,
-    chunkTotal: chunks.length,
-  }
-  const checkpoint = await loadLongSourceCheckpoint(checkpointPath, checkpointParams)
-  let globalDigest = checkpoint?.globalDigest ?? ""
-  const analyses: string[] = checkpoint?.analyses ? [...checkpoint.analyses] : []
-  let completedThrough = checkpoint?.completedThrough ?? 0
+  const mapSystemPrompt = buildChunkMapSystemPrompt(purpose, schema, index, sourceContent)
+  const analyses: string[] = new Array(chunks.length)
+  let done = 0
 
-  if (completedThrough > 0) {
-    activity.updateItem(activityId, {
-      detail: `Resuming long source analysis from chunk ${completedThrough + 1}/${chunks.length}...`,
-    })
+  for (let i = 0; i < chunks.length; i += LONG_SOURCE_MAP_CONCURRENCY) {
+    const batch = chunks.slice(i, i + LONG_SOURCE_MAP_CONCURRENCY)
+    await Promise.all(batch.map(async (chunk) => {
+      if (signal?.aborted) return
+      const userPrompt = buildChunkMapUserPrompt(sourceIdentity, folderContext, chunk)
+      const raw = await runChunkStream(streamFn, llmConfig, mapSystemPrompt, userPrompt, signal)
+      const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
+      analyses[chunk.index - 1] = [
+        `## Chunk ${chunk.index}/${chunk.total}${chunk.headingPath ? ` — ${chunk.headingPath}` : ""}`,
+        trimLongText(chunkAnalysis, LONG_SOURCE_CHUNK_ANALYSIS_MAX),
+      ].join("\n")
+      done += 1
+      onProgress?.(done, chunks.length)
+    }))
+    throwIfIngestAborted(signal)
   }
 
-  for (const chunk of chunks) {
-    if (chunk.index <= completedThrough) continue
-    throwIfIngestAborted(signal, activityId)
-    activity.updateItem(activityId, {
-      detail: `Analyzing long source chunk ${chunk.index}/${chunk.total}...`,
-    })
-
-    let raw = ""
-    let hadError = false
-    await streamChat(
-      llmConfig,
-      [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: buildChunkAnalysisUserPrompt(
-            sourceIdentity,
-            folderContext,
-            chunk,
-            trimLongText(globalDigest, LONG_SOURCE_DIGEST_MAX),
-          ),
-        },
-      ],
-      {
-        onToken: (token) => { raw += token },
-        onDone: () => {},
-        onError: (err) => {
-          hadError = true
-          activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${err.message}` })
-        },
-      },
-      signal,
-      { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: 4096 },
-    )
-
-    throwIfIngestAborted(signal, activityId)
-    if (hadError) throw new Error("Chunk analysis stream failed")
-
-    const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
-    const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
-    analyses.push([
-      `## Chunk ${chunk.index}/${chunk.total}${chunk.headingPath ? ` — ${chunk.headingPath}` : ""}`,
-      trimLongText(chunkAnalysis, LONG_SOURCE_CHUNK_ANALYSIS_MAX),
-    ].join("\n"))
-
-    globalDigest = trimLongText(
-      nextDigest || [globalDigest, chunkAnalysis].filter(Boolean).join("\n\n"),
-      LONG_SOURCE_DIGEST_MAX,
-    )
-    completedThrough = chunk.index
-    await saveLongSourceCheckpoint(checkpointPath, {
-      version: 1,
-      ...checkpointParams,
-      completedThrough,
-      globalDigest,
-      analyses,
-      updatedAt: Date.now(),
-    })
-  }
+  const reduceSystemPrompt = buildReduceSystemPrompt(purpose, schema, index)
+  const reduceUserPrompt = [
+    `Source file: ${sourceIdentity}`,
+    folderContext ? `Folder context: ${folderContext}` : "",
+    `Total chunks: ${chunks.length}`,
+    "",
+    "## Chunk Analyses (in document order)",
+    trimLongText(analyses.join("\n\n"), LONG_SOURCE_DIGEST_MAX * 2),
+  ].filter(Boolean).join("\n")
+  const reduceRaw = await runChunkStream(streamFn, llmConfig, reduceSystemPrompt, reduceUserPrompt, signal)
+  const globalDigest = extractMarkedSection(reduceRaw, "Final Global Digest") || reduceRaw.trim()
 
   const analysis = [
     "# Consolidated Long-Document Analysis",
@@ -2968,7 +2976,7 @@ async function analyzeLongSourceInChunks(
   const sourceContext = [
     `# Long Source Context: ${sourceIdentity}`,
     "",
-    `The original source was analyzed in ${chunks.length} semantic chunks with paragraph/section boundaries and overlap. Use this consolidated context instead of assuming the raw document ended early.`,
+    `The original source was analyzed in ${chunks.length} semantic chunks in parallel (map-reduce), with paragraph/section boundaries and overlap. Use this consolidated context instead of assuming the raw document ended early.`,
     "",
     "## Final Global Digest",
     globalDigest || "(No digest produced.)",
@@ -2977,7 +2985,7 @@ async function analyzeLongSourceInChunks(
     trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
   ].join("\n")
 
-  return { chunked: true, analysis, sourceContext, checkpointPath }
+  return { chunked: true, analysis, sourceContext }
 }
 
 /**

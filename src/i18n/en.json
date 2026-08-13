@@ -4,11 +4,21 @@
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
   "common": {
-    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close",
-    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "ignore": "Ignore",
+    "close": "Close",
+    "dismiss": "Dismiss",
+    "loading": "Loading...",
+    "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
-  "errors": { "generic": "Something went wrong" },
+  "layout": {
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar"
+  },
+  "errors": {
+    "generic": "Something went wrong"
+  },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",
     "showDetails": "Show parser details",
@@ -47,10 +57,16 @@
     "rawSources": "Raw Sources",
     "noWikiPages": "No wiki pages yet. Import sources to get started.",
     "typeLabels": {
-      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
-      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
-      "thesis": "Theses", "methodology": "Methodologies",
-      "comparison": "Comparisons", "query": "Queries"
+      "overview": "Overview",
+      "entity": "Entities",
+      "concept": "Concepts",
+      "source": "Sources",
+      "synthesis": "Synthesis",
+      "finding": "Findings",
+      "thesis": "Theses",
+      "methodology": "Methodologies",
+      "comparison": "Comparisons",
+      "query": "Queries"
     }
   },
   "editor": {
@@ -92,7 +108,10 @@
       "createFailed": "The missing page could not be created.",
       "emptyDraftError": "The model returned an empty draft."
     },
-    "frontmatter": { "origin": "Origin", "more": "More" },
+    "frontmatter": {
+      "origin": "Origin",
+      "more": "More"
+    },
     "rawMarkdownEditor": "Raw Markdown editor"
   },
   "research": {
@@ -445,6 +464,7 @@
       "sourceWatch": "Source Watch",
       "scheduledImport": "Scheduled Import",
       "mineru": "MinerU PDF",
+      "mediaIngest": "Media Ingestion",
       "apiServer": "API + MCP",
       "output": "Output",
       "interface": "Interface",
@@ -491,7 +511,7 @@
           "activeDefault": "Use active model",
           "hint": "Choose separate models for interactive chat and document ingest. The active model remains the fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Use a project-specific model",
           "provider": "Project provider",
           "selectProvider": "Select a provider",
@@ -624,7 +644,7 @@
       },
       "multimodal": {
         "title": "Image Captioning",
-        "description": "Generate factual captions for images extracted from PDFs / DOCX / PPTX during ingest. Captions are inserted as alt text inside the source markdown — they're what semantic search matches when you search for image content. Cached by image hash so duplicate logos / charts only call the LLM once.",
+        "description": "Generate factual captions for images extracted from PDFs / DOCX / PPTX during ingest, and for standalone image files imported via Media ingestion — this master switch gates both. Captions are inserted as alt text inside the source markdown — they're what semantic search matches when you search for image content. Cached by image hash so duplicate logos / charts only call the LLM once.",
         "enableLabel": "Enable captioning at ingest",
         "enableHint": "Off: image references are stripped from ingested content — no images appear in wiki pages, search won't return them. (Files still extract to wiki/media/ for the raw-source preview.) On: each new image gets a factual caption from the vision LLM (cached by hash) and lands in the wiki page's alt text.",
         "stateOn": "ON",
@@ -729,7 +749,7 @@
         "ingestConcurrencyDescription": "Prepare this many sources in parallel. Wiki writes remain ordered. Higher values use more LLM capacity and memory.",
         "noProject": "Open a project to change this project-level setting.",
         "fileTypes": "Allowed file types",
-        "fileTypesDescription": "Document types are enabled by default. Media, binaries, source code, and config-like formats stay off unless selected.",
+        "fileTypesDescription": "Document types are enabled by default. Audio/video and image files are controlled separately in Media Ingestion settings, not by the checkboxes below. Binaries, source code, and config-like formats stay off unless selected.",
         "exclusions": "Exclusions and limits",
         "maxSize": "Maximum auto-ingest file size (MB)",
         "excludeDirs": "Excluded folders",
@@ -794,6 +814,26 @@
         "mcpUsage": "MCP usage",
         "mcpUsageHint": "Build once with `npm run mcp:build`, then configure your MCP client to run the server below. Use LLM_WIKI_API_TOKEN unless unauthenticated access is enabled.",
         "mcpPathUnavailable": "MCP server entry was not found. Run `npm run mcp:build` from the LLM Wiki repository, then reopen Settings.",
+        "remoteMcpEnable": "Enable remote MCP access",
+        "remoteMcpEnableHint": "Runs a separate HTTP+OAuth bridge so agents outside this machine (ChatGPT, Codex, Claude.ai) can reach this project over the internet — unlike the local API above, which only Codex/Claude CLI on this machine can use. Requires Node.js on PATH.",
+        "remoteMcpPort": "Local port",
+        "remoteMcpHostname": "Your own domain (optional)",
+        "remoteMcpHostnamePlaceholder": "e.g. mcp.example.com — leave empty for an auto-generated link",
+        "remoteMcpHostnameHint": "Empty = a Cloudflare Quick Tunnel generates a free https://…trycloudflare.com link automatically (changes every time you start it — fine for testing, not for a permanent integration). Set your own domain here only if you already run a reverse proxy/tunnel pointed at the port above.",
+        "remoteMcpVaultRoot": "Linked vault folder (optional)",
+        "remoteMcpVaultRootPlaceholder": "Absolute path to an Obsidian-style vault — leave empty to skip",
+        "remoteMcpVaultRootHint": "When set, the bridge also exposes vault_read_note / vault_list_notes / vault_search_notes / vault_write_note / vault_append_note, plus vault_get_conventions (reads the vault's own CLAUDE.md or README.md so the connecting agent learns the vault's writing rules before it writes anything).",
+        "remoteMcpToken": "Static API key",
+        "remoteMcpTokenPlaceholder": "For clients without OAuth support — click Generate",
+        "remoteMcpPassword": "OAuth approval password",
+        "remoteMcpPasswordPlaceholder": "Required for any client that self-registers via OAuth",
+        "remoteMcpPasswordHint": "Any MCP client can self-register (OAuth Dynamic Client Registration) — registering alone grants no access. This password is the actual gate: it's asked once, in a browser page, before a registered client gets a working token.",
+        "remoteMcpBusy": "Working…",
+        "remoteMcpRunning": "Running",
+        "remoteMcpStopped": "Stopped",
+        "remoteMcpUrl": "Connect at",
+        "remoteMcpUrlPending": "Waiting for the tunnel URL…",
+        "remoteMcpWarning": "Anyone with the static API key, or anyone who completes the OAuth approval step, gets the same access as a local MCP client — including write access if a vault folder is linked. Treat both secrets like passwords.",
         "token": "Access token",
         "tokenHint": "Send as `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`. Read endpoints may omit it when unauthenticated access is enabled, but Agent chat and cancellation always require it. The environment variable LLM_WIKI_API_TOKEN overrides this field if set.",
         "tokenPlaceholder": "Paste an existing token or click Generate",
@@ -977,6 +1017,23 @@
         "testing": "Testing...",
         "testSuccess": "Connection successful",
         "testFailed": "Test failed"
+      },
+      "mediaIngest": {
+        "title": "Media ingestion",
+        "description": "Transcribe audio/video sources and caption image sources so they become searchable wiki content.",
+        "audioVideoEnabled": "Enable audio/video transcription",
+        "audioVideoDescription": "Local video/audio files and video links (YouTube and anything yt-dlp supports) get their audio extracted and transcribed. Off by default — mp4/audio files and links are not ingested until enabled.",
+        "provider": "Transcription provider",
+        "providerGroq": "Groq (Whisper large-v3-turbo) - requires an API token",
+        "providerCustom": "Custom endpoint - any OpenAI-compatible transcription API",
+        "groqToken": "Groq API Token",
+        "groqTokenHint": "Get your token from console.groq.com",
+        "customEndpoint": "Endpoint URL",
+        "customEndpointHint": "Base URL of an OpenAI-compatible /audio/transcriptions endpoint.",
+        "customToken": "API Token (optional)",
+        "customTokenHint": "Sent as an Authorization: Bearer header",
+        "imagesEnabled": "Accept standalone image files as sources",
+        "imagesDescription": "Standalone image files (png/jpg/...) are captioned using the LLM model already configured under LLM Models — no separate provider needed. The configured model must support image input. Both this toggle AND the separate Image Captioning settings category must be enabled: with only this one on, image files are accepted as sources but no caption is produced."
       }
     }
   },
@@ -1031,12 +1088,25 @@
     "fileSync": "File Sync",
     "rescan": "Rescan",
     "rescanTitle": "Scan project files for external changes",
-    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "changeKinds": {
+      "created": "Created",
+      "modified": "Modified",
+      "deleted": "Deleted"
+    },
     "fileTypes": {
-      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
-      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
-      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
-      "index": "Index", "log": "Log", "file": "File"
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "comparison": "Comparison",
+      "finding": "Finding",
+      "thesis": "Thesis",
+      "methodology": "Methodology",
+      "overview": "Overview",
+      "index": "Index",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {

@@ -3,13 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { invoke } from "@tauri-apps/api/core"
 import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart"
 import i18n from "@/i18n"
+import { detectSystemOutputLanguage } from "@/lib/detect-system-language"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMediaIngestConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -363,6 +364,10 @@ function App() {
         if (savedMineruConfig) {
           useWikiStore.getState().setMineruConfig(savedMineruConfig)
         }
+        const savedMediaIngestConfig = await loadMediaIngestConfig()
+        if (savedMediaIngestConfig) {
+          useWikiStore.getState().setMediaIngestConfig(savedMediaIngestConfig)
+        }
         const savedProxy = await loadProxyConfig()
         if (savedProxy) {
           useWikiStore.getState().setProxyConfig(savedProxy)
@@ -387,6 +392,22 @@ function App() {
                 ? savedApi.mcpEnabled
                 : false,
             token: typeof savedApi.token === "string" ? savedApi.token : "",
+            remoteMcpEnabled:
+              typeof savedApi.remoteMcpEnabled === "boolean" ? savedApi.remoteMcpEnabled : false,
+            remoteMcpPort:
+              typeof savedApi.remoteMcpPort === "number" ? savedApi.remoteMcpPort : 8931,
+            remoteMcpToken:
+              typeof savedApi.remoteMcpToken === "string" ? savedApi.remoteMcpToken : "",
+            remoteMcpApprovalPassword:
+              typeof savedApi.remoteMcpApprovalPassword === "string"
+                ? savedApi.remoteMcpApprovalPassword
+                : "",
+            remoteMcpPublicHostname:
+              typeof savedApi.remoteMcpPublicHostname === "string"
+                ? savedApi.remoteMcpPublicHostname
+                : "",
+            remoteMcpVaultRoot:
+              typeof savedApi.remoteMcpVaultRoot === "string" ? savedApi.remoteMcpVaultRoot : "",
           })
         }
         const savedGeneral = await loadGeneralConfig()
@@ -454,7 +475,7 @@ function App() {
         llmState.customLlmPresets,
       ))
       const projectOutputLang = await loadOutputLanguage(proj.id)
-      useWikiStore.getState().setOutputLanguage(projectOutputLang ?? "auto")
+      useWikiStore.getState().setOutputLanguage(projectOutputLang ?? detectSystemOutputLanguage())
       setSelectedFile(null)
       setFileTree([])
       setActiveView("wiki")

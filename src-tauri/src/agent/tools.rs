@@ -1189,6 +1189,7 @@ pub async fn run_web_search(
         "firecrawl" => firecrawl_search(&client, query, &config, max_results).await?,
         "searxng" => searxng_search(&client, query, &config, max_results).await?,
         "tavily" => tavily_search(&client, query, &config, max_results).await?,
+        "exa" => exa_search(&client, query, &config, max_results).await?,
         "ollama" => ollama_search(&client, query, &config, max_results).await?,
         "brave" => brave_search(&client, query, &config, max_results).await?,
         "bocha" => bocha_search(&client, query, &config, max_results).await?,
@@ -1727,6 +1728,41 @@ async fn tavily_search(
         .await
         .map_err(|err| format!("Network error reaching Tavily: {err}"))?;
     parse_web_json_response(response, "Tavily", |value| {
+        value
+            .get("results")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(normalize_web_result)
+            .collect()
+    })
+    .await
+}
+
+async fn exa_search(
+    client: &reqwest::Client,
+    query: &str,
+    config: &WebSearchConfig,
+    max_results: usize,
+) -> Result<Vec<WebSearchItem>, String> {
+    let key = required_api_key(config, "Exa")?;
+    let response = client
+        .post("https://api.exa.ai/search")
+        .header("x-api-key", key)
+        .json(&json!({
+            "query": query,
+            "numResults": max_results,
+            "type": "auto",
+            "contents": {
+                "text": { "maxCharacters": 500 },
+                "summary": {}
+            }
+        }))
+        .send()
+        .await
+        .map_err(|err| format!("Network error reaching Exa: {err}"))?;
+    parse_web_json_response(response, "Exa", |value| {
         value
             .get("results")
             .and_then(Value::as_array)

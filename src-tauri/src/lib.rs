@@ -592,6 +592,7 @@ pub fn run() {
             app.manage(commands::claude_cli::ClaudeCliState::default());
             app.manage(commands::codex_cli::CodexCliState::default());
             app.manage(commands::file_sync::FileSyncState::default());
+            app.manage(commands::remote_mcp::RemoteMcpState::default());
             app.manage(agent::session::AgentSessionStore::default());
             app.manage(agent::cancel::AgentCancellationRegistry::default());
             app.manage(CloseBehaviorState(Mutex::new("minimize".to_string())));
@@ -600,6 +601,10 @@ pub fn run() {
             // backend is reachable if tray setup or another integration fails.
             clip_server::start_clip_server(app.handle().clone());
             api_server::start_api_server(app.handle().clone());
+            // Resume remote MCP access if the user last left it enabled —
+            // spawned in the background so a slow Node download/spawn
+            // can't delay the rest of app startup.
+            tauri::async_runtime::spawn(commands::remote_mcp::autostart_if_enabled(app.handle().clone()));
             let tray_available = match tray::create_tray(app.handle()) {
                 Ok(()) => true,
                 Err(err) => {
@@ -665,6 +670,11 @@ pub fn run() {
             agent_list_sessions,
             agent::skills::agent_list_skills,
             mcp_server_entry_path,
+            commands::remote_mcp::remote_mcp_status,
+            commands::remote_mcp::remote_mcp_start,
+            commands::remote_mcp::remote_mcp_stop,
+            commands::media_tools::download_media_url,
+            commands::media_tools::extract_audio_track,
             commands::vectorstore::vector_upsert,
             commands::vectorstore::vector_search,
             commands::vectorstore::vector_delete,
@@ -759,6 +769,13 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
+            }
+            // The remote MCP child is spawned with kill_on_drop, but that
+            // only fires if the Child value is actually dropped — a plain
+            // process exit can skip Drop. Kill it explicitly here so a
+            // stale http-server.js doesn't keep listening after the app quits.
+            if let tauri::RunEvent::Exit = event {
+                commands::remote_mcp::kill_on_app_exit(app);
             }
             let _ = (app, event); // suppress unused warnings on non-macOS
         });

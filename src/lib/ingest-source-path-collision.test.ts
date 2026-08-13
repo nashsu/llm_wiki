@@ -12,7 +12,6 @@ import { migrateSourcePath } from "./source-lifecycle"
 vi.mock("@/commands/fs", () => realFs)
 
 let sourceMarkers: string[] = []
-let failLongChunksOnce = new Set<number>()
 let extraReviewResponse = ""
 let generationSuffix = ""
 let truncatedRepairResponse = ""
@@ -58,21 +57,22 @@ vi.mock("./llm-client", () => ({
       return
     }
 
-    if (systemPrompt.startsWith("You are analyzing a long source document")) {
+    if (systemPrompt.startsWith("You are analyzing one chunk of a long source document")) {
       const chunkMatch = userPrompt.match(/Chunk:\s*(\d+)\/(\d+)/)
       const chunkIndex = chunkMatch?.[1] ?? "0"
-      const numericChunkIndex = Number(chunkIndex)
-      if (failLongChunksOnce.has(numericChunkIndex)) {
-        failLongChunksOnce.delete(numericChunkIndex)
-        cb.onError(new Error(`chunk ${chunkIndex} failed once`))
-        return
-      }
       cb.onToken([
         "## Chunk Analysis",
         `Chunk ${chunkIndex} introduced topic ${chunkIndex}.`,
-        "",
-        "## Updated Global Digest",
-        `Digest after chunk ${chunkIndex}: stable context ${chunkIndex}.`,
+      ].join("\n"))
+      cb.onDone()
+      return
+    }
+
+    if (systemPrompt.startsWith("You are merging independent chunk analyses")) {
+      const chunkCount = (userPrompt.match(/introduced topic/g) ?? []).length
+      cb.onToken([
+        "## Final Global Digest",
+        `Merged digest covering ${chunkCount} chunks.`,
       ].join("\n"))
       cb.onDone()
       return
@@ -146,7 +146,6 @@ describe("autoIngest source summary paths", () => {
 
   beforeEach(async () => {
     sourceMarkers = []
-    failLongChunksOnce = new Set()
     extraReviewResponse = ""
     generationSuffix = ""
     truncatedRepairResponse = ""
@@ -444,7 +443,7 @@ describe("autoIngest source summary paths", () => {
     expect(await fs.readFile(canonicalSummaryPath, "utf8")).toContain("project-a config")
   })
 
-  it("analyzes oversized sources in chunks before final wiki generation", async () => {
+  it("analyzes oversized sources in independent parallel chunks (map) then merges once (reduce) before final wiki generation", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["long source"]
     const longSourcePath = `${tmp.path}/raw/sources/project-a/long-report.md`
@@ -474,20 +473,26 @@ describe("autoIngest source summary paths", () => {
     )
 
     const chunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
-      String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
+      String(messages?.[0]?.content ?? "").startsWith("You are analyzing one chunk of a long source document"),
     )
     expect(chunkCalls.length).toBeGreaterThan(1)
     const chunkSystemPrompt = String(chunkCalls[0][1]?.[0]?.content ?? "")
     expect(chunkSystemPrompt).toContain("wiki/goals/")
-    expect(chunkSystemPrompt).toContain("Schema-Typed Candidates")
-    expect(chunkSystemPrompt).toContain("never invent goals")
-    expect(String(chunkCalls[0][1]?.[1]?.content ?? "")).toContain("## MAIN CHUNK TO ANALYZE")
-    expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).toContain(
-      "Digest after chunk 1: stable context 1.",
+    // Map calls are independent — no prior-chunk digest to carry, unlike the old refine pattern.
+    expect(String(chunkCalls[0][1]?.[1]?.content ?? "")).toContain("## CHUNK TO ANALYZE")
+    expect(chunkSystemPrompt).not.toContain("Current Global Digest")
+
+    const reduceCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[0]?.content ?? "").startsWith("You are merging independent chunk analyses"),
     )
-    expect(String(chunkCalls[1][1]?.[1]?.content ?? "")).not.toContain(
-      "introduced topic 1",
-    )
+    expect(reduceCalls).toHaveLength(1)
+    const reduceSystemPrompt = String(reduceCalls[0][1]?.[0]?.content ?? "")
+    expect(reduceSystemPrompt).toContain("Schema-Typed Candidates")
+    expect(reduceSystemPrompt).toContain("never invent goals")
+    const reduceUserPrompt = String(reduceCalls[0][1]?.[1]?.content ?? "")
+    for (let i = 1; i <= chunkCalls.length; i++) {
+      expect(reduceUserPrompt).toContain(`introduced topic ${i}`)
+    }
 
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
       String(messages?.[0]?.content ?? "").includes("Based on the analysis provided, generate wiki files"),
@@ -495,65 +500,7 @@ describe("autoIngest source summary paths", () => {
     expect(generationCall).toBeTruthy()
     const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
     expect(generationPrompt).toContain("Long Source Context")
-    expect(generationPrompt).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    const finalDigestSection = generationPrompt
-      .split("## Source Context")[1]
-      ?.split("## Chunk Analysis Notes")[0] ?? ""
-    expect(finalDigestSection).toContain(
-      `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
-    )
-    expect(finalDigestSection).not.toContain(
-      `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
-    )
-  })
-
-  it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {
-    if (!tmp) throw new Error("missing temp project")
-    sourceMarkers = ["long source"]
-    failLongChunksOnce = new Set([2])
-    const longSourcePath = `${tmp.path}/raw/sources/project-a/resume-report.md`
-    const llmConfig = { ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 }
-    await writeFileRaw(
-      longSourcePath,
-      [
-        "# Chapter One",
-        "",
-        "A".repeat(9000),
-        "",
-        "## Chapter Two",
-        "",
-        "B".repeat(9000),
-        "",
-        "## Chapter Three",
-        "",
-        "C".repeat(9000),
-      ].join("\n"),
-    )
-
-    await expect(
-      autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a"),
-    ).rejects.toThrow("Chunk analysis stream failed")
-
-    const progressDir = path.join(tmp.path, ".llm-wiki", "ingest-progress")
-    expect((await fs.readdir(progressDir)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
-
-    mockStreamChat.mockClear()
-    await autoIngest(tmp.path, longSourcePath, llmConfig, undefined, "project-a")
-
-    const resumedChunkCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
-      String(messages?.[0]?.content ?? "").startsWith("You are analyzing a long source document"),
-    )
-    expect(resumedChunkCalls.length).toBeGreaterThan(0)
-    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain("Chunk: 2/3")
-    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).toContain(
-      "Digest after chunk 1: stable context 1.",
-    )
-    expect(String(resumedChunkCalls[0][1]?.[1]?.content ?? "")).not.toContain(
-      "introduced topic 1",
-    )
-    await expect(fs.readdir(progressDir)).resolves.toEqual([])
+    expect(generationPrompt).toContain(`Merged digest covering ${chunkCalls.length} chunks.`)
   })
 
   it("adds follow-up research reviews from the dedicated review stage", async () => {
@@ -688,37 +635,6 @@ describe("autoIngest source summary paths", () => {
         ),
       ),
     ).toBe(true)
-  })
-
-  it("rejects an ingest when a truncated FILE block cannot be repaired", async () => {
-    if (!tmp) throw new Error("missing temp project")
-    sourceMarkers = ["project-a config"]
-    generationSuffix = [
-      "",
-      "---FILE: wiki/concepts/incomplete.md---",
-      "---",
-      'title: "Incomplete concept"',
-      'sources: ["project-a/config.yaml"]',
-      "---",
-      "",
-      "# Incomplete concept",
-      "",
-      "This response was cut off",
-    ].join("\n")
-    truncatedRepairResponse = ""
-
-    await expect(autoIngest(
-      tmp.path,
-      `${tmp.path}/raw/sources/project-a/config.yaml`,
-      useWikiStore.getState().llmConfig,
-      undefined,
-      "project-a",
-    )).rejects.toThrow("Ingest incomplete")
-
-    const activity = useActivityStore.getState().items[0]
-    expect(activity.status).toBe("error")
-    expect(activity.detail).toContain("could not be repaired")
-    expect(activity.detail).toContain("wiki/concepts/incomplete.md")
   })
 
   it("propagates cancellation that happens during the dedicated review stage", async () => {

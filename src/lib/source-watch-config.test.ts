@@ -31,13 +31,15 @@ describe("source watch config", () => {
     ).toBe(1)
   })
 
-  it("allows document types by default and rejects config/media/binaries", () => {
+  it("allows document and media types by default and rejects config/binaries", () => {
     expect(isPathAllowedBySourceWatch("raw/sources/report.pdf", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(true)
     expect(isPathAllowedBySourceWatch("raw/sources/notes.md", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(true)
     expect(isPathAllowedBySourceWatch("raw/sources/notes.org", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(true)
     expect(isPathAllowedBySourceWatch("raw/sources/report.doc", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(true)
     expect(isPathAllowedBySourceWatch("raw/sources/secrets.json", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
-    expect(isPathAllowedBySourceWatch("raw/sources/video.mp4", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
+    // Media clears the watcher now; whether it is actually ingested is decided
+    // later by isIngestableSourcePath + the mediaIngestConfig toggles.
+    expect(isPathAllowedBySourceWatch("raw/sources/video.mp4", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(true)
     expect(isPathAllowedBySourceWatch("raw/sources/tool.exe", DEFAULT_SOURCE_WATCH_CONFIG)).toBe(false)
   })
 
@@ -64,7 +66,10 @@ describe("source watch config", () => {
       excludeGlobs: ["*.private.*, ~$*"],
     })
 
-    expect(config.includeExtensions).toEqual(["md", "pdf", "docx"])
+    // Media extensions are appended to every non-empty include-list (see
+    // source-watch-config.media-defaults.test.ts); only the normalization of
+    // the user-supplied entries is asserted here.
+    expect(config.includeExtensions.slice(0, 3)).toEqual(["md", "pdf", "docx"])
     expect(config.excludeExtensions).toEqual(["json", "yaml", "xml", "dll"])
     expect(config.excludeDirs).toEqual([".git", "node_modules", "drafts", "wip"])
     expect(config.excludeGlobs).toEqual(["*.private.*", "~$*"])

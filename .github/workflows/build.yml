@@ -108,7 +108,28 @@ jobs:
           npm --prefix mcp-server ci
           npm run mcp:build
 
-      - name: Build Tauri app
+      # `if:` can't read `secrets` directly (GitHub blocks that), so stash
+      # a plain boolean in a step output first.
+      - name: Check for Apple codesign certificate
+        id: apple_cert
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        shell: bash
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Split signed/unsigned so the Apple env keys are truly ABSENT (not
+      # just empty-string) on forks without a codesign certificate secret —
+      # tauri-action's macOS signing path still attempts a keychain import
+      # when APPLE_CERTIFICATE is set to "" rather than omitted entirely,
+      # which fails hard ("SecKeychainItemImport: ... not valid") instead
+      # of falling back to an unsigned build.
+      - name: Build Tauri app (signed)
+        if: steps.apple_cert.outputs.present == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -124,6 +145,19 @@ jobs:
           # empty so tauri-action skips the release-upload step and
           # just produces bundle artifacts — useful for testing a
           # branch build without polluting the Releases page.
+          tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
+          releaseBody: 'See the assets below for download links.'
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build Tauri app (unsigned)
+        if: steps.apple_cert.outputs.present != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
           tagName: ${{ github.event_name == 'push' && github.ref_name || '' }}
           releaseName: ${{ github.event_name == 'push' && format('LLM Wiki {0}', github.ref_name) || '' }}
           releaseBody: 'See the assets below for download links.'

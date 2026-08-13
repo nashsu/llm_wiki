@@ -1,10 +1,11 @@
-import { writeFile } from "@/commands/fs"
+import { copyFile, deleteFile, downloadMediaUrl, writeFile } from "@/commands/fs"
 import type { LlmConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import { useWikiStore } from "@/stores/wiki-store"
 import type { WikiProject } from "@/types/wiki"
 import { getHttpFetch } from "@/lib/tauri-fetch"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { enqueueSourceIngest, getUniqueDestPath } from "@/lib/source-lifecycle"
-import { normalizePath } from "@/lib/path-utils"
+import { getFileName, normalizePath } from "@/lib/path-utils"
 
 export const MAX_BATCH_URLS = 50
 const MAX_REDIRECTS = 10
@@ -166,6 +167,36 @@ export async function importSourceUrls(
 
   for (const url of urls) {
     try {
+      if (useWikiStore.getState().mediaIngestConfig.audioVideoEnabled) {
+        try {
+          // yt-dlp already wrote the audio to local disk, so this is a copy,
+          // not a second HTTP round-trip.
+          const downloadedPath = await downloadMediaUrl(url)
+          try {
+            const destPath = await getUniqueDestPath(sourceRoot, getFileName(downloadedPath))
+            await copyFile(downloadedPath, destPath)
+            importedPaths.push(destPath)
+            results.push({ url, path: destPath })
+            continue
+          } finally {
+            // The copy above leaves the yt-dlp download in the temp dir, which
+            // is never auto-cleared on Windows. Non-fatal: a failed cleanup
+            // must not mask the real error.
+            await deleteFile(downloadedPath).catch(() => {})
+          }
+        } catch (mediaErr) {
+          const message = mediaErr instanceof Error ? mediaErr.message : String(mediaErr)
+          if (!message.toLowerCase().startsWith("unsupported url")) {
+            // A real failure (network, private video, geo-block) — not a
+            // "this isn't a media link" signal. Report it and move to the
+            // next URL instead of silently falling through to a generic
+            // text fetch that will almost certainly also fail.
+            results.push({ url, error: message })
+            continue
+          }
+          // Not a media link: fall through to the text/HTML fetch below.
+        }
+      }
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 60_000)
       let response: Response

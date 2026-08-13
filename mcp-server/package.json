@@ -5,12 +5,14 @@
   "type": "module",
   "main": "dist/src/index.js",
   "bin": {
-    "llm-wiki-mcp": "dist/src/index.js"
+    "llm-wiki-mcp": "dist/src/index.js",
+    "llm-wiki-mcp-http": "dist/src/http-server.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/src/index.js",
+    "start:http": "node dist/src/http-server.js",
     "test": "npm run build && node --test dist/test/*.test.js"
   },
   "engines": {
@@ -23,9 +25,11 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
     "@types/node": "^20.0.0",
     "typescript": "^5.7.3"
   }

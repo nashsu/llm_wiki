@@ -4,6 +4,7 @@ import en from "./en.json"
 import it from "./it.json"
 import zh from "./zh.json"
 import ru from "./ru.json"
+import { detectSystemUiLanguage } from "@/lib/detect-system-language"
 
 i18n.use(initReactI18next).init({
   resources: {
@@ -12,7 +13,7 @@ i18n.use(initReactI18next).init({
     zh: { translation: zh },
     ru: { translation: ru },
   },
-  lng: "en",
+  lng: detectSystemUiLanguage(),
   fallbackLng: "en",
   interpolation: { escapeValue: false },
 })

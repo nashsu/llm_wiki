@@ -70,6 +70,12 @@ walkdir = "2"
 epub = "2.1.5"
 mobi = "0.8"
 html2text = { version = "0.17.1", default-features = false, features = ["xml"] }
+# Remote MCP bridge: when `node` isn't on PATH, download and extract an
+# official Node.js release into app_data_dir so the bridge works without
+# asking the user to install anything (see commands/remote_mcp.rs).
+# `zip` (Windows .zip) is already a dependency above (project archives).
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

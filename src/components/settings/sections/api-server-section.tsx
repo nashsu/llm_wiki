@@ -1,22 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Copy,
   Eye,
   EyeOff,
   ExternalLink,
+  Globe,
   RefreshCw,
   Server,
   ShieldAlert,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { openUrl } from "@tauri-apps/plugin-opener"
-import { apiServerStatus, mcpServerEntryPath } from "@/commands/fs"
+import {
+  apiServerStatus,
+  mcpServerEntryPath,
+  remoteMcpStart,
+  remoteMcpStatus,
+  remoteMcpStop,
+} from "@/commands/fs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { API_SERVER_BASE_URL, API_SERVER_HEALTH_URL } from "@/lib/api-server-constants"
 import { generateApiToken } from "@/lib/api-token"
-import { useWikiStore } from "@/stores/wiki-store"
+import { saveApiConfig } from "@/lib/project-store"
+import { useWikiStore, type ApiConfig } from "@/stores/wiki-store"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 
 interface Props {
@@ -60,12 +68,19 @@ export const API_ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: stri
 export function ApiServerSection({ draft, setDraft }: Props) {
   const { t } = useTranslation()
   const [showToken, setShowToken] = useState(false)
-  const [copiedField, setCopiedField] = useState<"token" | "curl" | "chat" | "mcp" | null>(null)
+  const [copiedField, setCopiedField] = useState<"token" | "curl" | "chat" | "mcp" | "remoteToken" | "remotePassword" | "remoteUrl" | null>(null)
   const [serverStatus, setServerStatus] = useState<string>("...")
   const [health, setHealth] = useState<ApiHealth | null>(null)
   const [mcpEntryPath, setMcpEntryPath] = useState<string | null>(null)
   const [mcpPathError, setMcpPathError] = useState<string | null>(null)
   const persistedApiConfig = useWikiStore((s) => s.apiConfig)
+  const [showRemoteToken, setShowRemoteToken] = useState(false)
+  const [showRemotePassword, setShowRemotePassword] = useState(false)
+  const [remoteMcpRunning, setRemoteMcpRunning] = useState(false)
+  const [remoteMcpPublicUrl, setRemoteMcpPublicUrl] = useState<string | null>(null)
+  const [remoteMcpBusy, setRemoteMcpBusy] = useState(false)
+  const [remoteMcpError, setRemoteMcpError] = useState<string | null>(null)
+  const remoteMcpPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -95,8 +110,23 @@ export function ApiServerSection({ draft, setDraft }: Props) {
         setMcpEntryPath(null)
         setMcpPathError(err instanceof Error ? err.message : String(err))
       })
+    remoteMcpStatus()
+      .then((status) => {
+        if (!alive) return
+        setRemoteMcpRunning(status.running)
+        setRemoteMcpPublicUrl(status.publicUrl)
+      })
+      .catch(() => {
+        // Remote MCP has never been started this session — not an error.
+      })
     return () => {
       alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (remoteMcpPollRef.current) clearInterval(remoteMcpPollRef.current)
     }
   }, [])
 
@@ -200,6 +230,146 @@ export function ApiServerSection({ draft, setDraft }: Props) {
       console.error("[api-settings] copy MCP config failed:", err)
     }
   }, [mcpEntryPath, sampleMcpConfig])
+
+  const handleGenerateRemoteToken = useCallback(() => {
+    setDraft("remoteMcpToken", generateApiToken())
+    setShowRemoteToken(true)
+  }, [setDraft])
+
+  const handleGenerateRemotePassword = useCallback(() => {
+    setDraft("remoteMcpApprovalPassword", generateApiToken())
+    setShowRemotePassword(true)
+  }, [setDraft])
+
+  const handleCopyRemoteToken = useCallback(async () => {
+    if (!draft.remoteMcpToken) return
+    await navigator.clipboard.writeText(draft.remoteMcpToken)
+    setCopiedField("remoteToken")
+    setTimeout(() => setCopiedField(null), 1500)
+  }, [draft.remoteMcpToken])
+
+  const handleCopyRemotePassword = useCallback(async () => {
+    if (!draft.remoteMcpApprovalPassword) return
+    await navigator.clipboard.writeText(draft.remoteMcpApprovalPassword)
+    setCopiedField("remotePassword")
+    setTimeout(() => setCopiedField(null), 1500)
+  }, [draft.remoteMcpApprovalPassword])
+
+  const handleCopyRemoteUrl = useCallback(async () => {
+    if (!remoteMcpPublicUrl) return
+    await navigator.clipboard.writeText(`${remoteMcpPublicUrl}/mcp`)
+    setCopiedField("remoteUrl")
+    setTimeout(() => setCopiedField(null), 1500)
+  }, [remoteMcpPublicUrl])
+
+  const pollRemoteMcpUrl = useCallback(() => {
+    if (remoteMcpPollRef.current) clearInterval(remoteMcpPollRef.current)
+    let elapsedMs = 0
+    remoteMcpPollRef.current = setInterval(() => {
+      elapsedMs += 1500
+      remoteMcpStatus()
+        .then((status) => {
+          setRemoteMcpRunning(status.running)
+          if (status.publicUrl) setRemoteMcpPublicUrl(status.publicUrl)
+          if (status.publicUrl || elapsedMs >= 20_000) {
+            if (remoteMcpPollRef.current) clearInterval(remoteMcpPollRef.current)
+          }
+        })
+        .catch(() => {
+          if (remoteMcpPollRef.current) clearInterval(remoteMcpPollRef.current)
+        })
+    }, 1500)
+  }, [])
+
+  // Persists straight to disk immediately (not gated behind the page's Save
+  // button, unlike the rest of this screen) — this is what makes
+  // autostart_if_enabled on the Rust side correct: it can trust
+  // app-state.json to already match whatever's actually running.
+  //
+  // Deliberately does NOT call the Zustand setApiConfig() setter here.
+  // settings-view.tsx has a resync effect that rebuilds the ENTIRE draft
+  // from the store whenever apiConfig changes (see the comment above it,
+  // "Resync draft from store if it changes out-of-band") — it already had
+  // to special-case uiLanguage/theme/zoomLevel to stop that from
+  // clobbering in-flight edits to those specific fields. Calling
+  // setApiConfig from here, outside the page's unified Save flow, would
+  // trigger that same resync and silently discard ANY other field the user
+  // has edited-but-not-saved elsewhere on this page (an LLM key just
+  // pasted, a MinerU token, etc.) — merged from a snapshot of the store
+  // that hasn't seen those edits. Writing only to disk avoids that; the
+  // in-memory store (and the "Save settings to apply changes" banner
+  // elsewhere on this page) simply catches up next time the user does a
+  // normal Save, which is harmless since draft.remoteMcp* is already kept
+  // correct locally via setDraft below.
+  const persistRemoteMcpConfig = useCallback(
+    async (patch: Partial<ApiConfig>) => {
+      const next: ApiConfig = { ...persistedApiConfig, ...patch }
+      await saveApiConfig(next)
+    },
+    [persistedApiConfig],
+  )
+
+  // The checkbox itself is the on/off control — no separate Start/Stop
+  // step and no need to hit the page-level Save button. Checking it
+  // starts the bridge (auto-generating the token/password if either is
+  // still empty) and persists immediately; unchecking stops it and
+  // persists immediately, so a relaunch resumes exactly this state.
+  const handleToggleRemoteMcp = useCallback(
+    async (checked: boolean) => {
+      setDraft("remoteMcpEnabled", checked)
+      setRemoteMcpError(null)
+      setRemoteMcpBusy(true)
+      try {
+        if (checked) {
+          const token = draft.remoteMcpToken.trim() || generateApiToken()
+          const password = draft.remoteMcpApprovalPassword.trim() || generateApiToken()
+          setDraft("remoteMcpToken", token)
+          setDraft("remoteMcpApprovalPassword", password)
+          await remoteMcpStart({
+            httpToken: token,
+            approvalPassword: password,
+            port: draft.remoteMcpPort,
+            publicHostname: draft.remoteMcpPublicHostname.trim() || undefined,
+            vaultRoot: draft.remoteMcpVaultRoot.trim() || undefined,
+            llmWikiApiToken: draft.apiAllowUnauthenticated ? undefined : draft.apiToken.trim() || undefined,
+          })
+          setRemoteMcpRunning(true)
+          pollRemoteMcpUrl()
+          await persistRemoteMcpConfig({
+            remoteMcpEnabled: true,
+            remoteMcpToken: token,
+            remoteMcpApprovalPassword: password,
+            remoteMcpPort: draft.remoteMcpPort,
+            remoteMcpPublicHostname: draft.remoteMcpPublicHostname.trim(),
+            remoteMcpVaultRoot: draft.remoteMcpVaultRoot.trim(),
+          })
+        } else {
+          await remoteMcpStop()
+          setRemoteMcpRunning(false)
+          setRemoteMcpPublicUrl(null)
+          if (remoteMcpPollRef.current) clearInterval(remoteMcpPollRef.current)
+          await persistRemoteMcpConfig({ remoteMcpEnabled: false })
+        }
+      } catch (err) {
+        setRemoteMcpError(err instanceof Error ? err.message : String(err))
+        setDraft("remoteMcpEnabled", !checked) // revert the checkbox — the action didn't actually happen
+      } finally {
+        setRemoteMcpBusy(false)
+      }
+    },
+    [
+      draft.apiAllowUnauthenticated,
+      draft.apiToken,
+      draft.remoteMcpApprovalPassword,
+      draft.remoteMcpPort,
+      draft.remoteMcpPublicHostname,
+      draft.remoteMcpToken,
+      draft.remoteMcpVaultRoot,
+      persistRemoteMcpConfig,
+      pollRemoteMcpUrl,
+      setDraft,
+    ],
+  )
 
   const handleOpenHealth = useCallback(() => {
     void openUrl(API_SERVER_HEALTH_URL).catch((err) => {
@@ -676,6 +846,236 @@ export function ApiServerSection({ draft, setDraft }: Props) {
               : sampleMcpConfig}
           </pre>
         </div>
+      </div>
+
+      {/* ── Remote MCP access ────────────────────────────────────── */}
+      <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={draft.remoteMcpEnabled}
+            onChange={(event) => void handleToggleRemoteMcp(event.target.checked)}
+            disabled={remoteMcpBusy}
+            className="mt-1 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              {t("settings.sections.apiServer.remoteMcpEnable", {
+                defaultValue: "Enable remote MCP access",
+              })}
+              {remoteMcpBusy && (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.remoteMcpEnableHint", {
+                defaultValue:
+                  "Runs a separate HTTP+OAuth bridge so agents outside this machine (ChatGPT, Codex, Claude.ai) can reach this project over the internet — unlike the local API above, which only Codex/Claude CLI on this machine can use. Starts and stops immediately with this checkbox, and resumes automatically the next time you open the app. If Node.js isn't found on your system, it's downloaded automatically the first time (one-off, a few dozen MB).",
+              })}
+            </p>
+          </div>
+        </label>
+
+        {(
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="remote-mcp-port" className="text-xs">
+                  {t("settings.sections.apiServer.remoteMcpPort", { defaultValue: "Local port" })}
+                </Label>
+                <Input
+                  id="remote-mcp-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={draft.remoteMcpPort}
+                  disabled={remoteMcpRunning}
+                  onChange={(event) => setDraft("remoteMcpPort", Number(event.target.value) || 8931)}
+                  className="font-mono"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="remote-mcp-hostname" className="text-xs">
+                  {t("settings.sections.apiServer.remoteMcpHostname", { defaultValue: "Your own domain (optional)" })}
+                </Label>
+                <Input
+                  id="remote-mcp-hostname"
+                  type="text"
+                  value={draft.remoteMcpPublicHostname}
+                  disabled={remoteMcpRunning}
+                  onChange={(event) => setDraft("remoteMcpPublicHostname", event.target.value)}
+                  placeholder={t("settings.sections.apiServer.remoteMcpHostnamePlaceholder", {
+                    defaultValue: "e.g. mcp.example.com — leave empty for an auto-generated link",
+                  })}
+                  className="font-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {t("settings.sections.apiServer.remoteMcpHostnameHint", {
+                defaultValue:
+                  "Empty = a Cloudflare Quick Tunnel generates a free https://…trycloudflare.com link automatically (changes every time you start it — fine for testing, not for a permanent integration). Set your own domain here only if you already run a reverse proxy/tunnel pointed at the port above.",
+              })}
+            </p>
+
+            <div className="space-y-1">
+              <Label htmlFor="remote-mcp-vault-root" className="text-xs">
+                {t("settings.sections.apiServer.remoteMcpVaultRoot", { defaultValue: "Linked vault folder (optional)" })}
+              </Label>
+              <Input
+                id="remote-mcp-vault-root"
+                type="text"
+                value={draft.remoteMcpVaultRoot}
+                disabled={remoteMcpRunning}
+                onChange={(event) => setDraft("remoteMcpVaultRoot", event.target.value)}
+                placeholder={t("settings.sections.apiServer.remoteMcpVaultRootPlaceholder", {
+                  defaultValue: "Absolute path to an Obsidian-style vault — leave empty to skip",
+                })}
+                className="font-mono"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                {t("settings.sections.apiServer.remoteMcpVaultRootHint", {
+                  defaultValue:
+                    "When set, the bridge also exposes vault_read_note / vault_list_notes / vault_search_notes / vault_write_note / vault_append_note, plus vault_get_conventions (reads the vault's own CLAUDE.md or README.md so the connecting agent learns the vault's writing rules before it writes anything).",
+                })}
+              </p>
+            </div>
+
+            {/* Token */}
+            <div className="space-y-1">
+              <Label htmlFor="remote-mcp-token" className="text-xs">
+                {t("settings.sections.apiServer.remoteMcpToken", { defaultValue: "Static API key" })}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="remote-mcp-token"
+                  type={showRemoteToken ? "text" : "password"}
+                  value={draft.remoteMcpToken}
+                  disabled={remoteMcpRunning}
+                  onChange={(event) => setDraft("remoteMcpToken", event.target.value)}
+                  placeholder={t("settings.sections.apiServer.remoteMcpTokenPlaceholder", {
+                    defaultValue: "For clients without OAuth support — click Generate",
+                  })}
+                  className="font-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button type="button" variant="outline" size="icon" onClick={() => setShowRemoteToken((v) => !v)}>
+                  {showRemoteToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+                <Button type="button" variant="outline" size="icon" onClick={handleCopyRemoteToken} disabled={!draft.remoteMcpToken}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={handleGenerateRemoteToken} disabled={remoteMcpRunning} className="gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t("settings.sections.apiServer.generate", { defaultValue: "Generate new token" })}
+              </Button>
+              {copiedField === "remoteToken" && (
+                <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+                  {t("settings.sections.apiServer.copied", { defaultValue: "Copied" })}
+                </span>
+              )}
+            </div>
+
+            {/* OAuth approval password */}
+            <div className="space-y-1">
+              <Label htmlFor="remote-mcp-password" className="text-xs">
+                {t("settings.sections.apiServer.remoteMcpPassword", { defaultValue: "OAuth approval password" })}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="remote-mcp-password"
+                  type={showRemotePassword ? "text" : "password"}
+                  value={draft.remoteMcpApprovalPassword}
+                  disabled={remoteMcpRunning}
+                  onChange={(event) => setDraft("remoteMcpApprovalPassword", event.target.value)}
+                  placeholder={t("settings.sections.apiServer.remoteMcpPasswordPlaceholder", {
+                    defaultValue: "Required for any client that self-registers via OAuth",
+                  })}
+                  className="font-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <Button type="button" variant="outline" size="icon" onClick={() => setShowRemotePassword((v) => !v)}>
+                  {showRemotePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+                <Button type="button" variant="outline" size="icon" onClick={handleCopyRemotePassword} disabled={!draft.remoteMcpApprovalPassword}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={handleGenerateRemotePassword} disabled={remoteMcpRunning} className="gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" />
+                {t("settings.sections.apiServer.generate", { defaultValue: "Generate new password" })}
+              </Button>
+              {copiedField === "remotePassword" && (
+                <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+                  {t("settings.sections.apiServer.copied", { defaultValue: "Copied" })}
+                </span>
+              )}
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                {t("settings.sections.apiServer.remoteMcpPasswordHint", {
+                  defaultValue:
+                    "Any MCP client can self-register (OAuth Dynamic Client Registration) — registering alone grants no access. This password is the actual gate: it's asked once, in a browser page, before a registered client gets a working token.",
+                })}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <span className={`text-xs font-mono ${remoteMcpRunning ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                {remoteMcpBusy
+                  ? t("settings.sections.apiServer.remoteMcpBusy", { defaultValue: "Working…" })
+                  : remoteMcpRunning
+                    ? t("settings.sections.apiServer.remoteMcpRunning", { defaultValue: "Running" })
+                    : t("settings.sections.apiServer.remoteMcpStopped", { defaultValue: "Stopped" })}
+              </span>
+            </div>
+
+            {remoteMcpError && (
+              <p className="text-xs leading-relaxed text-destructive">{remoteMcpError}</p>
+            )}
+
+            {remoteMcpRunning && (
+              <div className="rounded-md border border-border/50 bg-background/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">
+                    {t("settings.sections.apiServer.remoteMcpUrl", { defaultValue: "Connect at" })}
+                  </span>
+                  {remoteMcpPublicUrl && (
+                    <Button type="button" variant="outline" size="sm" onClick={handleCopyRemoteUrl} className="gap-1.5">
+                      <Copy className="h-3.5 w-3.5" />
+                      {copiedField === "remoteUrl"
+                        ? t("settings.sections.apiServer.copied", { defaultValue: "Copied" })
+                        : t("settings.sections.apiServer.copy", { defaultValue: "Copy" })}
+                    </Button>
+                  )}
+                </div>
+                <div className="mt-1 font-mono text-xs">
+                  {remoteMcpPublicUrl
+                    ? `${remoteMcpPublicUrl}/mcp`
+                    : t("settings.sections.apiServer.remoteMcpUrlPending", {
+                        defaultValue: "Waiting for the tunnel URL…",
+                      })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {t("settings.sections.apiServer.remoteMcpWarning", {
+                  defaultValue:
+                    "Anyone with the static API key, or anyone who completes the OAuth approval step, gets the same access as a local MCP client — including write access if a vault folder is linked. Treat both secrets like passwords.",
+                })}
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

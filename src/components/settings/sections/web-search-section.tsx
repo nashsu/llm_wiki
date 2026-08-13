@@ -36,6 +36,13 @@ const SEARCH_PROVIDERS = [
     configKind: "key",
   },
   {
+    id: "exa",
+    label: "Exa",
+    hint: "AI-native semantic search for Deep Research — generous free tier (exa.ai)",
+    keyPlaceholder: "Enter your Exa API key (dashboard.exa.ai)",
+    configKind: "key",
+  },
+  {
     id: "serpapi",
     label: "SerpApi",
     hint: "Google, Bing, DuckDuckGo, Scholar, News, Images, Videos, YouTube",

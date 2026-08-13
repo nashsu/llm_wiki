@@ -4,11 +4,21 @@
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
   "common": {
-    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭",
-    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+    "retry": "重试",
+    "cancel": "取消",
+    "ignore": "忽略",
+    "close": "关闭",
+    "dismiss": "关闭",
+    "loading": "加载中……",
+    "optional": "可选"
   },
-  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
-  "errors": { "generic": "出现错误" },
+  "layout": {
+    "showSidebar": "展开侧栏",
+    "hideSidebar": "收起侧栏"
+  },
+  "errors": {
+    "generic": "出现错误"
+  },
   "mermaid": {
     "renderFailed": "无法渲染 Mermaid 图表",
     "showDetails": "查看解析器详情",
@@ -47,10 +57,16 @@
     "rawSources": "原始资料",
     "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
     "typeLabels": {
-      "overview": "概览", "entity": "实体", "concept": "概念",
-      "source": "来源", "synthesis": "综合", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论",
-      "comparison": "比较", "query": "查询"
+      "overview": "概览",
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "synthesis": "综合",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "comparison": "比较",
+      "query": "查询"
     }
   },
   "editor": {
@@ -92,7 +108,10 @@
       "createFailed": "无法创建缺失页面。",
       "emptyDraftError": "模型返回了空白草稿。"
     },
-    "frontmatter": { "origin": "来源", "more": "更多" },
+    "frontmatter": {
+      "origin": "来源",
+      "more": "更多"
+    },
     "rawMarkdownEditor": "Markdown 源码编辑器"
   },
   "research": {
@@ -445,6 +464,7 @@
       "sourceWatch": "资料文件夹监控",
       "scheduledImport": "定时导入",
       "mineru": "MinerU PDF",
+      "mediaIngest": "媒体导入",
       "apiServer": "API + MCP",
       "output": "输出偏好",
       "interface": "界面",
@@ -491,7 +511,7 @@
           "activeDefault": "使用当前活跃模型",
           "hint": "可为交互聊天和文档摄取分别选择模型；未指定时继续使用当前活跃模型。"
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "为当前项目使用独立模型",
           "provider": "项目 Provider",
           "selectProvider": "选择 Provider",
@@ -624,7 +644,7 @@
       },
       "multimodal": {
         "title": "图片描述",
-        "description": "导入时调用视觉模型为 PDF / DOCX / PPTX 中提取的图片生成事实性描述。描述会写入源 markdown 的 alt 属性，语义搜索按图片内容查询时就靠它命中。按图片字节 SHA-256 缓存，跨文档重复出现的 logo / 图表模板只调用一次。",
+        "description": "导入时调用视觉模型为 PDF / DOCX / PPTX 中提取的图片、以及通过「媒体内容导入」导入的独立图片文件生成事实性描述——这个总开关同时控制两者。描述会写入源 markdown 的 alt 属性，语义搜索按图片内容查询时就靠它命中。按图片字节 SHA-256 缓存，跨文档重复出现的 logo / 图表模板只调用一次。",
         "enableLabel": "导入时生成图片描述",
         "enableHint": "关：ingest 时把图片引用从内容里剥掉 —— wiki 页面里不会出现图片，搜索也不会返回。（图片仍会落到 wiki/media/，原始文档预览能看到。）开：每张新图调用视觉模型生成事实性 caption（按 hash 缓存），写入 wiki 页面 alt 属性。",
         "stateOn": "已开启",
@@ -729,7 +749,7 @@
         "ingestConcurrencyDescription": "同时准备这些数量的原始资料，Wiki 写入仍会保持顺序。更高的数值会占用更多模型容量和内存。",
         "noProject": "打开项目后才能修改这个项目级设置。",
         "fileTypes": "允许的文件类型",
-        "fileTypesDescription": "常见文档类型默认开启。媒体、二进制、源码和配置类格式默认关闭，需要时再手动选择。",
+        "fileTypesDescription": "常见文档类型默认开启。音频/视频和图片由「媒体导入」设置单独控制，不受下方勾选框影响。二进制、源码和配置类格式默认关闭，需要时再手动选择。",
         "exclusions": "排除规则和限制",
         "maxSize": "自动提取的最大文件大小（MB）",
         "excludeDirs": "排除的文件夹",
@@ -794,6 +814,26 @@
         "mcpUsage": "MCP 使用说明",
         "mcpUsageHint": "先执行一次 `npm run mcp:build`，然后让 MCP 客户端运行下面的服务配置。除非启用了无认证访问，否则需要设置 LLM_WIKI_API_TOKEN。",
         "mcpPathUnavailable": "没有找到 MCP 服务入口。请在 LLM Wiki 仓库中先执行 `npm run mcp:build`，然后重新打开设置。",
+        "remoteMcpEnable": "启用远程 MCP 访问",
+        "remoteMcpEnableHint": "启动一个独立的 HTTP+OAuth 桥接服务，让本机以外的智能体（ChatGPT、Codex、Claude.ai）通过互联网访问此项目——不同于上面的本地 API，后者只能被本机上的 Codex/Claude CLI 使用。需要在 PATH 中有 Node.js。",
+        "remoteMcpPort": "本地端口",
+        "remoteMcpHostname": "自有域名（可选）",
+        "remoteMcpHostnamePlaceholder": "例如 mcp.example.com — 留空则自动生成链接",
+        "remoteMcpHostnameHint": "留空 = 由 Cloudflare Quick Tunnel 自动生成一个免费的 https://…trycloudflare.com 链接（每次启动都会变化——适合测试，不适合永久集成）。只有在你已经有反向代理/隧道指向上面端口的情况下，才在此填写自有域名。",
+        "remoteMcpVaultRoot": "关联的 vault 目录（可选）",
+        "remoteMcpVaultRootPlaceholder": "Obsidian 风格 vault 的绝对路径 — 留空则跳过",
+        "remoteMcpVaultRootHint": "设置后，桥接服务还会暴露 vault_read_note / vault_list_notes / vault_search_notes / vault_write_note / vault_append_note，以及 vault_get_conventions（读取该 vault 自身的 CLAUDE.md 或 README.md，让连接的智能体在写入前先了解该 vault 的写作规则）。",
+        "remoteMcpToken": "静态 API 密钥",
+        "remoteMcpTokenPlaceholder": "供不支持 OAuth 的客户端使用 — 点击生成",
+        "remoteMcpPassword": "OAuth 批准密码",
+        "remoteMcpPasswordPlaceholder": "任何通过 OAuth 自行注册的客户端都需要此密码",
+        "remoteMcpPasswordHint": "任何 MCP 客户端都可以自行注册（OAuth 动态客户端注册）——仅注册本身不会授予访问权限。这个密码才是真正的关卡：在浏览器页面中询问一次，之后已注册的客户端才能获得可用的令牌。",
+        "remoteMcpBusy": "处理中…",
+        "remoteMcpRunning": "运行中",
+        "remoteMcpStopped": "已停止",
+        "remoteMcpUrl": "连接地址",
+        "remoteMcpUrlPending": "正在等待隧道链接…",
+        "remoteMcpWarning": "任何拥有静态 API 密钥、或完成 OAuth 批准流程的人，都会获得与本地 MCP 客户端相同的访问权限——如果关联了 vault 目录，还包括写入权限。请将这两个密钥都当作密码对待。",
         "token": "访问令牌",
         "tokenHint": "通过 `Authorization: Bearer <token>` 或 `X-LLM-Wiki-Token: <token>` 发送。启用无认证访问后，读取类接口可以省略 token，但 Agent 对话和取消接口始终需要 token。环境变量 LLM_WIKI_API_TOKEN 优先生效。",
         "tokenPlaceholder": "粘贴已有 token，或点击生成",
@@ -977,6 +1017,23 @@
         "testing": "测试中...",
         "testSuccess": "连接成功",
         "testFailed": "测试失败"
+      },
+      "mediaIngest": {
+        "title": "媒体内容导入",
+        "description": "转写音视频来源并为图片生成描述，让它们成为可检索的 wiki 内容。",
+        "audioVideoEnabled": "启用音视频转写",
+        "audioVideoDescription": "本地视频/音频文件和视频链接（YouTube 以及 yt-dlp 支持的其他站点）会先提取音轨再转写。默认关闭——在启用之前，mp4/音频文件和链接不会被导入。",
+        "provider": "转写服务",
+        "providerGroq": "Groq（Whisper large-v3-turbo）——需要 API Token",
+        "providerCustom": "自定义地址——任意 OpenAI-compatible 转写 API",
+        "groqToken": "Groq API Token",
+        "groqTokenHint": "从 console.groq.com 获取您的 Token",
+        "customEndpoint": "接口地址",
+        "customEndpointHint": "填写 OpenAI-compatible /audio/transcriptions 接口的基础地址。",
+        "customToken": "API Token（可选）",
+        "customTokenHint": "使用 Authorization: Bearer 请求头发送",
+        "imagesEnabled": "启用图片描述",
+        "imagesDescription": "独立的图片文件（png/jpg/...）会使用「LLM 模型」中已配置的模型生成描述，无需单独的服务商。所选模型必须支持图片输入。必须同时启用此开关和单独的「图片描述」设置分类：只打开此开关时，图片文件会被接受为来源，但不会生成任何描述。"
       }
     }
   },
@@ -1031,12 +1088,25 @@
     "fileSync": "文件同步",
     "rescan": "重新扫描",
     "rescanTitle": "扫描项目文件的外部变更",
-    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "changeKinds": {
+      "created": "已创建",
+      "modified": "已修改",
+      "deleted": "已删除"
+    },
     "fileTypes": {
-      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
-      "synthesis": "综合", "comparison": "比较", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论", "overview": "概览",
-      "index": "索引", "log": "日志", "file": "文件"
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "query": "查询",
+      "synthesis": "综合",
+      "comparison": "比较",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "overview": "概览",
+      "index": "索引",
+      "log": "日志",
+      "file": "文件"
     }
   },
   "fileTree": {

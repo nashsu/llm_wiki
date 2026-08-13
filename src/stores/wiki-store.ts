@@ -53,6 +53,7 @@ interface LlmConfig {
 
 export type SearchProvider =
   | "tavily"
+  | "exa"
   | "serpapi"
   | "searxng"
   | "ollama"
@@ -219,6 +220,14 @@ interface ScheduledImportConfig {
  *   - `token` is the bearer secret. Empty + auth required =
  *     every non-/health request returns 401. The env var
  *     `LLM_WIKI_API_TOKEN` overrides this field at the backend.
+ *
+ * Remote MCP access (`remoteMcp*`) is a separate, optional capability: a
+ * spawned Node child process (mcp-server/dist/src/http-server.js, see
+ * src-tauri/src/commands/remote_mcp.rs) exposing this project — and
+ * optionally a linked Company Brain vault — over MCP Streamable HTTP to
+ * agents outside this machine (ChatGPT, Codex, Claude.ai), via a static
+ * token or self-registering OAuth. Unlike the local API above, this is
+ * never auto-started; the user starts/stops it explicitly per session.
  */
 interface ApiConfig {
   enabled: boolean
@@ -226,6 +235,12 @@ interface ApiConfig {
   allowLanAccess: boolean
   mcpEnabled: boolean
   token: string
+  remoteMcpEnabled: boolean
+  remoteMcpPort: number
+  remoteMcpToken: string
+  remoteMcpApprovalPassword: string
+  remoteMcpPublicHostname: string
+  remoteMcpVaultRoot: string
 }
 
 export type CloseBehavior = "ask" | "minimize" | "exit"
@@ -301,6 +316,23 @@ export interface MineruConfig {
   localServerUrl?: string
   token: string
   modelVersion: MineruModelVersion
+}
+
+export type MediaTranscribeBackend = "groq" | "custom"
+
+export interface MediaIngestConfig {
+  /** Audio/video files and links get transcribed via ffmpeg + a transcription API. */
+  audioVideoEnabled: boolean
+  /** "groq" uses Groq's Whisper API; "custom" uses audioVideoCustomEndpoint. */
+  audioVideoBackend: MediaTranscribeBackend
+  /** Groq API token (used when backend === "groq"). */
+  audioVideoToken: string
+  /** Base URL of an OpenAI-compatible audio transcription endpoint (used when backend === "custom"). */
+  audioVideoCustomEndpoint: string
+  /** Bearer token for the custom endpoint (used when backend === "custom"). */
+  audioVideoCustomToken: string
+  /** Standalone image files get captioned/OCR'd via the app's configured LLM — no separate provider. */
+  imagesEnabled: boolean
 }
 
 interface MultimodalConfig {
@@ -431,6 +463,7 @@ interface WikiState {
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   mineruConfig: MineruConfig
+  mediaIngestConfig: MediaIngestConfig
   apiConfig: ApiConfig
   generalConfig: GeneralConfig
   graphUiState: GraphUiState
@@ -462,6 +495,7 @@ interface WikiState {
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setMineruConfig: (config: MineruConfig) => void
+  setMediaIngestConfig: (config: MediaIngestConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setGeneralConfig: (config: GeneralConfig) => void
   setGraphUiState: (state: GraphUiState | ((current: GraphUiState) => GraphUiState)) => void
@@ -636,6 +670,14 @@ export const useWikiStore = create<WikiState>((set) => ({
     token: "",
     modelVersion: "vlm",
   },
+  mediaIngestConfig: {
+    audioVideoEnabled: false,
+    audioVideoBackend: "groq",
+    audioVideoToken: "",
+    audioVideoCustomEndpoint: "",
+    audioVideoCustomToken: "",
+    imagesEnabled: false,
+  },
 
   // Default `enabled: true` preserves the pre-toggle behavior: anyone
   // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
@@ -648,6 +690,12 @@ export const useWikiStore = create<WikiState>((set) => ({
     allowLanAccess: false,
     mcpEnabled: false,
     token: "",
+    remoteMcpEnabled: false,
+    remoteMcpPort: 8931,
+    remoteMcpToken: "",
+    remoteMcpApprovalPassword: "",
+    remoteMcpPublicHostname: "",
+    remoteMcpVaultRoot: "",
   },
 
   generalConfig: {
@@ -672,6 +720,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
+  setMediaIngestConfig: (mediaIngestConfig) => set({ mediaIngestConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setGeneralConfig: (generalConfig) => set({ generalConfig }),
   setGraphUiState: (graphUiState) =>

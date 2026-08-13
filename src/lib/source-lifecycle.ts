@@ -41,6 +41,7 @@ import type { SourceWatchConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { preprocessSourceFiles } from "@/lib/source-preprocess"
 import { moveParsedMarkdown, removeParsedMarkdown } from "@/lib/parsed-source-output"
+import { AUDIO_VIDEO_SOURCE_EXTENSIONS, IMAGE_SOURCE_EXTENSIONS } from "@/lib/media-extensions"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "md",
@@ -75,6 +76,8 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "epub",
   "mobi",
   "org",
+  ...AUDIO_VIDEO_SOURCE_EXTENSIONS,
+  ...IMAGE_SOURCE_EXTENSIONS,
 ])
 
 function flattenFiles(nodes: FileNode[]): FileNode[] {
@@ -235,7 +238,14 @@ export function isIngestableSourcePath(path: string): boolean {
   const fileName = normalized.split("/").pop() ?? ""
   if (!fileName || fileName.startsWith(".")) return false
   const ext = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
-  return ext ? INGESTABLE_SOURCE_EXTENSIONS.has(ext) : false
+  if (!ext || !INGESTABLE_SOURCE_EXTENSIONS.has(ext)) return false
+  if (AUDIO_VIDEO_SOURCE_EXTENSIONS.has(ext)) {
+    return useWikiStore.getState().mediaIngestConfig.audioVideoEnabled
+  }
+  if (IMAGE_SOURCE_EXTENSIONS.has(ext)) {
+    return useWikiStore.getState().mediaIngestConfig.imagesEnabled
+  }
+  return true
 }
 
 export function folderContextForSourcePath(sourcePath: string, sourcesRoot = "raw/sources"): string {
@@ -359,7 +369,11 @@ export async function importSourceFolder(
     if (isSensitiveConfigSourceFile(file.path)) {
       continue
     }
-    let allowed = isPathAllowedBySourceWatch(relPath, cfg)
+    // isPathAllowedBySourceWatch always allows media extensions (the watcher
+    // only enqueues), so the media toggles must be applied here too: this
+    // function copies, and un-ingestable media would be dead weight in
+    // raw/sources.
+    let allowed = isIngestableSourcePath(file.path) && isPathAllowedBySourceWatch(relPath, cfg)
     if (allowed) {
       try {
         allowed = await getFileSize(file.path) <= maxBytes

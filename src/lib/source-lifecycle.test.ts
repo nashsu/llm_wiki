@@ -29,6 +29,7 @@ vi.mock("@/lib/ingest-queue", () => ({
   enqueueBatch: mocks.enqueueBatch,
 }))
 
+import { useWikiStore } from "@/stores/wiki-store"
 import {
   enqueueSourceIngest,
   folderContextForSourcePath,
@@ -47,6 +48,14 @@ beforeEach(() => {
   mocks.listDirectory.mockResolvedValue([])
   mocks.preprocessFile.mockResolvedValue("")
   mocks.enqueueBatch.mockResolvedValue(["task"])
+  useWikiStore.getState().setMediaIngestConfig({
+    audioVideoEnabled: false,
+    audioVideoBackend: "groq",
+    audioVideoToken: "",
+    audioVideoCustomEndpoint: "",
+    audioVideoCustomToken: "",
+    imagesEnabled: false,
+  })
 })
 
 describe("source-lifecycle path helpers", () => {
@@ -130,6 +139,97 @@ describe("source-lifecycle path helpers", () => {
         sourcePath: "/project/raw/sources/imported/keep.md",
         folderContext: "imported",
       },
+    ])
+  })
+
+  it("does not copy media files during folder import while the media toggles are off", async () => {
+    useWikiStore.getState().setMediaIngestConfig({
+      audioVideoEnabled: false,
+      audioVideoBackend: "groq",
+      audioVideoToken: "",
+      audioVideoCustomEndpoint: "",
+      audioVideoCustomToken: "",
+      imagesEnabled: false,
+    })
+    mocks.listDirectory.mockResolvedValue([
+      { name: "keep.md", path: "/external/imported/keep.md", is_dir: false },
+      { name: "photo.png", path: "/external/imported/photo.png", is_dir: false },
+      { name: "talk.mp4", path: "/external/imported/talk.mp4", is_dir: false },
+    ])
+
+    const copied = await importSourceFolder(
+      { id: "p1", name: "Project", path: "/project" },
+      "/external/imported",
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+      {
+        enabled: true,
+        autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
+        ingestConcurrency: 1,
+        includeExtensions: ["md"],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
+    )
+
+    expect(copied).toEqual(["/project/raw/sources/imported/keep.md"])
+    expect(mocks.copyFile).toHaveBeenCalledTimes(1)
+    expect(mocks.copyFile).not.toHaveBeenCalledWith("/external/imported/photo.png", expect.anything())
+    expect(mocks.copyFile).not.toHaveBeenCalledWith("/external/imported/talk.mp4", expect.anything())
+  })
+
+  it("copies media files during folder import once the media toggles are on", async () => {
+    useWikiStore.getState().setMediaIngestConfig({
+      audioVideoEnabled: true,
+      audioVideoBackend: "groq",
+      audioVideoToken: "",
+      audioVideoCustomEndpoint: "",
+      audioVideoCustomToken: "",
+      imagesEnabled: true,
+    })
+    mocks.listDirectory.mockResolvedValue([
+      { name: "photo.png", path: "/external/imported/photo.png", is_dir: false },
+      { name: "talk.mp4", path: "/external/imported/talk.mp4", is_dir: false },
+    ])
+
+    const copied = await importSourceFolder(
+      { id: "p1", name: "Project", path: "/project" },
+      "/external/imported",
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+      {
+        enabled: true,
+        autoIngest: true,
+        persistExtractedMarkdown: false,
+        parsingConcurrency: 2,
+        ingestConcurrency: 1,
+        includeExtensions: ["md"],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
+    )
+
+    expect(copied).toEqual([
+      "/project/raw/sources/imported/photo.png",
+      "/project/raw/sources/imported/talk.mp4",
     ])
   })
 
