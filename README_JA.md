@@ -453,6 +453,7 @@ LLM Wiki は組み込みのローカル HTTP API（`http://127.0.0.1:19828` で�
 - `POST /api/v1/projects/{id}/chat` — 非ストリーミングの Rust バックエンド Agent chat エンドポイント。assistant message、references、usage、tool events を返し、Wiki / Source / Web / AnyTXT 検索に対応します。`mode: "deep"` では証拠収集範囲を広げます
 - `GET /api/v1/projects/{id}/graph` — wikilinks の知識グラフ
 - `POST /api/v1/projects/{id}/sources/rescan` — バックエンドの再スキャンをトリガー
+- `POST /api/v1/projects/{id}/pages/embed` — 外部で作成・更新された単一の `wiki/*.md` ページを、ベクトル DB 全体を再構築せずにインデックス化
 
 **設定 → API + MCP** から API を有効化し、Token を発行できます。必要に応じて、ローカルからの認証なしアクセスも切り替えられます。
 

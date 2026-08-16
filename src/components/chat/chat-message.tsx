@@ -10,6 +10,7 @@ import {
   Bot, User, FileText, BookmarkPlus, ChevronDown, ChevronRight, RefreshCw, Copy, Check,
   Users, Lightbulb, BookOpen, HelpCircle, GitMerge, BarChart3, Layout, Globe,
   TrendingUp, Target, Sparkles, Image as ImageIcon, FileSearch, Terminal,
+  ListTree,
 } from "lucide-react"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -78,6 +79,7 @@ interface ChatMessageProps {
   isLastAssistant?: boolean
   onRegenerate?: () => void
   onOpenReferencePreview?: (preview: ChatReferencePreview, relatedPreviews?: ChatReferencePreview[]) => void
+  onOpenContextDetails?: (references: MessageReference[]) => void
   onApproveShellCommand?: (command: string, assistantMessageId: string) => void
   onSubmitUserInput?: (request: ChatUserInputRequest, answers: Record<string, unknown>) => boolean
 }
@@ -96,6 +98,7 @@ function ChatMessageImpl({
   isLastAssistant,
   onRegenerate,
   onOpenReferencePreview,
+  onOpenContextDetails,
   onApproveShellCommand,
   onSubmitUserInput,
 }: ChatMessageProps) {
@@ -181,6 +184,7 @@ function ChatMessageImpl({
             content={message.content}
             savedReferences={message.references}
             onOpenReferencePreview={onOpenReferencePreview}
+            onOpenContextDetails={onOpenContextDetails}
           />
         )}
         {isAssistant && message.userInputRequest && (
@@ -749,10 +753,12 @@ function CitedReferencesPanel({
   content,
   savedReferences,
   onOpenReferencePreview,
+  onOpenContextDetails,
 }: {
   content: string
   savedReferences?: CitedPage[]
   onOpenReferencePreview?: (preview: ChatReferencePreview, relatedPreviews?: ChatReferencePreview[]) => void
+  onOpenContextDetails?: (references: MessageReference[]) => void
 }) {
   const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
@@ -780,6 +786,9 @@ function CitedReferencesPanel({
     }
     return extractCitedPages(content)
   }, [content, savedReferences])
+  const contextReferences = savedReferences && savedReferences.length > 0
+    ? savedReferences
+    : citedPages
 
   // Async-fetch each cited page's content once and extract image
   // info: count + first URL. Done in parallel; failures are
@@ -1110,19 +1119,32 @@ function CitedReferencesPanel({
       )}
       {citedPages.length > 0 && (
         <div className="rounded-md border border-border/60 bg-muted/30 text-xs mb-1">
-          <button
-            type="button"
-            onClick={() => hasMore && setExpanded(!expanded)}
-            className="flex w-full items-center gap-1.5 px-2 py-1 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <FileText className="h-3 w-3 shrink-0" />
-            <span className="font-medium">{t("chat.references")} ({citedPages.length})</span>
-            {hasMore && (
-              expanded
-                ? <ChevronDown className="h-3 w-3 ml-auto" />
-                : <ChevronRight className="h-3 w-3 ml-auto" />
+          <div className="flex items-center px-2 py-1 text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => hasMore && setExpanded(!expanded)}
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-foreground transition-colors"
+            >
+              <FileText className="h-3 w-3 shrink-0" />
+              <span className="font-medium">{t("chat.references")} ({citedPages.length})</span>
+              {hasMore && (
+                expanded
+                  ? <ChevronDown className="h-3 w-3 ml-auto" />
+                  : <ChevronRight className="h-3 w-3 ml-auto" />
+              )}
+            </button>
+            {onOpenContextDetails && (
+              <button
+                type="button"
+                onClick={() => onOpenContextDetails(contextReferences)}
+                className="ml-2 inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-foreground"
+                title={t("chat.contextDetails")}
+              >
+                <ListTree className="h-3 w-3" />
+                {t("chat.details")}
+              </button>
             )}
-          </button>
+          </div>
           <div className="px-2 pb-1.5">
         <ReferenceKnowledgeGraph references={citedPages} onOpenReference={openCitedPage} />
         {visiblePages.map((page, i) => {

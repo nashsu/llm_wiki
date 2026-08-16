@@ -23,6 +23,7 @@ import {
   isSafeIngestPath,
   stampGeneratedFrontmatterDates,
   stampGeneratedLogDate,
+  buildAnalysisPrompt,
   buildGenerationPrompt,
   sourceSummaryMediaRefsForExternalMarkdown,
   buildDeterministicIngestLog,
@@ -596,6 +597,16 @@ describe("generated ingest dates", () => {
     expect(prompt).toContain("Use this exact date")
     expect(prompt).not.toContain("created: 2026-04-29")
   })
+
+  it("instructs the model to preserve structured source data verbatim", () => {
+    const prompt = buildGenerationPrompt("", "", "", "schema.sql")
+    const analysisPrompt = buildAnalysisPrompt("", "", "CREATE TABLE users (id BIGINT PRIMARY KEY);")
+
+    expect(prompt).toContain("Preserve structured source data verbatim")
+    expect(prompt).toContain("DDL")
+    expect(analysisPrompt).toContain("Preserve structured source data verbatim")
+    expect(analysisPrompt).toContain("constraints, keys, or indexes")
+  })
 })
 
 describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
@@ -619,6 +630,76 @@ describe("rewriteIngestPathFromTitleForTargetLanguage", () => {
         "Chinese",
       ),
     ).toBe("wiki/concepts/反硝化除磷技术.md")
+  })
+
+  it("renames CJK pages under the default auto language by detecting the content language", () => {
+    const content = [
+      "---",
+      "type: concept",
+      "title: 反硝化除磷技术",
+      "created: 2026-06-18",
+      "---",
+      "",
+      "# 反硝化除磷技术",
+      "",
+      "这是一段中文正文，用于检测语言。",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/denitrifying-phosphorus-removal.md",
+        content,
+        "auto",
+      ),
+    ).toBe("wiki/concepts/反硝化除磷技术.md")
+  })
+
+  it("leaves English pages untouched under the default auto language", () => {
+    const content = [
+      "---",
+      "type: concept",
+      "title: Denitrifying phosphorus removal",
+      "---",
+      "",
+      "# Denitrifying phosphorus removal",
+      "",
+      "This is an English body used for language detection.",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/denitrifying-phosphorus-removal.md",
+        content,
+        "auto",
+      ),
+    ).toBe("wiki/concepts/denitrifying-phosphorus-removal.md")
+  })
+
+  it("uses a CJK title under auto when an ASCII structured body dominates the page", () => {
+    const sql = Array.from(
+      { length: 30 },
+      (_, index) => `CREATE TABLE audit_${index} (id BIGINT PRIMARY KEY, event_type VARCHAR(64));`,
+    ).join("\n")
+    const content = [
+      "---",
+      "type: concept",
+      "title: 审计数据模型",
+      "---",
+      "",
+      "# 审计数据模型",
+      "",
+      "```sql",
+      sql,
+      "```",
+    ].join("\n")
+
+    expect(
+      rewriteIngestPathFromTitleForTargetLanguage(
+        "wiki/concepts/audit-data-model.md",
+        content,
+        "auto",
+      ),
+    ).toBe("wiki/concepts/审计数据模型.md")
   })
 
   it("does not rewrite source summaries or aggregate pages", () => {

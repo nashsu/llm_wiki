@@ -67,6 +67,54 @@ test("search posts JSON body to current project", async () => {
   assert.equal(results.results[0]?.vectorScore, 0.9)
 })
 
+test("embedPage posts a project-relative wiki path", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:19828/api/v1/projects/project-a/pages/embed")
+    assert.equal(init?.method, "POST")
+    assert.deepEqual(JSON.parse(String(init?.body)), { path: "wiki/ideas/page.md", force: true })
+    return new Response(JSON.stringify({
+      ok: true,
+      result: {
+        path: "wiki/ideas/page.md",
+        pageId: "page",
+        revision: "sha256:abc",
+        chunks: 2,
+        vectorsWritten: 2,
+        status: "indexed",
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })
+  }
+  const client = new LlmWikiApiClient({ fetchImpl })
+  assert.deepEqual(await client.embedPage("wiki/ideas/page.md", "project-a", true), {
+    path: "wiki/ideas/page.md",
+    pageId: "page",
+    revision: "sha256:abc",
+    chunks: 2,
+    vectorsWritten: 2,
+    status: "indexed",
+  })
+})
+
+test("embedPage rejects malformed success payloads", async () => {
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+    ok: true,
+    result: {
+      path: "wiki/page.md",
+      pageId: "page",
+      revision: "sha256:abc",
+      chunks: "2",
+      vectorsWritten: 2,
+      status: "indexed",
+    },
+  }), { status: 200, headers: { "Content-Type": "application/json" } })
+  const client = new LlmWikiApiClient({ fetchImpl })
+
+  await assert.rejects(
+    () => client.embedPage("wiki/page.md"),
+    /page embedding result\.chunks: expected finite number/,
+  )
+})
+
 test("chat posts agent request and parses references", async () => {
   let url = ""
   let body = ""

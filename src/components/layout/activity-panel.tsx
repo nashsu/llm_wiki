@@ -6,6 +6,7 @@ import {
   ArrowUp, ArrowDown,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { useActivityStore, type ActivityItem } from "@/stores/activity-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useFileSyncStore } from "@/stores/file-sync-store"
@@ -78,6 +79,7 @@ function getFileTypeInfo(path: string): { icon: typeof FileText; typeKey: string
 
 export function ActivityPanel() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const items = useActivityStore((s) => s.items)
   const clearDone = useActivityStore((s) => s.clearDone)
   // Pin in-progress tasks to the top so ongoing work stays visible.
@@ -176,13 +178,16 @@ export function ActivityPanel() {
     cancelTask(taskId)
   }, [project])
 
-  const handleCancelAll = useCallback(() => {
+  const handleCancelAll = useCallback(async () => {
     if (!project) return
     const activeCount = queueSummary.pending + queueSummary.processing
     if (activeCount === 0) return
-    if (!window.confirm(t("activity.cancelAllConfirm", { count: activeCount }))) return
+    if (!(await appDialog.confirm({
+      message: t("activity.cancelAllConfirm", { count: activeCount }),
+      variant: "destructive",
+    }))) return
     cancelAllTasks()
-  }, [project, queueSummary.pending, queueSummary.processing, t])
+  }, [appDialog, project, queueSummary.pending, queueSummary.processing, t])
 
   const handleTogglePause = useCallback(() => {
     if (!project) return

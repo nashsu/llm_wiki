@@ -124,7 +124,30 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
           <p className="text-xs leading-relaxed text-muted-foreground">
             {t("settings.sections.sourceWatch.parsingConcurrencyDescription", {
               defaultValue:
-                "Parse up to this many imported documents at once before sequential Wiki generation. PDF parsing remains internally serialized for safety.",
+                "Parse up to this many imported documents at once. PDF parsing remains internally serialized for safety.",
+            })}
+          </p>
+        </label>
+
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">
+            {t("settings.sections.sourceWatch.ingestConcurrency", {
+              defaultValue: "Concurrent ingest tasks",
+            })}
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={5}
+            value={config.ingestConcurrency}
+            onChange={(event) => updateConfig({ ingestConcurrency: Number(event.target.value) || 1 })}
+            disabled={!projectReady}
+            className="w-24 rounded-md border border-input bg-background px-2 py-1 text-sm"
+          />
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("settings.sections.sourceWatch.ingestConcurrencyDescription", {
+              defaultValue:
+                "Prepare this many sources in parallel. Wiki writes remain ordered. Higher values use more LLM capacity and memory.",
             })}
           </p>
         </label>

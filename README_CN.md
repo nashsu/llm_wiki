@@ -444,6 +444,7 @@ LLM Wiki 内置一个本地 HTTP API（监听 `http://127.0.0.1:19828`，Token �
 - `POST /api/v1/projects/{id}/chat` —— 非流式 Rust 后端 Agent 聊天接口，返回助手消息、引用、用量和工具事件；支持 Wiki/Source/Web/AnyTXT 检索，`mode: "deep"` 会扩展证据收集范围
 - `GET /api/v1/projects/{id}/graph` —— Wikilinks 知识图谱
 - `POST /api/v1/projects/{id}/sources/rescan` —— 触发后端重新扫描
+- `POST /api/v1/projects/{id}/pages/embed` —— 为外部创建或更新的单个 `wiki/*.md` 页面建立向量索引，无需重建整个向量数据库
 
 在 **设置 → API + MCP** 中开启 API、生成 Token，并按需选择是否允许本机无鉴权访问。
 

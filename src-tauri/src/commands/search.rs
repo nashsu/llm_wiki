@@ -98,6 +98,10 @@ pub struct SearchEmbeddingConfig {
     /// by the client.
     #[serde(default)]
     pub extra_headers: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub max_chunk_chars: Option<usize>,
+    #[serde(default)]
+    pub overlap_chunk_chars: Option<usize>,
 }
 
 #[tauri::command]
@@ -1059,7 +1063,7 @@ pub fn extract_image_refs(content: &str) -> Vec<SearchImageRef> {
     out
 }
 
-async fn fetch_embedding_with_retry(
+pub(crate) async fn fetch_embedding_with_retry(
     text: &str,
     cfg: &SearchEmbeddingConfig,
     max_retries: usize,
@@ -1093,7 +1097,7 @@ async fn fetch_embedding_with_retry(
     }
 }
 
-async fn fetch_embedding_batch(
+pub(crate) async fn fetch_embedding_batch(
     texts: &[String],
     cfg: &SearchEmbeddingConfig,
 ) -> Result<Vec<Vec<f32>>, String> {
@@ -1157,6 +1161,10 @@ async fn fetch_embedding_batch(
         )
     })?;
     parse_embedding_batch_values(&data, texts.len())
+}
+
+pub(crate) fn supports_embedding_batch(cfg: &SearchEmbeddingConfig) -> bool {
+    !is_google_embedding_config(cfg) && !is_doubao_multimodal_embedding_config(cfg)
 }
 
 fn parse_embedding_batch_values(data: &Value, expected: usize) -> Result<Vec<Vec<f32>>, String> {
@@ -1734,6 +1742,8 @@ mod tests {
             model: "gemini-embedding-001".to_string(),
             output_dimensionality: Some(768.0),
             extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
         };
 
         let endpoint = google_embedding_endpoint(&cfg);
@@ -1756,6 +1766,8 @@ mod tests {
             model: "doubao-embedding-text-240715".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1782,6 +1794,8 @@ mod tests {
             model: "doubao-embedding-vision".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
         };
 
         assert_eq!(
@@ -1805,6 +1819,8 @@ mod tests {
             model: "doubao-embedding-text-240715".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
         };
         assert_eq!(
             volcengine_embedding_endpoint(&cfg),
@@ -1840,6 +1856,8 @@ mod tests {
             model: "doubao-embedding-vision".to_string(),
             output_dimensionality: None,
             extra_headers: None,
+            max_chunk_chars: None,
+            overlap_chunk_chars: None,
         };
 
         assert!(is_doubao_multimodal_embedding_config(&cfg));

@@ -9,6 +9,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { listDirectory, openPathInProject, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import { rescanProjectFileSync } from "@/lib/project-file-sync"
@@ -33,6 +34,7 @@ type SourceIngestStatus = "not-ingested" | "ingested" | IngestTask["status"]
 
 export function SourcesView() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -268,10 +270,10 @@ export function SourcesView() {
       await openPathInProject(project.path, node.path)
     } catch (err) {
       console.error("Failed to open source externally:", err)
-      window.alert(t("sources.openExternalFailed", {
+      await appDialog.alert({ message: t("sources.openExternalFailed", {
         name: node.name,
         error: String(err),
-      }))
+      }) })
     }
   }
 
@@ -299,7 +301,7 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete source:", err)
-      window.alert(`Failed to delete: ${err}`)
+      await appDialog.alert({ message: `Failed to delete: ${err}` })
     }
   }
 
@@ -335,7 +337,7 @@ export function SourcesView() {
       }
     } catch (err) {
       console.error("Failed to delete folder:", err)
-      window.alert(`Failed to delete folder: ${err}`)
+      await appDialog.alert({ message: `Failed to delete folder: ${err}` })
     }
   }
 

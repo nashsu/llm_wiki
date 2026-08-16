@@ -10,12 +10,17 @@ import {
 import type { FileNode, WikiProject } from "@/types/wiki"
 import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { useWikiStore } from "@/stores/wiki-store"
-import type { ScheduledImportConfig } from "@/stores/wiki-store"
+import type { ScheduledImportConfig, SourceWatchConfig } from "@/stores/wiki-store"
 import {
   loadScheduledImportConfig,
+  loadSourceWatchConfig,
   saveScheduledImportConfig,
   getRecentProjects,
 } from "@/lib/project-store"
+import {
+  isPathAllowedBySourceWatch,
+  normalizeSourceWatchConfig,
+} from "@/lib/source-watch-config"
 import {
   deleteSourceFile,
   enqueueSourceIngest,
@@ -44,6 +49,7 @@ interface ImportDbStore {
 type ScanOptions = {
   runId?: number
   allowInactive?: boolean
+  sourceWatchConfig?: SourceWatchConfig
 }
 
 const EMPTY_DB: ImportDb = {
@@ -449,6 +455,13 @@ export async function scanAndImport(
     }
 
     const tree = await listDirectory(importRoot)
+    const sourceWatchConfig = normalizeSourceWatchConfig(
+      options.sourceWatchConfig ??
+        (isCurrentProject(project.id)
+          ? useWikiStore.getState().sourceWatchConfig
+          : await loadSourceWatchConfig(project.id)),
+    )
+    const maxFileSizeBytes = sourceWatchConfig.maxFileSizeMb * 1024 * 1024
     const db = await loadImportDb(projectPath, importRoot)
     const nextDb: ImportDb = { files: {}, lastScan: Date.now() }
     const changedFiles: Array<{ key: string; md5: string; destPath: string }> = []
@@ -460,6 +473,7 @@ export async function scanAndImport(
         if (
           shouldSkipScheduledImportFile(projectPath, sourcePath) ||
           shouldSkipScheduledImportConfigFile(sourcePath) ||
+          !isPathAllowedBySourceWatch(sourcePath, sourceWatchConfig) ||
           !isIngestableSourcePath(sourcePath)
         ) {
           continue
@@ -472,9 +486,10 @@ export async function scanAndImport(
         }
 
         const size = await getFileSize(sourcePath)
-        if (size > MAX_SCHEDULED_IMPORT_BYTES) {
+        if (size > Math.min(MAX_SCHEDULED_IMPORT_BYTES, maxFileSizeBytes)) {
+          const limitMb = Math.min(100, sourceWatchConfig.maxFileSizeMb)
           console.warn(
-            `[scheduled-import] skipping ${sourcePath}: ${(size / 1024 / 1024).toFixed(1)} MB exceeds 100 MB limit`,
+            `[scheduled-import] skipping ${sourcePath}: ${(size / 1024 / 1024).toFixed(1)} MB exceeds ${limitMb} MB limit`,
           )
           continue
         }

@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { convertFileSrc, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText } from "lucide-react"
+import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText, ListTree, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePreview } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
@@ -24,6 +24,7 @@ import { parseFrontmatter } from "@/lib/frontmatter"
 import { getFileCategory, getFileExtension, isTextReadable } from "@/lib/file-types"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { summarizeAgentFileChange } from "@/lib/agent-file-activity"
+import { ReferenceKnowledgeGraph } from "@/components/chat/reference-knowledge-graph"
 
 type InternalChatSendOptions = ChatSendOptions & {
   suppressUserMessage?: boolean
@@ -83,6 +84,24 @@ interface AvailableAgentSkill {
   name: string
   description?: string
   source: string
+}
+
+type ContextDetailCategory = "wiki" | "graph" | "web" | "anytxt" | "workspace" | "external"
+
+interface ContextDetailItem extends MessageReference {
+  content: string
+  charCount: number
+  category: ContextDetailCategory
+}
+
+function contextDetailCategory(reference: MessageReference): ContextDetailCategory {
+  const source = reference.source?.trim().toLowerCase()
+  if (source === "graph") return "graph"
+  if (source === "anytxt") return "anytxt"
+  if (source === "web") return "web"
+  if (reference.kind === "workspace") return "workspace"
+  if (reference.kind === "wiki") return "wiki"
+  return "external"
 }
 
 // Store the page mapping from the last query so SourceFilesBar can show which pages were cited
@@ -496,12 +515,21 @@ export function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const [agentEvents, setAgentEvents] = useState<ChatAgentEvent[]>([])
   const [referencePreview, setReferencePreview] = useState<ChatReferencePreview | null>(null)
+  const [contextDetailReferences, setContextDetailReferences] = useState<MessageReference[] | null>(null)
   const [generatedOutputPreviews, setGeneratedOutputPreviews] = useState<ChatReferencePreview[]>([])
   const [generatedOutputPreview, setGeneratedOutputPreview] = useState<ChatReferencePreview | null>(null)
   const [referencePreviewWidth, setReferencePreviewWidth] = useState(420)
+  const handleOpenContextDetails = useCallback((references: MessageReference[]) => {
+    setReferencePreview(null)
+    setGeneratedOutputPreviews([])
+    setContextDetailReferences(references)
+  }, [])
   const [availableSkills, setAvailableSkills] = useState<AvailableAgentSkill[]>([])
   const [approvingShellMessageId, setApprovingShellMessageId] = useState<string | null>(null)
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
+  useEffect(() => {
+    setContextDetailReferences(null)
+  }, [activeConversationId])
   const buildGeneratedOutputPreview = useCallback(async (ref: MessageReference): Promise<ChatReferencePreview | null> => {
     if (!project) return null
     const outputPath = projectAbsolutePath(project.path, ref.path)
@@ -642,6 +670,7 @@ export function ChatPanel() {
   }, [generatedOutputPreviews, project])
 
   const handleOpenReferencePreview = useCallback((preview: ChatReferencePreview, relatedPreviews?: ChatReferencePreview[]) => {
+    setContextDetailReferences(null)
     const isGeneratedOutput = preview.source === "Workspace"
       || normalizePath(preview.path).split("/").includes("agent-workspace")
     if (!isGeneratedOutput) {
@@ -1411,6 +1440,7 @@ export function ChatPanel() {
                         isLastAssistant={isLastAssistant && !activeStreaming}
                         onRegenerate={isLastAssistant ? handleRegenerate : undefined}
                         onOpenReferencePreview={handleOpenReferencePreview}
+                        onOpenContextDetails={handleOpenContextDetails}
                         onApproveShellCommand={
                           isLastAssistant && approvingShellMessageId !== msg.id
                             ? handleApproveShellCommand
@@ -1475,6 +1505,15 @@ export function ChatPanel() {
           width={referencePreviewWidth}
           onResize={setReferencePreviewWidth}
           onClose={() => setReferencePreview(null)}
+        />
+      )}
+      {contextDetailReferences && project && (
+        <ContextDetailsPanel
+          references={contextDetailReferences}
+          projectPath={project.path}
+          width={referencePreviewWidth}
+          onResize={setReferencePreviewWidth}
+          onClose={() => setContextDetailReferences(null)}
         />
       )}
       {generatedOutputPreviews.length > 0 && (
@@ -1704,6 +1743,205 @@ function ChatReferencePreviewPanel({
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <ChatReferencePreviewContent preview={preview} />
+      </div>
+    </aside>
+  )
+}
+
+function ContextDetailsPanel({
+  references,
+  projectPath,
+  width,
+  onResize,
+  onClose,
+}: {
+  references: MessageReference[]
+  projectPath: string
+  width: number
+  onResize: (width: number) => void
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const [items, setItems] = useState<ContextDetailItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const dragStartRef = useRef<{ x: number; width: number } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all(references.map(async (reference): Promise<ContextDetailItem> => {
+      let content = reference.snippet?.trim() ?? ""
+      // The persisted snippet is the exact retrieved fragment. Prefer it over
+      // re-reading a file that may have changed since the answer was produced.
+      if (reference.kind !== "external" && !content) {
+        const normalizedProject = normalizePath(projectPath)
+        const directPath = isAbsolutePath(reference.path)
+          ? normalizePath(reference.path)
+          : projectAbsolutePath(normalizedProject, reference.path)
+        const stem = getFileName(reference.path.replace(/^wiki\//, "").replace(/\.md$/i, ""))
+        const candidates = reference.kind === "workspace"
+          ? [directPath]
+          : [
+              directPath,
+              `${normalizedProject}/wiki/entities/${stem}.md`,
+              `${normalizedProject}/wiki/concepts/${stem}.md`,
+              `${normalizedProject}/wiki/sources/${stem}.md`,
+              `${normalizedProject}/wiki/queries/${stem}.md`,
+              `${normalizedProject}/wiki/synthesis/${stem}.md`,
+              `${normalizedProject}/wiki/comparisons/${stem}.md`,
+              `${normalizedProject}/wiki/${stem}.md`,
+            ]
+        for (const candidate of candidates) {
+          try {
+            content = await readFile(candidate)
+            break
+          } catch {
+            // Try resolver-compatible fallback paths.
+          }
+        }
+      }
+      const category = contextDetailCategory(reference)
+      if (category === "graph" && reference.graphRelations?.length) {
+        content = [
+          content,
+          content ? "" : undefined,
+          ...reference.graphRelations.map((relation) => `→ ${relation}`),
+        ].filter((line): line is string => typeof line === "string").join("\n")
+      }
+      return {
+        ...reference,
+        content,
+        charCount: content.length,
+        category,
+      }
+    })).then((loaded) => {
+      if (cancelled) return
+      const graphItems: ContextDetailItem[] = loaded.flatMap((item) => {
+        if (item.category === "graph" || !item.graphRelations?.length) return []
+        const content = item.graphRelations.join("\n")
+        return [{
+          title: item.title,
+          path: item.path,
+          kind: "wiki",
+          source: "Graph",
+          graphRelations: item.graphRelations,
+          content,
+          charCount: content.length,
+          category: "graph" as const,
+        }]
+      })
+      setItems([...loaded, ...graphItems])
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [projectPath, references])
+
+  const groups = useMemo(() => {
+    const result = new Map<ContextDetailCategory, ContextDetailItem[]>()
+    for (const item of items) {
+      result.set(item.category, [...(result.get(item.category) ?? []), item])
+    }
+    const labels: Record<ContextDetailCategory, string> = {
+      wiki: t("chat.contextCategoryWiki"),
+      graph: t("chat.contextCategoryGraph"),
+      web: t("chat.contextCategoryWeb"),
+      anytxt: t("chat.contextCategoryAnyTxt"),
+      workspace: t("chat.contextCategoryWorkspace"),
+      external: t("chat.contextCategoryExternal"),
+    }
+    const order: ContextDetailCategory[] = ["wiki", "graph", "web", "anytxt", "workspace", "external"]
+    return order.flatMap((category) => {
+      const group = result.get(category)
+      return group ? [[category, labels[category], group] as const] : []
+    })
+  }, [items, t])
+  const totalChars = items.reduce((sum, item) => sum + item.charCount, 0)
+  const estimatedTokens = Math.ceil(totalChars / 4)
+
+  const startResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragStartRef.current = { x: event.clientX, width }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }, [width])
+  const resize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current) return
+    onResize(clampReferencePreviewWidth(dragStartRef.current.width + dragStartRef.current.x - event.clientX))
+  }, [onResize])
+  const stopResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    dragStartRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }, [])
+
+  return (
+    <aside className="relative flex h-full min-w-[320px] max-w-[56%] shrink-0 flex-col border-l bg-background" style={{ width }}>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("chat.resizeReferencePreview")}
+        className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-primary/15"
+        onPointerDown={startResize}
+        onPointerMove={resize}
+        onPointerUp={stopResize}
+        onPointerCancel={stopResize}
+      />
+      <div className="flex min-h-10 items-center gap-2 border-b px-3 py-2">
+        <ListTree className="h-4 w-4 text-primary" />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium">{t("chat.contextDetails")}</div>
+          <div className="text-[10px] text-muted-foreground">{t("chat.contextDetailsScope")}</div>
+        </div>
+        <button type="button" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={t("chat.closeReferencePreview")}>
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="grid grid-cols-3 border-b bg-muted/20 text-center text-[11px]">
+        <div className="border-r px-2 py-2"><strong className="block text-sm text-foreground">{items.length}</strong>{t("chat.contextItems")}</div>
+        <div className="border-r px-2 py-2"><strong className="block text-sm text-foreground">{totalChars.toLocaleString()}</strong>{t("chat.contextCharacters")}</div>
+        <div className="px-2 py-2"><strong className="block text-sm text-foreground">~{estimatedTokens.toLocaleString()}</strong>{t("chat.contextTokens")}</div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {loading ? (
+          <div className="p-4 text-xs text-muted-foreground">{t("common.loading")}</div>
+        ) : groups.map(([category, label, group]) => (
+          <section key={category} className="border-b">
+            <div className="sticky top-0 z-[1] flex items-center justify-between border-b bg-muted/70 px-3 py-2 text-[11px] font-semibold backdrop-blur">
+              <span>{label}</span>
+              <span className="rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">{group.length}</span>
+            </div>
+            {category === "graph" && (
+              <div className="px-3 pt-2">
+                <ReferenceKnowledgeGraph references={group} />
+              </div>
+            )}
+            {group.map((item, index) => {
+              const key = `${item.kind ?? "wiki"}:${item.path}:${index}`
+              const isExpanded = Boolean(expanded[key])
+              return (
+                <div key={key} className="border-t border-border/50 px-3 py-2">
+                  <button type="button" className="flex w-full items-start gap-2 text-left" onClick={() => setExpanded((value) => ({ ...value, [key]: !isExpanded }))}>
+                    {isExpanded ? <ChevronDown className="mt-0.5 h-3.5 w-3.5" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{item.title}</span>
+                      <span className="block truncate text-[10px] text-muted-foreground" title={item.url ?? item.path}>{item.url ?? item.path}</span>
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {item.category === "graph"
+                        ? t("chat.contextRelations", { count: item.graphRelations?.length ?? 0 })
+                        : item.charCount > 0
+                          ? t("chat.contextCharacterCount", { count: item.charCount.toLocaleString() })
+                          : t("chat.contextNotRecorded")}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words border-l-2 border-primary/30 pl-3 text-[11px] leading-5 text-foreground/80">{item.content || t("chat.contextContentUnavailable")}</pre>
+                  )}
+                </div>
+              )
+            })}
+          </section>
+        ))}
       </div>
     </aside>
   )

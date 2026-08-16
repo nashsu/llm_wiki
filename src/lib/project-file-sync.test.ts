@@ -469,6 +469,7 @@ describe("project file sync", () => {
       autoIngest: true,
       persistExtractedMarkdown: false,
       parsingConcurrency: 2,
+      ingestConcurrency: 1,
       includeExtensions: ["md", "xml"],
       excludeExtensions: [],
       excludeDirs: [],

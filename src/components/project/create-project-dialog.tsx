@@ -141,92 +141,86 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
-        <DialogHeader>
-          <DialogTitle className="px-6 pt-6">{t("project.createTitle")}</DialogTitle>
+      <DialogContent className="grid max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-lg grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)] sm:w-full sm:max-w-lg">
+        <DialogHeader className="shrink-0 border-b px-4 py-3 pr-12 sm:px-6 sm:py-4">
+          <DialogTitle>{t("project.createTitle")}</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-4 overflow-y-auto min-h-0 px-6 py-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="name">
-              {t("project.name")} <span className="text-destructive">{t("project.requiredMarker")}</span>
-            </Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => {
-                markEdited()
-                setName(e.target.value)
-              }}
-              placeholder={t("project.namePlaceholder")}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="language">
-              {t("project.aiOutputLanguage")} <span className="text-destructive">{t("project.requiredMarker")}</span>
-            </Label>
-            <select
-              id="language"
-              value={language}
-              onChange={(e) => {
-                markEdited()
-                setLanguage(e.target.value)
-              }}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="" disabled>
-                {t("project.pickLanguage")}
-              </option>
-              {/*
-                * "auto" is intentionally filtered out at project
-                * creation time. Auto-detect is a fine post-hoc
-                * setting (Settings → Output) for users who later
-                * decide they want it, but at create time we force
-                * an explicit commitment so the project never starts
-                * in the implicit-detect mode that was the source
-                * of "wiki content showed up in a language I didn't
-                * expect" surprises.
-                */}
-              {OUTPUT_LANGUAGE_OPTIONS.filter((l) => l.value !== "auto").map((l) => (
-                <option key={l.value} value={l.value}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {t("project.aiOutputLanguageHint")}
-            </p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="path">
-              {t("project.parentDir")} <span className="text-destructive">{t("project.requiredMarker")}</span>
-            </Label>
-            <div className="flex gap-2">
+        <div className="min-h-0 overscroll-contain overflow-y-auto px-4 py-4 [scrollbar-gutter:stable] sm:px-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="name">
+                {t("project.name")} <span className="text-destructive">{t("project.requiredMarker")}</span>
+              </Label>
               <Input
-                id="path"
-                value={path}
+                id="name"
+                value={name}
                 onChange={(e) => {
                   markEdited()
-                  setPath(e.target.value)
+                  setName(e.target.value)
                 }}
-                placeholder={t("project.parentDirPlaceholder")}
-                className="flex-1"
+                placeholder={t("project.namePlaceholder")}
               />
-              <Button variant="outline" size="icon" onClick={handleBrowse} type="button">
-                <FolderOpen className="h-4 w-4" />
-              </Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="language">
+                {t("project.aiOutputLanguage")} <span className="text-destructive">{t("project.requiredMarker")}</span>
+              </Label>
+              <select
+                id="language"
+                value={language}
+                onChange={(e) => {
+                  markEdited()
+                  setLanguage(e.target.value)
+                }}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="" disabled>
+                  {t("project.pickLanguage")}
+                </option>
+                {OUTPUT_LANGUAGE_OPTIONS.filter((l) => l.value !== "auto").map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {t("project.aiOutputLanguageHint")}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="path">
+                {t("project.parentDir")} <span className="text-destructive">{t("project.requiredMarker")}</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="path"
+                  value={path}
+                  onChange={(e) => {
+                    markEdited()
+                    setPath(e.target.value)
+                  }}
+                  placeholder={t("project.parentDirPlaceholder")}
+                  className="min-w-0 flex-1"
+                />
+                <Button variant="outline" size="icon" onClick={handleBrowse} type="button">
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>{t("project.template")}</Label>
+              <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
             </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label>{t("project.template")}</Label>
-            <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
-          </div>
         </div>
-        <DialogFooter className="mx-0 mb-0 flex-col border-t bg-background/95 px-6 py-4 sm:flex-row sm:items-center">
-          <div className="min-h-5 flex-1 text-left text-sm text-destructive">
+        <DialogFooter className="mx-0 mb-0 shrink-0 flex-col gap-2 rounded-none border-t bg-background px-4 py-3 sm:flex-row sm:items-center sm:px-6">
+          <div className="min-h-5 min-w-0 flex-1 break-words text-left text-xs text-destructive sm:text-sm">
             {formStatus.footerError || (formStatus.footerMessageKey ? t(formStatus.footerMessageKey) : "")}
           </div>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>{t("project.cancel")}</Button>
-          <Button onClick={handleCreate} disabled={creating || !formStatus.canCreate}>{creating ? t("project.creating") : t("project.create")}</Button>
+          <div className="flex shrink-0 justify-end gap-2">
+            <Button variant="outline" onClick={() => handleOpenChange(false)}>{t("project.cancel")}</Button>
+            <Button onClick={handleCreate} disabled={creating || !formStatus.canCreate}>{creating ? t("project.creating") : t("project.create")}</Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

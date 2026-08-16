@@ -6,7 +6,7 @@ import type { MessageReference } from "@/stores/chat-store"
 
 interface ReferenceKnowledgeGraphProps {
   references: MessageReference[]
-  onOpenReference: (reference: MessageReference) => void
+  onOpenReference?: (reference: MessageReference) => void
 }
 
 interface ReferenceGraphData {
@@ -89,7 +89,7 @@ function ReferenceGraphEvents({ data, onOpenReference }: ReferenceKnowledgeGraph
       },
       clickNode: ({ node }) => {
         const reference = referencesByNode.get(node)
-        if (reference) onOpenReference(reference)
+        if (reference) onOpenReference?.(reference)
       },
     })
   }, [onOpenReference, referencesByNode, registerEvents, sigma])
@@ -133,7 +133,9 @@ export function ReferenceKnowledgeGraph({ references, onOpenReference }: Referen
         }}
       >
         <ReferenceGraphLoader data={data} />
-        <ReferenceGraphEvents data={data} references={references} onOpenReference={onOpenReference} />
+        {onOpenReference && (
+          <ReferenceGraphEvents data={data} references={references} onOpenReference={onOpenReference} />
+        )}
       </SigmaContainer>
     </div>
   )

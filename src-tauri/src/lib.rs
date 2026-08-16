@@ -627,6 +627,8 @@ pub fn run() {
             commands::file_history::list_file_history,
             commands::file_history::restore_file_history,
             commands::file_history::get_file_history_stats,
+            commands::file_history::get_file_history_settings,
+            commands::file_history::set_file_history_settings,
             commands::file_history::clear_file_history,
             commands::fs::list_directory,
             commands::fs::copy_file,

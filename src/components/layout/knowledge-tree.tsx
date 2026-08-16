@@ -13,6 +13,7 @@ import { cascadeDeleteWikiPagesWithRefs } from "@/lib/wiki-page-delete"
 import { inferWikiTypeFromPath, wikiTypeLabel } from "@/lib/wiki-page-types"
 import { filterRawSourceTree } from "@/lib/source-filter"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 interface WikiPageInfo {
   path: string
@@ -41,6 +42,7 @@ function typeConfig(type: string): { icon: typeof FileText; label: string; color
 
 export function KnowledgeTree() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
@@ -117,12 +119,12 @@ export function KnowledgeTree() {
         if (selectedFile === pagePath) setSelectedFile(null)
       } catch (err) {
         console.error("[KnowledgeTree] delete failed:", err)
-        window.alert(`Failed to delete: ${err}`)
+        await appDialog.alert({ message: `Failed to delete: ${err}` })
       } finally {
         setDeletingPath(null)
       }
     },
-    [project, armedPath, loadPages, selectedFile, setSelectedFile],
+    [appDialog, project, armedPath, loadPages, selectedFile, setSelectedFile],
   )
 
   if (!project) {

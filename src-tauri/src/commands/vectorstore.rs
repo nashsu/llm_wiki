@@ -1,5 +1,6 @@
 use arrow_array::{
-    ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StringArray, UInt32Array,
+    ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator, StringArray,
+    UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use chrono::Duration;
@@ -375,7 +376,7 @@ pub async fn vector_count(project_path: String) -> Result<usize, String> {
 // plus exposes the chunk metadata for a future "matched in X section" UI.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn validate_page_id_for_v2(page_id: &str) -> Result<(), String> {
+pub(crate) fn validate_page_id_for_v2(page_id: &str) -> Result<(), String> {
     validate_page_id_common(page_id)
 }
 
@@ -464,66 +465,121 @@ pub async fn vector_upsert_chunks(
     chunks: Vec<ChunkUpsertInput>,
 ) -> Result<(), String> {
     run_guarded_async("vector_upsert_chunks", async move {
-        validate_page_id_for_v2(&page_id)?;
-        let lock = vectorstore_v2_lock(&project_path);
-        let _guard = lock.write().await;
-
-        if chunks.is_empty() {
-            return Ok(());
-        }
-
-        let dim = chunks[0].embedding.len() as i32;
-        if dim == 0 {
-            return Err("Chunk #0 has empty embedding".to_string());
-        }
-
-        let db = connect(&db_path(&project_path))
-            .execute()
-            .await
-            .map_err(|e| format!("DB connect error: {e}"))?;
-
-        let schema = make_schema_v2(dim);
-        let batch = make_batch_v2(schema.clone(), &page_id, &chunks, dim)?;
-        let data = vec![batch];
-
-        let tables = db
-            .table_names()
-            .execute()
-            .await
-            .map_err(|e| format!("List tables error: {e}"))?;
-
-        if tables.contains(&TABLE_V2.to_string()) {
-            let table = db
-                .open_table(TABLE_V2)
-                .execute()
-                .await
-                .map_err(|e| format!("Open table error: {e}"))?;
-
-            table
-                .delete(&format!("page_id = '{}'", page_id))
-                .await
-                .map_err(|e| {
-                    format!(
-                        "Delete existing chunks before upsert failed for page '{}': {}",
-                        page_id, e
-                    )
-                })?;
-
-            table
-                .add(data)
-                .execute()
-                .await
-                .map_err(|e| format!("Add error: {e}"))?;
-        } else {
-            db.create_table(TABLE_V2, data)
-                .execute()
-                .await
-                .map_err(|e| format!("Create table error: {e}"))?;
-        }
-
-        Ok(())
+        vector_upsert_chunks_inner(&project_path, &page_id, chunks, None).await
     })
     .await
+}
+
+pub(crate) async fn vector_upsert_chunks_with_revision(
+    project_path: &str,
+    page_id: &str,
+    chunks: Vec<ChunkUpsertInput>,
+    fingerprint: &str,
+) -> Result<(), String> {
+    vector_upsert_chunks_inner(project_path, page_id, chunks, Some(fingerprint)).await
+}
+
+async fn vector_upsert_chunks_inner(
+    project_path: &str,
+    page_id: &str,
+    chunks: Vec<ChunkUpsertInput>,
+    revision: Option<&str>,
+) -> Result<(), String> {
+    validate_page_id_for_v2(&page_id)?;
+    let lock = vectorstore_v2_lock(project_path);
+    let _guard = lock.write().await;
+
+    if chunks.is_empty() {
+        return Ok(());
+    }
+
+    let dim = chunks[0].embedding.len() as i32;
+    if dim == 0 {
+        return Err("Chunk #0 has empty embedding".to_string());
+    }
+
+    let db = connect(&db_path(project_path))
+        .execute()
+        .await
+        .map_err(|e| format!("DB connect error: {e}"))?;
+
+    let schema = make_schema_v2(dim);
+    let batch = make_batch_v2(schema.clone(), &page_id, &chunks, dim)?;
+    let tables = db
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| format!("List tables error: {e}"))?;
+
+    if tables.contains(&TABLE_V2.to_string()) {
+        let table = db
+            .open_table(TABLE_V2)
+            .execute()
+            .await
+            .map_err(|e| format!("Open table error: {e}"))?;
+
+        let data = RecordBatchIterator::new(vec![Ok(batch)], schema);
+        let mut merge = table.merge_insert(&["chunk_id"]);
+        merge
+            .when_matched_update_all(None)
+            .when_not_matched_insert_all()
+            .when_not_matched_by_source_delete(Some(format!("page_id = '{}'", page_id)));
+        merge
+            .execute(Box::new(data))
+            .await
+            .map_err(|e| format!("Atomic page upsert failed: {e}"))?;
+    } else {
+        db.create_table(TABLE_V2, vec![batch])
+            .execute()
+            .await
+            .map_err(|e| format!("Create table error: {e}"))?;
+    }
+
+    if let Some(fingerprint) = revision {
+        if let Err(err) = super::page_embedding::save_revision(project_path, page_id, fingerprint) {
+            let _ = super::page_embedding::invalidate_page_revision(project_path, page_id);
+            eprintln!("[page-embedding] failed to save revision metadata: {err}");
+        }
+    } else {
+        let _ = super::page_embedding::invalidate_page_revision(project_path, page_id);
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn vector_page_revision_match(
+    project_path: &str,
+    page_id: &str,
+    fingerprint: &str,
+) -> Result<Option<usize>, String> {
+    validate_page_id_for_v2(page_id)?;
+    let lock = vectorstore_v2_lock(project_path);
+    let _guard = lock.read().await;
+    if super::page_embedding::load_revision(project_path, page_id).as_deref() != Some(fingerprint) {
+        return Ok(None);
+    }
+
+    let db = connect(&db_path(project_path))
+        .execute()
+        .await
+        .map_err(|e| format!("DB connect error: {e}"))?;
+    let tables = db
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| format!("List tables error: {e}"))?;
+    if !tables.contains(&TABLE_V2.to_string()) {
+        return Ok(None);
+    }
+    let count = db
+        .open_table(TABLE_V2)
+        .execute()
+        .await
+        .map_err(|e| format!("Open table error: {e}"))?
+        .count_rows(Some(format!("page_id = '{}'", page_id)))
+        .await
+        .map_err(|e| format!("Count page chunks error: {e}"))?;
+    Ok((count > 0).then_some(count))
 }
 
 /// Top-K chunk search. Returns every matching chunk's metadata + score

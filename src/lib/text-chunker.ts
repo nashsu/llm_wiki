@@ -1,6 +1,11 @@
 /**
  * Markdown-aware recursive text chunker for embedding pipelines.
  *
+ * The local API has a separate Rust implementation in
+ * `src-tauri/src/commands/page_embedding.rs`. Keep heading, frontmatter,
+ * fenced-block, table, overlap, and Unicode behavior aligned when changing
+ * either implementation.
+ *
  * Design constraints (enforced by tests in text-chunker.test.ts):
  *
  *   1. Each chunk carries a `headingPath` breadcrumb ("## Intro > ### Usage")

@@ -36,6 +36,7 @@ const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 const RATE_LIMIT_MAX_REQUESTS: usize = 120;
 const MAX_IN_FLIGHT_REQUESTS: usize = 64;
 const MAX_IN_FLIGHT_CHAT_STREAMS: usize = 8;
+const MAX_IN_FLIGHT_PAGE_EMBEDS: usize = 4;
 const SSE_QUEUE_CAPACITY: usize = 64;
 const SSE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -43,6 +44,7 @@ const SSE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 static API_STATUS: AtomicU8 = AtomicU8::new(0);
 static IN_FLIGHT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static IN_FLIGHT_CHAT_STREAMS: AtomicUsize = AtomicUsize::new(0);
+static IN_FLIGHT_PAGE_EMBEDS: AtomicUsize = AtomicUsize::new(0);
 static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
 
@@ -323,7 +325,7 @@ fn handle_request(
         // retry instantly the way 401 would.
         return err(503, "API server is disabled in Settings → API Server");
     }
-    if is_agent_chat_request(&method, &path) && !is_token_authorized(app, query, headers) {
+    if is_token_required_request(&method, &path) && !is_token_authorized(app, query, headers) {
         return err(401, "Unauthorized");
     }
     if !is_authorized(app, query, headers) {
@@ -356,6 +358,9 @@ fn handle_request(
         (&Method::Get, ["projects", project_id, "graph"]) => handle_graph(app, project_id, query),
         (&Method::Post, ["projects", project_id, "sources", "rescan"]) => {
             handle_rescan(app, project_id)
+        }
+        (&Method::Post, ["projects", project_id, "pages", "embed"]) => {
+            handle_embed_page(app, project_id, body)
         }
         (&Method::Post, ["projects", project_id, "chat"]) => handle_chat(app, project_id, body),
         (&Method::Post, ["projects", project_id, "chat", session_id, "cancel"]) => {
@@ -399,6 +404,16 @@ fn is_agent_chat_request(method: &Method, path: &str) -> bool {
             parts.as_slice(),
             ["projects", _, "chat"] | ["projects", _, "chat", _, "cancel"]
         )
+}
+
+fn is_token_required_request(method: &Method, path: &str) -> bool {
+    if is_agent_chat_request(method, path) {
+        return true;
+    }
+    let Some(parts) = api_path_parts(path) else {
+        return false;
+    };
+    method == &Method::Post && matches!(parts.as_slice(), ["projects", _, "pages", "embed"])
 }
 
 fn chat_project_id<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
@@ -1741,6 +1756,75 @@ struct SearchRequest {
     top_k: Option<usize>,
     include_content: Option<bool>,
     query_embedding: Option<Vec<f32>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbedPageRequest {
+    path: String,
+    #[serde(default)]
+    force: bool,
+}
+
+struct PageEmbedSlot;
+
+impl Drop for PageEmbedSlot {
+    fn drop(&mut self) {
+        IN_FLIGHT_PAGE_EMBEDS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn try_acquire_page_embed_slot() -> Option<PageEmbedSlot> {
+    IN_FLIGHT_PAGE_EMBEDS
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            (current < MAX_IN_FLIGHT_PAGE_EMBEDS).then_some(current + 1)
+        })
+        .ok()
+        .map(|_| PageEmbedSlot)
+}
+
+fn handle_embed_page(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let req: EmbedPageRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    if req.path.trim().is_empty() {
+        return err(400, "path is required");
+    }
+    let Some(config) = load_embedding_config(app) else {
+        return err(400, "Embedding is not configured");
+    };
+    let Some(_slot) = try_acquire_page_embed_slot() else {
+        return err(503, "Too many page indexing requests are already running");
+    };
+    let result = tauri::async_runtime::block_on(commands::page_embedding::embed_wiki_page(
+        &project.path,
+        &req.path,
+        config,
+        req.force,
+    ));
+    match result {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "projectId": project.id,
+            "result": result,
+        })),
+        Err(error) => {
+            let status = match error.kind {
+                commands::page_embedding::PageEmbeddingErrorKind::InvalidRequest => 400,
+                commands::page_embedding::PageEmbeddingErrorKind::NotFound => 404,
+                commands::page_embedding::PageEmbeddingErrorKind::Provider => 502,
+                commands::page_embedding::PageEmbeddingErrorKind::Storage => 500,
+                commands::page_embedding::PageEmbeddingErrorKind::Conflict => 409,
+                commands::page_embedding::PageEmbeddingErrorKind::Timeout => 504,
+            };
+            err(status, error.message)
+        }
+    }
 }
 
 fn handle_search(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
@@ -3091,6 +3175,26 @@ mod tests {
         assert!(!is_agent_chat_request(
             &Method::Get,
             "/api/v1/projects/current/chat"
+        ));
+    }
+
+    #[test]
+    fn paid_or_mutating_agent_routes_always_require_a_token() {
+        assert!(is_token_required_request(
+            &Method::Post,
+            "/api/v1/projects/current/pages/embed"
+        ));
+        assert!(is_token_required_request(
+            &Method::Post,
+            "/api/v1/projects/current/chat"
+        ));
+        assert!(!is_token_required_request(
+            &Method::Post,
+            "/api/v1/projects/current/search"
+        ));
+        assert!(!is_token_required_request(
+            &Method::Get,
+            "/api/v1/projects/current/pages/embed"
         ));
     }
 

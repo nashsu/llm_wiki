@@ -37,6 +37,15 @@ export interface ApiSearchResponse {
   vectorHits?: number
 }
 
+export interface ApiPageEmbeddingResult {
+  path: string
+  pageId: string
+  revision: string
+  chunks: number
+  vectorsWritten: number
+  status: string
+}
+
 export interface ApiChatReference {
   title: string
   path: string
@@ -155,6 +164,20 @@ function requireObject(value: unknown, context: string): Record<string, unknown>
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function requireString(value: unknown, context: string): string {
+  if (typeof value !== "string" || !value) {
+    throw new Error(`${context}: expected non-empty string`)
+  }
+  return value
+}
+
+function requireNumber(value: unknown, context: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${context}: expected finite number`)
+  }
+  return value
 }
 
 export class LlmWikiApiClient {
@@ -294,6 +317,22 @@ export class LlmWikiApiClient {
     return this.request(`/projects/${encodeURIComponent(projectId)}/sources/rescan`, {
       method: "POST",
     })
+  }
+
+  async embedPage(path: string, projectId = "current", force = false): Promise<ApiPageEmbeddingResult> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/pages/embed`, {
+      method: "POST",
+      body: { path, force },
+    })
+    const result = requireObject(json.result, "page embedding result")
+    return {
+      path: requireString(result.path, "page embedding result.path"),
+      pageId: requireString(result.pageId, "page embedding result.pageId"),
+      revision: requireString(result.revision, "page embedding result.revision"),
+      chunks: requireNumber(result.chunks, "page embedding result.chunks"),
+      vectorsWritten: requireNumber(result.vectorsWritten, "page embedding result.vectorsWritten"),
+      status: requireString(result.status, "page embedding result.status"),
+    }
   }
 
   private async request(path: string, options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {}): Promise<Record<string, unknown>> {

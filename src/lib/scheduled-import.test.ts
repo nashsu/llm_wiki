@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   loadScheduledImportConfig: vi.fn(),
   saveScheduledImportConfig: vi.fn(),
   getRecentProjects: vi.fn(),
+  loadSourceWatchConfig: vi.fn(),
   enqueueInactiveProjectBatch: vi.fn(),
   folderContextForSourcePath: vi.fn(),
 }))
@@ -48,6 +49,7 @@ vi.mock("@/lib/project-store", () => ({
   loadScheduledImportConfig: mocks.loadScheduledImportConfig,
   saveScheduledImportConfig: mocks.saveScheduledImportConfig,
   getRecentProjects: mocks.getRecentProjects,
+  loadSourceWatchConfig: mocks.loadSourceWatchConfig,
 }))
 
 import {
@@ -229,6 +231,18 @@ describe("scanAndImport failure handling", () => {
     vi.clearAllMocks()
     useWikiStore.setState({
       project,
+      sourceWatchConfig: {
+        enabled: true,
+        autoIngest: true,
+        persistExtractedMarkdown: true,
+        parsingConcurrency: 2,
+        ingestConcurrency: 2,
+        includeExtensions: [],
+        excludeExtensions: [],
+        excludeDirs: [],
+        excludeGlobs: [],
+        maxFileSizeMb: 100,
+      },
       llmConfig: {
         provider: "openai",
         apiKey: "test-key",
@@ -256,6 +270,9 @@ describe("scanAndImport failure handling", () => {
       interval: 60,
       lastScan: null,
     })
+    mocks.loadSourceWatchConfig.mockResolvedValue(
+      useWikiStore.getState().sourceWatchConfig,
+    )
     mocks.saveScheduledImportConfig.mockResolvedValue(undefined)
     mocks.enqueueInactiveProjectBatch.mockResolvedValue(["background-task-1"])
     mocks.folderContextForSourcePath.mockReturnValue("scheduled-import")
@@ -479,5 +496,93 @@ describe("scanAndImport failure handling", () => {
       "/Users/me/wiki-project/raw/sources/scheduled-import/settings.json",
       expect.any(Object),
     )
+  })
+
+  it("cleans an imported source after a source-watch directory exclusion is added", async () => {
+    useWikiStore.setState({
+      sourceWatchConfig: {
+        ...useWikiStore.getState().sourceWatchConfig,
+        excludeDirs: ["archive"],
+      },
+    })
+    mocks.fileExists.mockResolvedValue(true)
+    mocks.readFile.mockResolvedValue(JSON.stringify({
+      version: 1,
+      directories: {
+        "/Users/me/inbox": {
+          files: { "/Users/me/inbox/archive/old.pdf": "old-md5" },
+          lastScan: 123,
+        },
+      },
+    }))
+    mocks.listDirectory.mockResolvedValue([
+      {
+        name: "archive",
+        path: "/Users/me/inbox/archive",
+        is_dir: true,
+        children: [
+          {
+            name: "old.pdf",
+            path: "/Users/me/inbox/archive/old.pdf",
+            is_dir: false,
+          },
+        ],
+      },
+    ])
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    const mirror = "/Users/me/wiki-project/raw/sources/scheduled-import/archive/old.pdf"
+    expect(mocks.discardTasksForSources).toHaveBeenCalledWith([mirror])
+    expect(mocks.deleteSourceFile).toHaveBeenCalledWith(
+      project.path,
+      mirror,
+      expect.objectContaining({
+        logReason: "scheduled import source removed or excluded",
+      }),
+    )
+  })
+
+  it("applies an inactive project's persisted source-watch exclusions", async () => {
+    useWikiStore.setState({
+      project: {
+        id: "active-project",
+        name: "Active",
+        path: "/Users/me/active-project",
+      },
+    })
+    mocks.loadSourceWatchConfig.mockResolvedValue({
+      ...useWikiStore.getState().sourceWatchConfig,
+      excludeGlobs: ["*.draft.pdf"],
+    })
+    mocks.listDirectory.mockResolvedValue([
+      {
+        name: "paper.draft.pdf",
+        path: "/Users/me/inbox/paper.draft.pdf",
+        is_dir: false,
+      },
+    ])
+
+    await scanAndImport(project, "/Users/me/inbox", { allowInactive: true })
+
+    expect(mocks.loadSourceWatchConfig).toHaveBeenCalledWith(project.id)
+    expect(mocks.getFileSize).not.toHaveBeenCalled()
+    expect(mocks.copyFile).not.toHaveBeenCalled()
+    expect(mocks.enqueueInactiveProjectBatch).not.toHaveBeenCalled()
+  })
+
+  it("uses the lower scheduled-import and source-watch file size limit", async () => {
+    useWikiStore.setState({
+      sourceWatchConfig: {
+        ...useWikiStore.getState().sourceWatchConfig,
+        maxFileSizeMb: 5,
+      },
+    })
+    mocks.getFileSize.mockResolvedValue(6 * 1024 * 1024)
+
+    await scanAndImport(project, "/Users/me/inbox")
+
+    expect(mocks.getFileMd5).not.toHaveBeenCalled()
+    expect(mocks.copyFile).not.toHaveBeenCalled()
   })
 })

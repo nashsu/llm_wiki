@@ -20,9 +20,11 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 
 export function ResearchPanel() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const tasks = useResearchStore((s) => s.tasks)
   const removeTask = useResearchStore((s) => s.removeTask)
   const setPanelOpen = useResearchStore((s) => s.setPanelOpen)
@@ -35,21 +37,21 @@ export function ResearchPanel() {
   const queued = tasks.filter((t) => t.status === "queued")
   const done = tasks.filter((t) => t.status === "done" || t.status === "error")
 
-  function handleStartResearch() {
+  async function handleStartResearch() {
     const topic = inputValue.trim()
     if (!topic || !project) return
     if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
-      window.alert(t("research.notConfigured"))
+      await appDialog.alert({ message: t("research.notConfigured") })
       return
     }
     queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig)
     setInputValue("")
   }
 
-  function handleRetryResearch(task: ResearchTask) {
+  async function handleRetryResearch(task: ResearchTask) {
     if (!project) return
     if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
-      window.alert(t("research.notConfigured"))
+      await appDialog.alert({ message: t("research.notConfigured") })
       return
     }
     queueResearch(

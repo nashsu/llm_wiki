@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import { flushMicrotasks } from "@/test-helpers/deferred"
+import { createDeferred, flushMicrotasks, waitFor } from "@/test-helpers/deferred"
 
 // Mock autoIngest so tests control success/failure timing.
 vi.mock("./ingest", () => ({
@@ -71,15 +71,18 @@ import {
   pauseProcessing,
   resumeProcessing,
   isQueuePaused,
+  setIngestWorkerLimit,
+  getIngestWorkerLimit,
 } from "./ingest-queue"
 import { autoIngest } from "./ingest"
-import { readFile, writeFile } from "@/commands/fs"
+import { deleteFile, readFile, writeFile } from "@/commands/fs"
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
 const mockWriteFile = vi.mocked(writeFile)
+const mockDeleteFile = vi.mocked(deleteFile)
 const mockSweep = vi.mocked(sweepResolvedReviews)
 
 /** Simulate the app having opened `TEST_ID` at `TEST_PATH` so the queue
@@ -95,6 +98,8 @@ beforeEach(async () => {
   mockAutoIngest.mockReset()
   mockReadFile.mockReset()
   mockWriteFile.mockReset()
+  mockDeleteFile.mockReset()
+  mockDeleteFile.mockResolvedValue(undefined as unknown as void)
   mockSweep.mockReset()
   mockSweep.mockResolvedValue(0)
   removePageEmbeddingMock.mockReset()
@@ -117,6 +122,15 @@ beforeEach(async () => {
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
+  it("clamps the configurable worker limit", () => {
+    setIngestWorkerLimit(0)
+    expect(getIngestWorkerLimit()).toBe(1)
+    setIngestWorkerLimit(99)
+    expect(getIngestWorkerLimit()).toBe(5)
+    setIngestWorkerLimit(2.9)
+    expect(getIngestWorkerLimit()).toBe(2)
+  })
+
   it("persists inactive-project tasks and starts them when that project opens", async () => {
     const ids = await enqueueInactiveProjectBatch(TEST_ID_B, TEST_PATH_B, [
       {
@@ -161,6 +175,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
       expect.any(AbortSignal),
       "scheduled-import",
       expect.any(Function),
+      expect.objectContaining({ runCommit: expect.any(Function) }),
     )
     expect(getQueue()).toHaveLength(0)
   })
@@ -223,6 +238,155 @@ describe("ingest-queue — enqueue & basic processing", () => {
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     expect(getQueue()).toHaveLength(0)
+  })
+})
+
+describe("ingest-queue — concurrent workers", () => {
+  it("fills the configured worker pool without exceeding its limit", async () => {
+    setIngestWorkerLimit(2)
+    const runs = new Map<string, ReturnType<typeof createDeferred<string[]>>>()
+    mockAutoIngest.mockImplementation((_projectPath, sourcePath) => {
+      const deferred = createDeferred<string[]>()
+      runs.set(sourcePath, deferred)
+      return deferred.promise
+    })
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "a.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+      { sourcePath: "c.md", folderContext: "" },
+    ])
+    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
+    expect(getQueueSummary()).toMatchObject({ processing: 2, pending: 1 })
+
+    const firstRun = [...runs.values()][0]
+    expect(firstRun).toBeDefined()
+    firstRun.resolve(["wiki/sources/a.md"])
+    await waitFor(() => mockAutoIngest.mock.calls.length === 3)
+    expect(getQueueSummary().processing).toBe(2)
+
+    for (const deferred of runs.values()) {
+      if (!deferred.settled) deferred.resolve(["wiki/sources/completed.md"])
+    }
+    await waitFor(() => getQueue().length === 0)
+    expect(getQueueSummary()).toMatchObject({ completed: 3, processing: 0, pending: 0 })
+  })
+
+  it("cancels one active worker without aborting its sibling", async () => {
+    setIngestWorkerLimit(2)
+    const signals = new Map<string, AbortSignal>()
+    const runs = new Map<string, ReturnType<typeof createDeferred<string[]>>>()
+    mockAutoIngest.mockImplementation((_projectPath, sourcePath, _config, signal) => {
+      const deferred = createDeferred<string[]>()
+      signals.set(sourcePath, signal as AbortSignal)
+      runs.set(sourcePath, deferred)
+      signal?.addEventListener("abort", () => deferred.reject(new Error("aborted")))
+      return deferred.promise
+    })
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "a.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+    ])
+    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
+    const firstTask = getQueue().find((task) => task.sourcePath === "a.md")
+    expect(firstTask).toBeDefined()
+    await cancelTask(firstTask?.id ?? "")
+
+    expect(signals.get(`${TEST_PATH}/a.md`)?.aborted).toBe(true)
+    expect(signals.get(`${TEST_PATH}/b.md`)?.aborted).toBe(false)
+    const siblingRun = [...runs.entries()].find(([path]) => path.endsWith("/b.md"))?.[1]
+    expect(siblingRun).toBeDefined()
+    siblingRun?.resolve(["wiki/sources/b.md"])
+    await waitFor(() => getQueueSummary().processing === 0)
+    expect(getQueue().find((task) => task.sourcePath === "a.md")?.status).toBe("cancelled")
+  })
+
+  it("does not delete merged pages when cancelling a worker", async () => {
+    const finish = createDeferred<string[]>()
+    mockAutoIngest.mockImplementation(
+      async (_projectPath, _sourcePath, _config, _signal, _folder, onFileWritten) => {
+        onFileWritten?.("wiki/concepts/existing.md")
+        return finish.promise
+      },
+    )
+
+    await enqueueIngest(TEST_ID, "cancel-during-write.md")
+    await waitFor(() => getQueueSummary().processing === 1)
+    const task = getQueue()[0]
+    await cancelTask(task.id)
+
+    expect(mockDeleteFile).not.toHaveBeenCalled()
+    finish.resolve(["wiki/concepts/existing.md"])
+    await flushMicrotasks(10)
+    expect(mockDeleteFile).not.toHaveBeenCalled()
+  })
+
+  it("does not restart a cancelled task until its previous worker exits", async () => {
+    setIngestWorkerLimit(2)
+    const firstRun = createDeferred<string[]>()
+    mockAutoIngest
+      .mockImplementationOnce(() => firstRun.promise)
+      .mockResolvedValueOnce(["wiki/sources/retried.md"])
+
+    await enqueueIngest(TEST_ID, "retry-after-cancel.md")
+    await waitFor(() => mockAutoIngest.mock.calls.length === 1)
+    const task = getQueue()[0]
+    await cancelTask(task.id)
+    await retryTask(task.id)
+    await flushMicrotasks(10)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+
+    firstRun.reject(new Error("aborted"))
+    await waitFor(() => mockAutoIngest.mock.calls.length === 2)
+    await waitFor(() => getQueue().length === 0)
+  })
+
+  it("ignores retry requests for a task that is still processing", async () => {
+    setIngestWorkerLimit(2)
+    const run = createDeferred<string[]>()
+    mockAutoIngest.mockImplementation(() => run.promise)
+
+    await enqueueIngest(TEST_ID, "still-processing.md")
+    await waitFor(() => getQueueSummary().processing === 1)
+    const task = getQueue()[0]
+    await retryTask(task.id)
+
+    expect(task.status).toBe("processing")
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    run.resolve(["wiki/sources/still-processing.md"])
+    await waitFor(() => getQueue().length === 0)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+  })
+
+  it("pauses and aborts every active worker after a provider usage limit", async () => {
+    setIngestWorkerLimit(2)
+    const signals: AbortSignal[] = []
+    const firstRun = createDeferred<string[]>()
+    const secondRun = createDeferred<string[]>()
+    mockAutoIngest
+      .mockImplementationOnce((_projectPath, _sourcePath, _config, signal) => {
+        signals.push(signal as AbortSignal)
+        return firstRun.promise
+      })
+      .mockImplementationOnce((_projectPath, _sourcePath, _config, signal) => {
+        signals.push(signal as AbortSignal)
+        signal?.addEventListener("abort", () => secondRun.reject(new Error("aborted")))
+        return secondRun.promise
+      })
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "limited.md", folderContext: "" },
+      { sourcePath: "sibling.md", folderContext: "" },
+    ])
+    await waitFor(() => signals.length === 2)
+    firstRun.reject(new Error("429 usage limit exceeded"))
+    await waitFor(() => getQueueSummary().processing === 0)
+
+    expect(signals[1].aborted).toBe(true)
+    expect(isQueuePaused()).toBe(true)
+    expect(getQueue().map((task) => task.status)).toEqual(["pending", "pending"])
+    expect(getQueue().every((task) => task.retryCount === 0)).toBe(true)
   })
 })
 
@@ -549,7 +713,7 @@ describe("ingest-queue — queue-drain triggers review sweep", () => {
     // (We simulate an idle condition by enqueueing, processing, draining once)
     mockAutoIngest.mockResolvedValue(["wiki/sources/foo.md"])
     await enqueueIngest(TEST_ID, "a.md")
-    await flushMicrotasks(20)
+    await waitFor(() => mockSweep.mock.calls.length === 1)
     expect(mockSweep).toHaveBeenCalledTimes(1)
 
     // Now the queue is empty. Calling cancelTask on a nonexistent id is a
@@ -792,6 +956,31 @@ describe("ingest-queue — restoreQueue", () => {
 import { pauseQueue } from "./ingest-queue"
 
 describe("ingest-queue — pauseQueue & switch-project survival", () => {
+  it("waits for an active commit before completing a project switch", async () => {
+    const commit = createDeferred<void>()
+    let commitStarted = false
+    mockAutoIngest.mockImplementation(
+      async (_projectPath, _sourcePath, _config, _signal, _folder, _onFileWritten, options) => {
+        await options?.runCommit?.(async () => {
+          commitStarted = true
+          await commit.promise
+        })
+        return ["wiki/sources/committed.md"]
+      },
+    )
+
+    await enqueueIngest(TEST_ID, "committing.md")
+    await waitFor(() => commitStarted)
+    let pauseFinished = false
+    const pause = pauseQueue().then(() => { pauseFinished = true })
+    await flushMicrotasks(5)
+    expect(pauseFinished).toBe(false)
+
+    commit.resolve()
+    await pause
+    expect(pauseFinished).toBe(true)
+  })
+
   it("pauseQueue persists pending/processing tasks to the paused project's disk", async () => {
     mockAutoIngest.mockImplementation(() => new Promise(() => {}))
     await enqueueBatch(TEST_ID, [
@@ -928,7 +1117,7 @@ describe("ingest-queue — pause/resume processing", () => {
 
     // Resume → aborted a.md restarts first, then b.md drains.
     resumeProcessing()
-    await flushMicrotasks(10)
+    await waitFor(() => mockAutoIngest.mock.calls.length === 3)
     expect(mockAutoIngest).toHaveBeenCalledTimes(3)
     expect(getQueue()).toHaveLength(0)
     expect(isQueuePaused()).toBe(false)

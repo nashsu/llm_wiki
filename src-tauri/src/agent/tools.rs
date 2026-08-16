@@ -2828,6 +2828,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("llm-wiki-context-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join(".llm-wiki")).unwrap();
         fs::create_dir_all(root.join("wiki/entities")).unwrap();
+        fs::write(
+            root.join(".llm-wiki/history-settings.json"),
+            r#"{"enabled":true,"maxVersionsPerFile":10}"#,
+        )
+        .unwrap();
         let alpha = root.join("wiki/entities/alpha.md");
         let beta = root.join("wiki/entities/beta.md");
         fs::write(

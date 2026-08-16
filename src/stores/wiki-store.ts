@@ -265,6 +265,8 @@ interface SourceWatchConfig {
   persistExtractedMarkdown: boolean
   /** Maximum number of source text extraction jobs allowed at once. */
   parsingConcurrency: number
+  /** Maximum number of ingest tasks allowed to prepare concurrently. */
+  ingestConcurrency: number
   includeExtensions: string[]
   excludeExtensions: string[]
   excludeDirs: string[]

@@ -16,13 +16,19 @@ describe("source watch config", () => {
     expect(DEFAULT_SOURCE_WATCH_CONFIG).toEqual(sourceWatchDefaults)
     expect(normalizeSourceWatchConfig({}).persistExtractedMarkdown).toBe(false)
     expect(normalizeSourceWatchConfig({}).parsingConcurrency).toBe(2)
+    expect(normalizeSourceWatchConfig({}).ingestConcurrency).toBe(1)
     expect(
       normalizeSourceWatchConfig({ persistExtractedMarkdown: true }).persistExtractedMarkdown,
     ).toBe(true)
     expect(normalizeSourceWatchConfig({ parsingConcurrency: 20 }).parsingConcurrency).toBe(8)
+    expect(normalizeSourceWatchConfig({ ingestConcurrency: 20 }).ingestConcurrency).toBe(5)
+    expect(normalizeSourceWatchConfig({ ingestConcurrency: 0 }).ingestConcurrency).toBe(1)
     expect(
       normalizeSourceWatchConfig({ parsingConcurrency: Number.NaN }).parsingConcurrency,
     ).toBe(2)
+    expect(
+      normalizeSourceWatchConfig({ ingestConcurrency: Number.NaN }).ingestConcurrency,
+    ).toBe(1)
   })
 
   it("allows document types by default and rejects config/media/binaries", () => {

@@ -26,6 +26,32 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.9",
+    date: "2026-08-14",
+    highlights: {
+      en: [
+        "Added a single-page Wiki vector indexing API and MCP tool with safe incremental updates.",
+        "Added an answer context details panel for inspecting context size, categorized references, and knowledge-graph evidence.",
+        "Added streaming Chat API responses and concurrent Ingest processing for faster external integrations and bulk imports.",
+        "Made file history opt-in and configurable, with bounded version retention.",
+        "Expanded scheduled imports with cross-project monitoring and source name or path filtering.",
+        "Added external source-file opening, a global Settings shortcut, and Russian and Italian interface translations.",
+        "Added support for authenticated local MinerU and improved trusted proxy TLS options, CJK filenames, and structured data preservation during Ingest.",
+        "Improved existing features and fixed stability, compatibility, indexing, and data-integrity issues.",
+      ],
+      zh: [
+        "新增单个 Wiki 页面向量索引 API 和 MCP 工具，并支持安全的增量更新。",
+        "新增回答上下文详情面板，可查看上下文长度、分类引用和知识图谱证据。",
+        "Chat API 新增流式输出，并支持并发 Ingest，提升外部集成和批量导入效率。",
+        "文件历史改为可选功能，并支持配置有限的版本保留数量。",
+        "扩展定时导入，支持跨项目监控以及按来源名称或路径过滤。",
+        "支持使用系统默认程序打开原始资料，新增全局设置快捷键，并加入俄语和意大利语界面。",
+        "完善本地 MinerU 鉴权、受信任代理 TLS 选项、CJK 文件名和 Ingest 结构化数据保留。",
+        "优化现有功能，并修复稳定性、兼容性、索引和数据完整性问题。",
+      ],
+    },
+  },
+  {
     version: "0.6.8",
     date: "2026-08-07",
     highlights: {

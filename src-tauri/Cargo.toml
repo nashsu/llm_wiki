@@ -1,6 +1,6 @@
 [package]
 name = "llm-wiki"
-version = "0.6.8"
+version = "0.6.9"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
@@ -48,7 +48,7 @@ futures = "0.3"
 # Claude Code CLI subprocess transport: spawn `claude` as a child process,
 # stream stdout line-by-line back to the frontend. tokio::process gives us
 # async io and clean cancellation; `which` locates the binary on PATH.
-tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt", "time"] }
 which = "7"
 uuid = { version = "1", features = ["v4"] }
 # Multimodal image extraction (Phase 1):

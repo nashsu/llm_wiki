@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useAppDialog } from "@/stores/app-dialog-store"
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from "@tauri-apps/plugin-dialog"
 import {
@@ -34,8 +35,11 @@ import type { DuplicateGroup } from "@/lib/dedup"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import {
   clearFileHistory,
+  getFileHistorySettings,
   getFileHistoryStats,
   openProject,
+  setFileHistorySettings,
+  type FileHistorySettings,
   type FileHistoryStats,
 } from "@/commands/fs"
 import { addToRecentProjects } from "@/lib/project-store"
@@ -59,6 +63,7 @@ function findTaskForGroup(
 
 export function MaintenanceSection() {
   const { t } = useTranslation()
+  const appDialog = useAppDialog()
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const project = useWikiStore((s) => s.project)
 
@@ -69,6 +74,7 @@ export function MaintenanceSection() {
   const [projectToolStatus, setProjectToolStatus] = useState<string | null>(null)
   const [projectToolBusy, setProjectToolBusy] = useState(false)
   const [historyStats, setHistoryStats] = useState<FileHistoryStats | null>(null)
+  const [historySettings, setHistorySettingsState] = useState<FileHistorySettings | null>(null)
   const [historyBusy, setHistoryBusy] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
 
@@ -77,10 +83,15 @@ export function MaintenanceSection() {
       setHistoryStats(null)
       return
     }
+    const projectPath = project.path
     try {
       setHistoryError(null)
-      setHistoryStats(await getFileHistoryStats(project.path))
+      const stats = await getFileHistoryStats(projectPath)
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryStats(stats)
+      }
     } catch (error) {
+      if (useWikiStore.getState().project?.path !== projectPath) return
       console.warn("[Maintenance] failed to load file history stats:", error)
       setHistoryError(String(error))
       setHistoryStats(null)
@@ -91,19 +102,97 @@ export function MaintenanceSection() {
     void refreshHistoryStats()
   }, [refreshHistoryStats])
 
-  const handleClearHistory = useCallback(async () => {
-    if (!project || !window.confirm(t("settings.sections.maintenance.history.confirm"))) return
+  useEffect(() => {
+    let active = true
+    setHistorySettingsState(null)
+    setHistoryBusy(false)
+    setHistoryError(null)
+    if (!project) return () => { active = false }
+    void getFileHistorySettings(project.path)
+      .then((settings) => {
+        if (active) setHistorySettingsState(settings)
+      })
+      .catch((error) => {
+        if (active) setHistoryError(String(error))
+      })
+    return () => { active = false }
+  }, [project])
+
+  const updateHistorySettings = useCallback(async (next: FileHistorySettings) => {
+    if (!project) return
+    const projectPath = project.path
     setHistoryBusy(true)
     try {
       setHistoryError(null)
-      await clearFileHistory(project.path)
-      await refreshHistoryStats()
+      const saved = await setFileHistorySettings(projectPath, next)
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setHistorySettingsState(saved)
+      setHistoryStats(await getFileHistoryStats(projectPath))
     } catch (error) {
+      if (useWikiStore.getState().project?.path !== projectPath) return
       setHistoryError(String(error))
+      try {
+        setHistorySettingsState(await getFileHistorySettings(projectPath))
+      } catch {
+        // Keep the original settings error visible.
+      }
     } finally {
-      setHistoryBusy(false)
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryBusy(false)
+      }
     }
-  }, [project, refreshHistoryStats, t])
+  }, [project])
+
+  const commitHistoryRetention = useCallback(async (value: number) => {
+    if (!historySettings) return
+    if (value === 0 && !(await appDialog.confirm({
+      message: t("settings.sections.maintenance.history.zeroConfirm"),
+      variant: "destructive",
+    }))) {
+      if (project) {
+        const projectPath = project.path
+        try {
+          const settings = await getFileHistorySettings(projectPath)
+          if (useWikiStore.getState().project?.path === projectPath) {
+            setHistorySettingsState(settings)
+          }
+        } catch (error) {
+          if (useWikiStore.getState().project?.path === projectPath) {
+            setHistoryError(String(error))
+          }
+        }
+      }
+      return
+    }
+    await updateHistorySettings({
+      ...historySettings,
+      enabled: value === 0 ? false : historySettings.enabled,
+      maxVersionsPerFile: value,
+    })
+  }, [appDialog, historySettings, project, t, updateHistorySettings])
+
+  const handleClearHistory = useCallback(async () => {
+    if (!project || !(await appDialog.confirm({
+      message: t("settings.sections.maintenance.history.confirm"),
+      variant: "destructive",
+    }))) return
+    const projectPath = project.path
+    setHistoryBusy(true)
+    try {
+      setHistoryError(null)
+      await clearFileHistory(projectPath)
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setHistoryStats(await getFileHistoryStats(projectPath))
+    } catch (error) {
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryError(String(error))
+      }
+    } finally {
+      if (useWikiStore.getState().project?.path === projectPath) {
+        setHistoryBusy(false)
+      }
+    }
+  }, [appDialog, project, t])
 
   const handleRebuildIndex = useCallback(async () => {
     if (!project) return
@@ -329,6 +418,69 @@ export function MaintenanceSection() {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.maintenance.history.description")}
         </p>
+        {historySettings && (
+          <div className="space-y-3 rounded-md border border-border/60 bg-background/60 p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="file-history-enabled">
+                  {t("settings.sections.maintenance.history.enabled")}
+                </Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("settings.sections.maintenance.history.enabledHint")}
+                </p>
+              </div>
+              <button
+                id="file-history-enabled"
+                type="button"
+                role="switch"
+                aria-checked={historySettings.enabled}
+                disabled={!project || historyBusy}
+                onClick={() => void updateHistorySettings({
+                  ...historySettings,
+                  enabled: !historySettings.enabled,
+                })}
+                className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-50 ${historySettings.enabled ? "border-primary bg-primary" : "border-border bg-muted"}`}
+              >
+                <span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-background shadow-sm transition-transform ${historySettings.enabled ? "left-[22px]" : "left-0.5"}`} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="file-history-retention">
+                  {t("settings.sections.maintenance.history.retention")}
+                </Label>
+                <span className="text-xs font-medium tabular-nums">
+                  {t("settings.sections.maintenance.history.retentionValue", {
+                    count: historySettings.maxVersionsPerFile,
+                  })}
+                </span>
+              </div>
+              <input
+                id="file-history-retention"
+                type="range"
+                min={0}
+                max={30}
+                step={1}
+                value={historySettings.maxVersionsPerFile}
+                disabled={!project || historyBusy}
+                onChange={(event) => setHistorySettingsState({
+                  ...historySettings,
+                  maxVersionsPerFile: Number(event.target.value),
+                })}
+                onPointerUp={(event) => void commitHistoryRetention(Number(event.currentTarget.value))}
+                onKeyUp={(event) => {
+                  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+                    void commitHistoryRetention(Number(event.currentTarget.value))
+                  }
+                }}
+                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-muted accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.maintenance.history.retentionHint")}
+              </p>
+            </div>
+          </div>
+        )}
         {historyStats && (
           <p className="text-xs text-muted-foreground">
             {t("settings.sections.maintenance.history.usage", {

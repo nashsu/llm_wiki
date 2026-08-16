@@ -53,6 +53,7 @@ export const API_ENDPOINTS: Array<{ method: "GET" | "POST" | "PATCH"; path: stri
   { method: "POST", path: "/api/v1/projects/{id}/search", noteKey: "endpointSearchNote" },
   { method: "GET", path: "/api/v1/projects/{id}/graph", noteKey: "endpointGraphNote" },
   { method: "POST", path: "/api/v1/projects/{id}/sources/rescan", noteKey: "endpointRescanNote" },
+  { method: "POST", path: "/api/v1/projects/{id}/pages/embed", noteKey: "endpointEmbedPageNote" },
   { method: "POST", path: "/api/v1/projects/{id}/chat", noteKey: "endpointChatNote" },
   { method: "POST", path: "/api/v1/projects/{id}/chat/{sessionId}/cancel", noteKey: "endpointChatCancelNote" },
 ]

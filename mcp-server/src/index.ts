@@ -169,6 +169,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         additionalProperties: false,
       },
     },
+    {
+      name: "llm_wiki_embed_page",
+      description: "Create or replace the vector index for one existing Markdown page under a project's wiki/ directory.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          path: { type: "string", description: "Project-relative Markdown path, for example wiki/ideas/example.md." },
+          force: { type: "boolean", description: "Force rebuilding vectors even when the page content and embedding configuration are unchanged." },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+    },
   ],
 }))
 
@@ -267,6 +281,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await assertMcpEnabled()
         const scope = await resolveProjectScope(args)
         return textResult(withActiveProject(JSON.stringify(await client.rescan(scope.id), null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_embed_page": {
+        await assertMcpEnabled()
+        const path = stringArg(args.path, "path")
+        const scope = await resolveProjectScope(args)
+        const result = await client.embedPage(path, scope.id, boolArg(args.force, false))
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
       }
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`)

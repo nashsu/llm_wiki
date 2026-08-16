@@ -562,14 +562,20 @@ export function languageRule(sourceContent: string = ""): string {
  * Auto-ingest: reads source → LLM analyzes → LLM writes wiki pages, all in one go.
  * Used when importing new files.
  *
- * Concurrency: this function holds a per-project lock for its full
- * duration. Two simultaneous calls for the same project (e.g. queue
- * + Save-to-Wiki) take turns. The lock is necessary because the
- * analysis stage reads `wiki/index.md` and the generation stage
- * overwrites it; without serialization, each call would emit an
- * "updated" index based on the same pre-state and overwrite each
- * other's additions.
+ * Concurrency: source preparation and LLM generation for different sources may
+ * overlap. Wiki-page and aggregate-file mutations run through a per-project
+ * commit boundary. Queue callers can add stricter ordering around that boundary.
  */
+export type IngestCommitRunner = <T>(operation: () => Promise<T>) => Promise<T>
+
+export interface AutoIngestOptions {
+  /**
+   * Adds queue ordering around a commit. The supplied runner must not acquire
+   * the project mutex; autoIngest always acquires it inside this callback.
+   */
+  runCommit?: IngestCommitRunner
+}
+
 export async function autoIngest(
   projectPath: string,
   sourcePath: string,
@@ -577,9 +583,21 @@ export async function autoIngest(
   signal?: AbortSignal,
   folderContext?: string,
   onFileWritten?: (relativePath: string) => void,
+  options?: AutoIngestOptions,
 ): Promise<string[]> {
-  return withProjectLock(normalizePath(projectPath), () =>
-    autoIngestImpl(projectPath, sourcePath, llmConfig, signal, folderContext, onFileWritten),
+  const pp = normalizePath(projectPath)
+  const sp = normalizePath(sourcePath)
+  return withProjectLock(
+    `ingest-source\0${pp}\0${sp}`,
+    () => autoIngestImpl(
+      projectPath,
+      sourcePath,
+      llmConfig,
+      signal,
+      folderContext,
+      onFileWritten,
+      options,
+    ),
   )
 }
 
@@ -645,6 +663,7 @@ async function autoIngestImpl(
   signal?: AbortSignal,
   folderContext?: string,
   onFileWritten?: (relativePath: string) => void,
+  options?: AutoIngestOptions,
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -653,6 +672,10 @@ async function autoIngestImpl(
   const sourceIdentity = sourceIdentityForPath(pp, sp)
   const sourceSummarySlug = sourceSummarySlugFromIdentity(sourceIdentity)
   const sourceSummaryPath = `wiki/sources/${sourceSummarySlug}.md`
+  const queueCommit = options?.runCommit
+  const runCommit: IngestCommitRunner = queueCommit
+    ? ((operation) => queueCommit(() => withProjectLock(pp, operation)))
+    : ((operation) => withProjectLock(pp, operation))
   console.log(`[ingest:diag] autoIngestImpl ENTRY for "${fileName}" (project="${pp}", source="${sp}")`)
   const activityId = activity.addItem({
     type: "ingest",
@@ -745,7 +768,9 @@ async function autoIngestImpl(
   const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent)
   console.log(`[ingest:diag] cache check for "${sourceIdentity}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
-    try {
+    return runCommit(async () => {
+      throwIfIngestAborted(signal, activityId)
+      try {
       console.log(`[ingest:diag] cache-hit branch: starting image extraction for ${sp}`)
       const skipNativePdfImageExtraction = isPdf && hasMineruImageRefs(sourceContent, sourceSummarySlug)
       let savedImages = skipNativePdfImageExtraction
@@ -780,17 +805,19 @@ async function autoIngestImpl(
           const captionLlm = resolveCaptionConfig(mmCfg, llmConfig)
           if (captionLlm) {
             try {
-              await captionMarkdownImages(pp, appendSavedImageRefsForCaption(sourceContent, savedImages), captionLlm, {
-                signal,
-                shouldCaption: (url) =>
-                  isSavedImagePromptUrl(pp, sourceSummarySlug, url),
-                urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
-                concurrency: mmCfg.concurrency,
-                onProgress: (done, total) =>
-                  activity.updateItem(activityId, {
-                    detail: `Captioning images... ${done}/${total}`,
-                  }),
-              })
+              await withProjectLock(`${pp}\0image-caption-cache`, () =>
+                captionMarkdownImages(pp, appendSavedImageRefsForCaption(sourceContent, savedImages), captionLlm, {
+                  signal,
+                  shouldCaption: (url) =>
+                    isSavedImagePromptUrl(pp, sourceSummarySlug, url),
+                  urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
+                  concurrency: mmCfg.concurrency,
+                  onProgress: (done, total) =>
+                    activity.updateItem(activityId, {
+                      detail: `Captioning images... ${done}/${total}`,
+                    }),
+                }),
+              )
             } catch (err) {
               console.warn(
                 `[ingest:caption] cache-hit caption pass failed:`,
@@ -810,18 +837,19 @@ async function autoIngestImpl(
       } else {
         console.log(`[ingest:diag] cache-hit branch: skipping injection (no images returned from extraction)`)
       }
-    } catch (err) {
-      console.warn(
-        `[ingest:images] cache-hit injection failed for "${fileName}":`,
-        err instanceof Error ? err.message : err,
-      )
-    }
-    activity.updateItem(activityId, {
-      status: "done",
-      detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
-      filesWritten: cachedFiles,
+      } catch (err) {
+        console.warn(
+          `[ingest:images] cache-hit injection failed for "${fileName}":`,
+          err instanceof Error ? err.message : err,
+        )
+      }
+      activity.updateItem(activityId, {
+        status: "done",
+        detail: `Skipped (unchanged) — ${cachedFiles.length} files from previous ingest`,
+        filesWritten: cachedFiles,
+      })
+      return cachedFiles
     })
-    return cachedFiles
   }
 
   // ── Step 0.5: Extract embedded images ─────────────────────────
@@ -922,21 +950,23 @@ async function autoIngestImpl(
     activity.updateItem(activityId, { detail: "Captioning images..." })
     const ourMediaPrefix = `${pp}/wiki/media/${sourceSummarySlug}/`
     try {
-      const result = await captionMarkdownImages(pp, enrichedSourceContent, captionLlm, {
-        signal,
-        // Strict filter: only caption images we know we just
-        // extracted into this source's media directory. Skips any
-        // pre-existing markdown image refs the user may have typed
-        // into the source content (e.g. for hand-authored .md
-        // sources).
-        shouldCaption: (url) => url.startsWith(ourMediaPrefix) || isSavedImagePromptUrl(pp, sourceSummarySlug, url),
-        urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
-        concurrency: mmCfg.concurrency,
-        onProgress: (done, total) =>
-          activity.updateItem(activityId, {
-            detail: `Captioning images... ${done}/${total}`,
-          }),
-      })
+      const result = await withProjectLock(`${pp}\0image-caption-cache`, () =>
+        captionMarkdownImages(pp, enrichedSourceContent, captionLlm, {
+          signal,
+          // Strict filter: only caption images we know we just
+          // extracted into this source's media directory. Skips any
+          // pre-existing markdown image refs the user may have typed
+          // into the source content (e.g. for hand-authored .md
+          // sources).
+          shouldCaption: (url) => url.startsWith(ourMediaPrefix) || isSavedImagePromptUrl(pp, sourceSummarySlug, url),
+          urlToAbsPath: (url) => promptImageUrlToAbs(pp, url),
+          concurrency: mmCfg.concurrency,
+          onProgress: (done, total) =>
+            activity.updateItem(activityId, {
+              detail: `Captioning images... ${done}/${total}`,
+            }),
+        }),
+      )
       enrichedSourceContent = stripWikiMediaAbsPaths(pp, result.enrichedMarkdown)
       console.log(
         `[ingest:caption] images=${savedImages.length} fresh=${result.freshCaptions} cached=${result.cachedCaptions} failed=${result.failed}`,
@@ -1121,6 +1151,7 @@ async function autoIngestImpl(
   }
 
   // ── Step 3: Write files ───────────────────────────────────────
+  return runCommit(async () => {
   throwIfIngestAborted(signal, activityId)
   activity.updateItem(activityId, { detail: "Writing files..." })
   await migrateLegacySourceSummaryIfSafe(pp, sourceIdentity, sourceSummaryPath)
@@ -1431,6 +1462,7 @@ async function autoIngestImpl(
   })
 
   return writtenPaths
+  })
 }
 
 /**
@@ -1503,7 +1535,15 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   content: string,
   targetLang: string | undefined,
 ): string {
-  if (!targetLang || targetLang === "auto" || !CJK_OUTPUT_LANGUAGES.has(targetLang)) {
+  const title = extractGeneratedPageTitle(content)
+  // "auto" (the default output language) means "follow the source", so resolve
+  // it from the generated title. The title is the filename authority; using
+  // the whole body lets large SQL/code blocks or English technical prose
+  // outweigh a short CJK title and silently retain an ASCII filename.
+  const shouldUseCjkFilename = !targetLang || targetLang === "auto"
+    ? Boolean(title && containsCjk(title))
+    : CJK_OUTPUT_LANGUAGES.has(targetLang)
+  if (!shouldUseCjkFilename) {
     return relativePath
   }
   if (
@@ -1513,7 +1553,6 @@ export function rewriteIngestPathFromTitleForTargetLanguage(
   ) {
     return relativePath
   }
-  const title = extractGeneratedPageTitle(content)
   if (!title || !containsCjk(title)) return relativePath
 
   const slash = relativePath.lastIndexOf("/")
@@ -2151,6 +2190,7 @@ export function buildAnalysisPrompt(
     "- What evidence supports them?",
     "- How strong is the evidence?",
     "- Which named subject is each claim about? Do not transfer claims, limits, or evaluations from one entity/model/product/method to another just because they share keywords.",
+    "- Preserve structured source data verbatim in the analysis when present: include SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tables in fenced code blocks or Markdown tables. Do not reduce exact field names, types, constraints, keys, or indexes to prose.",
     "",
     "## Connections to Existing Wiki",
     "- What existing pages does this source relate to?",
@@ -2273,8 +2313,9 @@ export function buildGenerationPrompt(
     "- Preserve subject boundaries: when a source discusses multiple entities/models/products/methods, keep claims, evaluations, limitations, benchmark results, and recommendations attached to the exact subject they describe.",
     "- Do not merge or generalize a claim about one subject into another subject's page solely because they share terms (for example context window size, benchmark name, dataset, architecture, or feature name).",
     "- If a page needs to mention another subject for comparison, write it explicitly as a comparison and cite which source/frontmatter `sources` entry supports that statement.",
-    "- Use kebab-case filenames",
+    "- Use kebab-case for Latin-script filenames; for Chinese/Japanese/Korean titles keep the CJK characters (do NOT romanize to pinyin/romaji or translate to English)",
     "- Derive filenames from the page title in the mandatory output language, but short proper nouns and technical identifiers take precedence: preserve names such as OpenAI, GPT-5, Transformer, CLIP, ImageNet, PyTorch, CUDA, GitHub, arXiv, React, LanceDB, AnyTXT, MinerU, model names, dataset names, tool names, and code identifiers in their standard original form. Do not put raw URLs, citation strings, or full paper titles directly into file paths; convert surrounding descriptive prose to a safe readable title. For Chinese/Japanese/Korean prose titles, keep readable CJK characters in the filename instead of translating the slug to English.",
+    "- Preserve structured source data verbatim: copy SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tabular data into fenced code blocks (or Markdown tables) in the source summary page instead of paraphrasing them. Exact column names, types, constraints, primary/foreign keys, and indexes must survive ingest — a prose-only summary that drops them loses the structure the user imported the source to keep.",
     "- Follow the analysis recommendations on what to emphasize",
     "- If the analysis found connections to existing pages, add cross-references",
     "",
@@ -2786,6 +2827,7 @@ function buildChunkAnalysisSystemPrompt(
     "- New or updated concepts",
     "- Any schema-defined page types beyond entity/concept that the main chunk genuinely supports",
     "- Claims, findings, evidence, contradictions",
+    "- Exact structured data from this chunk, when present: preserve SQL DDL / CREATE TABLE statements, schema definitions, API signatures, configuration, and tables verbatim in fenced code blocks or Markdown tables; retain field names, types, constraints, keys, and indexes",
     "- Open questions or research gaps",
     "",
     "## Updated Global Digest",
