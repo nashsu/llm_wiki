@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { FileNode } from "@/types/wiki"
-import { filterSourceTreeByQuery } from "./sources-view"
+import { filterSourceTreeByQuery, summarizeImportOutcome } from "./sources-view"
 
 const TREE: FileNode[] = [
   {
@@ -37,5 +37,49 @@ describe("filterSourceTreeByQuery", () => {
 
   it("returns an empty tree when no source matches", () => {
     expect(filterSourceTreeByQuery(TREE, "missing source")).toEqual([])
+  })
+})
+
+describe("summarizeImportOutcome", () => {
+  it("stays silent when every selected file was imported", () => {
+    expect(
+      summarizeImportOutcome({ imported: ["/project/raw/sources/a.md"], skipped: [] }, null),
+    ).toBeNull()
+  })
+
+  it("reports which files were left out of a partial import", () => {
+    expect(
+      summarizeImportOutcome(
+        {
+          imported: ["/project/raw/sources/a.md"],
+          skipped: [{ name: "審查資料範例.pdf", reason: "too-large", detail: "142.8 MB" }],
+        },
+        null,
+      ),
+    ).toEqual({
+      importedCount: 1,
+      skipped: [{ name: "審查資料範例.pdf", reason: "too-large", detail: "142.8 MB" }],
+      error: null,
+    })
+  })
+
+  it("surfaces a thrown import error that today only reaches the console", () => {
+    expect(
+      summarizeImportOutcome(null, new Error("Cannot import the project folder")),
+    ).toEqual({
+      importedCount: 0,
+      skipped: [],
+      error: "Cannot import the project folder",
+    })
+  })
+
+  it("reports nothing imported when the picker yielded no usable file", () => {
+    expect(
+      summarizeImportOutcome({ imported: [], skipped: [{ name: "a.py", reason: "unsupported-type" }] }, null),
+    ).toEqual({
+      importedCount: 0,
+      skipped: [{ name: "a.py", reason: "unsupported-type" }],
+      error: null,
+    })
   })
 })

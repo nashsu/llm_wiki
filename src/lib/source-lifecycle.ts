@@ -282,14 +282,42 @@ export async function enqueueSourceIngest(
   return enqueueBatch(project.id, files)
 }
 
+export type SourceImportSkipReason =
+  | "unsupported-type"
+  | "excluded"
+  | "too-large"
+  | "unreadable"
+  | "copy-failed"
+  | "sensitive-config"
+
+export interface SkippedSourceImport {
+  name: string
+  reason: SourceImportSkipReason
+  detail?: string
+}
+
+export interface SourceImportResult {
+  imported: string[]
+  skipped: SkippedSourceImport[]
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function errorDetail(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export async function importSourceFiles(
   project: WikiProject,
   sourcePaths: string[],
   llmConfig: LlmConfig,
   sourceWatchConfig?: SourceWatchConfig,
-): Promise<string[]> {
+): Promise<SourceImportResult> {
   const pp = normalizePath(project.path)
   const importedPaths: string[] = []
+  const skipped: SkippedSourceImport[] = []
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
   // Explicit file selection is user intent, so the watcher's allow-list must
   // not silently reject a newly supported format from an older persisted
@@ -301,18 +329,29 @@ export async function importSourceFiles(
   for (const sourcePath of sourcePaths) {
     const originalName = getFileName(sourcePath) || "unknown"
     if (isSensitiveConfigSourceFile(sourcePath)) {
+      skipped.push({ name: originalName, reason: "sensitive-config" })
       continue
     }
-    let allowed = isIngestableSourcePath(sourcePath)
-      && isPathAllowedBySourceWatch(sourcePath, explicitImportConfig)
-    if (allowed) {
-      try {
-        allowed = await getFileSize(sourcePath) <= maxBytes
-      } catch {
-        allowed = false
-      }
+    // Exclusions first: a hidden or excluded file may still be a supported
+    // type, and "excluded" is the reason the user can act on.
+    if (!isPathAllowedBySourceWatch(sourcePath, explicitImportConfig)) {
+      skipped.push({ name: originalName, reason: "excluded" })
+      continue
     }
-    if (!allowed) continue
+    if (!isIngestableSourcePath(sourcePath)) {
+      skipped.push({ name: originalName, reason: "unsupported-type" })
+      continue
+    }
+    try {
+      const size = await getFileSize(sourcePath)
+      if (size > maxBytes) {
+        skipped.push({ name: originalName, reason: "too-large", detail: formatMegabytes(size) })
+        continue
+      }
+    } catch (err) {
+      skipped.push({ name: originalName, reason: "unreadable", detail: errorDetail(err) })
+      continue
+    }
 
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
@@ -320,6 +359,7 @@ export async function importSourceFiles(
       importedPaths.push(destPath)
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
+      skipped.push({ name: originalName, reason: "copy-failed", detail: errorDetail(err) })
     }
   }
 
@@ -327,7 +367,7 @@ export async function importSourceFiles(
     parsingConcurrency: cfg.parsingConcurrency,
   })
 
-  return importedPaths
+  return { imported: importedPaths, skipped }
 }
 
 export async function importSourceFolder(
@@ -335,7 +375,7 @@ export async function importSourceFolder(
   selectedFolder: string,
   llmConfig: LlmConfig,
   sourceWatchConfig?: SourceWatchConfig,
-): Promise<string[]> {
+): Promise<SourceImportResult> {
   const pp = normalizePath(project.path)
   const sourceRoot = normalizePath(selectedFolder)
   if (isProjectScopedImport(pp, sourceRoot)) {
@@ -346,6 +386,7 @@ export async function importSourceFolder(
   const cfg = normalizeSourceWatchConfig(sourceWatchConfig)
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
   const allowedFiles: string[] = []
+  const skipped: SkippedSourceImport[] = []
   // include hidden: a user importing a folder into raw/sources may
   // legitimately want dotfolder notes. Config-like files under known
   // agent/tool config folders are still filtered before copy so API
@@ -357,17 +398,23 @@ export async function importSourceFolder(
     const destPath = `${destDir}/${relativeSourcePath}`
     const relPath = `raw/sources/${folderName}/${relativeSourcePath}`
     if (isSensitiveConfigSourceFile(file.path)) {
+      skipped.push({ name: file.name, reason: "sensitive-config" })
       continue
     }
-    let allowed = isPathAllowedBySourceWatch(relPath, cfg)
-    if (allowed) {
-      try {
-        allowed = await getFileSize(file.path) <= maxBytes
-      } catch {
-        allowed = false
-      }
+    if (!isPathAllowedBySourceWatch(relPath, cfg)) {
+      skipped.push({ name: file.name, reason: "excluded" })
+      continue
     }
-    if (!allowed) continue
+    try {
+      const size = await getFileSize(file.path)
+      if (size > maxBytes) {
+        skipped.push({ name: file.name, reason: "too-large", detail: formatMegabytes(size) })
+        continue
+      }
+    } catch (err) {
+      skipped.push({ name: file.name, reason: "unreadable", detail: errorDetail(err) })
+      continue
+    }
     const parent = parentPath(destPath)
     if (parent) await createDirectory(parent)
     await copyFile(file.path, destPath)
@@ -386,7 +433,7 @@ export async function importSourceFolder(
     })
   }
 
-  return naturallyOrderedFiles
+  return { imported: naturallyOrderedFiles, skipped }
 }
 
 export async function deleteSourceFile(

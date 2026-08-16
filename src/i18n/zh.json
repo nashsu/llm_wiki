@@ -186,6 +186,18 @@
     "refreshFolderHint": "重新扫描资料文件夹，并处理新增、修改或删除的文件。",
     "refreshFolderTooltip": "按自动监控相同规则重新扫描当前项目的资料文件夹。允许的新增或修改文件会加入提取队列；已删除的资料会走正常的 Wiki 与索引清理流程；随后重建文件树。",
     "refreshFailed": "刷新原始资料失败：{{error}}",
+    "importSkip": {
+      "failed": "导入失败：{{error}}",
+      "summary": "已导入 {{imported}} 个，跳过 {{skipped}} 个",
+      "reason": {
+        "unsupported-type": "不支持的文件类型",
+        "excluded": "被排除规则阻止",
+        "too-large": "超过文件大小上限",
+        "unreadable": "无法读取文件",
+        "copy-failed": "无法复制文件",
+        "sensitive-config": "已跳过工具配置文件"
+      }
+    },
     "openExternal": "用默认应用打开",
     "openExternalFailed": "无法打开「{{name}}」：{{error}}",
     "ingest": "提取到 Wiki",
