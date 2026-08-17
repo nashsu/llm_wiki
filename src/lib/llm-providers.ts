@@ -376,13 +376,33 @@ function isGlmVisionModel(model: string): boolean {
     || /(?:^|[-_.])glm[-_.]4v(?:[-_.]|$)/i.test(normalized)
 }
 
+// GPT-5 / o-series (o1, o3, …) reasoning models require
+// `max_completion_tokens` instead of `max_tokens`. Azure deployment names are
+// user-chosen and frequently don't *start* with the underlying model id
+// (e.g. "prod-gpt5", "my-gpt-5-chat", "o3-reasoning"), so match a family token
+// anywhere in the name using word boundaries. `gpt-?5` also covers the common
+// dashless "gpt5" spelling. See issue #610.
+function deploymentNameSuggestsStrictCompletion(name: string): boolean {
+  const n = name.trim().toLowerCase()
+  return /(?:^|[-_.])gpt-?5(?:[-_.]|$)/.test(n) || /(?:^|[-_.])o\d+(?:[-_.]|$)/.test(n)
+}
+
 function isOpenAiStrictCompletionModel(config: LlmConfig): boolean {
-  if ((config.provider === "azure" || (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint)))
-    && config.azureModelFamily === "gpt5") {
-    return true
-  }
+  const isAzureLike =
+    config.provider === "azure" ||
+    (config.provider === "custom" && isAzureOpenAiEndpoint(config.customEndpoint))
+
+  // Explicit family override always wins.
+  if (isAzureLike && config.azureModelFamily === "gpt5") return true
 
   const model = config.model.trim().toLowerCase()
+
+  // When the Azure family is left on "auto" (the default), infer it from the
+  // deployment name with a boundary-aware match anywhere in the string so
+  // GPT-5 / o-series deployments get `max_completion_tokens` without requiring
+  // the user to manually set the family. See issue #610.
+  if (isAzureLike && deploymentNameSuggestsStrictCompletion(model)) return true
+
   const strictModel =
     /^gpt-5(?:[.\-_]|$)/.test(model) || /^o\d+(?:[.\-_]|$)/.test(model)
   if (!strictModel) return false
