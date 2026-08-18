@@ -186,6 +186,18 @@
     "refreshFolderHint": "Riesamina la cartella delle fonti ed elabora i file nuovi, modificati o eliminati.",
     "refreshFolderTooltip": "Riesamina la cartella delle fonti del progetto con le stesse regole del monitoraggio automatico. I file consentiti nuovi o modificati vengono messi in coda per l'elaborazione; le fonti eliminate avviano la normale pulizia di wiki e indice; infine l'albero dei file viene ricostruito.",
     "refreshFailed": "Impossibile aggiornare le fonti: {{error}}",
+    "importSkip": {
+      "failed": "Importazione non riuscita: {{error}}",
+      "summary": "Importati {{imported}}, ignorati {{skipped}}",
+      "reason": {
+        "unsupported-type": "Tipo di file non supportato",
+        "excluded": "Bloccato da una regola di esclusione",
+        "too-large": "Supera la dimensione massima del file",
+        "unreadable": "Impossibile leggere il file",
+        "copy-failed": "Impossibile copiare il file",
+        "sensitive-config": "Escluso in quanto file di configurazione"
+      }
+    },
     "openExternal": "Apri nell'app predefinita",
     "openExternalFailed": "Impossibile aprire {{name}}: {{error}}",
     "ingest": "Elabora",
