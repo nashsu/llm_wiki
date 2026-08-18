@@ -116,20 +116,22 @@ function fileNameToId(fileName: string): string {
 }
 
 function targetAliases(value: string): string[] {
-  const lower = value.toLowerCase()
-  return [value, lower, lower.replace(/\s+/g, "-")]
+  const normalized = normalizeLinkTarget(value)
+  return [value, normalized, normalized.replace(/\s+/g, "-")]
 }
 
-function buildTargetIndex(nodeIds: Iterable<string>): Map<string, string> {
-  const ids = Array.from(nodeIds)
+function buildTargetIndex(nodes: Iterable<{ id: string; shortPath: string }>): Map<string, string> {
+  const items = Array.from(nodes)
   const index = new Map<string, string>()
   // Exact IDs must win over case-folded aliases. On a case-sensitive
   // filesystem, Foo.md and foo.md are distinct pages and [[foo]] must retain
   // the reader's exact-match behavior.
-  for (const id of ids) index.set(id, id)
-  for (const id of ids) {
-    for (const alias of targetAliases(id).slice(1)) {
-      if (!index.has(alias)) index.set(alias, id)
+  for (const node of items) index.set(node.id, node.id)
+  for (const node of items) {
+    for (const value of [node.id, node.shortPath, fileBase(node.shortPath)]) {
+      for (const alias of targetAliases(value)) {
+        if (!index.has(alias)) index.set(alias, node.id)
+      }
     }
   }
   return index
@@ -210,7 +212,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   // Build a map of id -> node data
   const nodeMap = new Map<
     string,
-    { id: string; label: string; type: string; path: string; links: string[] }
+    { id: string; label: string; type: string; path: string; shortPath: string; links: string[] }
   >()
 
   const parsedFiles = await mapWithConcurrency(
@@ -220,11 +222,16 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
       try {
         const content = await readFile(file.path)
         const id = fileNameToId(file.name)
+        const normalizedPath = normalizePath(file.path)
+        const shortPath = normalizedPath.startsWith(`${wikiRoot}/`)
+          ? normalizedPath.slice(wikiRoot.length + 1)
+          : file.name
         return {
           id,
           label: extractTitle(content, file.name),
           type: extractType(content),
           path: file.path,
+          shortPath,
           links: extractWikilinks(content),
         }
       } catch {
@@ -253,7 +260,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   }
 
   const rawEdges: GraphEdge[] = []
-  const targetIndex = buildTargetIndex(nodeMap.keys())
+  const targetIndex = buildTargetIndex(nodeMap.values())
 
   for (const [sourceId, nodeData] of nodeMap) {
     for (const targetRaw of nodeData.links) {
@@ -326,6 +333,19 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
   }))
 
   return { nodes, edges, communities }
+}
+
+function normalizeLinkTarget(raw: string): string {
+  return raw.replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/^wiki\//i, "")
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase()
+}
+
+function fileBase(path: string): string {
+  return path.replace(/\\/g, "/").split("/").pop()?.replace(/\.md$/i, "") ?? path
 }
 
 function resolveTarget(

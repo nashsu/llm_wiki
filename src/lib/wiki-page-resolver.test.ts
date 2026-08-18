@@ -205,6 +205,15 @@ describe("resolveRelatedSlug", () => {
     )
   })
 
+  it("accepts wiki-root-relative paths with or without .md", () => {
+    expect(resolveRelatedSlug(INDEX, "concepts/bar", WIKI)).toBe(
+      `${WIKI}/concepts/bar.md`,
+    )
+    expect(resolveRelatedSlug(INDEX, "concepts/bar.md", WIKI)).toBe(
+      `${WIKI}/concepts/bar.md`,
+    )
+  })
+
   it("returns null when slug doesn't exist", () => {
     expect(resolveRelatedSlug(INDEX, "ghost", WIKI)).toBeNull()
   })
