@@ -1,4 +1,5 @@
 import type { AzureModelFamily, CustomLlmPreset } from "@/stores/wiki-store"
+import i18n from "@/i18n"
 
 /**
  * Curated LLM provider presets.
@@ -549,6 +550,28 @@ export function availableLlmPresets(customPresets: CustomLlmPreset[] = []): LlmP
 
 export function findLlmPreset(id: string, customPresets: CustomLlmPreset[] = []): LlmPreset | undefined {
   return availableLlmPresets(customPresets).find((preset) => preset.id === id)
+}
+
+/**
+ * Default ready-to-configure custom profiles shown on first run. They have
+ * NO hardcoded Endpoint / model: the user fills those in via the expanded
+ * per-profile panel when they open Settings. Each is a real profile backed by
+ * providerConfigs[id], so once configured, switching between the slots
+ * restores the saved Endpoint + model instantly.
+ *
+ * Ids use the `custom-` prefix required by normalizeCustomLlmPresets. They are
+ * only seeded in-memory when nothing has been persisted yet; any add/rename/
+ * delete in the settings UI persists the list and takes over.
+ */
+export function defaultCustomLlmPresetLabel(number: number): string {
+  return i18n.t("settings.sections.llm.customProfiles.defaultName", { number })
+}
+
+export function defaultCustomLlmPresets(): CustomLlmPreset[] {
+  return [
+    { id: "custom-default-1", label: defaultCustomLlmPresetLabel(1) },
+    { id: "custom-default-2", label: defaultCustomLlmPresetLabel(2) },
+  ]
 }
 
 /**

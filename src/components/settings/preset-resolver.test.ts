@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { LLM_PRESETS } from "./llm-presets"
+import { defaultCustomLlmPresets, defaultCustomLlmPresetLabel } from "./llm-presets"
 import { disabledLlmConfig, resolveConfig } from "./preset-resolver"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import type { LlmConfig } from "@/stores/wiki-store"
@@ -77,8 +78,8 @@ describe("resolveConfig", () => {
 
   it("keeps an explicit provider-level reasoning override", () => {
     const preset: LlmPreset = {
-      id: "qwen",
-      label: "Qwen",
+      id: "local-gateway",
+      label: "Local gateway",
       provider: "custom",
       baseUrl: "http://localhost:8000/v1",
       defaultModel: "Qwen3.5-122B",
@@ -222,5 +223,30 @@ describe("disabledLlmConfig", () => {
     expect(cleared.customEndpoint).toBe("http://local.test/v1")
     expect(cleared.provider).toBe("openai")
     expect(hasUsableLlm(cleared)).toBe(false)
+  })
+})
+
+describe("defaultCustomLlmPresets", () => {
+  it("seeds two empty ready-to-configure custom profiles with valid ids", () => {
+    const seeded = defaultCustomLlmPresets()
+
+    expect(seeded).toHaveLength(2)
+    expect(seeded.map((preset) => preset.id)).toEqual(["custom-default-1", "custom-default-2"])
+    for (const preset of seeded) {
+      // Must satisfy normalizeCustomLlmPresets' id + label rules so the
+      // persisted-list loader and settings UI accept them unchanged.
+      expect(preset.id).toMatch(/^custom-[A-Za-z0-9-]{1,80}$/)
+      expect(preset.label.trim()).not.toBe("")
+    }
+  })
+
+  it("labels the seeded profiles with the localized default-name convention", () => {
+    const seeded = defaultCustomLlmPresets()
+    const expected1 = defaultCustomLlmPresetLabel(1)
+    const expected2 = defaultCustomLlmPresetLabel(2)
+
+    expect(seeded[0].label).toBe(expected1)
+    expect(seeded[1].label).toBe(expected2)
+    expect(seeded[0].label).not.toBe(seeded[1].label)
   })
 })

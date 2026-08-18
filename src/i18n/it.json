@@ -4,11 +4,24 @@
     "subtitle": "Costruisci e mantieni la tua knowledge base personale con gli LLM"
   },
   "common": {
-    "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
-    "dismiss": "Nascondi", "loading": "Caricamento...", "optional": "opzionale"
+    "retry": "Riprova",
+    "cancel": "Annulla",
+    "ignore": "Ignora",
+    "close": "Chiudi",
+    "ok": "OK",
+    "confirm": "Conferma",
+    "notice": "Avviso",
+    "dismiss": "Nascondi",
+    "loading": "Caricamento...",
+    "optional": "opzionale"
   },
-  "layout": { "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
-  "errors": { "generic": "Qualcosa è andato storto" },
+  "layout": {
+    "showSidebar": "Mostra la barra laterale",
+    "hideSidebar": "Nascondi la barra laterale"
+  },
+  "errors": {
+    "generic": "Qualcosa è andato storto"
+  },
   "mermaid": {
     "renderFailed": "Impossibile visualizzare il diagramma Mermaid",
     "showDetails": "Mostra i dettagli del parser",
@@ -47,10 +60,16 @@
     "rawSources": "Fonti grezze",
     "noWikiPages": "Ancora nessuna pagina wiki. Importa delle fonti per iniziare.",
     "typeLabels": {
-      "overview": "Panoramica", "entity": "Entità", "concept": "Concetti",
-      "source": "Fonti", "synthesis": "Sintesi", "finding": "Risultati",
-      "thesis": "Tesi", "methodology": "Metodologie",
-      "comparison": "Confronti", "query": "Query"
+      "overview": "Panoramica",
+      "entity": "Entità",
+      "concept": "Concetti",
+      "source": "Fonti",
+      "synthesis": "Sintesi",
+      "finding": "Risultati",
+      "thesis": "Tesi",
+      "methodology": "Metodologie",
+      "comparison": "Confronti",
+      "query": "Query"
     }
   },
   "editor": {
@@ -92,13 +111,16 @@
       "createFailed": "Non è stato possibile creare la pagina mancante.",
       "emptyDraftError": "Il modello ha restituito una bozza vuota."
     },
-    "frontmatter": { "origin": "Origine", "more": "Altro" },
+    "frontmatter": {
+      "origin": "Origine",
+      "more": "Altro"
+    },
     "rawMarkdownEditor": "Editor Markdown grezzo"
   },
   "research": {
     "title": "Deep Research",
     "notConfigured": "Le fonti per la Deep Research non sono configurate. Vai in Impostazioni → Fonti di informazione esterne per configurare la ricerca web o AnyTXT.",
-    "activeBadge": "{{running}} attive{{queued, plural, =0 {} other {, {{queued}} in coda}}}",
+    "activeBadge": "{{running}} attive",
     "inputPlaceholder": "Inserisci un argomento di ricerca...",
     "emptyTitle": "Ancora nessuna ricerca",
     "emptyHint": "Inserisci un argomento qui sopra oppure clicca su Deep Research in Revisione",
@@ -118,7 +140,8 @@
       "saved": "Salvato",
       "done": "Completato",
       "failed": "Non riuscito"
-    }
+    },
+    "activeBadgeWithQueued": "{{running}} attive, {{queued}} in coda"
   },
   "project": {
     "createTitle": "Crea un nuovo progetto wiki",
@@ -436,7 +459,9 @@
     "dismissSelected": "Scarta i selezionati",
     "affectedPages": "Pagine",
     "allClear": "Tutto a posto — niente da revisionare",
-    "resolvedDivider": "— Risolti —"
+    "resolvedDivider": "— Risolti —",
+    "autoReviewed": "Già revisionati automaticamente",
+    "autoReviewedHint": "Mostra solo gli elementi già elaborati dalla revisione automatica"
   },
   "settings": {
     "title": "Impostazioni",
@@ -488,7 +513,9 @@
         "closeMinimize": "Nascondi la finestra",
         "closeMinimizeHint": "Mantieni LLM Wiki in esecuzione in background quando chiudi la finestra. Su macOS corrisponde al normale comportamento del pulsante rosso di chiusura. Se su Linux l'area di notifica non è disponibile, la finestra viene ridotta a icona invece che nascosta.",
         "closeExit": "Esci dall'app",
-        "closeExitHint": "Chiudi subito LLM Wiki quando chiudi la finestra."
+        "closeExitHint": "Chiudi subito LLM Wiki quando chiudi la finestra.",
+        "autoProcessReviews": "Elabora automaticamente gli elementi di revisione con l'IA",
+        "autoProcessReviewsHint": "Se abilitato, gli elementi di revisione generati durante l'ingestione vengono elaborati automaticamente dall'LLM — le pagine vengono create, la ricerca viene accodata o gli elementi vengono saltati se opportuno. Gli elementi che l'IA non può gestire con sicurezza restano nel pannello Revisione per la gestione manuale."
       },
       "skills": {
         "title": "Skill",
@@ -514,7 +541,7 @@
           "activeDefault": "Usa il modello attivo",
           "hint": "Scegli modelli distinti per la chat interattiva e per l'elaborazione dei documenti. Il modello attivo resta il fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Usa un modello specifico per il progetto",
           "provider": "Provider del progetto",
           "selectProvider": "Seleziona un provider",
@@ -1055,12 +1082,25 @@
     "fileSync": "Sincronizzazione file",
     "rescan": "Riesamina",
     "rescanTitle": "Cerca modifiche esterne nei file del progetto",
-    "changeKinds": { "created": "Creato", "modified": "Modificato", "deleted": "Eliminato" },
+    "changeKinds": {
+      "created": "Creato",
+      "modified": "Modificato",
+      "deleted": "Eliminato"
+    },
     "fileTypes": {
-      "entity": "Entità", "concept": "Concetto", "source": "Fonte", "query": "Query",
-      "synthesis": "Sintesi", "comparison": "Confronto", "finding": "Risultato",
-      "thesis": "Tesi", "methodology": "Metodologia", "overview": "Panoramica",
-      "index": "Indice", "log": "Log", "file": "File"
+      "entity": "Entità",
+      "concept": "Concetto",
+      "source": "Fonte",
+      "query": "Query",
+      "synthesis": "Sintesi",
+      "comparison": "Confronto",
+      "finding": "Risultato",
+      "thesis": "Tesi",
+      "methodology": "Metodologia",
+      "overview": "Panoramica",
+      "index": "Indice",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {

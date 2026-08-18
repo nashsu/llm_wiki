@@ -77,6 +77,7 @@ export interface SettingsDraft {
   // General app behavior
   autostart: boolean
   closeBehavior: CloseBehavior
+  autoProcessReviews: boolean
 
   // Source folder auto watch
   sourceWatchConfig: SourceWatchConfig
