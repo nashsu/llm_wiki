@@ -638,6 +638,7 @@ pub fn run() {
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
+            commands::fs::is_directory,
             commands::fs::get_file_modified_time,
             commands::fs::get_file_size,
             commands::fs::get_file_md5,

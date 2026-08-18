@@ -8,7 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
 }))
 
-import { createDirectory, listDirectory, writeFile, writeFileAtomic } from "./fs"
+import {
+  createDirectory,
+  isDirectory,
+  listDirectory,
+  writeFile,
+  writeFileAtomic,
+} from "./fs"
 
 describe("fs command path guards", () => {
   beforeEach(() => {
@@ -45,6 +51,16 @@ describe("fs command path guards", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("write_file", {
       path: "/tmp/project/wiki/sources/page.md",
       contents: "content",
+    })
+  })
+
+  it("forwards directory classification to Tauri", async () => {
+    mocks.invoke.mockResolvedValue(true)
+
+    await expect(isDirectory("/tmp/project/raw/sources")).resolves.toBe(true)
+
+    expect(mocks.invoke).toHaveBeenCalledWith("is_directory", {
+      path: "/tmp/project/raw/sources",
     })
   })
 

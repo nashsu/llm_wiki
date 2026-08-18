@@ -1542,10 +1542,20 @@ pub async fn list_directory(
     tauri::async_runtime::spawn_blocking(move || {
         run_guarded("list_directory", || {
             let p = Path::new(&path);
-            if !p.exists() {
-                return Err(format!("Path does not exist: '{}'", path));
+            let metadata = fs::symlink_metadata(p).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    format!("Path does not exist: '{}'", path)
+                } else {
+                    format!("Failed to inspect path '{}': {}", path, error)
+                }
+            })?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "Path is a symbolic link and cannot be listed: '{}'; choose its target directly",
+                    path
+                ));
             }
-            if !p.is_dir() {
+            if !metadata.is_dir() {
                 return Err(format!("Path is not a directory: '{}'", path));
             }
             let nodes = build_tree(p, 0, max_depth, include_hidden)?;
@@ -1566,31 +1576,52 @@ fn build_tree(
         return Ok(vec![]);
     }
 
+    let metadata = fs::symlink_metadata(dir)
+        .map_err(|e| format!("Failed to inspect directory '{}': {}", dir.display(), e))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Refusing to traverse symbolic link directory '{}'",
+            dir.display()
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(format!("Path is not a directory: '{}'", dir.display()));
+    }
+
     let mut entries: Vec<_> = fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let visible = entry
                 .file_name()
                 .to_str()
-                .map(|n| entry_is_visible(n, include_hidden))
-                .unwrap_or(false)
+                .map(|name| entry_is_visible(name, include_hidden))
+                .unwrap_or(false);
+            if !visible {
+                return None;
+            }
+
+            let metadata = fs::symlink_metadata(entry.path()).ok()?;
+            if metadata.file_type().is_symlink() {
+                return None;
+            }
+            if !metadata.is_dir() && !metadata.is_file() {
+                return None;
+            }
+
+            Some((entry, metadata.is_dir()))
         })
         .collect();
 
     // Sort: directories first, then alphabetical within each group
-    entries.sort_by(|a, b| {
-        let a_is_dir = a.path().is_dir();
-        let b_is_dir = b.path().is_dir();
-        match (a_is_dir, b_is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.file_name().cmp(&b.file_name()),
-        }
+    entries.sort_by(|(a, a_is_dir), (b, b_is_dir)| match (a_is_dir, b_is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.file_name().cmp(&b.file_name()),
     });
 
     let mut nodes = Vec::new();
-    for entry in entries {
+    for (entry, is_dir) in entries {
         let entry_path = entry.path();
         let name = entry.file_name().to_str().unwrap_or("").to_string();
         // Always return forward-slash paths so the TS layer can compare
@@ -1599,7 +1630,6 @@ fn build_tree(
         // prevents a whole class of bugs where TS-constructed `/` paths
         // fail to match Rust-returned `\` paths.
         let path_str = entry_path.to_string_lossy().replace('\\', "/");
-        let is_dir = entry_path.is_dir();
 
         let children = if is_dir {
             let kids = build_tree(&entry_path, depth + 1, max_depth, include_hidden)?;
@@ -1981,6 +2011,39 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
     })
     .await
     .map_err(|e| format!("file_exists blocking task join error: {e}"))?
+}
+
+/// Classify a dropped regular file or directory without following symlinks.
+///
+/// Unlike `file_exists`, a metadata error is surfaced so callers can explain
+/// why a dropped source could not be classified rather than silently treating
+/// it as a file.
+#[tauri::command]
+pub async fn is_directory(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("is_directory", || {
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "Cannot import symbolic link '{}'; choose its target directly",
+                    path
+                ));
+            }
+            if metadata.is_dir() {
+                return Ok(true);
+            }
+            if metadata.is_file() {
+                return Ok(false);
+            }
+            Err(format!(
+                "Path is neither a regular file nor a directory: '{}'; choose a regular file or directory",
+                path
+            ))
+        })
+    })
+    .await
+    .map_err(|e| format!("is_directory blocking task join error: {e}"))?
 }
 
 /// Get the last modified timestamp of a file in milliseconds since Unix epoch.
@@ -2370,6 +2433,138 @@ mod tests {
         let relative = write_file_base64("relative.bin".to_string(), "AA==".to_string()).await;
         assert!(relative.is_err());
         assert!(relative.unwrap_err().contains("requires an absolute path"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_directory_distinguishes_file_directory_and_missing_path() {
+        let root = make_temp_dir("is-directory");
+        let file = root.join("source.md");
+        let missing = root.join("missing");
+        fs::write(&file, "source").unwrap();
+
+        assert!(!is_directory(file.to_string_lossy().into_owned())
+            .await
+            .unwrap());
+        assert!(is_directory(root.to_string_lossy().into_owned())
+            .await
+            .unwrap());
+
+        let error = is_directory(missing.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        assert!(error.contains("Failed to get metadata for"), "got: {error}");
+        assert!(
+            error.contains(missing.to_string_lossy().as_ref()),
+            "got: {error}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_directory_rejects_symlinks_and_special_files() {
+        let root = make_temp_dir("is-directory-symlink");
+        let file = root.join("source.md");
+        let directory = root.join("directory");
+        let file_link = root.join("file-link");
+        let directory_link = root.join("directory-link");
+        // Unix-domain socket paths are short (104 bytes on macOS), while the
+        // standard per-user temp directory can already approach that limit.
+        let socket =
+            std::path::Path::new("/tmp").join(format!("llmwiki-{}.sock", uuid::Uuid::new_v4()));
+        fs::write(&file, "source").unwrap();
+        fs::create_dir(&directory).unwrap();
+        std::os::unix::fs::symlink(&file, &file_link).unwrap();
+        std::os::unix::fs::symlink(&directory, &directory_link).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        for link in [&file_link, &directory_link] {
+            let error = is_directory(link.to_string_lossy().into_owned())
+                .await
+                .unwrap_err();
+            assert!(error.contains("symbolic link"), "got: {error}");
+            assert!(
+                error.contains(link.to_string_lossy().as_ref()),
+                "got: {error}"
+            );
+        }
+
+        let error = is_directory(socket.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("neither a regular file nor a directory"),
+            "got: {error}"
+        );
+        assert!(
+            error.contains(socket.to_string_lossy().as_ref()),
+            "got: {error}"
+        );
+
+        drop(listener);
+        let _ = fs::remove_file(socket);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_directory_rejects_symlink_root_and_omits_unsafe_nested_entries() {
+        // Keep the Unix-domain socket path comfortably below macOS's limit.
+        let root =
+            std::path::Path::new("/tmp").join(format!("llmwiki-tree-{}", uuid::Uuid::new_v4()));
+        let listed = root.join("listed");
+        let nested = listed.join("nested");
+        let external = root.join("external");
+        let listed_link = root.join("listed-link");
+        let socket = nested.join("special.md");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir(&external).unwrap();
+        fs::write(nested.join("regular.md"), "regular").unwrap();
+        fs::write(external.join("must-not-appear.md"), "external").unwrap();
+        std::os::unix::fs::symlink(&external, nested.join("nested-link")).unwrap();
+        std::os::unix::fs::symlink(&listed, &listed_link).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        let nodes = list_directory(listed.to_string_lossy().into_owned(), Some(false), Some(30))
+            .await
+            .unwrap();
+        let nested_node = nodes.iter().find(|node| node.name == "nested").unwrap();
+        let children = nested_node.children.as_ref().unwrap();
+        assert!(children.iter().any(|node| node.name == "regular.md"));
+        assert!(
+            !children.iter().any(|node| node.name == "special.md"),
+            "special file entries must not be exposed: {children:?}"
+        );
+        assert!(
+            !children.iter().any(|node| node.name == "nested-link"),
+            "symlink entries must not be exposed: {children:?}"
+        );
+        assert!(
+            !children
+                .iter()
+                .any(|node| node.name == "must-not-appear.md"),
+            "symlink targets must not be traversed: {children:?}"
+        );
+
+        let error = list_directory(
+            listed_link.to_string_lossy().into_owned(),
+            Some(false),
+            Some(30),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("symbolic link"), "got: {error}");
+        assert!(
+            error.contains(listed_link.to_string_lossy().as_ref()),
+            "got: {error}"
+        );
+
+        let error = build_tree(&listed_link, 0, 30, false).unwrap_err();
+        assert!(error.contains("symbolic link"), "got: {error}");
+
+        drop(listener);
+        let _ = fs::remove_dir_all(root);
     }
 
     /// Ad-hoc probe: run the production PDF extraction path against every
