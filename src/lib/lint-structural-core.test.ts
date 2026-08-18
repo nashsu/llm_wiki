@@ -21,6 +21,27 @@ describe("computeStructuralLint", () => {
     expect(broken?.suggestedTarget).toBe("transformer.md")
   })
 
+  it("resolves wiki-root-relative path links", () => {
+    const pages: StructuralLintPage[] = [
+      {
+        shortName: "entities/CompGCN.md",
+        slug: "entities/CompGCN",
+        title: "CompGCN",
+        outlinks: ["concepts/inductive-kg-reasoning"],
+        tokens: ["compgcn"],
+      },
+      {
+        shortName: "concepts/inductive-kg-reasoning.md",
+        slug: "concepts/inductive-kg-reasoning",
+        title: "Inductive KG Reasoning",
+        outlinks: ["entities/CompGCN"],
+        tokens: ["inductive", "knowledge", "graph"],
+      },
+    ]
+
+    expect(computeStructuralLint(pages).filter((finding) => finding.type === "broken-link")).toEqual([])
+  })
+
   it("handles 5,000 pages without quadratic candidate expansion", () => {
     const pages = Array.from({ length: 5_000 }, (_, index) => page(index, 5_000))
     const started = performance.now()

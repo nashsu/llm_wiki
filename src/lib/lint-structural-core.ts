@@ -40,10 +40,15 @@ function fileName(path: string): string {
 
 function normalizeTarget(target: string): string {
   return target.replace(/\\/g, "/")
+    .replace(/^\/+/, "")
     .replace(/^wiki\//i, "")
     .replace(/\.md$/i, "")
     .trim()
     .toLowerCase()
+}
+
+function wikiRootRelativeTarget(target: string): string {
+  return normalizeTarget(target).split("/").slice(-2).join("/")
 }
 
 function levenshtein(a: string, b: string): number {
@@ -112,6 +117,8 @@ export function computeStructuralLint(
   pages.forEach((page, index) => {
     const basename = fileName(page.shortName).replace(/\.md$/i, "")
     slugMap.set(normalizeTarget(page.slug), index)
+    slugMap.set(normalizeTarget(page.shortName), index)
+    slugMap.set(wikiRootRelativeTarget(page.shortName), index)
     slugMap.set(normalizeTarget(basename), index)
     for (const token of page.tokenSet) addToIndex(tokenIndex, token, index)
     for (const value of [page.slug, page.shortName, page.title]) {

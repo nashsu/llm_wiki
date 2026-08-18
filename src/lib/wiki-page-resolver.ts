@@ -107,10 +107,11 @@ export function findInTreeByName(
 
 /**
  * Resolve a `related:` reference to an absolute wiki page path.
- * Accepts three shapes the wiki has historically written:
+ * Accepts four shapes the wiki has historically written:
  *   1. project-relative path:  `wiki/entities/dpao.md`
- *   2. bare filename with .md: `dpao.md`
- *   3. bare slug:              `dpao`
+ *   2. wiki-root path:         `entities/dpao` or `entities/dpao.md`
+ *   3. bare filename with .md: `dpao.md`
+ *   4. bare slug:              `dpao`
  * Returns the absolute path of an existing file, or null if none
  * matches. Always restricts the lookup to `wiki/` to avoid pulling
  * in a same-named file from `raw/sources/`.
@@ -120,16 +121,27 @@ export function resolveRelatedSlug(
   ref: string,
   wikiRoot: string,
 ): string | null {
-  // Path-like → resolve relative to project root (one segment up
-  // from wikiRoot).
-  if (ref.includes("/")) {
-    const projectRoot = wikiRoot.replace(/\/wiki$/, "")
-    const target = `${projectRoot}/${ref}`
-    const found = findInTreeByPath(index, target)
-    return found && found.includes(`${wikiRoot}/`) ? found : null
+  const normalizedRef = ref.replace(/\\/g, "/").replace(/^\/+/, "").trim()
+  const projectRoot = wikiRoot.replace(/\/wiki$/, "")
+
+  // Path-like refs may be project-relative (`wiki/concepts/foo.md`) or
+  // wiki-root-relative (`concepts/foo`). LLM-generated pages historically
+  // used both, and many omitted the `.md` extension.
+  if (normalizedRef.includes("/")) {
+    const bases = normalizedRef.startsWith("wiki/")
+      ? [`${projectRoot}/${normalizedRef}`]
+      : [`${projectRoot}/${normalizedRef}`, `${wikiRoot}/${normalizedRef}`]
+    for (const base of bases) {
+      const candidates = base.endsWith(".md") ? [base] : [base, `${base}.md`]
+      for (const target of candidates) {
+        const found = findInTreeByPath(index, target)
+        if (found?.startsWith(`${wikiRoot}/`)) return found
+      }
+    }
+    return null
   }
 
-  const filename = ref.endsWith(".md") ? ref : `${ref}.md`
+  const filename = normalizedRef.endsWith(".md") ? normalizedRef : `${normalizedRef}.md`
   return findInTreeByName(index, filename, `${wikiRoot}/`)
 }
 
