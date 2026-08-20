@@ -326,6 +326,44 @@ impl LlmClient {
         images: &[AgentImage],
         include_model: bool,
     ) -> Result<String, String> {
+        let attempt = |thinking_off: bool| {
+            let cfg = if thinking_off {
+                with_thinking_disabled(&self.config)
+            } else {
+                self.config.clone()
+            };
+            async move {
+                let client = LlmClient::new(cfg)?;
+                client
+                    .generate_openai_like_once(url, system, user, images, include_model)
+                    .await
+            }
+        };
+        let first = attempt(false).await;
+        match first {
+            Err(err) if is_reasoning_only_error(&err) && can_retry_thinking(&self.config) => {
+                // The model spent its whole budget on reasoning_content and
+                // produced no final content (common with DeepSeek V4
+                // thinking models). Retry once with thinking disabled so the
+                // user gets a usable answer instead of an opaque error.
+                let retried = attempt(true).await;
+                match retried {
+                    Ok(text) => Ok(text),
+                    Err(_) => Err(err),
+                }
+            }
+            other => other,
+        }
+    }
+
+    async fn generate_openai_like_once(
+        &self,
+        url: &str,
+        system: &str,
+        user: &str,
+        images: &[AgentImage],
+        include_model: bool,
+    ) -> Result<String, String> {
         let body = self.openai_like_body(system, user, images, include_model, false);
 
         let response = self
@@ -369,7 +407,44 @@ impl LlmClient {
         user: &str,
         images: &[AgentImage],
         include_model: bool,
-        on_delta: F,
+        mut on_delta: F,
+    ) -> Result<String, String>
+    where
+        F: FnMut(&str) + Send,
+    {
+        let first = self
+            .stream_openai_like_once(url, system, user, images, include_model, &mut on_delta)
+            .await;
+        match first {
+            Err(err) if is_reasoning_only_error(&err) && can_retry_thinking(&self.config) => {
+                // The model spent its whole budget on reasoning_content and
+                // produced no final content (common with DeepSeek V4
+                // thinking models). Retry once with thinking disabled so the
+                // user gets a usable answer instead of an opaque error.
+                let client = LlmClient::new(with_thinking_disabled(&self.config))?;
+                client
+                    .stream_openai_like_once(
+                        url,
+                        system,
+                        user,
+                        images,
+                        include_model,
+                        &mut on_delta,
+                    )
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn stream_openai_like_once<F>(
+        &self,
+        url: &str,
+        system: &str,
+        user: &str,
+        images: &[AgentImage],
+        include_model: bool,
+        on_delta: &mut F,
     ) -> Result<String, String>
     where
         F: FnMut(&str) + Send,
@@ -588,13 +663,16 @@ impl LlmClient {
 
     pub fn structured_task_config(&self, max_tokens: u32) -> Self {
         let mut config = self.config.clone();
-        // Structured tasks need concise final content, but forcing "off" is
-        // invalid for thinking-only models and generic custom gateways. Auto
-        // omits provider-specific controls and is the portable safe default.
-        config.reasoning = Some(LlmReasoningConfig {
-            mode: Some("auto".to_string()),
-            budget_tokens: None,
-        });
+        // Structured tasks need concise final content. Keep the user's
+        // explicit reasoning choice when they made one (e.g. "off" to stop
+        // DeepSeek V4 from burning the whole budget on reasoning_content);
+        // fall back to the portable auto default only when unset.
+        if config.reasoning.is_none() {
+            config.reasoning = Some(LlmReasoningConfig {
+                mode: Some("auto".to_string()),
+                budget_tokens: None,
+            });
+        }
         config.max_tokens = Some(max_tokens);
         Self {
             config,
@@ -910,6 +988,27 @@ fn is_azure_endpoint(url: &str) -> bool {
     lower.contains(".openai.azure.com") || lower.contains("/openai/deployments/")
 }
 
+fn is_deepseek_endpoint(url: &str) -> bool {
+    // Mirrors isDeepSeekEndpoint in src/lib/llm-providers.ts.
+    let lower = url.to_ascii_lowercase();
+    regex_like_api_deepseek(&lower)
+}
+
+fn regex_like_api_deepseek(lower: &str) -> bool {
+    // api.deepseek.com / api.deepseek.cn with an optional :port or /path
+    let Some(pos) = lower.find("api.deepseek.") else {
+        return false;
+    };
+    let rest = &lower[pos + "api.deepseek.".len()..];
+    rest.starts_with("com") || rest.starts_with("cn")
+}
+
+fn is_deepseek_v4_model(model: &str) -> bool {
+    // Mirrors supportsDeepSeekThinkingParam in src/lib/llm-providers.ts.
+    let lower = model.to_ascii_lowercase();
+    lower.contains("deepseek-v4") || lower.contains("deepseek_v4")
+}
+
 fn requires_bearer_auth(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     lower.contains("minimax.io") || lower.contains("minimaxi.com")
@@ -931,6 +1030,26 @@ fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
         }
         return;
     }
+    // DeepSeek V4 thinking mode. `thinking.type=disabled` is the most
+    // important path for ingestion/rewrite tasks: it prevents the model
+    // from spending the whole response on `reasoning_content` with no
+    // final `content`. Mirrors the frontend handling in llm-providers.ts.
+    if is_deepseek_endpoint(&config.custom_endpoint) && is_deepseek_v4_model(&config.model) {
+        match reasoning.mode.as_deref() {
+            Some("off") => {
+                body["thinking"] = json!({ "type": "disabled" });
+            }
+            Some("high" | "max") => {
+                body["thinking"] = json!({ "type": "enabled" });
+                body["reasoning_effort"] =
+                    Value::String(reasoning.mode.clone().unwrap_or_default());
+            }
+            // "auto" omits provider-specific controls; the server applies
+            // the model default (thinking stays enabled).
+            _ => {}
+        }
+        return;
+    }
     // Generic OpenAI-compatible gateways do not promise support for OpenAI's
     // private reasoning fields. The frontend follows the same omission rule.
     if config.provider != "openai" && config.provider != "azure" {
@@ -946,6 +1065,29 @@ fn apply_openai_reasoning(body: &mut Value, config: &LlmConfig) {
         }
         _ => {}
     }
+}
+
+fn with_thinking_disabled(config: &LlmConfig) -> LlmConfig {
+    let mut config = config.clone();
+    config.reasoning = Some(LlmReasoningConfig {
+        mode: Some("off".to_string()),
+        budget_tokens: None,
+    });
+    config
+}
+
+const REASONING_ONLY_ERROR: &str = "LLM response did not contain assistant content";
+
+fn is_reasoning_only_error(err: &str) -> bool {
+    err == REASONING_ONLY_ERROR
+}
+
+fn can_retry_thinking(config: &LlmConfig) -> bool {
+    // Retrying with thinking disabled is only meaningful for providers that
+    // honor the OpenAI-compatible thinking field we control (DeepSeek V4).
+    config.provider == "custom"
+        && is_deepseek_endpoint(&config.custom_endpoint)
+        && is_deepseek_v4_model(&config.model)
 }
 
 fn adapt_openai_strict_completion_body(body: &mut Value, config: &LlmConfig) {
@@ -1236,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_task_config_uses_portable_auto_reasoning_and_raises_output_budget() {
+    fn structured_task_config_raises_output_budget_and_keeps_explicit_reasoning() {
         let mut cfg = config("openai");
         cfg.reasoning = Some(LlmReasoningConfig {
             mode: Some("high".to_string()),
@@ -1246,15 +1388,18 @@ mod tests {
         let body = client.openai_like_body("system", "user", &[], true, false);
 
         assert_eq!(body.get("max_tokens").and_then(Value::as_u64), Some(16_384));
-        assert!(body.get("reasoning_effort").is_none());
+        // User's explicit reasoning choice is preserved (was previously forced
+        // to "auto", which made reasoning-off impossible for DeepSeek V4).
         assert_eq!(
             client
                 .config
                 .reasoning
                 .as_ref()
                 .and_then(|value| value.mode.as_deref()),
-            Some("auto")
+            Some("high")
         );
+        // Non-reasoning OpenAI models still receive no reasoning_effort.
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]
@@ -1456,5 +1601,131 @@ mod tests {
 
         assert_eq!(full, "煤矿");
         assert_eq!(deltas, vec!["煤矿"]);
+    }
+
+    #[test]
+    fn deepseek_endpoint_detection() {
+        assert!(is_deepseek_endpoint("https://api.deepseek.com"));
+        assert!(is_deepseek_endpoint("https://api.deepseek.cn/v1"));
+        assert!(is_deepseek_endpoint("https://api.deepseek.com/v1/chat/completions"));
+        assert!(!is_deepseek_endpoint("https://example.com/v1"));
+        assert!(!is_deepseek_endpoint("https://api.deepseek.org"));
+    }
+
+    #[test]
+    fn deepseek_v4_model_detection() {
+        assert!(is_deepseek_v4_model("deepseek-v4-flash"));
+        assert!(is_deepseek_v4_model("deepseek-v4-pro"));
+        assert!(is_deepseek_v4_model("deepseek_v4_flash"));
+        assert!(!is_deepseek_v4_model("deepseek-chat"));
+        assert!(!is_deepseek_v4_model("gpt-4o"));
+    }
+
+    #[test]
+    fn deepseek_reasoning_off_sends_thinking_disabled() {
+        let mut body = json!({});
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg.model = "deepseek-v4-flash".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        apply_openai_reasoning(&mut body, &cfg);
+        assert_eq!(
+            body.get("thinking"),
+            Some(&json!({ "type": "disabled" }))
+        );
+    }
+
+    #[test]
+    fn deepseek_reasoning_high_sends_thinking_enabled_with_effort() {
+        let mut body = json!({});
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg.model = "deepseek-v4-pro".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("high".to_string()),
+            budget_tokens: None,
+        });
+        apply_openai_reasoning(&mut body, &cfg);
+        assert_eq!(body.get("thinking"), Some(&json!({ "type": "enabled" })));
+        assert_eq!(body.get("reasoning_effort"), Some(&Value::String("high".to_string())));
+    }
+
+    #[test]
+    fn deepseek_reasoning_auto_omits_controls() {
+        let mut body = json!({});
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg.model = "deepseek-v4-flash".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("auto".to_string()),
+            budget_tokens: None,
+        });
+        apply_openai_reasoning(&mut body, &cfg);
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn structured_task_config_keeps_user_explicit_reasoning() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg.model = "deepseek-v4-flash".to_string();
+        cfg.reasoning = Some(LlmReasoningConfig {
+            mode: Some("off".to_string()),
+            budget_tokens: None,
+        });
+        let client = LlmClient::new(cfg).unwrap().structured_task_config(16_384);
+        assert_eq!(
+            client
+                .config
+                .reasoning
+                .as_ref()
+                .and_then(|value| value.mode.as_deref()),
+            Some("off")
+        );
+        assert_eq!(client.config.max_tokens, Some(16_384));
+    }
+
+    #[test]
+    fn structured_task_config_defaults_to_auto_when_unset() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        let client = LlmClient::new(cfg).unwrap().structured_task_config(16_384);
+        assert_eq!(
+            client
+                .config
+                .reasoning
+                .as_ref()
+                .and_then(|value| value.mode.as_deref()),
+            Some("auto")
+        );
+    }
+
+    #[test]
+    fn can_retry_thinking_only_for_deepseek_v4() {
+        let mut cfg = config("custom");
+        cfg.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg.model = "deepseek-v4-flash".to_string();
+        assert!(can_retry_thinking(&cfg));
+
+        let mut cfg2 = config("custom");
+        cfg2.custom_endpoint = "https://example.com/v1".to_string();
+        cfg2.model = "deepseek-v4-flash".to_string();
+        assert!(!can_retry_thinking(&cfg2));
+
+        let mut cfg3 = config("custom");
+        cfg3.custom_endpoint = "https://api.deepseek.com".to_string();
+        cfg3.model = "deepseek-chat".to_string();
+        assert!(!can_retry_thinking(&cfg3));
+    }
+
+    #[test]
+    fn reasoning_only_error_detection() {
+        assert!(is_reasoning_only_error("LLM response did not contain assistant content"));
+        assert!(!is_reasoning_only_error("LLM HTTP 429: rate limited"));
+        assert!(!is_reasoning_only_error("network error"));
     }
 }
