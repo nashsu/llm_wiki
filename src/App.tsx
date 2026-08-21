@@ -9,7 +9,8 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, saveTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { hydrateTaskModelRoutingProfile } from "@/lib/llm-task-routing"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
@@ -346,7 +347,17 @@ function App() {
         }
         const savedTaskModelRouting = await loadTaskModelRouting()
         if (savedTaskModelRouting) {
-          useWikiStore.getState().setTaskModelRouting(savedTaskModelRouting)
+          const state = useWikiStore.getState()
+          const hydratedTaskModelRouting = hydrateTaskModelRoutingProfile(
+            savedTaskModelRouting,
+            state.globalLlmConfig,
+            savedProviderConfigs ?? {},
+            savedCustomLlmPresets,
+          )
+          state.setTaskModelRouting(hydratedTaskModelRouting)
+          if (hydratedTaskModelRouting !== savedTaskModelRouting) {
+            await saveTaskModelRouting(hydratedTaskModelRouting)
+          }
         }
         const savedSearchConfig = await loadSearchApiConfig()
         if (savedSearchConfig) {
