@@ -20,6 +20,7 @@ import {
   cancelTask,
   cancelTasks,
   cancelAllTasks,
+  clearAllTasks,
   movePendingTask,
   pauseProcessing,
   resumeProcessing,
@@ -184,6 +185,17 @@ export function ActivityPanel() {
     }))) return
     cancelAllTasks()
   }, [appDialog, project, queueSummary.pending, queueSummary.processing, t])
+
+  const handleClearQueue = useCallback(async () => {
+    if (!project || queueTasks.length === 0) return
+    if (!(await appDialog.confirm({
+      message: t("activity.clearQueueConfirm", { count: queueTasks.length }),
+      variant: "destructive",
+    }))) return
+    await clearAllTasks()
+    setSelectedTaskIds(new Set())
+    setQueueTasks([...getQueue()])
+  }, [appDialog, project, queueTasks.length, t])
 
   const handleTogglePause = useCallback(() => {
     if (!project) return
@@ -395,6 +407,15 @@ export function ActivityPanel() {
                     {t("activity.cancelAll")}
                   </button>
                 )}
+                {queueTasks.length > 0 && (
+                  <button
+                    onClick={handleClearQueue}
+                    className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+                    title={t("activity.clearQueueTitle")}
+                  >
+                    {t("activity.clearQueue")}
+                  </button>
+                )}
                 {queueSummary.failed + queueSummary.cancelled > 0 && (
                   <button
                     onClick={handleRetryAllFailed}
@@ -430,6 +451,13 @@ export function ActivityPanel() {
                   title={t("activity.retryFailedTitle")}
                 >
                   {t("activity.retryFailed")}
+                </button>
+                <button
+                  onClick={handleClearQueue}
+                  className="rounded px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+                  title={t("activity.clearQueueTitle")}
+                >
+                  {t("activity.clearQueue")}
                 </button>
               </div>
             </div>
