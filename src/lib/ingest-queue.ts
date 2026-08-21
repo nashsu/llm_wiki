@@ -637,6 +637,53 @@ export async function cancelAllTasks(): Promise<number> {
 }
 
 /**
+ * Permanently discard every task for the active project. In-flight work is
+ * aborted and any commit that has already entered a non-interruptible file
+ * write is allowed to finish before the empty queue is persisted.
+ */
+export async function clearAllTasks(): Promise<number> {
+  if (!currentProjectId || !currentProjectPath) return 0
+
+  const projectId = currentProjectId
+  const projectPath = currentProjectPath
+  const tasksToClear = queue.filter((task) => task.projectId === projectId)
+  if (tasksToClear.length === 0) return 0
+
+  // Invalidate workers before removing their tasks so a late completion
+  // cannot write the cleared queue state back into memory or to disk.
+  queueEpoch += 1
+  clearUsageLimitAutoResume()
+  paused = true
+  const runs = [...activeRuns.values()]
+  for (const run of runs) {
+    run.controller.abort()
+    run.releaseCommitTurn()
+  }
+  if (sweepAbortController) {
+    sweepAbortController.abort()
+    sweepAbortController = null
+  }
+
+  // Filesystem writes already in progress cannot be interrupted safely.
+  const committingRuns = runs.filter((run) => run.commitActive)
+  if (committingRuns.length > 0) {
+    await Promise.allSettled(committingRuns.map((run) => run.completion))
+  }
+
+  const taskIds = new Set(tasksToClear.map((task) => task.id))
+  queue = queue.filter((task) => !taskIds.has(task.id))
+  for (const taskId of taskIds) {
+    restoredPausedTaskIds.delete(taskId)
+    cancelledInFlightTaskIds.delete(taskId)
+  }
+  paused = false
+  resetQueueAccounting()
+  await saveQueue(projectPath)
+  console.log(`[Ingest Queue] Permanently cleared: ${tasksToClear.length} tasks`)
+  return tasksToClear.length
+}
+
+/**
  * Pause queue processing. The currently-running task (if any) is aborted
  * and returned to pending; no pending tasks are handed to the LLM until
  * resumeProcessing() is called. Use this to stop token spend without

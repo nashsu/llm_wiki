@@ -61,6 +61,7 @@ import {
   cancelTasks,
   discardTasksForSources,
   cancelAllTasks,
+  clearAllTasks,
   movePendingTask,
   clearCompletedTasks,
   clearQueueState,
@@ -654,6 +655,28 @@ describe("ingest-queue — cancelAllTasks", () => {
     await cancelAllTasks()
     const secondCall = await cancelAllTasks()
     expect(secondCall).toBe(0)
+  })
+})
+
+describe("ingest-queue — clearAllTasks", () => {
+  it("permanently removes every active-project task and persists an empty queue", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "a.md", folderContext: "" },
+      { sourcePath: "b.md", folderContext: "" },
+      { sourcePath: "c.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+    ;(getQueue()[2] as { status: string }).status = "failed"
+
+    const removed = await clearAllTasks()
+
+    expect(removed).toBe(3)
+    expect(getQueue()).toEqual([])
+    expect(mockWriteFile).toHaveBeenLastCalledWith(
+      `${TEST_PATH}/.llm-wiki/ingest-queue.json`,
+      "[]",
+    )
   })
 })
 
