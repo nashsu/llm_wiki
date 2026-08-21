@@ -34,6 +34,7 @@ interface LlmConfig {
   azureModelFamily?: AzureModelFamily
   maxContextSize: number // max context window in characters
   apiMode?: CustomApiMode
+  customHeaders?: Record<string, string>
   reasoning?: ReasoningConfig
   /**
    * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
@@ -48,7 +49,6 @@ interface LlmConfig {
   /** Defaults to true. HTTP providers use a non-streaming wire when false. */
   streamingEnabled?: boolean
   /** Optional headers added to every HTTP request for this provider preset. */
-  customHeaders?: Record<string, string>
 }
 
 export type SearchProvider =
@@ -332,13 +332,13 @@ export interface ProviderOverride {
   azureApiVersion?: string
   azureModelFamily?: AzureModelFamily
   apiMode?: CustomApiMode
+  customHeaders?: Record<string, string>
   maxContextSize?: number
   reasoning?: ReasoningConfig
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
   requestTimeoutMinutes?: number
   streamingEnabled?: boolean
-  customHeaders?: Record<string, string>
 }
 
 export type ProviderConfigs = Record<string, ProviderOverride>

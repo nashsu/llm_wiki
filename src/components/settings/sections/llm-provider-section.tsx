@@ -384,8 +384,17 @@ function PresetRow({
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
   const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
   const streamingEnabled = ov.streamingEnabled !== false
-  const [headersText, setHeadersText] = useState(() => llmHeadersToText(ov.customHeaders))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
+  const [headersText, setHeadersText] = useState(() => llmHeadersToText(ov.customHeaders))
+  const [isHeadersFocused, setIsHeadersFocused] = useState(false)
+
+  useEffect(() => {
+    if (!isHeadersFocused) {
+      setHeadersText(llmHeadersToText(ov.customHeaders))
+    }
+  }, [ov.customHeaders, isHeadersFocused])
+
+
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
     || Object.keys(ov.customHeaders ?? {}).length > 0 || ov.streamingEnabled === false
@@ -735,8 +744,16 @@ function PresetRow({
               <Label>{t("settings.sections.llm.customHeaders")}</Label>
               <textarea
                 value={headersText}
-                onChange={(event) => setHeadersText(event.target.value)}
-                onBlur={() => onChange({ customHeaders: parseLlmHeadersText(headersText) })}
+                onFocus={() => setIsHeadersFocused(true)}
+                onChange={(event) => {
+                  const text = event.target.value
+                  setHeadersText(text)
+                  onChange({ customHeaders: parseLlmHeadersText(text) })
+                }}
+                onBlur={() => {
+                  setIsHeadersFocused(false)
+                  onChange({ customHeaders: parseLlmHeadersText(headersText) })
+                }}
                 rows={3}
                 spellCheck={false}
                 placeholder="X-Tenant-ID: team-a"
