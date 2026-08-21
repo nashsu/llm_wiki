@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle, Plus, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -15,6 +15,7 @@ import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/l
 import { projectLlmProfile, resolveProjectLlmConfig } from "@/lib/llm-task-routing"
 import { saveProjectLlmOverride } from "@/lib/project-store"
 import { normalizeReasoningForProvider, resolveReasoningCapabilities } from "@/lib/reasoning-capabilities"
+import { resolveCodexModels } from "@/lib/resolve-codex-models"
 
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 
@@ -387,6 +388,37 @@ function PresetRow({
   const [headersText, setHeadersText] = useState(() => llmHeadersToText(ov.customHeaders))
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
+
+  // Codex CLI has no bare tier alias (unlike claude-code-cli's opus/sonnet/
+  // fable), so `preset.suggestedModels` is a snapshot that goes stale the
+  // moment OpenAI ships a new model family. Fetch the live list once per
+  // session and, if the user never customized this field, upgrade the
+  // stored default so the picker doesn't silently keep pointing at a
+  // retired model. Any fetch failure leaves the static preset untouched.
+  const [liveCodexModels, setLiveCodexModels] = useState<{ models: string[]; recommended: string | null } | null>(null)
+  const appliedLiveDefaultRef = useRef(false)
+  useEffect(() => {
+    if (preset.provider !== "codex-cli") return
+    let cancelled = false
+    resolveCodexModels().then((info) => {
+      if (!cancelled && info) setLiveCodexModels(info)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [preset.provider])
+  useEffect(() => {
+    if (preset.provider !== "codex-cli" || !liveCodexModels?.recommended) return
+    if (appliedLiveDefaultRef.current) return
+    if (!ov.model && liveCodexModels.recommended !== preset.defaultModel) {
+      appliedLiveDefaultRef.current = true
+      onChange({ model: liveCodexModels.recommended })
+    }
+  }, [preset.provider, liveCodexModels, ov.model, preset.defaultModel, onChange])
+  const modelSuggestions =
+    preset.provider === "codex-cli" && liveCodexModels?.models.length
+      ? liveCodexModels.models
+      : preset.suggestedModels ?? []
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
     || Object.keys(ov.customHeaders ?? {}).length > 0 || ov.streamingEnabled === false
   // Local CLI providers authenticate via their own existing login state
@@ -676,7 +708,7 @@ function PresetRow({
             </Label>
             <ModelPicker
               value={model}
-              suggestions={preset.suggestedModels ?? []}
+              suggestions={modelSuggestions}
               placeholder={preset.defaultModel ?? "e.g. gpt-4o"}
               onChange={(v) => onChange({ model: v })}
             />

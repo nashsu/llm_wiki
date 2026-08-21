@@ -149,7 +149,7 @@ export function KnowledgeTree() {
   if (!project) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-        No project open
+        {t("fileTree.noProject", { defaultValue: "No project open" })}
       </div>
     )
   }
