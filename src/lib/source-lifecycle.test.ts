@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   fileExists: vi.fn(),
   getFileSize: vi.fn(),
   listDirectory: vi.fn(),
+  readFile: vi.fn(),
   preprocessFile: vi.fn(),
   enqueueBatch: vi.fn(),
 }))
@@ -21,6 +22,7 @@ vi.mock("@/commands/fs", async () => {
     fileExists: mocks.fileExists,
     getFileSize: mocks.getFileSize,
     listDirectory: mocks.listDirectory,
+    readFile: mocks.readFile,
     preprocessFile: mocks.preprocessFile,
   }
 })
@@ -45,6 +47,7 @@ beforeEach(() => {
   mocks.fileExists.mockResolvedValue(false)
   mocks.getFileSize.mockResolvedValue(1024)
   mocks.listDirectory.mockResolvedValue([])
+  mocks.readFile.mockResolvedValue("")
   mocks.preprocessFile.mockResolvedValue("")
   mocks.enqueueBatch.mockResolvedValue(["task"])
 })
@@ -260,6 +263,71 @@ describe("source-lifecycle path helpers", () => {
         folderContext: "",
       },
     ])
+  })
+
+  it("imports bare Obsidian image embeds from other Vault folders", async () => {
+    mocks.readFile.mockResolvedValue(
+      "正文\n\n![[扩散波示意图.svg]]\n\n![[探头位置.png]]",
+    )
+    mocks.fileExists.mockImplementation(async (path: string) =>
+      path === "/vault/.obsidian",
+    )
+    mocks.listDirectory.mockResolvedValue([
+      {
+        name: "excalidraw",
+        path: "/vault/excalidraw",
+        is_dir: true,
+        children: [
+          {
+            name: "source",
+            path: "/vault/excalidraw/source",
+            is_dir: true,
+            children: [
+              {
+                name: "扩散波示意图.svg",
+                path: "/vault/excalidraw/source/扩散波示意图.svg",
+                is_dir: false,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        name: "99附件文件夹",
+        path: "/vault/99附件文件夹",
+        is_dir: true,
+        children: [
+          {
+            name: "探头位置.png",
+            path: "/vault/99附件文件夹/探头位置.png",
+            is_dir: false,
+          },
+        ],
+      },
+    ])
+
+    const copied = await importSourceFiles(
+      { id: "p1", name: "Project", path: "/project" },
+      ["/vault/97 超声成像/超声延时规则.md"],
+      {
+        provider: "openai",
+        endpoint: "https://api.example.com/v1",
+        apiKey: "key",
+        model: "model",
+        customModel: "",
+        reasoning: { enabled: false, effort: "low" },
+      } as never,
+    )
+
+    expect(copied).toEqual(["/project/raw/sources/超声延时规则.md"])
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/vault/excalidraw/source/扩散波示意图.svg",
+      "/project/raw/sources/扩散波示意图.svg",
+    )
+    expect(mocks.copyFile).toHaveBeenCalledWith(
+      "/vault/99附件文件夹/探头位置.png",
+      "/project/raw/sources/探头位置.png",
+    )
   })
 
   it("allows an explicitly selected ebook with an older watch include-list", async () => {

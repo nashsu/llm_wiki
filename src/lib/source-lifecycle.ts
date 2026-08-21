@@ -41,6 +41,7 @@ import type { SourceWatchConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { preprocessSourceFiles } from "@/lib/source-preprocess"
 import { moveParsedMarkdown, removeParsedMarkdown } from "@/lib/parsed-source-output"
+import { importObsidianMarkdownImages } from "@/lib/obsidian-image-import"
 
 export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "md",
@@ -282,6 +283,16 @@ export async function enqueueSourceIngest(
   return enqueueBatch(project.id, files)
 }
 
+/**
+ * 函数作用：把用户选中的来源文件复制到项目并加入摄取队列；Markdown 会同时导入其 Obsidian 图片。
+ * 输入参数：
+ *     project: 当前 Wiki 项目。
+ *     sourcePaths: 用户选中的来源文件路径。
+ *     llmConfig: 摄取任务使用的模型配置。
+ *     sourceWatchConfig: 可选的来源监控与过滤配置。
+ * 输出参数：
+ *     返回成功导入到项目中的文件路径列表。
+ */
 export async function importSourceFiles(
   project: WikiProject,
   sourcePaths: string[],
@@ -317,6 +328,9 @@ export async function importSourceFiles(
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
       await copyFile(sourcePath, destPath)
+      if (/\.mdx?$/i.test(sourcePath)) {
+        await importObsidianMarkdownImages(sourcePath, destPath)
+      }
       importedPaths.push(destPath)
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
