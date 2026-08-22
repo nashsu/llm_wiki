@@ -619,7 +619,10 @@
           "max": "Max",
           "custom": "Custom",
           "budgetTokens": "thinking budget tokens",
-          "hint": "Structured tasks such as ingest may override this to Off to avoid reasoning-only responses."
+
+          "hint": "Structured tasks such as ingest may override this to Off to avoid reasoning-only responses.",
+          "ingestTitle": "Reasoning during ingest",
+          "ingestHint": "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled."
         }
       },
       "embedding": {

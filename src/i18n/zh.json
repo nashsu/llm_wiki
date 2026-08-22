@@ -619,7 +619,10 @@
           "max": "最大",
           "custom": "自定义",
           "budgetTokens": "thinking token 预算",
-          "hint": "结构化任务（如 ingest）可能会自动关闭 reasoning，避免模型只输出思考过程而没有正文。"
+
+          "hint": "结构化任务（如 ingest）可能会自动关闭 reasoning，避免模型只输出思考过程而没有正文。",
+          "ingestTitle": "导入时的推理",
+          "ingestHint": "通常应关闭：导入需要结构化输出，推理只会增加耗时而无助于质量。仅当模型拒绝在关闭推理的情况下运行时才调高。"
         }
       },
       "embedding": {

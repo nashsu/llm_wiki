@@ -39,6 +39,7 @@
  */
 import type { LlmConfig } from "@/stores/wiki-store"
 import { streamChat, type ChatMessage } from "./llm-client"
+import { resolveIngestReasoning } from "@/lib/reasoning-capabilities"
 
 /**
  * The "no surrounding text" prompt — same factual / verbatim /
@@ -219,7 +220,7 @@ export async function captionImage(
       // often burns the small caption budget on thinking and produces
       // no usable alt text. Disable reasoning for caption calls unless
       // this helper grows an explicit caption-reasoning option.
-      reasoning: { mode: "off" },
+      reasoning: resolveIngestReasoning(llmConfig),
     },
   )
 

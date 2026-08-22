@@ -619,7 +619,10 @@
           "max": "Massimo",
           "custom": "Personalizzato",
           "budgetTokens": "token di budget per il ragionamento",
-          "hint": "Le attività strutturate come l'elaborazione dei documenti possono forzare questo valore su Disattivo per evitare risposte di solo ragionamento."
+
+          "hint": "Le attività strutturate come l'elaborazione dei documenti possono forzare questo valore su Disattivo per evitare risposte di solo ragionamento.",
+          "ingestTitle": "Ragionamento durante l'ingest",
+          "ingestHint": "Di norma va tenuto spento: l'ingest chiede output strutturato e il ragionamento costa tempo senza migliorarlo. Alzalo solo se il modello si rifiuta di funzionare con il ragionamento disattivato."
         }
       },
       "embedding": {

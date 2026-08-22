@@ -380,6 +380,8 @@ function PresetRow({
   const azureModelFamily = ov.azureModelFamily ?? preset.azureModelFamily ?? "auto"
   const context = ov.maxContextSize ?? preset.suggestedContextSize ?? 131072
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
+  // "off" by default: what ingest hardcoded before it was settable.
+  const ingestReasoning = ov.ingestReasoning ?? { mode: "off" as const }
   const localCliIsolation = ov.localCliIsolation === true
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
   const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
@@ -770,6 +772,19 @@ function PresetRow({
             onChange={(reasoning) => onChange({ reasoning })}
           />
 
+          <ReasoningControls
+            value={ingestReasoning}
+            config={resolvedConfig}
+            onChange={(ingestReasoning) => onChange({ ingestReasoning })}
+            title={t("settings.sections.llm.reasoning.ingestTitle", {
+              defaultValue: "Reasoning during ingest",
+            })}
+            hint={t("settings.sections.llm.reasoning.ingestHint", {
+              defaultValue:
+                "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled.",
+            })}
+          />
+
           <div className="space-y-2 rounded-md border p-3">
             <div>
               <div className="text-sm font-medium">
@@ -830,10 +845,15 @@ function ReasoningControls({
   value,
   config,
   onChange,
+  title,
+  hint,
 }: {
   value: ReasoningConfig
   config: LlmConfig
   onChange: (value: ReasoningConfig) => void
+  /** Defaults to the chat reasoning label; the ingest control passes its own. */
+  title?: string
+  hint?: string
 }) {
   const { t } = useTranslation()
   const capabilities = resolveReasoningCapabilities(config)
@@ -852,7 +872,8 @@ function ReasoningControls({
 
   return (
     <div className="space-y-2">
-      <Label>{t("settings.sections.llm.reasoning.title")}</Label>
+      <Label>{title ?? t("settings.sections.llm.reasoning.title")}</Label>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="flex flex-wrap gap-1.5">
         {modes.map((m) => {
           const active = normalizedValue.mode === m.value

@@ -35,6 +35,9 @@ export function resolveConfig(
   const maxContextSize =
     ov.maxContextSize ?? preset.suggestedContextSize ?? fallback.maxContextSize
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
+  // Carried alongside `reasoning`: without it the ingest selector would save a
+  // value the resolved config drops, and ingest would keep using the default.
+  const ingestReasoning = ov.ingestReasoning ?? { mode: "off" as const }
   const localCliIsolation = ov.localCliIsolation === true
   const codexCliTimeoutMinutes =
     typeof ov.codexCliTimeoutMinutes === "number" && Number.isFinite(ov.codexCliTimeoutMinutes)
@@ -61,6 +64,7 @@ export function resolveConfig(
       maxContextSize,
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
       reasoning,
+      ingestReasoning,
       localCliIsolation: false,
       requestTimeoutMinutes,
       customHeaders,
@@ -77,6 +81,7 @@ export function resolveConfig(
       customEndpoint: fallback.customEndpoint,
       maxContextSize,
       reasoning,
+      ingestReasoning,
       localCliIsolation: false,
       requestTimeoutMinutes,
       customHeaders,
@@ -95,6 +100,7 @@ export function resolveConfig(
       azureModelFamily: ov.azureModelFamily ?? preset.azureModelFamily ?? "auto",
       maxContextSize,
       reasoning,
+      ingestReasoning,
       localCliIsolation: false,
       requestTimeoutMinutes,
       customHeaders,
@@ -113,6 +119,7 @@ export function resolveConfig(
       customEndpoint: fallback.customEndpoint,
       maxContextSize,
       reasoning,
+      ingestReasoning,
       localCliIsolation,
       codexCliTimeoutMinutes: preset.provider === "codex-cli" ? codexCliTimeoutMinutes : undefined,
       requestTimeoutMinutes,
@@ -131,6 +138,7 @@ export function resolveConfig(
     customEndpoint: fallback.customEndpoint,
     maxContextSize,
     reasoning,
+    ingestReasoning,
     localCliIsolation: false,
     requestTimeoutMinutes,
     customHeaders,
