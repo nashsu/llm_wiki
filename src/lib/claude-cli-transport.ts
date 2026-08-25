@@ -99,6 +99,126 @@ export function createClaudeCodeStreamParser() {
   }
 }
 
+/** Diagnostic buffer budget, in UTF-16 code units (not bytes). */
+export const UNPARSED_BUFFER_CAP = 4096
+
+const TRUNCATION_MARKER = " … [truncated] … "
+
+const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff
+const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff
+
+/**
+ * Shrink one oversized line to fit the budget while keeping both ends.
+ *
+ * The head carries `type` and `subtype`; the tail carries what a hook
+ * writes last — `stderr`, `exit_code`, `outcome`. Keeping only the head
+ * would drop exactly the fields that say the thing failed, which is the
+ * loss this buffer exists to prevent.
+ *
+ * Cuts step off a surrogate pair rather than through it: half a pair is
+ * a lone surrogate that renders as U+FFFD. Matters for emoji and for CJK
+ * outside the BMP.
+ */
+export function truncateDiagnosticLine(line: string): string {
+  if (line.length <= UNPARSED_BUFFER_CAP) return line
+
+  const budget = UNPARSED_BUFFER_CAP - TRUNCATION_MARKER.length
+  let headLen = Math.ceil(budget / 2)
+  let tailStart = line.length - (budget - headLen)
+
+  if (isHighSurrogate(line.charCodeAt(headLen - 1))) headLen -= 1
+  if (isLowSurrogate(line.charCodeAt(tailStart))) tailStart += 1
+
+  return line.slice(0, headLen) + TRUNCATION_MARKER + line.slice(tailStart)
+}
+
+/**
+ * `system` subtypes that are high-volume and carry no diagnostic value.
+ * Everything else under `system` is kept — including subtypes added
+ * upstream after this was written. The event list is open by design, and
+ * an unrecognized terminal event is precisely the one worth showing.
+ */
+const ROUTINE_SYSTEM_SUBTYPES = new Set([
+  "init",
+  "hook_started",
+  "hook_progress",
+  // Steady telemetry during a long turn. Keeping it would refill the
+  // buffer with exactly the kind of volume this filter removes.
+  "thinking_tokens",
+])
+
+/**
+ * Should this unrecognized stdout line be kept as a failure diagnostic?
+ *
+ * The stream-json channel carries a lot of well-formed noise the parser
+ * ignores on purpose: session init, tool_use/tool_result turns, and hook
+ * events that can each run to several KB. Left unfiltered that noise
+ * fills the diagnostic buffer and buries whatever explains the failure.
+ *
+ * Filtering is deliberately asymmetric. Dropping requires recognizing a
+ * shape as routine; keeping is the default for anything else. Over-keeping
+ * costs the user some noise, over-dropping costs them the reason their
+ * run died.
+ */
+export function isDiagnosticLine(rawLine: string): boolean {
+  const line = rawLine.trim()
+  if (!line) return false
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    // Non-JSON on stdout is not part of the stream-json contract:
+    // crash traces, runtime warnings and shell errors land here. Keep it.
+    return true
+  }
+  if (!parsed || typeof parsed !== "object") return true
+
+  const obj = parsed as Record<string, unknown>
+  const subtype = typeof obj.subtype === "string" ? obj.subtype : ""
+
+  // An explicit error signal wins regardless of which event carries it.
+  if (
+    obj.is_error === true ||
+    obj.is_api_error_message === true ||
+    obj.outcome === "error" ||
+    obj.status === "failed" ||
+    obj.error ||
+    obj.stderr ||
+    /error|fail/i.test(subtype)
+  ) {
+    return true
+  }
+
+  switch (obj.type) {
+    case "result":
+      return subtype !== "success"
+    case "system":
+      if (ROUTINE_SYSTEM_SUBTYPES.has(subtype)) return false
+      // A hook that ran clean is routine; any other outcome already
+      // tripped the signal check above.
+      // Routine only in its happy state; any other outcome already
+      // tripped the signal check above.
+      return subtype === "hook_response" ? obj.outcome !== "success" : true
+    case "rate_limit_event": {
+      // Top-level type, and the status is nested. `overageStatus` is
+      // "rejected" on a healthy account, so it is not a signal. No
+      // status at all means keep rather than guess.
+      const info = obj.rate_limit_info as Record<string, unknown> | undefined
+      return info?.status !== "allowed"
+    }
+    case "stream_event": {
+      const event = obj.event as Record<string, unknown> | undefined
+      return event?.type === "error"
+    }
+    case "assistant":
+    case "user":
+      return false
+    default:
+      return true
+  }
+}
+
 // Tauri's `invoke` typing requires the payload object to satisfy
 // `Record<string, unknown>` (an index signature). Plain interfaces
 // don't provide one, so we use a `type` alias with the explicit
@@ -162,18 +282,21 @@ export async function streamClaudeCodeCli(
   // unknown event types, the stream-json `{"type":"error",...}`
   // shape claude can emit on auth failure) used to be silently
   // dropped — leaving users staring at a bare "exit code 1" with
-  // nothing to act on. We collect them up to a hard cap so that if
+  // nothing to act on. We collect them within a fixed budget so that if
   // the child exits non-zero AND stderr is empty, we have something
   // concrete to show in the error message.
-  const UNPARSED_BUFFER_CAP = 4096
   const unparsedLines: string[] = []
   let unparsedSize = 0
   function captureUnparsed(line: string) {
-    if (unparsedSize >= UNPARSED_BUFFER_CAP) return
-    const trimmed = line.trim()
-    if (trimmed.length === 0) return
-    unparsedLines.push(line)
-    unparsedSize += line.length + 1
+    if (!isDiagnosticLine(line)) return
+    const trimmed = truncateDiagnosticLine(line.trim())
+    unparsedLines.push(trimmed)
+    unparsedSize += trimmed.length + 1
+    // Evict from the front: a diagnostic that arrives late still needs
+    // to fit, and startup noise is the cheapest thing to give up.
+    while (unparsedSize > UNPARSED_BUFFER_CAP && unparsedLines.length > 1) {
+      unparsedSize -= (unparsedLines.shift() as string).length + 1
+    }
   }
 
   const cleanup = () => {

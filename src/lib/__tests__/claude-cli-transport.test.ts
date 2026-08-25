@@ -27,9 +27,27 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: tauriMocks.listen,
 }))
 
+/**
+ * Lone-surrogate check without String.prototype.isWellFormed(), which
+ * needs lib es2024 — the project targets lower and `npm run build`
+ * rejects it. encodeURIComponent throws URIError on an unpaired
+ * surrogate and nothing else here does.
+ */
+function isWellFormedUtf16(value: string): boolean {
+  try {
+    encodeURIComponent(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 import {
   createClaudeCodeStreamParser,
   buildExitError,
+  isDiagnosticLine,
+  truncateDiagnosticLine,
+  UNPARSED_BUFFER_CAP,
   streamClaudeCodeCli,
 } from "../claude-cli-transport"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -167,7 +185,317 @@ describe("createClaudeCodeStreamParser", () => {
   })
 })
 
+describe("isDiagnosticLine", () => {
+  it("drops routine stream-json events", () => {
+    const noise = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "s1" }),
+      JSON.stringify({ type: "system", subtype: "hook_started", hook_name: "SessionStart" }),
+      // Real hook_response events always carry an outcome; see the
+      // sample in #366. A clean one is the routine case.
+      JSON.stringify({ type: "system", subtype: "hook_response", stdout: "x".repeat(5000), exit_code: 0, outcome: "success" }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1" }] } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } }),
+      JSON.stringify({ type: "stream_event", event: { type: "message_start" } }),
+      JSON.stringify({ type: "result", subtype: "success", is_error: false }),
+      "   ",
+    ]
+    for (const line of noise) {
+      expect(isDiagnosticLine(line)).toBe(false)
+    }
+  })
+
+  it("keeps error signals whatever event type carries them", () => {
+    // Regression: an earlier cut of this filter dropped every `system`,
+    // `assistant` and `user` event, which silently ate the diagnostics
+    // below. Match the signal, not a list of Anthropic's subtypes.
+    const carriers = [
+      // A retry the CLI reports before giving up on an auth failure.
+      JSON.stringify({ type: "system", subtype: "api_retry", error_status: 401, error: "authentication_failed" }),
+      // A SessionStart hook that exited non-zero.
+      JSON.stringify({ type: "system", subtype: "hook_response", exit_code: 2, outcome: "error", stderr: "hook blew up\n" }),
+      // An assistant turn that is really an API error envelope.
+      JSON.stringify({ type: "assistant", error: "oauth_org_not_allowed", is_api_error_message: true, message: { content: [] } }),
+      // Subtypes we have never seen but that name themselves.
+      JSON.stringify({ type: "system", subtype: "mirror_error" }),
+      JSON.stringify({ type: "system", subtype: "plugin_install", status: "failed" }),
+    ]
+    for (const line of carriers) {
+      expect(isDiagnosticLine(line)).toBe(true)
+    }
+  })
+
+  it("keeps the result shape reported in #526 (minimized fixture: subtype success, is_error true)", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "Not logged in \u00b7 Please run /login",
+    })
+    expect(isDiagnosticLine(line)).toBe(true)
+  })
+
+  it("keeps terminal system events even when no top-level signal names them", () => {
+    // Minimized representative shapes, not wire-exact payloads: each
+    // documented subtype records failure in a field this filter has no
+    // reason to read, and the assertion is only that an unrecognized
+    // `system` subtype defaults to kept. Otherwise the next one
+    // Anthropic adds is eaten silently.
+    const terminal = [
+      { type: "system", subtype: "status", compact_result: "failed", compact_error: "boom" },
+      { type: "system", subtype: "informational", prevent_continuation: true },
+      { type: "system", subtype: "model_refusal_no_fallback" },
+      { type: "system", subtype: "files_persisted", failed: ["a.md"] },
+      { type: "system", subtype: "task_updated", patch: { status: "failed" } },
+      // Invented on purpose: a subtype that does not exist yet.
+      { type: "system", subtype: "some_future_terminal_event" },
+    ]
+    for (const obj of terminal) {
+      expect(isDiagnosticLine(JSON.stringify(obj))).toBe(true)
+    }
+  })
+
+  it("drops high-volume system telemetry", () => {
+    // Observed on a live CLI run: these arrive steadily and say nothing
+    // about failure, so leaving them in would rebuild the wall of JSON
+    // this filter exists to prevent.
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "system", subtype: "thinking_tokens", estimated_tokens: 3, estimated_tokens_delta: 3,
+    }))).toBe(false)
+    // rate_limit_event is a TOP-LEVEL type and nests its status. An
+    // earlier cut of this filter looked for it under `system` with a
+    // flat `status`, which matched nothing the CLI actually emits.
+    // overageStatus "rejected" is normal telemetry on a healthy account
+    // and must not by itself keep the frame.
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed", overageStatus: "rejected" },
+    }))).toBe(false)
+  })
+
+  it("keeps a rate_limit_event that is not merely allowed", () => {
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "rate_limit_event", rate_limit_info: { status: "rejected" },
+    }))).toBe(true)
+    // No status to clear it: keep rather than guess.
+    expect(isDiagnosticLine(JSON.stringify({ type: "rate_limit_event" }))).toBe(true)
+  })
+
+  it("keeps a hook_response whose outcome is missing rather than guessing", () => {
+    // Ambiguous shape: no outcome to clear it. Over-keeping costs noise,
+    // over-dropping costs the failure reason, so it stays.
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "system", subtype: "hook_response", stdout: "x".repeat(50),
+    }))).toBe(true)
+  })
+
+  it("keeps a stream_event carrying an inner error", () => {
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "stream_event", event: { type: "error", error: { type: "overloaded_error" } },
+    }))).toBe(true)
+    expect(isDiagnosticLine(JSON.stringify({
+      type: "stream_event", event: { type: "content_block_delta" },
+    }))).toBe(false)
+  })
+
+  it("still drops a hook_response that succeeded", () => {
+    const line = JSON.stringify({
+      type: "system", subtype: "hook_response", exit_code: 0, outcome: "success", stderr: "",
+    })
+    expect(isDiagnosticLine(line)).toBe(false)
+  })
+
+  it("keeps lines that explain a failure", () => {
+    const signal = [
+      JSON.stringify({ type: "error", error: { message: "Unauthenticated" } }),
+      JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true }),
+      JSON.stringify({ type: "result", subtype: "error_max_turns" }),
+      "Error loading config.toml: unknown variant `ultra`",
+      "null",
+    ]
+    for (const line of signal) {
+      expect(isDiagnosticLine(line)).toBe(true)
+    }
+  })
+})
+
+describe("truncateDiagnosticLine", () => {
+  it("never exceeds the cap, marker included", () => {
+    const out = truncateDiagnosticLine("x".repeat(20000))
+    expect(out.length).toBeLessThanOrEqual(UNPARSED_BUFFER_CAP)
+    expect(out).toContain("[truncated]")
+  })
+
+  it("leaves a line that already fits completely alone", () => {
+    const line = JSON.stringify({ type: "error", message: "short" })
+    expect(truncateDiagnosticLine(line)).toBe(line)
+  })
+
+  it("keeps the tail of an oversized hook line, where stderr and outcome live", () => {
+    // A hook writes output first and its verdict last. Head-only
+    // truncation drops exactly the fields that say it failed — the same
+    // loss this whole buffer exists to prevent.
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "hook_response",
+      hook_name: "SessionStart:startup",
+      stdout: "You have superpowers. ".repeat(400),
+      stderr: "synthetic-hook-failure",
+      exit_code: 2,
+      outcome: "error",
+    })
+    expect(line.length).toBeGreaterThan(UNPARSED_BUFFER_CAP)
+
+    const out = truncateDiagnosticLine(line)
+    expect(out).toContain('"subtype":"hook_response"')   // head survived
+    expect(out).toContain("synthetic-hook-failure")      // tail survived
+    expect(out).toContain('"outcome":"error"')
+    expect(out.length).toBeLessThanOrEqual(UNPARSED_BUFFER_CAP)
+  })
+
+  it("does not split a surrogate pair at either cut point", () => {
+    // Emoji and CJK Extension B sit outside the BMP: two code units each.
+    // Slicing between them yields a lone surrogate, which becomes U+FFFD.
+    for (const filler of ["\u{1F600}", "\u{20BB7}"]) {
+      const line = filler.repeat(6000)
+      const out = truncateDiagnosticLine(line)
+      expect(isWellFormedUtf16(out)).toBe(true)
+      expect(out.length).toBeLessThanOrEqual(UNPARSED_BUFFER_CAP)
+    }
+  })
+})
+
 describe("streamClaudeCodeCli", () => {
+  it("evicts the oldest diagnostics once they exceed the buffer cap", async () => {
+    // Every line here survives isDiagnosticLine, so this is the test
+    // that actually drives the eviction loop. Deleting the loop must
+    // turn this red.
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const stream = streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+
+    // 12 x ~600 chars comfortably overruns the 4096 cap.
+    for (let i = 0; i < 12; i += 1) {
+      tauriMocks.emit(
+        `claude-cli:${payload.streamId}`,
+        JSON.stringify({ type: "error", seq: `seq-${String(i).padStart(2, "0")}`, pad: "p".repeat(600) }),
+      )
+    }
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({ type: "error", seq: "seq-last", message: "the real failure" }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 1, stderr: "" })
+    await stream
+
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toContain("seq-last")
+    expect(message).toContain("the real failure")
+    // The earliest lines are the ones that must have been dropped.
+    expect(message).not.toContain("seq-00")
+    expect(message).not.toContain("seq-01")
+  })
+
+  it("truncates a single diagnostic line larger than the cap", async () => {
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const stream = streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({ type: "error", subtype: "huge", pad: "q".repeat(20000) }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 1, stderr: "" })
+    await stream
+
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toContain("[truncated]")
+    // The head of the line survives — that is where type/subtype live.
+    expect(message).toContain('"subtype":"huge"')
+    // ...but the buffer stayed bounded rather than pasting all 20 KB.
+    expect(message.length).toBeLessThan(6000)
+  })
+
+  it("keeps the failure line visible when hook events flood stdout", async () => {
+    const callbacks = { onToken: vi.fn(), onDone: vi.fn(), onError: vi.fn() }
+    const stream = streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+
+    // A single SessionStart hook can echo a whole skill file, and there
+    // are several of them — far more than the diagnostic buffer holds.
+    for (let i = 0; i < 20; i += 1) {
+      tauriMocks.emit(
+        `claude-cli:${payload.streamId}`,
+        JSON.stringify({
+          type: "system",
+          subtype: "hook_response",
+          hook_name: "SessionStart:startup",
+          stdout: "You have superpowers. ".repeat(200),
+          exit_code: 0,
+          outcome: "success",
+          stderr: "",
+        }),
+      )
+    }
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        result: "MCP server codex failed to start",
+      }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 1, stderr: "" })
+    await stream
+
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toContain("MCP server codex failed to start")
+    expect(message).not.toContain("superpowers")
+  })
+
   it("does not resolve until the Claude CLI done event arrives", async () => {
     const callbacks = {
       onToken: vi.fn(),
