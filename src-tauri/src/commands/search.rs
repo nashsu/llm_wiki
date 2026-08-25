@@ -267,17 +267,34 @@ fn get_page_links_inner(project_path: &str, file_path: &str) -> Result<PageLinks
     })
 }
 
-/// Mirror `resolveRelatedSlug` in the frontend reader. Path-shaped links must
-/// match their project-relative path exactly; bare links resolve by exact
-/// filename after adding `.md`. Deliberately avoid title and fuzzy aliases so
-/// the links panel never claims a target that the rendered page cannot open.
+/// Mirror `resolveRelatedSlug` in the frontend reader. Path-shaped links may be
+/// project-relative (`wiki/concepts/foo.md`) or wiki-root-relative
+/// (`concepts/foo`). Bare links resolve by exact filename after adding `.md`.
+/// Deliberately avoid title and fuzzy aliases so the links panel never claims a
+/// target that the rendered page cannot open.
 fn resolve_reader_wikilink<'a>(
     pages: &'a BTreeMap<String, GraphPage>,
     link: &str,
 ) -> Option<&'a String> {
-    let link = link.trim().replace('\\', "/");
+    let link = link.trim().replace('\\', "/").trim_start_matches('/').to_string();
     if link.contains('/') {
-        return pages.get_key_value(&link).map(|(path, _)| path);
+        let candidates = if link.starts_with("wiki/") {
+            vec![link]
+        } else {
+            vec![link.clone(), format!("wiki/{link}")]
+        };
+        for candidate in candidates {
+            if let Some((path, _)) = pages.get_key_value(&candidate) {
+                return Some(path);
+            }
+            if !candidate.ends_with(".md") {
+                let with_ext = format!("{candidate}.md");
+                if let Some((path, _)) = pages.get_key_value(&with_ext) {
+                    return Some(path);
+                }
+            }
+        }
+        return None;
     }
     let filename = if link.ends_with(".md") {
         link
@@ -2156,7 +2173,7 @@ mod tests {
         write_page(
             &root,
             "wiki/concepts/current.md",
-            "[[wiki/concepts/target.md]] [[target#section]]",
+            "[[wiki/concepts/target.md]] [[concepts/target]] [[concepts/target.md]] [[target#section]]",
         );
         write_page(&root, "wiki/concepts/target.md", "# Target");
         write_page(&root, "wiki/concepts/not-markdown.txt", "text");

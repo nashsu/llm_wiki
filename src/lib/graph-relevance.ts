@@ -121,18 +121,33 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
+function normalizeLinkTarget(raw: string): string {
+  return raw.replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/^wiki\//i, "")
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase()
+}
+
+function fileBase(path: string): string {
+  return path.replace(/\\/g, "/").split("/").pop()?.replace(/\.md$/i, "") ?? path
+}
+
 function resolveTarget(
   raw: string,
-  nodeIds: ReadonlySet<string>,
+  nodes: readonly Pick<RetrievalNode, "id" | "path">[],
+  wikiRoot: string,
 ): string | null {
-  if (nodeIds.has(raw)) return raw
+  const normalized = normalizeLinkTarget(raw).replace(/\s+/g, "-")
 
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeIds) {
-    const idLower = id.toLowerCase()
-    if (idLower === normalized) return id
-    if (idLower === raw.toLowerCase()) return id
-    if (idLower.replace(/\s+/g, "-") === normalized) return id
+  for (const node of nodes) {
+    const path = normalizePath(node.path)
+    const shortPath = path.startsWith(`${wikiRoot}/`) ? path.slice(wikiRoot.length + 1) : path
+    const keys = [node.id, shortPath, fileBase(shortPath)].map(normalizeLinkTarget)
+    if (keys.some((key) => key === normalized || key.replace(/\s+/g, "-") === normalized)) {
+      return node.id
+    }
   }
   return null
 }
@@ -206,6 +221,7 @@ export async function buildRetrievalGraph(
   }
 
   const nodeIds = new Set(rawNodes.map((n) => n.id))
+  const nodeLookup = rawNodes.map((n) => ({ id: n.id, path: n.path }))
 
   // Second pass: resolve links and build graph nodes
   const outLinksMap = new Map<string, Set<string>>()
@@ -218,7 +234,7 @@ export async function buildRetrievalGraph(
 
   for (const raw of rawNodes) {
     for (const linkTarget of raw.rawLinks) {
-      const resolvedId = resolveTarget(linkTarget, nodeIds)
+      const resolvedId = resolveTarget(linkTarget, nodeLookup, wikiRoot)
       if (resolvedId === null || resolvedId === raw.id) continue
       outLinksMap.get(raw.id)!.add(resolvedId)
       inLinksMap.get(resolvedId)!.add(raw.id)

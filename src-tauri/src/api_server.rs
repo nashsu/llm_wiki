@@ -2511,13 +2511,30 @@ fn extract_wikilinks(content: &str) -> Vec<String> {
 }
 
 fn resolve_link(raw: &str, ids: &BTreeSet<String>) -> Option<String> {
-    if ids.contains(raw) {
-        return Some(raw.to_string());
+    let normalized_raw = raw
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .trim_start_matches("wiki/")
+        .trim_end_matches(".md")
+        .to_string();
+    let basename = normalized_raw
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized_raw)
+        .to_string();
+    for candidate in [raw.trim(), normalized_raw.as_str(), basename.as_str()] {
+        if ids.contains(candidate) {
+            return Some(candidate.to_string());
+        }
+        let normalized = candidate.to_lowercase().replace(' ', "-");
+        if let Some(id) = ids.iter().find(|id| {
+            id.to_lowercase() == normalized || id.to_lowercase() == candidate.to_lowercase()
+        }) {
+            return Some(id.clone());
+        }
     }
-    let normalized = raw.to_lowercase().replace(' ', "-");
-    ids.iter()
-        .find(|id| id.to_lowercase() == normalized || id.to_lowercase() == raw.to_lowercase())
-        .cloned()
+    None
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
@@ -2589,6 +2606,22 @@ mod tests {
         let path = std::env::temp_dir().join(format!("llm-wiki-api-test-{id}-{seq}"));
         fs::create_dir_all(path.join("wiki")).unwrap();
         path
+    }
+
+    #[test]
+    fn resolve_link_accepts_wiki_root_relative_paths() {
+        let ids = BTreeSet::from([
+            "CompGCN".to_string(),
+            "inductive-kg-reasoning".to_string(),
+        ]);
+        assert_eq!(
+            resolve_link("concepts/inductive-kg-reasoning", &ids).as_deref(),
+            Some("inductive-kg-reasoning")
+        );
+        assert_eq!(
+            resolve_link("wiki/concepts/inductive-kg-reasoning.md", &ids).as_deref(),
+            Some("inductive-kg-reasoning")
+        );
     }
 
     #[test]

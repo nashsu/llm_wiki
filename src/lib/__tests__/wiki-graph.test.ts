@@ -27,6 +27,11 @@ function mdFile(name: string): FileNode {
   return { name, path: `/project/wiki/${name}`, is_dir: false }
 }
 
+function mdFileAt(path: string): FileNode {
+  const name = path.split("/").pop()!
+  return { name, path: `/project/wiki/${path}`, is_dir: false }
+}
+
 describe("buildWikiGraph frontmatter extraction", () => {
   it("does not read a title: line from the document body as the frontmatter title", async () => {
     const buildWikiGraph = await loadBuildWikiGraph()
@@ -131,5 +136,24 @@ describe("buildWikiGraph frontmatter extraction", () => {
     expect(second).toBe(first)
     expect(mockListDirectory).toHaveBeenCalledTimes(1)
     expect(mockReadFile).toHaveBeenCalledTimes(1)
+  })
+
+  it("resolves wiki-root-relative path links as graph edges", async () => {
+    const buildWikiGraph = await loadBuildWikiGraph()
+    mockListDirectory.mockResolvedValue([
+      mdFileAt("entities/CompGCN.md"),
+      mdFileAt("concepts/inductive-kg-reasoning.md"),
+    ])
+    mockReadFile.mockImplementation(async (path: string) =>
+      path.endsWith("CompGCN.md")
+        ? "---\ntitle: CompGCN\ntype: entity\n---\n# CompGCN\n\n[[concepts/inductive-kg-reasoning]]"
+        : "---\ntitle: Inductive KG Reasoning\ntype: concept\n---\n# Inductive KG Reasoning\n",
+    )
+
+    const graph = await buildWikiGraph("/project")
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ source: "CompGCN", target: "inductive-kg-reasoning" }),
+    ])
   })
 })
