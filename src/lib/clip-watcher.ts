@@ -2,6 +2,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { enqueueIngest } from "./ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
+import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 
 const POLL_INTERVAL = 3000 // Check every 3 seconds
 let intervalId: ReturnType<typeof setInterval> | null = null
@@ -36,7 +37,7 @@ export function startClipWatcher() {
           // a UI refresh. Same path used by file imports from sources-view.
           // Pass the project's stable UUID — the queue looks up the
           // current filesystem path from the registry at run time.
-          if (hasUsableLlm(store.llmConfig)) {
+          if (hasUsableLlm(getTaskLlmConfig("ingest", store.llmConfig))) {
             enqueueIngest(project.id, clipFilePath).catch((err) => {
               console.error("Failed to enqueue web clip:", err)
             })
