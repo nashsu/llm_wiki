@@ -1,3 +1,5 @@
+import yaml from "js-yaml"
+
 /**
  * Clean up an LLM-generated wiki page body before it hits disk.
  *
@@ -84,6 +86,11 @@ export function sanitizeIngestedFileContent(content: string): string {
   // left alone — those render fine via the wikilink → markdown
   // link transform applied at read time.
   cleaned = repairWikilinkListsInFrontmatter(cleaned)
+
+  // (4) Normalise YAML block scalars (>-, |-, etc.) to plain inline
+  // values. Runs after the wikilink repair so that step's quoted
+  // values are already in place when we re-serialise.
+  cleaned = normalizeBlockScalarsInFrontmatter(cleaned)
 
   return cleaned
 }
@@ -178,4 +185,73 @@ function repairWikilinkListsInFrontmatter(content: string): string {
   // four bytes. Windows CRLF makes `---\r\n` five bytes, and hard-coded offsets
   // corrupt both the opening fence and the payload boundary.
   return m[1] + repairedPayload + m[4] + content.slice(m[0].length)
+}
+
+/**
+ * Normalise YAML block scalars in frontmatter to plain inline values.
+ *
+ * LLMs sometimes emit folded (`>-`) or literal (`|-`) block scalars
+ * for string fields, e.g.:
+ *
+ *     description: >-
+ *       A long description that the model
+ *       decided to fold across lines.
+ *
+ * This is valid YAML but is not supported by LLM Wiki's frontmatter
+ * renderer and causes display/parse issues in downstream tooling.
+ * The fix: parse each top-level block scalar in isolation, collapse
+ * embedded newlines to a single space, and replace only that scalar.
+ * Unrelated YAML formatting, comments, quoting, and key order remain
+ * byte-for-byte unchanged.
+ *
+ * The function is a no-op when the frontmatter contains no block
+ * scalar indicators, so it adds negligible overhead to clean pages.
+ */
+function normalizeBlockScalarsInFrontmatter(content: string): string {
+  const fmRe = /^(---[ \t]*\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/
+  const m = content.match(fmRe)
+  if (!m) return content
+
+  const payload = m[2]
+  // Fast exit: no block scalar indicator on any value line.
+  // A block scalar always appears as the sole value after `key: `, e.g.
+  // `description: >-` with nothing else on that line.
+  if (!/^[\w-]+\s*:\s*[>|](?:[-+]?[1-9]?|[1-9]?[-+]?)\s*(?:#.*)?$/m.test(payload)) {
+    return content
+  }
+
+  const lineEnding = m[1].endsWith("\r\n") ? "\r\n" : "\n"
+  const lines = payload.split(/\r?\n/)
+  const indicator =
+    /^([\w-]+)(\s*:\s*)[>|](?:[-+]?[1-9]?|[1-9]?[-+]?)\s*(#.*)?$/
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(indicator)
+    if (!match) continue
+
+    let end = index + 1
+    while (end < lines.length && (lines[end].trim() === "" || /^\s/.test(lines[end]))) {
+      end += 1
+    }
+
+    let parsed: unknown
+    try {
+      parsed = yaml.load(lines.slice(index, end).join(lineEnding), {
+        schema: yaml.JSON_SCHEMA,
+      })
+    } catch {
+      continue
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
+
+    const value = (parsed as Record<string, unknown>)[match[1]]
+    if (typeof value !== "string") continue
+    const normalized = value.replace(/\s*\n\s*/g, " ").trim()
+    const inlineValue = yaml.dump(normalized, { lineWidth: -1 }).trimEnd()
+    const comment = match[3] ? ` ${match[3]}` : ""
+    lines.splice(index, end - index, `${match[1]}${match[2]}${inlineValue}${comment}`)
+  }
+
+  const newPayload = lines.join(lineEnding)
+  return m[1] + newPayload + m[3] + content.slice(m[0].length)
 }
