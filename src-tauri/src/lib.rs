@@ -19,6 +19,16 @@ use uuid::Uuid;
 struct CloseBehaviorState(Mutex<String>);
 struct TrayAvailabilityState(Mutex<bool>);
 
+const START_MINIMIZED_ENV: &str = "LLM_WIKI_START_MINIMIZED";
+
+fn start_minimized_from_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
+fn should_start_minimized() -> bool {
+    start_minimized_from_value(std::env::var_os(START_MINIMIZED_ENV).as_deref())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentProjectEntry {
@@ -552,6 +562,22 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 pub fn run() {
     apply_linux_webkit_compat_env();
 
+    let start_minimized = should_start_minimized();
+    let mut context = tauri::generate_context!();
+    if start_minimized {
+        if let Some(main_window) = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|window| window.label == "main")
+        {
+            // Create the window hidden so startup never flashes before tray
+            // availability determines its final background state.
+            main_window.visible = false;
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -565,7 +591,7 @@ pub fn run() {
         // Ark's api/coding/v3, etc.) still work. Requests leave the app
         // from Rust, never the webview.
         .plugin(tauri_plugin_http::init())
-        .setup(|app| {
+        .setup(move |app| {
             // Let the PDF extractor find the bundled pdfium dynamic
             // library via Tauri's platform-correct resource path.
             if let Ok(dir) = app.path().resource_dir() {
@@ -617,6 +643,21 @@ pub fn run() {
                 }
                 Err(err) => {
                     eprintln!("[tray] failed to update tray availability state: {err}");
+                }
+            }
+            if start_minimized && !tray_available {
+                if let Some(window) = app.get_webview_window("main") {
+                    // A hidden window has no recovery path without a tray.
+                    // Show it before minimizing; setup completes before the
+                    // event loop paints it, avoiding a visible startup flash.
+                    if let Err(err) = window.show() {
+                        eprintln!("[startup] failed to show main window: {err}");
+                    }
+                    if let Err(err) = window.minimize() {
+                        eprintln!("[startup] failed to minimize main window: {err}");
+                    }
+                } else {
+                    eprintln!("[startup] main window unavailable for minimized startup");
                 }
             }
             Ok(())
@@ -747,7 +788,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
@@ -789,3 +830,18 @@ fn apply_linux_webkit_compat_env() {
 
 #[cfg(not(target_os = "linux"))]
 fn apply_linux_webkit_compat_env() {}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::start_minimized_from_value;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn start_minimized_requires_exact_one() {
+        assert!(start_minimized_from_value(Some(OsStr::new("1"))));
+
+        for value in [None, Some(""), Some("0"), Some("true"), Some(" 1 ")] {
+            assert!(!start_minimized_from_value(value.map(OsStr::new)));
+        }
+    }
+}
