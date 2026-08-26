@@ -182,6 +182,7 @@ function initialDraft(
     apiMcpEnabled: apiConfig.mcpEnabled,
     apiToken: apiConfig.token,
     autostart: generalConfig.autostart,
+    startMinimized: generalConfig.startMinimized,
     closeBehavior: generalConfig.closeBehavior,
     uiLanguage,
     theme: theme ?? "system",
@@ -439,6 +440,7 @@ export function SettingsView() {
     }
     const newGeneralConfig = {
       autostart: draft.autostart,
+      startMinimized: draft.startMinimized,
       closeBehavior: draft.closeBehavior,
     }
 
