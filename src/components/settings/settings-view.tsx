@@ -129,6 +129,7 @@ function initialDraft(
     maxContextSize: llm.maxContextSize ?? 204800,
     apiMode: llm.apiMode,
     reasoning: llm.reasoning,
+    ingestReasoning: llm.ingestReasoning,
     localCliIsolation: llm.localCliIsolation === true,
     embeddingEnabled: embed.enabled,
     embeddingEndpoint: embed.endpoint,
@@ -368,6 +369,7 @@ export function SettingsView() {
       maxContextSize: draft.maxContextSize,
       apiMode: draft.provider === "custom" ? draft.apiMode : undefined,
       reasoning: draft.reasoning,
+      ingestReasoning: draft.ingestReasoning,
       localCliIsolation: draft.localCliIsolation,
     }
     const newEmbed = {

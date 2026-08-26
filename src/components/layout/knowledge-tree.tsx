@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { parseSources } from "@/lib/sources-merge"
 import { filterPagesBySource, listPageSourceIdentities } from "@/lib/knowledge-source-filter"
+import { flattenFilesNaturally } from "@/lib/file-tree-order"
 
 interface WikiPageInfo {
   path: string
@@ -298,11 +299,20 @@ function RawSourcesSection() {
   const [sources, setSources] = useState<FileNode[]>([])
 
   useEffect(() => {
+    setSources([])
     if (!project) return
+    let cancelled = false
     const pp = normalizePath(project.path)
     listDirectory(`${pp}/raw/sources`, true).then(filterRawSourceTree)
-      .then((tree) => setSources(flattenAllFiles(tree)))
-      .catch(() => setSources([]))
+      .then((tree) => {
+        if (!cancelled) setSources(flattenFilesNaturally(tree))
+      })
+      .catch(() => {
+        if (!cancelled) setSources([])
+      })
+    return () => {
+      cancelled = true
+    }
   }, [project])
 
   if (sources.length === 0) return null
@@ -459,18 +469,6 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
     if (node.is_dir && node.children) {
       files.push(...flattenMdFiles(node.children))
     } else if (!node.is_dir && node.name.endsWith(".md")) {
-      files.push(node)
-    }
-  }
-  return files
-}
-
-function flattenAllFiles(nodes: FileNode[]): FileNode[] {
-  const files: FileNode[] = []
-  for (const node of nodes) {
-    if (node.is_dir && node.children) {
-      files.push(...flattenAllFiles(node.children))
-    } else if (!node.is_dir) {
       files.push(node)
     }
   }

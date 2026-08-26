@@ -26,6 +26,26 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.6.11",
+    date: "2026-08-25",
+    highlights: {
+      en: [
+        "Added configurable reasoning effort for Ingest tasks across supported models and providers.",
+        "Fixed Claude Code CLI provider tests by preserving local isolation settings and passing MCP configuration arguments correctly.",
+        "Made raw source file lists use consistent natural numeric ordering across the app.",
+        "Prevented stale raw source entries from appearing when switching projects.",
+        "Expanded source-build documentation and improved related tests, stability, and compatibility.",
+      ],
+      zh: [
+        "新增可配置的 Ingest 推理强度，并完善不同模型与 Provider 的适配。",
+        "修复 Claude Code CLI Provider 测试，保留本地隔离设置并正确传递 MCP 配置参数。",
+        "原始资料列表统一使用自然数字排序。",
+        "修复切换项目时可能短暂显示旧项目原始资料的问题。",
+        "补充源码构建文档，并完善相关测试、稳定性与兼容性。",
+      ],
+    },
+  },
+  {
     version: "0.6.10",
     date: "2026-08-21",
     highlights: {

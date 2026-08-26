@@ -54,6 +54,15 @@ function isOpenAiReasoningModel(config: LlmConfig): boolean {
   return /^(?:gpt-5|o\d+)(?:[.\-_]|$)/.test(model)
 }
 
+export function isOpenRouterEndpoint(endpoint: string): boolean {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase()
+    return hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")
+  } catch {
+    return false
+  }
+}
+
 /**
  * Resolve only capabilities that are part of the selected wire contract.
  * Generic custom gateways deliberately stay Auto-only: a vendor-looking
@@ -84,6 +93,7 @@ export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabi
   }
   if (config.provider === "custom") {
     const endpoint = config.customEndpoint.toLowerCase()
+    if (isOpenRouterEndpoint(endpoint)) return capabilities(BUDGET_LEVELS)
     if (/api\.deepseek\.(?:com|cn)(?:[:/]|$)/.test(endpoint)) {
       return capabilities(DEEPSEEK_LEVELS)
     }
@@ -104,6 +114,24 @@ export function normalizeReasoningForProvider(
   requested: ReasoningConfig,
 ): ReasoningConfig {
   return resolveReasoningCapabilities(config).normalize(requested)
+}
+
+/**
+ * Reasoning for ingest's structured calls. Ingest hardcodes `{ mode: "off" }`
+ * at every call site, which is the right default — thinking buys little on
+ * structured extraction and a model that spends its budget on chain-of-thought
+ * can return empty `content`, losing the page — but it is wrong as a *rule*:
+ * some models reject disabling reasoning outright and answer 400, so every
+ * ingest call fails with no way to fix it from the UI. Making it settable is
+ * what lets those providers be used; "off" stays the default so existing
+ * setups behave exactly as before.
+ *
+ * Keep this helper provider-agnostic. The provider layer normalizes the saved
+ * value once when it builds the wire payload, including stale settings left by
+ * a provider or model change.
+ */
+export function resolveIngestReasoning(config: LlmConfig): ReasoningConfig {
+  return config.ingestReasoning ?? { mode: "off" }
 }
 
 export function isAdaptiveAnthropicModel(config: LlmConfig): boolean {

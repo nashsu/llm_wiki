@@ -414,12 +414,16 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 ### 소스에서 빌드
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.70+
+# 사전 요구 사항: Node.js 20+, Rust 1.88+, protoc
+#   macOS:   brew install protobuf
+#   Linux:   sudo apt install protobuf-compiler
+#   Windows: choco install protoc
 git clone https://github.com/nashsu/llm_wiki.git
 cd llm_wiki
 npm install
-npm run tauri dev      # Development
-npm run tauri build    # Production build
+npm --prefix mcp-server ci && npm run mcp:build   # mcp-server/dist는 Tauri 리소스로 번들됩니다
+npm run tauri dev      # 개발 모드
+npm run tauri build    # 프로덕션 빌드
 ```
 
 ### Chrome Extension

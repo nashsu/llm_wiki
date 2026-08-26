@@ -405,10 +405,14 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.70+
+# Prerequisites: Node.js 20+, Rust 1.88+, protoc
+#   macOS:  brew install protobuf
+#   Linux:  sudo apt install protobuf-compiler
+#   Windows: choco install protoc
 git clone https://github.com/nashsu/llm_wiki.git
 cd llm_wiki
 npm install
+npm --prefix mcp-server ci && npm run mcp:build   # mcp-server/dist is bundled as a Tauri resource
 npm run tauri dev      # Development
 npm run tauri build    # Production build
 ```

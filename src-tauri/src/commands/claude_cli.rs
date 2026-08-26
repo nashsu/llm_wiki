@@ -444,11 +444,6 @@ fn build_claude_cli_args(model: &str, isolate_local_config: bool) -> Vec<String>
         args.extend([
             "--setting-sources".to_string(),
             "project".to_string(),
-            "--strict-mcp-config".to_string(),
-            "--mcp-config".to_string(),
-            // Claude's strict MCP config expects the top-level mcpServers key
-            // even when the isolated server set is intentionally empty.
-            ISOLATED_MCP_CONFIG.to_string(),
             "--disable-slash-commands".to_string(),
             "--tools".to_string(),
             "".to_string(),
@@ -459,6 +454,16 @@ fn build_claude_cli_args(model: &str, isolate_local_config: bool) -> Vec<String>
     }
 
     args.extend(["--model".to_string(), model.to_string()]);
+    if isolate_local_config {
+        // `--mcp-config` accepts multiple space-separated values. Keep its
+        // inline JSON last so Claude's argument parser cannot consume later
+        // flags as additional config paths, especially through Windows shims.
+        args.extend([
+            "--strict-mcp-config".to_string(),
+            "--mcp-config".to_string(),
+            ISOLATED_MCP_CONFIG.to_string(),
+        ]);
+    }
     args
 }
 
@@ -644,6 +649,10 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--prompt-suggestions" && pair[1] == "false"));
+        assert_eq!(
+            &args[args.len() - 3..],
+            ["--strict-mcp-config", "--mcp-config", ISOLATED_MCP_CONFIG]
+        );
     }
 
     #[tokio::test]

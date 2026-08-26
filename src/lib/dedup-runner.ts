@@ -60,6 +60,7 @@ import {
   type MergeResult,
 } from "./dedup"
 import { loadNotDuplicates } from "./dedup-storage"
+import { resolveIngestReasoning } from "@/lib/reasoning-capabilities"
 
 /**
  * Wrap streamChat into the (system, user, signal) → string shape
@@ -97,14 +98,10 @@ export function buildDedupLlmCall(
           },
         },
         signal,
-        // Dedup detection + merge want JSON, never chain-of-thought.
-        // Like every other structured caller (ingest, connection-tests,
-        // vision-caption, anytxt-search), disable thinking AND cap output
-        // so a reasoning-capable model (an Ollama thinking model, or an
-        // unrecognized reasoning model behind a custom endpoint) doesn't
-        // spend its whole budget on reasoning and run the stream to the
-        // 30-min backstop — which surfaces as a bare "Request cancelled".
-        { temperature: 0.1, reasoning: { mode: "off" }, max_tokens: maxTokens },
+        // Dedup detection + merge want compact JSON. Keep the output capped;
+        // reasoning defaults off but remains configurable for models that
+        // require it.
+        { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: maxTokens },
       ).catch((err) => {
         streamError = err instanceof Error ? err : new Error(String(err))
         resolve()

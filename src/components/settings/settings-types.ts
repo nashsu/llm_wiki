@@ -19,6 +19,7 @@ export interface SettingsDraft {
   maxContextSize: number
   apiMode: CustomApiMode | undefined
   reasoning: ReasoningConfig | undefined
+  ingestReasoning: ReasoningConfig | undefined
   localCliIsolation: boolean
 
   // Embedding

@@ -414,10 +414,14 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 ### ソースからビルド
 
 ```bash
-# 前提条件: Node.js 20+, Rust 1.70+
+# 前提条件: Node.js 20+, Rust 1.88+, protoc
+#   macOS:   brew install protobuf
+#   Linux:   sudo apt install protobuf-compiler
+#   Windows: choco install protoc
 git clone https://github.com/nashsu/llm_wiki.git
 cd llm_wiki
 npm install
+npm --prefix mcp-server ci && npm run mcp:build   # mcp-server/dist は Tauri リソースとして同梱されます
 npm run tauri dev      # 開発モード
 npm run tauri build    # 本番ビルド
 ```

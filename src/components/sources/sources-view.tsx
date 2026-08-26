@@ -13,7 +13,7 @@ import { useAppDialog } from "@/stores/app-dialog-store"
 import { normalizePath } from "@/lib/path-utils"
 import { decideDeleteClick } from "@/lib/sources-tree-delete"
 import { rescanProjectFileSync } from "@/lib/project-file-sync"
-import { naturalCompare } from "@/lib/natural-sort"
+import { sortFileNodes } from "@/lib/file-tree-order"
 import {
   deleteSourceFile,
   deleteSourceFolder,
@@ -677,11 +677,7 @@ export function filterSourceTreeByQuery(
 }
 
 function sortSourceNodes(nodes: readonly FileNode[]): FileNode[] {
-  return [...nodes].sort((a, b) => {
-    if (a.is_dir && !b.is_dir) return -1
-    if (!a.is_dir && b.is_dir) return 1
-    return naturalCompare(a.name, b.name)
-  })
+  return sortFileNodes(nodes)
 }
 
 function flattenVisibleRows(

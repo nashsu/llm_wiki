@@ -464,6 +464,26 @@ describe("Sampling override translation across wires", () => {
     expect(body.max_completion_tokens).toBeUndefined()
   })
 
+  it("maps OpenRouter reasoning settings to its documented request object", () => {
+    const cfg = getProviderConfig({
+      provider: "custom",
+      apiKey: "k",
+      model: "vendor/reasoning-model",
+      ollamaUrl: "",
+      customEndpoint: "https://openrouter.ai/api/v1",
+      apiMode: "chat_completions",
+      maxContextSize: 128000,
+    })
+
+    expect(cfg.buildBody(baseMessages, { reasoning: { mode: "low" } }))
+      .toMatchObject({ reasoning: { effort: "low" } })
+    expect(cfg.buildBody(baseMessages, { reasoning: { mode: "off" } }))
+      .toMatchObject({ reasoning: { effort: "none" } })
+    expect(cfg.buildBody(baseMessages, {
+      reasoning: { mode: "custom", budgetTokens: 2048 },
+    })).toMatchObject({ reasoning: { max_tokens: 2048 } })
+  })
+
   it("custom Kimi routes strip unsupported temperature overrides", () => {
     const cfg = getProviderConfig({
       provider: "custom",

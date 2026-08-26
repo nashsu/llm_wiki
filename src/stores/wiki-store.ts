@@ -36,6 +36,15 @@ interface LlmConfig {
   apiMode?: CustomApiMode
   reasoning?: ReasoningConfig
   /**
+   * Reasoning for ingest's structured calls (analysis, page generation,
+   * captioning, dedup), kept separate from `reasoning` because the two want
+   * opposite things: chat benefits from thinking, whereas ingest asks for
+   * structured output thousands of times and a model that spends its budget on
+   * chain-of-thought can end the stream with empty `content` — a lost page.
+   * Defaults to "off", which is what ingest hardcoded before this was settable.
+   */
+  ingestReasoning?: ReasoningConfig
+  /**
    * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
    * to ignore user-level rules/config/MCP/tool state where the CLI exposes
    * such controls. Default false preserves existing advanced-user setups.
@@ -335,6 +344,8 @@ export interface ProviderOverride {
   apiMode?: CustomApiMode
   maxContextSize?: number
   reasoning?: ReasoningConfig
+  /** Reasoning used by structured ingest calls; defaults to off. */
+  ingestReasoning?: ReasoningConfig
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
   requestTimeoutMinutes?: number
