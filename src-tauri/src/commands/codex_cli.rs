@@ -37,8 +37,16 @@ pub struct DetectResult {
 const DEFAULT_CODEX_SPAWN_TIMEOUT_MINUTES: u64 = 10;
 const MIN_CODEX_SPAWN_TIMEOUT_MINUTES: u64 = 1;
 const MAX_CODEX_SPAWN_TIMEOUT_MINUTES: u64 = 240;
+const CODEX_DETECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const STDERR_LIMIT_BYTES: usize = 1024 * 1024;
 const STDOUT_LIMIT_BYTES: usize = 1024 * 1024;
+
+fn codex_detection_timeout_error() -> String {
+    format!(
+        "`codex --version` timed out after {}s",
+        CODEX_DETECTION_TIMEOUT.as_secs()
+    )
+}
 
 fn append_capped_line(collected: &mut String, line: &str, limit_bytes: usize) {
     if collected.len() >= limit_bytes {
@@ -90,7 +98,7 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     if let Some(path_env) = child_path_env().await {
         cmd.env("PATH", path_env);
     }
-    let output = tokio::time::timeout(Duration::from_secs(3), cmd.arg("--version").output()).await;
+    let output = tokio::time::timeout(CODEX_DETECTION_TIMEOUT, cmd.arg("--version").output()).await;
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
@@ -125,7 +133,7 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
             installed: false,
             version: None,
             path: Some(path_str),
-            error: Some("`codex --version` timed out after 3s".to_string()),
+            error: Some(codex_detection_timeout_error()),
         }),
     }
 }
@@ -390,6 +398,18 @@ mod tests {
         assert_eq!(out, "é水");
         assert_eq!(out.len(), 5);
         assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn codex_detection_timeout_error_uses_detection_timeout() {
+        assert_eq!(CODEX_DETECTION_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(
+            codex_detection_timeout_error(),
+            format!(
+                "`codex --version` timed out after {}s",
+                CODEX_DETECTION_TIMEOUT.as_secs()
+            )
+        );
     }
 
     #[test]
