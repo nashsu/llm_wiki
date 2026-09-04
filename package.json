@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.6.11",
   "type": "module",
+  "engines": {
+    "node": ">=20.19 <21",
+    "npm": ">=10 <11"
+  },
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --build --pretty",
@@ -14,6 +18,10 @@
     "test:llm": "vitest run real-llm --no-file-parallelism --reporter=verbose",
     "mcp:build": "npm --prefix mcp-server run build",
     "mcp:test": "npm --prefix mcp-server test",
+    "check:frontend": "npm run typecheck && npm run test:mocks && npm run build",
+    "check:rust": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
+    "check": "npm run check:frontend && npm run mcp:test && npm run check:rust",
+    "package:macos": "npm run tauri build -- --bundles app,dmg",
     "tauri": "tauri"
   },
   "dependencies": {

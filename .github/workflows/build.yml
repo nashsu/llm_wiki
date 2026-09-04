@@ -46,6 +46,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.88.0
           targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
@@ -98,10 +99,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Prepare MCP server resources
         run: |
