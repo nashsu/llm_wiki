@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Read as IoRead;
+use std::io::{Read as IoRead, Write as IoWrite};
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -1310,6 +1310,100 @@ pub async fn write_file_atomic(path: String, contents: String) -> Result<(), Str
     .map_err(|e| format!("write_file_atomic blocking task join error: {e}"))?
 }
 
+/// Atomically replace a text file only when it still matches the version the
+/// editor loaded. Obsidian and sync tools can modify vault files at any time;
+/// rejecting a stale save is safer than silently overwriting their update.
+#[tauri::command]
+pub async fn write_file_atomic_checked(
+    project_path: String,
+    path: String,
+    expected_md5: String,
+    contents: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("write_file_atomic_checked", || {
+            let (_, target) =
+                checked_existing_project_file("write_file_atomic_checked", &project_path, &path)?;
+            let actual_md5 = file_md5(&target)?;
+            if actual_md5 != expected_md5 {
+                return Err(format!(
+                    "File changed outside LLM Wiki; reload before saving: '{}'",
+                    target.display()
+                ));
+            }
+
+            let parent = target
+                .parent()
+                .ok_or_else(|| format!("File has no parent: '{}'", target.display()))?;
+            let mut temp_file = tempfile::Builder::new()
+                .prefix(".llm-wiki-write-")
+                .suffix(".tmp")
+                .tempfile_in(parent)
+                .map_err(|error| {
+                    format!(
+                        "Failed to create temp file beside '{}': {error}",
+                        target.display()
+                    )
+                })?;
+            let tmp_path = temp_file.path().to_path_buf();
+            file_sync::mark_app_write_path(&tmp_path);
+            file_sync::mark_app_write_path(&target);
+            crate::commands::file_history::record_file_version(
+                &target,
+                "baseline",
+                "before.ui.write_file_atomic_checked",
+            );
+            temp_file.write_all(contents.as_bytes()).map_err(|error| {
+                let _ = fs::remove_file(&tmp_path);
+                format!(
+                    "Failed to write temp file '{}': {error}",
+                    tmp_path.display()
+                )
+            })?;
+            temp_file.as_file().sync_all().map_err(|error| {
+                let _ = fs::remove_file(&tmp_path);
+                format!("Failed to sync temp file '{}': {error}", tmp_path.display())
+            })?;
+            let (_, revalidated) = match checked_existing_project_file(
+                "write_file_atomic_checked",
+                &project_path,
+                target.to_string_lossy().as_ref(),
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(error);
+                }
+            };
+            if revalidated != target {
+                let _ = fs::remove_file(&tmp_path);
+                return Err("write_file_atomic_checked target changed during save".to_string());
+            }
+            if let Err(error) = verify_file_revision(&target, &expected_md5) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(error);
+            }
+            temp_file.persist(&target).map_err(|error| {
+                format!(
+                    "Failed to atomically replace '{}' with '{}': {}",
+                    tmp_path.display(),
+                    target.display(),
+                    error.error
+                )
+            })?;
+            crate::commands::file_history::record_file_version(
+                &target,
+                "human",
+                "ui.write_file_atomic_checked",
+            );
+            file_sync::mark_app_write_path(&target);
+            file_md5(&target)
+        })
+    })
+    .await
+    .map_err(|e| format!("write_file_atomic_checked blocking task join error: {e}"))?
+}
+
 fn apply_text_selection_edit_inner(
     project_path: &str,
     file_path: &str,
@@ -1721,6 +1815,193 @@ pub async fn delete_file(path: String) -> Result<(), String> {
     .map_err(|e| format!("delete_file blocking task join error: {e}"))?
 }
 
+fn checked_project_root(operation: &str, project_path: &str) -> Result<std::path::PathBuf, String> {
+    require_absolute_path(operation, project_path)?;
+    let project = Path::new(project_path);
+    let metadata = fs::symlink_metadata(project).map_err(|error| {
+        format!(
+            "Failed to inspect project root '{}': {error}",
+            project.display()
+        )
+    })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "{operation} requires a real project directory, not a symlink: '{}'",
+            project.display()
+        ));
+    }
+    project.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve project root '{}': {error}",
+            project.display()
+        )
+    })
+}
+
+fn checked_existing_project_file(
+    operation: &str,
+    project_path: &str,
+    file_path: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let root = checked_project_root(operation, project_path)?;
+    require_absolute_path(operation, file_path)?;
+    let requested = Path::new(file_path);
+    let metadata = fs::symlink_metadata(requested)
+        .map_err(|error| format!("Failed to inspect '{}': {error}", requested.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Expected a regular file: '{}'",
+            requested.display()
+        ));
+    }
+    let resolved = requested
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve '{}': {error}", requested.display()))?;
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "{operation} refuses a path outside the project: '{}'",
+            requested.display()
+        ));
+    }
+    Ok((root, resolved))
+}
+
+fn checked_project_destination(
+    operation: &str,
+    root: &Path,
+    destination: &str,
+) -> Result<std::path::PathBuf, String> {
+    require_absolute_path(operation, destination)?;
+    let requested = Path::new(destination);
+    match fs::symlink_metadata(requested) {
+        Ok(_) => {
+            return Err(format!(
+                "Refusing to overwrite rename destination because the destination already exists: '{}'",
+                requested.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect rename destination '{}': {error}",
+                requested.display()
+            ));
+        }
+    }
+    let parent = requested
+        .parent()
+        .ok_or_else(|| "Rename destination must have a parent directory".to_string())?
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve rename destination directory: {error}"))?;
+    if !parent.starts_with(root) {
+        return Err(format!(
+            "{operation} refuses a destination outside the project: '{}'",
+            requested.display()
+        ));
+    }
+    let name = requested
+        .file_name()
+        .ok_or_else(|| "Rename destination must name a file".to_string())?;
+    Ok(parent.join(name))
+}
+
+fn verify_file_revision(path: &Path, expected_md5: &str) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Failed to inspect '{}': {error}", path.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("Expected a regular file: '{}'", path.display()));
+    }
+    if file_md5(path)? != expected_md5 {
+        return Err(format!(
+            "File changed outside LLM Wiki; reload before continuing: '{}'",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_file_checked(
+    project_path: String,
+    source: String,
+    destination: String,
+    expected_md5: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("rename_file_checked", || {
+            let (root, source_path) =
+                checked_existing_project_file("rename_file_checked", &project_path, &source)?;
+            let destination_path =
+                checked_project_destination("rename_file_checked", &root, &destination)?;
+            verify_file_revision(&source_path, &expected_md5)?;
+            file_sync::mark_app_write_path(&source_path);
+            file_sync::mark_app_write_path(&destination_path);
+            crate::commands::file_history::record_file_version(
+                &source_path,
+                "baseline",
+                "before.ui.rename_file_checked",
+            );
+            let (revalidated_root, revalidated_source) =
+                checked_existing_project_file("rename_file_checked", &project_path, &source)?;
+            let revalidated_destination = checked_project_destination(
+                "rename_file_checked",
+                &revalidated_root,
+                &destination,
+            )?;
+            if revalidated_source != source_path || revalidated_destination != destination_path {
+                return Err("rename_file_checked path changed during operation".to_string());
+            }
+            verify_file_revision(&revalidated_source, &expected_md5)?;
+            fs::rename(&source_path, &destination_path).map_err(|error| {
+                format!(
+                    "Failed to rename '{}' to '{}': {error}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+            file_sync::mark_app_write_path(&source_path);
+            file_sync::mark_app_write_path(&destination_path);
+            file_md5(&destination_path)
+        })
+    })
+    .await
+    .map_err(|e| format!("rename_file_checked blocking task join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_file_checked(
+    project_path: String,
+    path: String,
+    expected_md5: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("delete_file_checked", || {
+            let (_, target) =
+                checked_existing_project_file("delete_file_checked", &project_path, &path)?;
+            verify_file_revision(&target, &expected_md5)?;
+            file_sync::mark_app_write_path(&target);
+            crate::commands::file_history::record_file_version(
+                &target,
+                "baseline",
+                "before.ui.delete_file_checked",
+            );
+            let (_, revalidated) =
+                checked_existing_project_file("delete_file_checked", &project_path, &path)?;
+            if revalidated != target {
+                return Err("delete_file_checked path changed during operation".to_string());
+            }
+            verify_file_revision(&revalidated, &expected_md5)?;
+            remove_path_with_retry(&target.to_string_lossy(), false).map_err(|error| {
+                format!("Failed to delete file '{}': {error}", target.display())
+            })?;
+            file_sync::mark_app_write_path(&target);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|e| format!("delete_file_checked blocking task join error: {e}"))?
+}
+
 fn remove_path_with_retry(path: &str, is_dir: bool) -> Result<(), std::io::Error> {
     let mut last_err: Option<std::io::Error> = None;
     for attempt in 0..4 {
@@ -2020,28 +2301,59 @@ pub async fn get_file_size(path: String) -> Result<u64, String> {
 /// Compute MD5 hash of a file. Returns the hex-encoded hash string.
 #[tauri::command]
 pub async fn get_file_md5(path: String) -> Result<String, String> {
-    use md5::{Digest, Md5};
     tauri::async_runtime::spawn_blocking(move || {
-        run_guarded("get_file_md5", || {
-            let mut file = fs::File::open(&path)
-                .map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
-            let mut hasher = Md5::new();
-            let mut buffer = [0u8; 64 * 1024];
-            loop {
-                let read = file
-                    .read(&mut buffer)
-                    .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
-                if read == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..read]);
-            }
-            let result = hasher.finalize();
-            Ok(format!("{:x}", result))
-        })
+        run_guarded("get_file_md5", || file_md5(Path::new(&path)))
     })
     .await
     .map_err(|e| format!("get_file_md5 blocking task join error: {e}"))?
+}
+
+fn file_md5(path: &Path) -> Result<String, String> {
+    use md5::{Digest, Md5};
+
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open file '{}': {e}", path.display()))?;
+    let mut hasher = Md5::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read file '{}': {e}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedTextFile {
+    contents: String,
+    md5: String,
+}
+
+/// Read text and its revision from the same byte snapshot. Returning the hash
+/// from a separate metadata call would leave a race where the editor displays
+/// one version but later receives the hash of another.
+#[tauri::command]
+pub async fn read_text_file_versioned(path: String) -> Result<VersionedTextFile, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_guarded("read_text_file_versioned", || {
+            use md5::{Digest, Md5};
+
+            require_absolute_path("read_text_file_versioned", &path)?;
+            let bytes = fs::read(&path)
+                .map_err(|error| format!("Failed to read file '{path}': {error}"))?;
+            let md5 = format!("{:x}", Md5::digest(&bytes));
+            let contents = String::from_utf8(bytes)
+                .map_err(|_| format!("File is not valid UTF-8 text: '{path}'"))?;
+            Ok(VersionedTextFile { contents, md5 })
+        })
+    })
+    .await
+    .map_err(|e| format!("read_text_file_versioned blocking task join error: {e}"))?
 }
 
 #[cfg(test)]
@@ -2370,6 +2682,177 @@ mod tests {
         let relative = write_file_base64("relative.bin".to_string(), "AA==".to_string()).await;
         assert!(relative.is_err());
         assert!(relative.unwrap_err().contains("requires an absolute path"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn checked_atomic_write_preserves_obsidian_markdown_and_rejects_external_conflicts() {
+        let root =
+            std::env::temp_dir().join(format!("llm-wiki-vault-write-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        fs::write(
+            root.join(".llm-wiki/history-settings.json"),
+            r#"{"enabled":true,"maxVersionsPerFile":10}"#,
+        )
+        .unwrap();
+        let path = root.join("wiki/existing.md");
+        let original = "---\naliases: [Existing]\ncssclasses: [wide]\n---\n\nSee [[Other Note|alias]] and ![[asset.png]].\n";
+        let updated = format!("{original}\nLocal edit.\n");
+        fs::write(&path, original).unwrap();
+        let loaded = read_text_file_versioned(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(loaded.contents, original);
+
+        let written_md5 = write_file_atomic_checked(
+            root.to_string_lossy().into_owned(),
+            path.to_string_lossy().into_owned(),
+            loaded.md5,
+            updated.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), updated);
+        assert_eq!(
+            written_md5,
+            get_file_md5(path.to_string_lossy().into_owned())
+                .await
+                .unwrap()
+        );
+
+        fs::write(&path, "external Obsidian edit").unwrap();
+        let conflict = write_file_atomic_checked(
+            root.to_string_lossy().into_owned(),
+            path.to_string_lossy().into_owned(),
+            written_md5,
+            "stale app edit".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(conflict.contains("changed outside LLM Wiki"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external Obsidian edit");
+
+        let outside = std::env::temp_dir().join(format!(
+            "llm-wiki-outside-write-{}.md",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&outside, "outside").unwrap();
+        let outside_error = write_file_atomic_checked(
+            root.to_string_lossy().into_owned(),
+            outside.to_string_lossy().into_owned(),
+            file_md5(&outside).unwrap(),
+            "must not be written".to_string(),
+        )
+        .await
+        .unwrap_err();
+        assert!(outside_error.contains("outside the project"));
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn checked_rename_and_delete_round_trip_markdown_and_attachments() {
+        let root =
+            std::env::temp_dir().join(format!("llm-wiki-vault-move-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::create_dir_all(root.join("attachments")).unwrap();
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        let note = root.join("wiki/Original.md");
+        let renamed_note = root.join("wiki/Renamed.md");
+        let attachment = root.join("attachments/diagram.png");
+        let renamed_attachment = root.join("attachments/renamed-diagram.png");
+        let markdown = "---\ntags: [obsidian]\n---\n\n# Original\n\n![[diagram.png]]\n";
+        let image = [137_u8, 80, 78, 71, 0, 255];
+        fs::write(&note, markdown).unwrap();
+        fs::write(&attachment, image).unwrap();
+
+        let note_md5 = file_md5(&note).unwrap();
+        rename_file_checked(
+            root.to_string_lossy().into_owned(),
+            note.to_string_lossy().into_owned(),
+            renamed_note.to_string_lossy().into_owned(),
+            note_md5,
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(&renamed_note).unwrap(), markdown);
+
+        let attachment_md5 = file_md5(&attachment).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let dangling_destination = root.join("attachments/dangling.png");
+            symlink(root.join("attachments/missing.png"), &dangling_destination).unwrap();
+            let error = rename_file_checked(
+                root.to_string_lossy().into_owned(),
+                attachment.to_string_lossy().into_owned(),
+                dangling_destination.to_string_lossy().into_owned(),
+                attachment_md5.clone(),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("destination already exists"), "{error}");
+            assert!(attachment.exists());
+            fs::remove_file(dangling_destination).unwrap();
+        }
+        rename_file_checked(
+            root.to_string_lossy().into_owned(),
+            attachment.to_string_lossy().into_owned(),
+            renamed_attachment.to_string_lossy().into_owned(),
+            attachment_md5.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fs::read(&renamed_attachment).unwrap(), image);
+
+        fs::write(&renamed_attachment, b"externally replaced").unwrap();
+        let conflict = delete_file_checked(
+            root.to_string_lossy().into_owned(),
+            renamed_attachment.to_string_lossy().into_owned(),
+            attachment_md5,
+        )
+        .await
+        .unwrap_err();
+        assert!(conflict.contains("changed outside LLM Wiki"));
+        assert!(renamed_attachment.is_file());
+
+        let current_md5 = file_md5(&renamed_attachment).unwrap();
+        delete_file_checked(
+            root.to_string_lossy().into_owned(),
+            renamed_attachment.to_string_lossy().into_owned(),
+            current_md5,
+        )
+        .await
+        .unwrap();
+        assert!(!renamed_attachment.exists());
+
+        let history = crate::commands::file_history::list_file_history(
+            root.to_string_lossy().into_owned(),
+            renamed_attachment.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap();
+        let deleted_version = history
+            .iter()
+            .find(|entry| entry.content == "externally replaced")
+            .unwrap();
+        crate::commands::file_history::restore_file_history(
+            root.to_string_lossy().into_owned(),
+            renamed_attachment.to_string_lossy().into_owned(),
+            deleted_version.id.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::read(&renamed_attachment).unwrap(),
+            b"externally replaced"
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Ad-hoc probe: run the production PDF extraction path against every
