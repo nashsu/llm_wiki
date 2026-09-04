@@ -395,9 +395,11 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 ## Installation
 
+Maintainers and source builders should use the pinned, reproducible workflow in [Build and release](docs/BUILD_AND_RELEASE.md). Fork synchronization and GPL attribution are documented in [Fork and upstream policy](docs/FORK_AND_UPSTREAM.md); macOS installation, upgrade, and rollback are covered in [macOS operations](docs/MACOS_OPERATIONS.md).
+
 ### Pre-built Binaries
 
-Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
+Download fork builds from [Releases](https://github.com/simonislee/llm_wiki/releases):
 - **macOS**: `.dmg` (Apple Silicon + Intel)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
@@ -409,12 +411,12 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 #   macOS:  brew install protobuf
 #   Linux:  sudo apt install protobuf-compiler
 #   Windows: choco install protoc
-git clone https://github.com/nashsu/llm_wiki.git
+git clone https://github.com/simonislee/llm_wiki.git
 cd llm_wiki
-npm install
+npm ci
 npm --prefix mcp-server ci && npm run mcp:build   # mcp-server/dist is bundled as a Tauri resource
 npm run tauri dev      # Development
-npm run tauri build    # Production build
+npm run package:macos  # macOS app + DMG production build
 ```
 
 ### Chrome Extension

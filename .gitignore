@@ -16,13 +16,23 @@ src-tauri/target/
 # Tauri generated files
 src-tauri/gen/
 
-# Environment files
-.env
-.env.local
-.env.*.local
+# Environment files and signing material. Commit documented placeholders only.
+.env*
+!.env.example
+*.p12
+*.pem
+*.mobileprovision
 
-# Internal docs (not shipped)
-docs/
+# Local vaults, indexes, and application state must never enter the source tree.
+local-vaults/
+vault/
+vaults/
+.llm-wiki/
+.lancedb/
+*.lance
+app-state.json
+
+# Agent-local instructions (not shipped)
 AGENTS.md
 
 # Benchmark and test data (local only)
