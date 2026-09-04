@@ -4,7 +4,7 @@
 
 - macOS 13 or newer on Apple Silicon
 - Node.js `20.19.4` and npm 10 (`.nvmrc` and `package-lock.json`)
-- Rust `1.88.0` (`rust-toolchain.toml` and `Cargo.lock`)
+- Rust `1.91.0` (`rust-toolchain.toml` and `Cargo.lock`)
 - Xcode Command Line Tools and Homebrew `protobuf`
 
 Install the prerequisites:

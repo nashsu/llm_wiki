@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.91.0
 
       - name: Install protoc (macOS)
         if: matrix.platform == 'macos-latest'
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.91.0
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:

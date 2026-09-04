@@ -76,7 +76,7 @@ The core architecture follows Karpathy's design faithfully:
 - **log.md** as the chronological operation record with parseable format
 - **[[wikilink]]** syntax for cross-references
 - **YAML frontmatter** on every wiki page
-- **Obsidian compatibility** — the wiki directory works as an Obsidian vault
+- **Obsidian compatibility** — open a new or existing vault under the documented [compatibility and data-safety contract](docs/OBSIDIAN_COMPATIBILITY.md)
 - **Human curates, LLM maintains** — the fundamental role division
 
 <p align="center">
@@ -407,7 +407,7 @@ Download fork builds from [Releases](https://github.com/simonislee/llm_wiki/rele
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.88+, protoc
+# Prerequisites: Node.js 20+, Rust 1.91+, protoc
 #   macOS:  brew install protobuf
 #   Linux:  sudo apt install protobuf-compiler
 #   Windows: choco install protoc

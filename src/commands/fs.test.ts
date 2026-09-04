@@ -8,7 +8,16 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,
 }))
 
-import { createDirectory, listDirectory, writeFile, writeFileAtomic } from "./fs"
+import {
+  createDirectory,
+  deleteFileChecked,
+  listDirectory,
+  readTextFileVersioned,
+  renameFileChecked,
+  writeFile,
+  writeFileAtomic,
+  writeFileAtomicChecked,
+} from "./fs"
 
 describe("fs command path guards", () => {
   beforeEach(() => {
@@ -45,6 +54,60 @@ describe("fs command path guards", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("write_file", {
       path: "/tmp/project/wiki/sources/page.md",
       contents: "content",
+    })
+  })
+
+  it("passes the loaded revision to conflict-aware atomic writes", async () => {
+    mocks.invoke.mockResolvedValue("next-md5")
+
+    await expect(writeFileAtomicChecked(
+      "/tmp/project",
+      "/tmp/project/wiki/page.md",
+      "loaded-md5",
+      "updated markdown",
+    )).resolves.toBe("next-md5")
+
+    expect(mocks.invoke).toHaveBeenCalledWith("write_file_atomic_checked", {
+      projectPath: "/tmp/project",
+      path: "/tmp/project/wiki/page.md",
+      expectedMd5: "loaded-md5",
+      contents: "updated markdown",
+    })
+  })
+
+  it("loads editor text and its revision in one backend call", async () => {
+    mocks.invoke.mockResolvedValue({ contents: "# Note", md5: "loaded-md5" })
+
+    await expect(readTextFileVersioned("/tmp/project/wiki/page.md")).resolves.toEqual({
+      contents: "# Note",
+      md5: "loaded-md5",
+    })
+    expect(mocks.invoke).toHaveBeenCalledWith("read_text_file_versioned", {
+      path: "/tmp/project/wiki/page.md",
+    })
+  })
+
+  it("passes revisions to checked rename and delete operations", async () => {
+    mocks.invoke.mockResolvedValueOnce("renamed-md5").mockResolvedValueOnce(undefined)
+
+    await expect(renameFileChecked(
+      "/tmp/project",
+      "/tmp/project/wiki/old.md",
+      "/tmp/project/wiki/new.md",
+      "loaded-md5",
+    )).resolves.toBe("renamed-md5")
+    await deleteFileChecked("/tmp/project", "/tmp/project/wiki/new.md", "renamed-md5")
+
+    expect(mocks.invoke).toHaveBeenNthCalledWith(1, "rename_file_checked", {
+      projectPath: "/tmp/project",
+      source: "/tmp/project/wiki/old.md",
+      destination: "/tmp/project/wiki/new.md",
+      expectedMd5: "loaded-md5",
+    })
+    expect(mocks.invoke).toHaveBeenNthCalledWith(2, "delete_file_checked", {
+      projectPath: "/tmp/project",
+      path: "/tmp/project/wiki/new.md",
+      expectedMd5: "renamed-md5",
     })
   })
 

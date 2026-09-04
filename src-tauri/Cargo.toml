@@ -4,10 +4,10 @@ version = "0.6.11"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
-# AnyDoc and its archive/spreadsheet dependencies require Rust 1.88. Declaring
+# LanceDB and its transitive dependencies require Rust 1.91. Declaring
 # the floor here gives contributors an immediate toolchain error instead of a
 # late, platform-dependent dependency compilation failure.
-rust-version = "1.88"
+rust-version = "1.91"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -51,6 +51,7 @@ futures = "0.3"
 tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt", "time"] }
 which = "7"
 uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
 # Multimodal image extraction (Phase 1):
 #   `image` re-encodes pdfium's raw bitmap output to PNG so the IPC
 #   payload is self-contained (the frontend doesn't need to know

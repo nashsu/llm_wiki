@@ -414,7 +414,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 ### ソースからビルド
 
 ```bash
-# 前提条件: Node.js 20+, Rust 1.88+, protoc
+# 前提条件: Node.js 20+, Rust 1.91+, protoc
 #   macOS:   brew install protobuf
 #   Linux:   sudo apt install protobuf-compiler
 #   Windows: choco install protoc

@@ -623,9 +623,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::fs::read_file,
+            commands::fs::read_text_file_versioned,
             commands::fs::write_file,
             commands::fs::write_file_base64,
             commands::fs::write_file_atomic,
+            commands::fs::write_file_atomic_checked,
             commands::fs::apply_text_selection_edit,
             commands::fs::create_missing_wiki_page,
             commands::file_history::list_file_history,
@@ -639,6 +641,8 @@ pub fn run() {
             commands::fs::copy_directory,
             commands::fs::preprocess_file,
             commands::fs::delete_file,
+            commands::fs::delete_file_checked,
+            commands::fs::rename_file_checked,
             commands::fs::find_related_wiki_pages,
             commands::fs::create_directory,
             commands::fs::file_exists,
