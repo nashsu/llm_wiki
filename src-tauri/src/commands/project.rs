@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use chrono::Local;
@@ -246,6 +247,12 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
     run_guarded("open_project", || {
         let root = Path::new(&path);
 
+        if root.is_dir()
+            && root.join(".obsidian").is_dir()
+            && (!root.join("schema.md").is_file() || !root.join("wiki").is_dir())
+        {
+            initialize_existing_obsidian_vault(root)?;
+        }
         validate_wiki_project_root(root)?;
 
         // Derive project name from the directory name
@@ -261,6 +268,117 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
             path: path.replace('\\', "/"),
         })
     })
+}
+
+/// Add only LLM Wiki-managed scaffolding to an existing Obsidian vault.
+/// Existing notes, attachments, settings and unknown files are never moved or
+/// overwritten. In particular, `.obsidian/` remains entirely Obsidian-owned.
+fn initialize_existing_obsidian_vault(root: &Path) -> Result<(), String> {
+    let root_metadata =
+        fs::symlink_metadata(root).map_err(|e| format!("Failed to inspect vault root: {e}"))?;
+    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+        return Err("Vault root must be a real directory, not a symlink".to_string());
+    }
+    let obsidian = fs::symlink_metadata(root.join(".obsidian"))
+        .map_err(|e| format!("Failed to inspect .obsidian: {e}"))?;
+    if !obsidian.is_dir() || obsidian.file_type().is_symlink() {
+        return Err(".obsidian must be a real directory inside the selected vault".to_string());
+    }
+
+    for dir in [
+        "raw/sources",
+        "raw/assets",
+        "wiki/entities",
+        "wiki/concepts",
+        "wiki/sources",
+        "wiki/queries",
+        "wiki/comparisons",
+        "wiki/synthesis",
+    ] {
+        create_managed_directory(root, dir)?;
+    }
+
+    write_file_if_missing(
+        &root.join("schema.md"),
+        "# Wiki Schema\n\nLLM Wiki-managed pages live under `wiki/`. Existing vault notes remain in place.\n",
+    )?;
+    write_file_if_missing(
+        &root.join("purpose.md"),
+        "# Project Purpose\n\nDescribe the goal and scope of this knowledge base.\n",
+    )?;
+    write_file_if_missing(&root.join("wiki/index.md"), "# Wiki Index\n")?;
+    write_file_if_missing(&root.join("wiki/log.md"), "# Research Log\n")?;
+    write_file_if_missing(
+        &root.join("wiki/overview.md"),
+        "---\ntype: overview\ntitle: Project Overview\ntags: []\nrelated: []\n---\n\n# Overview\n",
+    )?;
+    Ok(())
+}
+
+fn create_managed_directory(root: &Path, relative: &str) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(format!("Invalid managed directory path: '{relative}'"));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "Refusing unsafe managed directory '{}': expected a real directory",
+                    current.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|error| {
+                    format!(
+                        "Failed to create managed directory '{}': {error}",
+                        current.display()
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect managed directory '{}': {error}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_file_if_missing(path: &Path, contents: &str) -> Result<(), String> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => file
+            .write_all(contents.as_bytes())
+            .map_err(|e| format!("Failed to initialize '{}': {e}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(path).map_err(|inspect_error| {
+                format!(
+                    "Failed to inspect managed file '{}': {inspect_error}",
+                    path.display()
+                )
+            })?;
+            if metadata.is_file() && !metadata.file_type().is_symlink() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Refusing unsafe managed file '{}': expected a regular file",
+                    path.display()
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "Failed to initialize '{}': {error}",
+            path.display()
+        )),
+    }
 }
 
 #[tauri::command]
@@ -375,4 +493,103 @@ fn write_file_inner(path: std::path::PathBuf, contents: &str) -> Result<(), Stri
     }
     fs::write(&path, contents)
         .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn opening_existing_obsidian_vault_is_non_destructive() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-obsidian-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".obsidian/plugins/community-plugin")).unwrap();
+        fs::create_dir_all(root.join("attachments")).unwrap();
+        fs::write(
+            root.join(".obsidian/app.json"),
+            r#"{"attachmentFolderPath":"attachments","unknownSetting":true}"#,
+        )
+        .unwrap();
+        let note = "---\naliases: [Existing]\n---\n\n# Existing\n\nSee [[Other Note]].\n";
+        fs::write(root.join("Existing.md"), note).unwrap();
+        fs::write(root.join("attachments/image.png"), [0_u8, 1, 2, 255]).unwrap();
+        fs::write(
+            root.join(".obsidian/plugins/community-plugin/data.json"),
+            "plugin state",
+        )
+        .unwrap();
+
+        let opened = open_project(root.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(opened.path, root.to_string_lossy().replace('\\', "/"));
+        assert!(root.join("wiki").is_dir());
+        assert!(root.join("raw/sources").is_dir());
+        assert!(root.join("schema.md").is_file());
+        assert_eq!(fs::read_to_string(root.join("Existing.md")).unwrap(), note);
+        assert_eq!(
+            fs::read_to_string(root.join(".obsidian/app.json")).unwrap(),
+            r#"{"attachmentFolderPath":"attachments","unknownSetting":true}"#
+        );
+        assert_eq!(
+            fs::read(root.join("attachments/image.png")).unwrap(),
+            [0_u8, 1, 2, 255]
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(".obsidian/plugins/community-plugin/data.json")).unwrap(),
+            "plugin state"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_vault_adoption_rejects_symlinked_managed_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("llm-wiki-obsidian-{}", Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("llm-wiki-obsidian-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("wiki")).unwrap();
+
+        let error = open_project(root.to_string_lossy().into_owned()).unwrap_err();
+
+        assert!(error.contains("managed directory"));
+        assert!(!outside.join("entities").exists());
+        assert!(!root.join("schema.md").exists());
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_vault_adoption_rejects_unsafe_managed_files() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("llm-wiki-obsidian-{}", Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("llm-wiki-obsidian-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(&outside, "outside").unwrap();
+        symlink(&outside, root.join("schema.md")).unwrap();
+
+        let error = open_project(root.to_string_lossy().into_owned()).unwrap_err();
+
+        assert!(error.contains("managed file"));
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_file(&outside).unwrap();
+
+        let root = std::env::temp_dir().join(format!("llm-wiki-obsidian-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir(root.join("schema.md")).unwrap();
+
+        let error = open_project(root.to_string_lossy().into_owned()).unwrap_err();
+
+        assert!(error.contains("managed file"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

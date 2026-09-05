@@ -19,6 +19,16 @@ export async function readFile(
   })
 }
 
+export interface VersionedTextFile {
+  contents: string
+  md5: string
+}
+
+export async function readTextFileVersioned(path: string): Promise<VersionedTextFile> {
+  assertAbsoluteFsPath("readTextFileVersioned", path)
+  return invoke<VersionedTextFile>("read_text_file_versioned", { path })
+}
+
 export async function writeFile(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFile", path)
   return invoke<void>("write_file", { path, contents })
@@ -32,6 +42,17 @@ export async function writeFileBase64(path: string, base64: string): Promise<voi
 export async function writeFileAtomic(path: string, contents: string): Promise<void> {
   assertAbsoluteFsPath("writeFileAtomic", path)
   return invoke<void>("write_file_atomic", { path, contents })
+}
+
+export async function writeFileAtomicChecked(
+  projectPath: string,
+  path: string,
+  expectedMd5: string,
+  contents: string,
+): Promise<string> {
+  assertAbsoluteFsPath("writeFileAtomicChecked", projectPath)
+  assertAbsoluteFsPath("writeFileAtomicChecked", path)
+  return invoke<string>("write_file_atomic_checked", { projectPath, path, expectedMd5, contents })
 }
 
 /**
@@ -111,6 +132,28 @@ export async function preprocessFile(path: string): Promise<string> {
 
 export async function deleteFile(path: string): Promise<void> {
   return invoke("delete_file", { path })
+}
+
+export async function deleteFileChecked(
+  projectPath: string,
+  path: string,
+  expectedMd5: string,
+): Promise<void> {
+  assertAbsoluteFsPath("deleteFileChecked", projectPath)
+  assertAbsoluteFsPath("deleteFileChecked", path)
+  return invoke<void>("delete_file_checked", { projectPath, path, expectedMd5 })
+}
+
+export async function renameFileChecked(
+  projectPath: string,
+  source: string,
+  destination: string,
+  expectedMd5: string,
+): Promise<string> {
+  assertAbsoluteFsPath("renameFileChecked", projectPath)
+  assertAbsoluteFsPath("renameFileChecked", source)
+  assertAbsoluteFsPath("renameFileChecked", destination)
+  return invoke<string>("rename_file_checked", { projectPath, source, destination, expectedMd5 })
 }
 
 export async function findRelatedWikiPages(

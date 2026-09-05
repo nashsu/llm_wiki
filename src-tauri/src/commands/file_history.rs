@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -42,7 +43,7 @@ pub struct FileHistorySettings {
 impl Default for FileHistorySettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             max_versions_per_file: DEFAULT_ENTRIES_PER_FILE,
         }
     }
@@ -110,7 +111,15 @@ fn project_root_for(path: &Path) -> Option<PathBuf> {
 }
 
 fn history_path(root: &Path, path: &Path) -> PathBuf {
-    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    // Windows temp/project paths may arrive in DOS, short-name, or verbatim
+    // (`\\?\`) form. Canonicalize both sides before deriving the key so the
+    // same vault file addresses the same history record across read/write APIs.
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let relative = canonical_path
+        .strip_prefix(&canonical_root)
+        .unwrap_or(&canonical_path)
+        .to_string_lossy();
     // Fixed FNV-1a keeps history addresses stable across Rust/toolchain upgrades.
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in relative.as_bytes() {
@@ -118,7 +127,9 @@ fn history_path(root: &Path, path: &Path) -> PathBuf {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     let key = format!("{hash:016x}");
-    root.join(".llm-wiki/history").join(format!("{key}.json"))
+    canonical_root
+        .join(".llm-wiki/history")
+        .join(format!("{key}.json"))
 }
 
 fn history_dir(root: &Path) -> PathBuf {
@@ -141,7 +152,12 @@ fn checked_history_dir(root: &Path, create: bool) -> Result<PathBuf, String> {
 
     let dir = metadata_dir.join("history");
     if create {
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&dir).map_err(|e| {
+            format!(
+                "Failed to create History directory '{}': {e}",
+                dir.display()
+            )
+        })?;
     } else if !dir.exists() {
         return Ok(dir);
     }
@@ -225,51 +241,56 @@ fn prune_entries_per_file(root: &Path, max_versions: usize) -> Result<(), String
         if entries.len() > max_versions {
             entries.drain(..entries.len() - max_versions);
             let serialized = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
-            fs::write(&path, serialized).map_err(|e| e.to_string())?;
+            write_history_file_atomically(&path, serialized.as_bytes())?;
         }
     }
     Ok(())
 }
 
 pub fn record_file_version(path: &Path, author: &str, tool: &str) {
+    let _ = record_file_version_required(path, author, tool);
+}
+
+/// Record a recoverable text baseline and report storage failures to callers
+/// that are about to perform a destructive checked mutation.
+pub fn record_file_version_required(path: &Path, author: &str, tool: &str) -> Result<(), String> {
     let Some(root) = project_root_for(path) else {
-        return;
+        return Ok(());
     };
     if path.starts_with(root.join(".llm-wiki")) {
-        return;
+        return Ok(());
     }
-    let Ok(_guard) = HISTORY_LOCK.lock() else {
-        return;
-    };
+    let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
     let settings = read_history_settings(&root);
     if !settings.enabled || settings.max_versions_per_file == 0 {
-        return;
+        return Ok(());
     }
-    let Ok(metadata) = fs::metadata(path) else {
-        return;
-    };
+    let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Err("History source must be a regular file, not a symlink".to_string());
+    }
     if !metadata.is_file() || metadata.len() as usize > MAX_HISTORY_CONTENT_BYTES {
-        return;
+        return Ok(());
     }
-    let Ok(content) = fs::read_to_string(path) else {
-        return;
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => return Ok(()),
+        Err(error) => return Err(error.to_string()),
     };
-    let Ok(dir) = checked_history_dir(&root, true) else {
-        return;
-    };
-    let Ok(checked_store_path) = checked_history_file(&root, path) else {
-        return;
-    };
-    let Some(file_name) = checked_store_path.file_name().map(ToOwned::to_owned) else {
-        return;
-    };
+    let dir = checked_history_dir(&root, true)?;
+    let checked_store_path = checked_history_file(&root, path)?;
+    let file_name = checked_store_path
+        .file_name()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "History file path must name a file".to_string())?;
     let store_path = dir.join(file_name);
-    let mut entries: Vec<FileHistoryEntry> = fs::read_to_string(&store_path)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut entries: Vec<FileHistoryEntry> = match fs::read_to_string(&store_path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.to_string()),
+    };
     if entries.last().is_some_and(|entry| entry.content == content) {
-        return;
+        return Ok(());
     }
     entries.push(FileHistoryEntry {
         id: Uuid::new_v4().to_string(),
@@ -282,11 +303,27 @@ pub fn record_file_version(path: &Path, author: &str, tool: &str) {
     if entries.len() > settings.max_versions_per_file {
         entries.drain(..entries.len() - settings.max_versions_per_file);
     }
-    if let Ok(raw) = serde_json::to_string(&entries) {
-        if fs::write(&store_path, raw).is_ok() {
-            prune_history_store(&root, &store_path);
-        }
-    }
+    let raw = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+    write_history_file_atomically(&store_path, raw.as_bytes())?;
+    prune_history_store(&root, &store_path);
+    Ok(())
+}
+
+fn write_history_file_atomically(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "History file path must have a parent".to_string())?;
+    let mut temp_file = tempfile::Builder::new()
+        .prefix(".llm-wiki-history-")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|e| e.to_string())?;
+    temp_file.write_all(contents).map_err(|e| e.to_string())?;
+    temp_file.as_file().sync_all().map_err(|e| e.to_string())?;
+    temp_file
+        .persist(path)
+        .map(|_| ())
+        .map_err(|e| format!("Failed to atomically store history: {}", e.error))
 }
 
 #[tauri::command]
@@ -323,7 +360,7 @@ pub async fn set_file_history_settings(
                 .is_some();
         let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
         validate_optional_regular_file(&settings_path, "History settings")?;
-        fs::write(settings_path, raw).map_err(|e| e.to_string())?;
+        write_history_file_atomically(&settings_path, raw.as_bytes())?;
         if !had_settings || settings.max_versions_per_file < previous.max_versions_per_file {
             prune_entries_per_file(&root, settings.max_versions_per_file)?;
         }
@@ -348,13 +385,112 @@ fn checked_file(project_path: &str, file_path: &str) -> Result<(PathBuf, PathBuf
     let root = Path::new(project_path)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    let file = Path::new(file_path)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
+    let requested = Path::new(file_path);
+    if !requested.is_absolute() {
+        return Err("History file path must be absolute".to_string());
+    }
+    let file = match fs::symlink_metadata(requested) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err("History target must be a regular file, not a symlink".to_string());
+            }
+            requested.canonicalize().map_err(|e| e.to_string())?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = requested
+                .parent()
+                .ok_or_else(|| "History file path must have a parent".to_string())?
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            let name = requested
+                .file_name()
+                .ok_or_else(|| "History file path must name a file".to_string())?;
+            parent.join(name)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     if !file.starts_with(&root) || file.starts_with(root.join(".llm-wiki")) {
         return Err("History path must stay inside the project".to_string());
     }
     Ok((root, file))
+}
+
+fn write_restored_content_atomically(
+    root: &Path,
+    file: &Path,
+    contents: &[u8],
+    expected_md5: Option<&str>,
+) -> Result<(), String> {
+    let parent = file
+        .parent()
+        .ok_or_else(|| "History restore target must have a parent".to_string())?;
+    let mut temp_file = tempfile::Builder::new()
+        .prefix(".llm-wiki-restore-")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|error| error.to_string())?;
+    let temp_path = temp_file.path().to_path_buf();
+    if let Err(error) = temp_file
+        .write_all(contents)
+        .and_then(|_| temp_file.as_file().sync_all())
+    {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error.to_string());
+    }
+    let (_, revalidated) = match checked_file(
+        root.to_string_lossy().as_ref(),
+        file.to_string_lossy().as_ref(),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error);
+        }
+    };
+    if revalidated != file {
+        let _ = fs::remove_file(&temp_path);
+        return Err("History restore target changed during operation".to_string());
+    }
+    match (expected_md5, fs::symlink_metadata(file)) {
+        (Some(expected), Ok(metadata))
+            if metadata.is_file() && !metadata.file_type().is_symlink() =>
+        {
+            let current = match fs::read(file) {
+                Ok(contents) => contents,
+                Err(error) => {
+                    let _ = fs::remove_file(&temp_path);
+                    return Err(error.to_string());
+                }
+            };
+            if content_md5(&current) != expected {
+                let _ = fs::remove_file(&temp_path);
+                return Err(
+                    "History restore target changed outside LLM Wiki; reload before restoring"
+                        .to_string(),
+                );
+            }
+        }
+        (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+        _ => {
+            let _ = fs::remove_file(&temp_path);
+            return Err("History restore target changed during operation".to_string());
+        }
+    }
+    temp_file.persist(file).map(|_| ()).map_err(|error| {
+        format!(
+            "Failed to atomically restore '{}': {}",
+            file.display(),
+            error.error
+        )
+    })
+}
+
+fn content_md5(contents: &[u8]) -> String {
+    use md5::{Digest, Md5};
+
+    let mut hasher = Md5::new();
+    hasher.update(contents);
+    format!("{:x}", hasher.finalize())
 }
 
 #[tauri::command]
@@ -396,35 +532,56 @@ pub async fn restore_file_history(
                 .find(|entry| entry.id == entry_id)
                 .cloned()
                 .ok_or_else(|| "History entry not found".to_string())?;
-            let current = fs::read_to_string(&file).map_err(|e| e.to_string())?;
-            if current.len() > MAX_HISTORY_CONTENT_BYTES {
-                return Err(format!(
-                    "Current file is too large to back up safely before restore (maximum {} bytes)",
-                    MAX_HISTORY_CONTENT_BYTES
-                ));
-            }
-            if current != entry.content
-                && !entries
-                    .last()
-                    .is_some_and(|existing| existing.content == current)
-            {
-                entries.push(FileHistoryEntry {
-                    id: Uuid::new_v4().to_string(),
-                    path: file.to_string_lossy().replace('\\', "/"),
-                    timestamp: Utc::now().timestamp_millis(),
-                    author: "human".to_string(),
-                    tool: "before.history.restore".to_string(),
-                    content: current,
-                });
-                let retention = read_history_settings(&root).max_versions_per_file.max(1);
-                if entries.len() > retention {
-                    entries.drain(..entries.len() - retention);
+            let expected_md5 = match fs::read(&file) {
+                Ok(current_bytes) => {
+                    if current_bytes.len() > MAX_HISTORY_CONTENT_BYTES {
+                        return Err(format!(
+                            "Current file is too large to back up safely before restore (maximum {} bytes)",
+                            MAX_HISTORY_CONTENT_BYTES
+                        ));
+                    }
+                    let current = String::from_utf8(current_bytes.clone()).map_err(|_| {
+                        "Current file is not UTF-8 text; refusing to overwrite it during restore"
+                            .to_string()
+                    })?;
+                    if current != entry.content
+                        && entries
+                            .last()
+                            .is_none_or(|existing| existing.content != current)
+                    {
+                        entries.push(FileHistoryEntry {
+                            id: Uuid::new_v4().to_string(),
+                            path: file.to_string_lossy().replace('\\', "/"),
+                            timestamp: Utc::now().timestamp_millis(),
+                            author: "human".to_string(),
+                            tool: "before.history.restore".to_string(),
+                            content: current,
+                        });
+                        let retention = read_history_settings(&root).max_versions_per_file.max(1);
+                        if entries.len() > retention {
+                            entries.drain(..entries.len() - retention);
+                        }
+                        let updated = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+                        write_history_file_atomically(&store_path, updated.as_bytes())?;
+                        prune_history_store(&root, &store_path);
+                    }
+                    Some(content_md5(&current_bytes))
                 }
-                let updated = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
-                fs::write(&store_path, updated).map_err(|e| e.to_string())?;
-                prune_history_store(&root, &store_path);
-            }
-            fs::write(&file, &entry.content).map_err(|e| e.to_string())?;
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(format!(
+                        "Failed to read current file before restore: {error}"
+                    ));
+                }
+            };
+            crate::commands::file_sync::mark_app_write_path(&file);
+            write_restored_content_atomically(
+                &root,
+                &file,
+                entry.content.as_bytes(),
+                expected_md5.as_deref(),
+            )?;
+            crate::commands::file_sync::mark_app_write_path(&file);
             entry.content
         };
         Ok(content)
@@ -488,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn history_is_disabled_by_default() {
+    fn history_backs_up_vault_files_by_default() {
         let root = std::env::temp_dir().join(format!("llm-wiki-history-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join(".llm-wiki")).unwrap();
         fs::create_dir_all(root.join("wiki")).unwrap();
@@ -497,7 +654,9 @@ mod tests {
 
         record_file_version(&file, "agent", "test.write");
 
-        assert!(!history_dir(&root).exists());
+        assert!(history_dir(&root).is_dir());
+        let entries = fs::read_dir(history_dir(&root)).unwrap().count();
+        assert_eq!(entries, 1);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -673,6 +832,42 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn restore_rejects_dangling_symlink_targets() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("llm-wiki-history-{}", Uuid::new_v4()));
+        let outside =
+            std::env::temp_dir().join(format!("llm-wiki-history-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        enable_history(&root, 10);
+        let file = root.join("wiki/page.md");
+        fs::write(&file, "recover me").unwrap();
+        record_file_version(&file, "agent", "test.write");
+        let version = list_file_history(
+            root.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
+        fs::remove_file(&file).unwrap();
+        symlink(&outside, &file).unwrap();
+
+        let result = restore_file_history(
+            root.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+            version.id,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(!outside.exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]

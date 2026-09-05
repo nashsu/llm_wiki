@@ -1,13 +1,14 @@
-import { useEffect, useCallback, useRef } from "react"
+import { useEffect, useCallback, useRef, useState } from "react"
 import { X } from "lucide-react"
 import { useWikiStore } from "@/stores/wiki-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, readTextFileVersioned, writeFileAtomicChecked } from "@/commands/fs"
 import { getFileCategory, isBinary, isExtractedTextPreviewFile } from "@/lib/file-types"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { getFileName } from "@/lib/path-utils"
 
 export function PreviewPanel() {
+  const project = useWikiStore((s) => s.project)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
   const previewContentPath = useWikiStore((s) => s.previewContentPath)
@@ -15,6 +16,14 @@ export function PreviewPanel() {
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const closePreview = useWikiStore((s) => s.closePreview)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const loadGenerationRef = useRef(0)
+  const loadedPathRef = useRef<string | null>(null)
+  const loadedRevisionRef = useRef<string | null>(null)
+  const revisionsByPathRef = useRef(new Map<string, string>())
+  const draftsByPathRef = useRef(new Map<string, string>())
+  const pendingSaveRef = useRef<{ path: string; markdown: string } | null>(null)
+  const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
   // `markdownUpdated` on initial parse (before the user types anything),
   // which used to trigger an auto-save that could write back a placeholder
@@ -23,47 +32,90 @@ export function PreviewPanel() {
   const lastLoadedRef = useRef<string>("")
 
   useEffect(() => {
+    const generation = ++loadGenerationRef.current
     if (!selectedFile) {
       setFileContent("")
       lastLoadedRef.current = ""
+      loadedRevisionRef.current = null
+      loadedPathRef.current = null
+      setSaveError(null)
       return
     }
-    if (previewContentPath === selectedFile) {
-      lastLoadedRef.current = fileContent
-      return
-    }
-    if (externalPreview?.path === selectedFile) {
-      lastLoadedRef.current = fileContent
-      return
-    }
-
     const category = getFileCategory(selectedFile)
+    if (previewContentPath === selectedFile && category !== "markdown") {
+      lastLoadedRef.current = fileContent
+      return
+    }
+    if (externalPreview?.path === selectedFile && category !== "markdown") {
+      lastLoadedRef.current = fileContent
+      return
+    }
 
     if (isBinary(category) && !isExtractedTextPreviewFile(selectedFile)) {
       setFileContent("")
       lastLoadedRef.current = ""
+      loadedRevisionRef.current = null
+      loadedPathRef.current = null
       return
     }
 
-    readFile(selectedFile)
-      .then((content) => {
-        lastLoadedRef.current = content
-        setFileContent(content)
+    const load = category === "markdown"
+      ? readTextFileVersioned(selectedFile)
+      : readFile(selectedFile).then((contents) => ({ contents, md5: null }))
+    load
+      .then(({ contents, md5 }) => {
+        if (loadGenerationRef.current !== generation) return
+        lastLoadedRef.current = contents
+        loadedRevisionRef.current = md5
+        loadedPathRef.current = selectedFile
+        if (md5) revisionsByPathRef.current.set(selectedFile, md5)
+        const draft = draftsByPathRef.current.get(selectedFile)
+        setFileContent(draft ?? contents)
+        setSaveError(draft !== undefined
+          ? {
+              path: selectedFile,
+              message: "This unsaved draft was retained after a save conflict. Reload the note after reconciling the external edit.",
+            }
+          : null)
       })
       .catch((err) => {
+        if (loadGenerationRef.current !== generation) return
         lastLoadedRef.current = ""
+        loadedRevisionRef.current = null
+        loadedPathRef.current = null
         setFileContent(`Error loading file: ${err}`)
+        setSaveError(null)
       })
   }, [selectedFile, previewContentPath, externalPreview, setFileContent])
 
   const writeNow = useCallback((path: string, markdown: string, syncStore = false) => {
-    writeFile(path, markdown)
-      .then(() => {
-        lastLoadedRef.current = markdown
-        if (syncStore) setFileContent(markdown)
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!project) return
+        const expectedMd5 = revisionsByPathRef.current.get(path)
+        if (!expectedMd5) {
+          throw new Error("no loaded file revision; reopen the note before saving")
+        }
+        const nextMd5 = await writeFileAtomicChecked(project.path, path, expectedMd5, markdown)
+        revisionsByPathRef.current.set(path, nextMd5)
+        if (draftsByPathRef.current.get(path) === markdown) {
+          draftsByPathRef.current.delete(path)
+          setSaveError((current) => current?.path === path ? null : current)
+        }
+        if (loadedPathRef.current === path) {
+          loadedRevisionRef.current = nextMd5
+          lastLoadedRef.current = markdown
+          if (syncStore) setFileContent(markdown)
+        }
       })
-      .catch((err) => console.error("Failed to save:", err))
-  }, [setFileContent])
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        setSaveError({ path, message })
+        if (loadedPathRef.current === path) setFileContent(markdown)
+        console.error("Failed to save:", err)
+      })
+  }, [project, setFileContent])
 
   const handleSave = useCallback(
     (markdown: string, options?: { immediate?: boolean }) => {
@@ -73,12 +125,16 @@ export function PreviewPanel() {
       // last disk read.
       if (markdown === lastLoadedRef.current) return
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      draftsByPathRef.current.set(selectedFile, markdown)
+      pendingSaveRef.current = { path: selectedFile, markdown }
       if (options?.immediate) {
+        pendingSaveRef.current = null
         setFileContent(markdown)
         writeNow(selectedFile, markdown, true)
         return
       }
       saveTimerRef.current = setTimeout(() => {
+        pendingSaveRef.current = null
         writeNow(selectedFile, markdown, true)
       }, 1000)
     },
@@ -88,8 +144,32 @@ export function PreviewPanel() {
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      const pending = pendingSaveRef.current
+      if (pending?.path === selectedFile) {
+        pendingSaveRef.current = null
+        writeNow(pending.path, pending.markdown, false)
+      }
     }
-  }, [])
+  }, [selectedFile, writeNow])
+
+  const discardDraftAndReload = useCallback(async () => {
+    if (!selectedFile) return
+    draftsByPathRef.current.delete(selectedFile)
+    try {
+      const loaded = await readTextFileVersioned(selectedFile)
+      revisionsByPathRef.current.set(selectedFile, loaded.md5)
+      loadedRevisionRef.current = loaded.md5
+      loadedPathRef.current = selectedFile
+      lastLoadedRef.current = loaded.contents
+      setFileContent(loaded.contents)
+      setSaveError(null)
+    } catch (err) {
+      setSaveError({
+        path: selectedFile,
+        message: `Failed to reload the disk version: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    }
+  }, [selectedFile, setFileContent])
 
   if (!selectedFile) {
     return (
@@ -117,6 +197,14 @@ export function PreviewPanel() {
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+      {saveError?.path === selectedFile && (
+        <div role="alert" className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <span>Save blocked to protect an external edit. Your draft is retained in the editor. {saveError.message}</span>
+          <button type="button" className="shrink-0 underline" onClick={discardDraftAndReload}>
+            Discard draft and reload
+          </button>
+        </div>
+      )}
       <div className="flex-1 min-w-0 overflow-auto">
         {externalPreview?.path === selectedFile ? (
           <ExternalReferencePreview

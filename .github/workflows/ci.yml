@@ -21,6 +21,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
 
       - name: Install protoc (macOS)
         if: matrix.platform == 'macos-latest'
@@ -44,19 +46,43 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Check frontend build
-        run: npx vite build
+      - name: Check frontend
+        run: npm run check:frontend
 
       - name: Prepare MCP server resources
         run: |
           npm --prefix mcp-server ci
           npm run mcp:build
 
-      - name: Check Rust build
-        working-directory: src-tauri
-        run: cargo build
+      - name: Test MCP server
+        run: npm run mcp:test
+
+      - name: Test Rust backend
+        run: npm run check:rust
+
+  package-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: brew install protobuf
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix mcp-server ci
+      - name: Verify unsigned macOS packaging
+        run: npm run package:macos -- --target aarch64-apple-darwin

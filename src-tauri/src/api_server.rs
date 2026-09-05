@@ -712,10 +712,13 @@ fn load_app_state(app: &AppHandle) -> Option<Value> {
     }
 
     let path = app.path().app_data_dir().ok()?.join("app-state.json");
-    let loaded = fs::read_to_string(path)
+    let mut parsed = fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
-    let value = loaded.or(previous);
+    if let Some(state) = parsed.as_mut() {
+        crate::secure_credentials::hydrate_app_state(state);
+    }
+    let value = parsed.or(previous);
 
     if let Ok(mut cache) = lock.lock() {
         *cache = Some(CachedAppState {

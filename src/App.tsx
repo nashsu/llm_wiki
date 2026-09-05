@@ -576,7 +576,7 @@ function App() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Open Wiki Project",
+      title: "Open Wiki Project or Obsidian Vault",
     })
     if (!selected) return
     try {

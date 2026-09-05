@@ -1,5 +1,7 @@
 # LLM Wiki
 
+> Security-sensitive deployments: review the local API, Agent permission, and threat model in [docs/SECURITY.md](docs/SECURITY.md).
+
 <p align="center">
   <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
@@ -76,7 +78,7 @@ The core architecture follows Karpathy's design faithfully:
 - **log.md** as the chronological operation record with parseable format
 - **[[wikilink]]** syntax for cross-references
 - **YAML frontmatter** on every wiki page
-- **Obsidian compatibility** — the wiki directory works as an Obsidian vault
+- **Obsidian compatibility** — open a new or existing vault under the documented [compatibility and data-safety contract](docs/OBSIDIAN_COMPATIBILITY.md)
 - **Human curates, LLM maintains** — the fundamental role division
 
 <p align="center">
@@ -395,9 +397,11 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 ## Installation
 
+Maintainers and source builders should use the pinned, reproducible workflow in [Build and release](docs/BUILD_AND_RELEASE.md). Fork synchronization and GPL attribution are documented in [Fork and upstream policy](docs/FORK_AND_UPSTREAM.md); macOS installation, upgrade, and rollback are covered in [macOS operations](docs/MACOS_OPERATIONS.md).
+
 ### Pre-built Binaries
 
-Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
+Download fork builds from [Releases](https://github.com/simonislee/llm_wiki/releases):
 - **macOS**: `.dmg` (Apple Silicon + Intel)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
@@ -405,16 +409,16 @@ Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
 ### Build from Source
 
 ```bash
-# Prerequisites: Node.js 20+, Rust 1.88+, protoc
+# Prerequisites: Node.js 20+, Rust 1.91+, protoc
 #   macOS:  brew install protobuf
 #   Linux:  sudo apt install protobuf-compiler
 #   Windows: choco install protoc
-git clone https://github.com/nashsu/llm_wiki.git
+git clone https://github.com/simonislee/llm_wiki.git
 cd llm_wiki
-npm install
+npm ci
 npm --prefix mcp-server ci && npm run mcp:build   # mcp-server/dist is bundled as a Tauri resource
 npm run tauri dev      # Development
-npm run tauri build    # Production build
+npm run package:macos  # macOS app + DMG production build
 ```
 
 ### Chrome Extension

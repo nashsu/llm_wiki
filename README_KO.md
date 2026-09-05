@@ -414,7 +414,7 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 ### 소스에서 빌드
 
 ```bash
-# 사전 요구 사항: Node.js 20+, Rust 1.88+, protoc
+# 사전 요구 사항: Node.js 20+, Rust 1.91+, protoc
 #   macOS:   brew install protobuf
 #   Linux:   sudo apt install protobuf-compiler
 #   Windows: choco install protoc

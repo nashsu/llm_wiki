@@ -10,7 +10,7 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
 import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, readTextFileVersioned, writeFileAtomicChecked } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
@@ -87,6 +87,7 @@ type GraphPreview = {
   path: string
   title: string
   content: string
+  md5: string
 }
 
 function graphThemePalette(isDark: boolean): GraphThemePalette {
@@ -763,11 +764,12 @@ export function GraphView() {
       const node = nodes.find((n) => n.id === nodeId)
       if (!node) return
       try {
-        const content = await readFile(node.path)
+        const loaded = await readTextFileVersioned(node.path)
         setGraphPreview({
           path: node.path,
           title: node.label || getFileName(node.path),
-          content,
+          content: loaded.contents,
+          md5: loaded.md5,
         })
       } catch (err) {
         console.error("Failed to open wiki page:", err)
@@ -1712,41 +1714,87 @@ function GraphPreviewPanel({
   onClose: () => void
   onContentChange: (content: string) => void
 }) {
+  const project = useWikiStore((state) => state.project)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSavedRef = useRef(preview.content)
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const savedByPathRef = useRef(new Map([[preview.path, preview.content]]))
+  const revisionByPathRef = useRef(new Map([[preview.path, preview.md5]]))
+  const draftsByPathRef = useRef(new Map<string, string>())
+  const pendingSaveRef = useRef<{ path: string; markdown: string } | null>(null)
+  const currentPathRef = useRef(preview.path)
+  const onContentChangeRef = useRef(onContentChange)
+  const [saveError, setSaveError] = useState<{ path: string; message: string } | null>(null)
   const category = getFileCategory(preview.path)
 
-  useEffect(() => {
-    lastSavedRef.current = preview.content
-  }, [preview.path, preview.content])
+  currentPathRef.current = preview.path
+  onContentChangeRef.current = onContentChange
 
   useEffect(() => {
+    savedByPathRef.current.set(preview.path, preview.content)
+    revisionByPathRef.current.set(preview.path, preview.md5)
+    setSaveError(draftsByPathRef.current.has(preview.path)
+      ? { path: preview.path, message: "This unsaved draft was retained after a save conflict." }
+      : null)
+  }, [preview.path, preview.md5])
+
+  const writeNow = useCallback((path: string, markdown: string) => {
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!project) return
+        const expectedRevision = revisionByPathRef.current.get(path)
+        if (!expectedRevision) {
+          throw new Error(`Cannot save ${path}: no loaded revision`)
+        }
+        const nextMd5 = await writeFileAtomicChecked(
+          project.path,
+          path,
+          expectedRevision,
+          markdown,
+        )
+        revisionByPathRef.current.set(path, nextMd5)
+        savedByPathRef.current.set(path, markdown)
+        if (draftsByPathRef.current.get(path) === markdown) {
+          draftsByPathRef.current.delete(path)
+          setSaveError((current) => current?.path === path ? null : current)
+        }
+        if (currentPathRef.current === path) onContentChangeRef.current(markdown)
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        setSaveError({ path, message })
+        console.error("Failed to save graph preview:", err)
+      })
+  }, [project])
+
+  useEffect(() => {
+    const path = preview.path
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      const pending = pendingSaveRef.current
+      if (pending?.path === path) {
+        pendingSaveRef.current = null
+        writeNow(pending.path, pending.markdown)
+      }
     }
-  }, [])
-
-  const writeNow = useCallback((markdown: string) => {
-    writeFile(preview.path, markdown)
-      .then(() => {
-        lastSavedRef.current = markdown
-        onContentChange(markdown)
-      })
-      .catch((err) => console.error("Failed to save graph preview:", err))
-  }, [onContentChange, preview.path])
+  }, [preview.path, writeNow])
 
   const handleSave = useCallback((markdown: string, options?: { immediate?: boolean }) => {
-    if (markdown === lastSavedRef.current) return
+    const path = preview.path
+    if (markdown === savedByPathRef.current.get(path)) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    draftsByPathRef.current.set(path, markdown)
+    pendingSaveRef.current = { path, markdown }
     if (options?.immediate) {
-      onContentChange(markdown)
-      writeNow(markdown)
+      pendingSaveRef.current = null
+      writeNow(path, markdown)
       return
     }
     saveTimerRef.current = setTimeout(() => {
-      writeNow(markdown)
+      pendingSaveRef.current = null
+      writeNow(path, markdown)
     }, 1000)
-  }, [onContentChange, writeNow])
+  }, [preview.path, writeNow])
 
   return (
     <div className="flex w-[420px] min-w-[320px] max-w-[50vw] shrink-0 flex-col border-l bg-background">
@@ -1762,11 +1810,16 @@ function GraphPreviewPanel({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+      {saveError?.path === preview.path && (
+        <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          Save blocked to protect an external edit. Your draft is retained in the editor. {saveError.message}
+        </div>
+      )}
       <div className="min-w-0 flex-1 overflow-auto">
         {category === "markdown" ? (
           <WikiEditor
             key={preview.path}
-            content={preview.content}
+            content={draftsByPathRef.current.get(preview.path) ?? preview.content}
             onSave={handleSave}
             filePath={preview.path}
           />

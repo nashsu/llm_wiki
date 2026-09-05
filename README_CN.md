@@ -405,7 +405,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 ### 从源码构建
 
 ```bash
-# 前置条件：Node.js 20+, Rust 1.88+, protoc
+# 前置条件：Node.js 20+, Rust 1.91+, protoc
 #   macOS：  brew install protobuf
 #   Linux：  sudo apt install protobuf-compiler
 #   Windows：choco install protoc
