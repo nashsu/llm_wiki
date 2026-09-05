@@ -1,5 +1,7 @@
 # LLM Wiki
 
+> Security-sensitive deployments: review the local API, Agent permission, and threat model in [docs/SECURITY.md](docs/SECURITY.md).
+
 <p align="center">
   <img src="logo.jpg" width="128" height="128" style="border-radius: 22%;" alt="LLM Wiki Logo">
 </p>
