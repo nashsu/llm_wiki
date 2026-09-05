@@ -1258,7 +1258,17 @@ impl AgentRuntime {
                 }
             }
         } else {
-            if references.is_empty() {
+            // CLI transports (claude-code / codex-cli) deliberately fail
+            // is_usable_for_backend_http(); for them this backend turn is a
+            // retrieval-only pass and the frontend generates the answer by
+            // spawning the local binary. An empty hit list is a normal
+            // outcome there (a brand-new wiki matches nothing), so it must
+            // not be reported as "LLM is not configured" — doing so aborts
+            // the turn before the CLI is ever spawned.
+            let is_cli_transport = self.llm_config.as_ref().is_some_and(|cfg| {
+                matches!(cfg.provider.as_str(), "claude-code" | "codex-cli")
+            });
+            if references.is_empty() && !is_cli_transport {
                 return Err(
                     "Backend Agent LLM is not configured or the selected Chat model is unavailable. Check Settings > Models and try again."
                         .to_string(),
@@ -4108,6 +4118,58 @@ mod tests {
 
         assert!(error.contains("Chat model is unavailable"));
         assert!(!error.contains("Router intent="));
+    }
+
+    #[tokio::test]
+    async fn cli_transport_with_no_wiki_hits_returns_retrieval_answer_not_an_error() {
+        // Regression: claude-code / codex-cli deliberately return false from
+        // is_usable_for_backend_http(), so this backend turn is retrieval-only
+        // and the frontend spawns the local binary to generate. A fresh wiki
+        // matches nothing, and that used to abort the turn with
+        // "LLM is not configured" before the CLI was ever spawned.
+        let project = temp_project("cli-transport-no-hits");
+        let runtime = AgentRuntime::new(
+            "project-1",
+            project.to_string_lossy(),
+            None,
+            Some(LlmConfig {
+                provider: "claude-code".to_string(),
+                api_key: String::new(),
+                model: "claude-sonnet-4-6".to_string(),
+                ollama_url: String::new(),
+                custom_endpoint: String::new(),
+                azure_api_version: None,
+                azure_model_family: None,
+                api_mode: None,
+                reasoning: None,
+                max_tokens: None,
+                max_context_size: None,
+                custom_headers: std::collections::BTreeMap::new(),
+                streaming_enabled: None,
+            }),
+            None,
+            None,
+        );
+
+        let response = runtime
+            .run_once(AgentChatRequest {
+                message: "hello".to_string(),
+                session_id: Some("s1".to_string()),
+                mode: AgentMode::Standard,
+                tools: AgentToolOptions {
+                    wiki: true,
+                    web: false,
+                    anytxt: false,
+                },
+                ..Default::default()
+            })
+            .await
+            .expect("retrieval-only turn must succeed for CLI transports");
+
+        assert!(response.ok);
+        assert!(response.references.is_empty());
+        assert!(!response.message.contains("Chat model is unavailable"));
+        assert!(!response.message.contains("Router intent="));
     }
 
     #[tokio::test]
