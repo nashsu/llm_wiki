@@ -13,6 +13,10 @@
     "test:mocks": "vitest run --exclude='**/*.real-llm.test.ts' --exclude='**/mcp-server/**'",
     "test:llm": "vitest run real-llm --no-file-parallelism --reporter=verbose",
     "mcp:build": "npm --prefix mcp-server run build",
+    "web:build": "npm run build && cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features server --bin llm-wiki-server",
+    "web:check": "cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server --lib --bins",
+    "web:test": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --features server --lib",
+    "web:serve": "cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features server --bin llm-wiki-server -- --static-dir dist",
     "mcp:test": "npm --prefix mcp-server test",
     "tauri": "tauri"
   },

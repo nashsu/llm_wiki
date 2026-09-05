@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react"
-import { message } from "@tauri-apps/plugin-dialog"
+import { backend } from "@/lib/backend"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
@@ -107,7 +107,7 @@ export function FileTree() {
       await openProjectFolder(project.path)
     } catch (err) {
       console.error("[FileTree] open project folder failed:", err)
-      await message(
+      await backend.dialog.message(
         t("fileTree.openProjectFolderFailed", {
           defaultValue: "Failed to open the project folder.",
         }),

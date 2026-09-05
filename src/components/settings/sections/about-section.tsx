@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { Download, RefreshCw, CheckCircle2, Sparkles } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { openUrl } from "@tauri-apps/plugin-opener"
+import { backend } from "@/lib/backend"
 import { apiServerStatus, clipServerStatus } from "@/commands/fs"
 import { Button } from "@/components/ui/button"
 import { API_SERVER_HEALTH_URL, API_SERVER_PORT } from "@/lib/api-server-constants"
@@ -223,7 +223,7 @@ export function AboutSection() {
             href="https://github.com/nashsu/llm_wiki"
             onClick={(e) => {
               e.preventDefault()
-              void openUrl("https://github.com/nashsu/llm_wiki").catch((err) => {
+              void backend.openUrl("https://github.com/nashsu/llm_wiki").catch((err) => {
                 console.error("[about] openUrl failed:", err)
               })
             }}
@@ -270,7 +270,7 @@ function UpdateAvailableBanner({
     // to the clipboard so the user can paste it into a browser
     // manually instead of seeing a silently broken button.
     try {
-      await openUrl(targetUrl)
+      await backend.openUrl(targetUrl)
     } catch (err) {
       console.error("[update-banner] openUrl failed:", err)
       try {

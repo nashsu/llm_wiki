@@ -15,10 +15,11 @@ import {
   Server,
   Settings,
   FileText,
+  Plug,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { invoke } from "@tauri-apps/api/core"
-import { disable as disableAutostart, enable as enableAutostart } from "@tauri-apps/plugin-autostart"
+import { invoke } from "@/lib/backend"
+import { backend } from "@/lib/backend"
 import i18n from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -38,6 +39,7 @@ import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
 import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
+import { ConnectorsSection } from "./sections/connectors-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
 import { MineruSection } from "./sections/mineru-section"
 import { ApiServerSection } from "./sections/api-server-section"
@@ -55,6 +57,7 @@ type CategoryId =
   | "network"
   | "source-watch"
   | "scheduled-import"
+  | "connectors"
   | "mineru"
   | "api-server"
   | "output"
@@ -81,6 +84,7 @@ const CATEGORIES: Category[] = [
   { id: "network", labelKey: "settings.categories.network", icon: Network },
   { id: "source-watch", labelKey: "settings.categories.sourceWatch", icon: FolderSync },
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
+  { id: "connectors", labelKey: "settings.categories.connectors", icon: Plug },
   { id: "mineru", labelKey: "settings.categories.mineru", icon: FileText },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
@@ -512,9 +516,9 @@ export function SettingsView() {
       await saveGeneralConfig(newGeneralConfig)
       try {
         if (newGeneralConfig.autostart) {
-          await enableAutostart()
+          await backend.autostart.enable()
         } else {
-          await disableAutostart()
+          await backend.autostart.disable()
         }
       } catch (err) {
         console.warn("[general] failed to update autostart:", err)
@@ -641,6 +645,8 @@ export function SettingsView() {
         return <SourceWatchSection draft={draft} setDraft={setDraft} projectReady={!!project} />
       case "scheduled-import":
         return <ScheduledImportSection draft={draft} setDraft={setDraft} />
+      case "connectors":
+        return <ConnectorsSection />
       case "mineru":
         return <MineruSection draft={draft} setDraft={setDraft} />
       case "api-server":

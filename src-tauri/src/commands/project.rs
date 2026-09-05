@@ -2,13 +2,12 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Local;
-use tauri::AppHandle;
-use tauri_plugin_opener::OpenerExt;
+use crate::app_ctx::AppCtx;
 
 use crate::panic_guard::run_guarded;
 use crate::types::wiki::WikiProject;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn create_project(name: String, path: String) -> Result<WikiProject, String> {
     run_guarded("create_project", || create_project_impl(name, path))
 }
@@ -241,7 +240,7 @@ related: []
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn open_project(path: String) -> Result<WikiProject, String> {
     run_guarded("open_project", || {
         let root = Path::new(&path);
@@ -263,8 +262,8 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
     })
 }
 
-#[tauri::command]
-pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn open_project_folder(app: AppCtx, path: String) -> Result<(), String> {
     run_guarded("open_project_folder", || {
         let root = Path::new(&path);
         validate_wiki_project_root(root)?;
@@ -274,24 +273,13 @@ pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to resolve project path '{}': {}", path, e))?;
         let canonical = canonical.to_string_lossy().to_string();
 
-        match app.opener().open_path(canonical.clone(), None::<&str>) {
-            Ok(()) => Ok(()),
-            Err(open_err) => app
-                .opener()
-                .reveal_item_in_dir(canonical)
-                .map_err(|reveal_err| {
-                    format!(
-                        "Failed to open project folder: {}; reveal fallback also failed: {}",
-                        open_err, reveal_err
-                    )
-                }),
-        }
+        open_with_system(&app, canonical, "project folder")
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn open_path_in_project(
-    app: AppHandle,
+    app: AppCtx,
     project_path: String,
     target_path: String,
 ) -> Result<(), String> {
@@ -324,18 +312,7 @@ pub fn open_path_in_project(
         }
 
         let target = target_canonical.to_string_lossy().to_string();
-        match app.opener().open_path(target.clone(), None::<&str>) {
-            Ok(()) => Ok(()),
-            Err(open_err) => app
-                .opener()
-                .reveal_item_in_dir(target)
-                .map_err(|reveal_err| {
-                    format!(
-                        "Failed to open project path: {}; reveal fallback also failed: {}",
-                        open_err, reveal_err
-                    )
-                }),
-        }
+        open_with_system(&app, target, "project path")
     })
 }
 
@@ -375,4 +352,29 @@ fn write_file_inner(path: std::path::PathBuf, contents: &str) -> Result<(), Stri
     }
     fs::write(&path, contents)
         .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))
+}
+
+/// Reveal a path with the host OS file manager. Only meaningful on the
+/// desktop build; the headless server has no desktop session to open it in,
+/// so the web frontend offers a download / copy-path fallback instead.
+#[allow(unused_variables)]
+fn open_with_system(app: &AppCtx, path: String, label: &str) -> Result<(), String> {
+    #[cfg(feature = "desktop")]
+    if let Some(handle) = app.tauri() {
+        use tauri_plugin_opener::OpenerExt;
+        return match handle.opener().open_path(path.clone(), None::<&str>) {
+            Ok(()) => Ok(()),
+            Err(open_err) => handle
+                .opener()
+                .reveal_item_in_dir(path)
+                .map_err(|reveal_err| {
+                    format!(
+                        "Failed to open {label}: {open_err}; reveal fallback also failed: {reveal_err}"
+                    )
+                }),
+        };
+    }
+    Err(format!(
+        "Opening the {label} in a system file manager is only available in the desktop app"
+    ))
 }

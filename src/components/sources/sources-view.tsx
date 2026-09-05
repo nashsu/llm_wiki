@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
+import { backend } from "@/lib/backend"
 import { Plus, FileText, RefreshCw, BookOpen, Trash2, Folder, ChevronRight, ChevronDown, Link, ExternalLink, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -167,7 +167,7 @@ export function SourcesView() {
   async function handleImport() {
     if (!project) return
 
-    const selected = await open({
+    const selected = await backend.dialog.open({
       multiple: true,
       title: t("sources.importSourceFiles"),
       filters: [
@@ -225,8 +225,9 @@ export function SourcesView() {
   async function handleImportFolder() {
     if (!project) return
 
-    const selected = await open({
+    const selected = await backend.dialog.open({
       directory: true,
+      allowUpload: true,
       title: t("sources.importSourceFolder"),
     })
 

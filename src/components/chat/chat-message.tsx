@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react"
 import { useTranslation } from "react-i18next"
-import { convertFileSrc } from "@tauri-apps/api/core"
+import { backend, convertFileSrc } from "@/lib/backend"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -12,7 +12,6 @@ import {
   TrendingUp, Target, Sparkles, Image as ImageIcon, FileSearch, Terminal,
   ListTree,
 } from "lucide-react"
-import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
 import { lastQueryPages } from "@/components/chat/chat-panel"
@@ -983,7 +982,7 @@ function CitedReferencesPanel({
         return
       }
       if (target) {
-        await openUrl(target).catch((err) => {
+        await backend.openUrl(target).catch((err) => {
           console.warn("[chat refs] failed to open external reference:", err)
         })
       }

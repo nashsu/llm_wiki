@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
-import { invoke } from "@tauri-apps/api/core"
-import { disable as disableAutostart, enable as enableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart"
+import { backend, invoke } from "@/lib/backend"
 import i18n from "@/i18n"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
@@ -399,11 +397,11 @@ function App() {
           console.warn("[general] failed to hydrate close behavior:", err)
         }
         try {
-          const currentAutostart = await isAutostartEnabled()
+          const currentAutostart = await backend.autostart.isEnabled()
           if (savedGeneral.autostart && !currentAutostart) {
-            await enableAutostart()
+            await backend.autostart.enable()
           } else if (!savedGeneral.autostart && currentAutostart) {
-            await disableAutostart()
+            await backend.autostart.disable()
           }
         } catch (err) {
           console.warn("[general] failed to sync autostart:", err)
@@ -573,12 +571,12 @@ function App() {
   }
 
   async function handleOpenProject() {
-    const selected = await open({
+    const selected = await backend.dialog.open({
       directory: true,
       multiple: false,
       title: "Open Wiki Project",
     })
-    if (!selected) return
+    if (!selected || Array.isArray(selected)) return
     try {
       const proj = await openProject(selected)
       await handleProjectOpened(proj)

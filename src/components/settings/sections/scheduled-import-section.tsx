@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
-import { open } from "@tauri-apps/plugin-dialog"
+import { backend } from "@/lib/backend"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
@@ -25,7 +25,7 @@ export function ScheduledImportSection({ draft, setDraft }: Props) {
   const [isScanning, setIsScanning] = useState(false)
 
   const handleSelectDirectory = async () => {
-    const selected = await open({
+    const selected = await backend.dialog.open({
       directory: true,
       title: t("settings.sections.scheduledImport.selectDirectory", {
         defaultValue: "Select Directory to Monitor",

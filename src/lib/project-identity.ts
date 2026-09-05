@@ -13,7 +13,7 @@
  *     `{ [id]: { id, path, name, lastOpened } }`
  */
 
-import { load } from "@tauri-apps/plugin-store"
+import { backend } from "@/lib/backend"
 import { readFile, writeFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 
@@ -70,7 +70,7 @@ export async function ensureProjectId(projectPath: string): Promise<string> {
 // ── Global registry (Tauri plugin-store) ──────────────────────────────────
 
 async function getStore() {
-  return load(STORE_NAME, { autoSave: true, defaults: {} })
+  return backend.loadStore(STORE_NAME)
 }
 
 export async function loadRegistry(): Promise<ProjectRegistry> {

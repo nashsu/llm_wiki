@@ -417,6 +417,22 @@ npm run tauri dev      # 开发模式
 npm run tauri build    # 生产构建
 ```
 
+### Web / Server 模式（自架）
+
+同一套前端可以在瀏覽器裡對著一個不依賴 Tauri 的 headless Rust 伺服器執行。定位是單人／小團隊自架：一組共用密碼、cookie session，其餘功能（匯入、Chat、圖譜、`:19828` 的 MCP API）與桌面版相同。
+
+```bash
+npm install && npm run build      # 產出 dist/
+npm run web:serve                 # llm-wiki-server 於 http://127.0.0.1:8080
+# 或：docker compose up -d        # 記得改 docker-compose.yml 裡的 LLM_WIKI_WEB_PASSWORD
+```
+
+細節見 [plans/web-server-mode.md](plans/web-server-mode.md)。
+
+### 外部來源連接器
+
+**設定 → 外部來源** 可以定時把其他系統的文件拉進 `raw/sources/@<名稱>/`，之後照一般原始資料的流程 ingest。內建本地資料夾與 Google Drive（自帶 OAuth client、delta 同步、Docs/Sheets/Slides 匯出成 Office 檔）。新增來源只要實作一個 Rust trait 加一個 descriptor，見 [plans/connectors.md](plans/connectors.md)。
+
 ### Chrome 扩展
 
 1. 打开 `chrome://extensions`

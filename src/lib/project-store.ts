@@ -1,4 +1,4 @@
-import { load } from "@tauri-apps/plugin-store"
+import { backend } from "@/lib/backend"
 import type { WikiProject } from "@/types/wiki"
 import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
@@ -10,7 +10,7 @@ const RECENT_PROJECTS_KEY = "recentProjects"
 const LAST_PROJECT_KEY = "lastProject"
 
 async function getStore() {
-  return load(STORE_NAME, { autoSave: true, defaults: {} })
+  return backend.loadStore(STORE_NAME)
 }
 
 export async function getRecentProjects(): Promise<WikiProject[]> {

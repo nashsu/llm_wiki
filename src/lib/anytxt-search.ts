@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "@/lib/backend"
 import type { AnyTxtConfig, LlmConfig } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
 import { streamChat } from "@/lib/llm-client"

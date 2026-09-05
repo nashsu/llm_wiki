@@ -148,7 +148,7 @@ fn make_batch(
 }
 
 /// Upsert a page embedding into LanceDB
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_upsert(
     project_path: String,
     page_id: String,
@@ -206,7 +206,7 @@ pub async fn vector_upsert(
 }
 
 /// Search for similar pages by embedding vector
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_search(
     project_path: String,
     query_embedding: Vec<f32>,
@@ -275,7 +275,7 @@ pub async fn vector_search(
 }
 
 /// Delete a page from the vector index
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_delete(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete", async move {
         validate_page_id(&page_id)?;
@@ -312,7 +312,7 @@ pub async fn vector_delete(project_path: String, page_id: String) -> Result<(), 
 }
 
 /// Get count of indexed vectors
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_count(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_count", async move {
         let db = connect(&db_path(&project_path))
@@ -458,7 +458,7 @@ fn make_batch_v2(
 /// An empty `chunks` argument is a no-op — it does NOT clear the page's
 /// existing index (for that, call `vector_delete_page` explicitly), so
 /// transient ingest failures don't nuke previously-good embeddings.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_upsert_chunks(
     project_path: String,
     page_id: String,
@@ -585,7 +585,7 @@ pub(crate) async fn vector_page_revision_match(
 /// Top-K chunk search. Returns every matching chunk's metadata + score
 /// (1 / (1 + distance), matching v1's convention for drop-in replacement
 /// at the TS layer). TS is responsible for grouping by page_id.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_search_chunks(
     project_path: String,
     query_embedding: Vec<f32>,
@@ -677,7 +677,7 @@ pub async fn vector_search_chunks(
 
 /// Delete every chunk belonging to a page. Used when a source document
 /// is removed, or before a full re-embed of a page whose content shrank.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_delete_page(project_path: String, page_id: String) -> Result<(), String> {
     run_guarded_async("vector_delete_page", async move {
         validate_page_id_for_v2(&page_id)?;
@@ -717,7 +717,7 @@ pub async fn vector_delete_page(project_path: String, page_id: String) -> Result
 
 /// Total chunk count in the v2 table (not pages — chunks). Useful for
 /// "vector index has N chunks" status text.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_count_chunks", async move {
         let lock = vectorstore_v2_lock(&project_path);
@@ -757,7 +757,7 @@ pub async fn vector_count_chunks(project_path: String) -> Result<usize, String> 
 /// Drop the v2 chunk table entirely. Used by Settings → Embedding
 /// "Re-index all pages" so a rebuild reflects the current wiki tree
 /// exactly and removes chunks for deleted/renamed pages.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_clear_chunks(project_path: String) -> Result<(), String> {
     run_guarded_async("vector_clear_chunks", async move {
         let lock = vectorstore_v2_lock(&project_path);
@@ -791,7 +791,7 @@ pub async fn vector_clear_chunks(project_path: String) -> Result<(), String> {
 /// embedding writes. This is intentionally a separate best-effort command so
 /// an already-successful rebuild is not reported as failed if maintenance hits
 /// a platform-specific LanceDB error.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_optimize_chunks(project_path: String) -> Result<(), String> {
     run_guarded_async("vector_optimize_chunks", async move {
         let lock = vectorstore_v2_lock(&project_path);
@@ -849,7 +849,7 @@ pub async fn vector_optimize_chunks(project_path: String) -> Result<(), String> 
 /// the TS layer uses this to show a one-time "re-index to v2" prompt in
 /// Settings → Embedding after upgrading. Returns 0 when v1 is absent or
 /// empty; otherwise returns the row count.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_legacy_row_count(project_path: String) -> Result<usize, String> {
     run_guarded_async("vector_legacy_row_count", async move {
         let db = connect(&db_path(&project_path))
@@ -886,7 +886,7 @@ pub async fn vector_legacy_row_count(project_path: String) -> Result<usize, Stri
 /// Drop the legacy v1 table entirely. Called from Settings → Embedding
 /// after the user has re-indexed into v2 so the orphaned v1 table stops
 /// taking disk space. No-op if v1 isn't present.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn vector_drop_legacy(project_path: String) -> Result<(), String> {
     run_guarded_async("vector_drop_legacy", async move {
         let db = connect(&db_path(&project_path))

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { open } from "@tauri-apps/plugin-dialog"
+import { backend } from "@/lib/backend"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog"
@@ -85,12 +85,12 @@ export function CreateProjectDialog({ open: isOpen, onOpenChange, onCreated }: C
   }
 
   async function handleBrowse() {
-    const selected = await open({
+    const selected = await backend.dialog.open({
       directory: true,
       multiple: false,
       title: t("project.browse"),
     })
-    if (selected) {
+    if (selected && typeof selected === "string") {
       markEdited()
       setPath(selected)
     }

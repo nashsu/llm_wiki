@@ -5,6 +5,8 @@ import "./index.css";
 import "@/i18n";
 import { loadAndApplyTheme, watchSystemTheme } from "@/lib/theme";
 import { AppDialogHost } from "@/components/app-dialog-host";
+import { WebDialogHost } from "@/components/web/web-dialog-host";
+import { WebGate } from "@/components/web/web-gate";
 
 function applyPlatformClass() {
   const isTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
@@ -22,8 +24,11 @@ async function initApp() {
 
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
-        <App />
-        <AppDialogHost />
+        <WebGate>
+          <App />
+          <AppDialogHost />
+          <WebDialogHost />
+        </WebGate>
       </React.StrictMode>
     );
   } catch (err) {

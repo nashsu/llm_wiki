@@ -1,0 +1,9 @@
+node_modules
+mcp-server/node_modules
+dist
+mcp-server/dist
+src-tauri/target
+src-tauri/gen
+.git
+*.pptx
+assets

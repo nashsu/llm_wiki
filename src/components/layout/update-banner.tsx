@@ -1,7 +1,7 @@
 import { useCallback } from "react"
 import { Sparkles, X, Download } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { openUrl } from "@tauri-apps/plugin-opener"
+import { backend } from "@/lib/backend"
 import { useUpdateStore, shouldShowUpdateBanner } from "@/stores/update-store"
 import { saveUpdateCheckState } from "@/lib/project-store"
 import { toLatestReleaseUrl } from "@/lib/update-check"
@@ -41,7 +41,7 @@ export function UpdateBanner() {
     // and click, and (b) the bare `/releases` listing's default
     // sort not putting newest at the top.
     try {
-      await openUrl(toLatestReleaseUrl(result.release.html_url))
+      await backend.openUrl(toLatestReleaseUrl(result.release.html_url))
     } catch (err) {
       console.error("[update-banner] openUrl failed:", err)
     }

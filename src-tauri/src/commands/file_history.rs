@@ -289,11 +289,11 @@ pub fn record_file_version(path: &Path, author: &str, tool: &str) {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_file_history_settings(
     project_path: String,
 ) -> Result<FileHistorySettings, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let root = checked_project_root(&project_path)?;
         Ok(read_history_settings(&root))
     })
@@ -301,12 +301,12 @@ pub async fn get_file_history_settings(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn set_file_history_settings(
     project_path: String,
     settings: FileHistorySettings,
 ) -> Result<FileHistorySettings, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let root = checked_project_root(&project_path)?;
         let mut settings = settings.normalized();
         if settings.enabled && settings.max_versions_per_file == 0 {
@@ -357,12 +357,12 @@ fn checked_file(project_path: &str, file_path: &str) -> Result<(PathBuf, PathBuf
     Ok((root, file))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_file_history(
     project_path: String,
     file_path: String,
 ) -> Result<Vec<FileHistoryEntry>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let (root, file) = checked_file(&project_path, &file_path)?;
         let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
         checked_history_dir(&root, false)?;
@@ -376,13 +376,13 @@ pub async fn list_file_history(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn restore_file_history(
     project_path: String,
     file_path: String,
     entry_id: String,
 ) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let (root, file) = checked_file(&project_path, &file_path)?;
         let content = {
             let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
@@ -433,9 +433,9 @@ pub async fn restore_file_history(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_file_history_stats(project_path: String) -> Result<FileHistoryStats, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let root = checked_project_root(&project_path)?;
         let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
         checked_history_dir(&root, false)?;
@@ -456,9 +456,9 @@ pub async fn get_file_history_stats(project_path: String) -> Result<FileHistoryS
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn clear_file_history(project_path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         let root = checked_project_root(&project_path)?;
         let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
         let dir = checked_history_dir(&root, false)?;

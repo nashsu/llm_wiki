@@ -26,7 +26,7 @@ pub struct AvailableAgentSkill {
     pub source: String,
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn agent_list_skills(project_path: String) -> Vec<AvailableAgentSkill> {
     list_available_skills(&project_path)
 }

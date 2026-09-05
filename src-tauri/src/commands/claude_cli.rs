@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use crate::app_ctx::AppCtx;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -169,7 +169,7 @@ fn suppress_windows_console(_cmd: &mut Command) {
 /// Locate `claude` on PATH and confirm it's runnable by calling
 /// `claude --version` with a short timeout. Cheap — safe to call on
 /// mount of the settings panel.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_cli_detect() -> Result<DetectResult, String> {
     let path = match find_claude_command().await {
         Ok(p) => p,
@@ -246,16 +246,16 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
 /// after writing the serialized history so claude starts processing.
 /// Emits a final `claude-cli:{stream_id}:done` event with `{ code }`
 /// when the child exits.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_cli_spawn(
-    app: AppHandle,
-    state: State<'_, ClaudeCliState>,
+    app: AppCtx,
     stream_id: String,
     model: String,
     messages: Vec<ClaudeMessage>,
     isolate_local_config: bool,
     working_directory: Option<String>,
 ) -> Result<(), String> {
+    let state = app.state::<ClaudeCliState>();
     // Build the turn list: fold any system messages into a preamble on
     // the first user turn rather than using a CLI flag, because
     // --system-prompt / --append-system-prompt availability varies
@@ -509,11 +509,12 @@ async fn resolve_claude_working_directory(value: Option<String>) -> Result<PathB
 /// Kill a running child registered under `stream_id`. Called on
 /// AbortSignal in the frontend. No-op if the id is unknown (e.g. the
 /// process already exited).
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn claude_cli_kill(
-    state: State<'_, ClaudeCliState>,
+    app: AppCtx,
     stream_id: String,
 ) -> Result<(), String> {
+    let state = app.state::<ClaudeCliState>();
     if let Some(mut child) = state.children.lock().await.remove(&stream_id) {
         let _ = child.start_kill();
         // Don't wait() here — the stdout-drain task already holds a

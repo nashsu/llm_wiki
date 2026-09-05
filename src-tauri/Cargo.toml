@@ -18,21 +18,52 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "llm-wiki"
 path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "llm-wiki-server"
+path = "src/bin/llm-wiki-server.rs"
+required-features = ["server"]
+
+[features]
+# `desktop` (default) builds the Tauri application. `server` builds the
+# headless `llm-wiki-server` binary that serves the same React frontend over
+# HTTP for self-hosted / web use. Both features can be enabled together, which
+# lets the desktop app host the web server for remote access.
+default = ["desktop"]
+desktop = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:tauri-plugin-opener",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-store",
+    "dep:tauri-plugin-http",
+]
+server = []
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
-tauri-plugin-opener = "2"
-tauri-plugin-autostart = "2.5.1"
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2.5.1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["clock"] }
-tauri-plugin-dialog = "2.7.1"
+tauri-plugin-dialog = { version = "2.7.1", optional = true }
 pdfium-render = "0.9"
-tauri-plugin-store = "2.4.2"
-tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
+tauri-plugin-store = { version = "2.4.2", optional = true }
+tauri-plugin-http = { version = "2", features = ["unsafe-headers"], optional = true }
+# Web server mode (see src/web/): axum serves the built frontend, a JSON-RPC
+# bridge to the same command functions the Tauri IPC uses, an SSE event
+# stream, file/upload endpoints and an outbound HTTP proxy for LLM calls.
+axum = { version = "0.8", features = ["multipart", "json", "tokio", "http1"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "set-header"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+http-body-util = "0.1"
+tower = "0.5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tiny_http = "0.12"
 zip = "2"
@@ -48,7 +79,7 @@ futures = "0.3"
 # Claude Code CLI subprocess transport: spawn `claude` as a child process,
 # stream stdout line-by-line back to the frontend. tokio::process gives us
 # async io and clean cancellation; `which` locates the binary on PATH.
-tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt", "time"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt", "rt-multi-thread", "time", "fs"] }
 which = "7"
 uuid = { version = "1", features = ["v4"] }
 # Multimodal image extraction (Phase 1):
@@ -69,6 +100,7 @@ notify = "8"
 walkdir = "2"
 epub = "2.1.5"
 mobi = "0.8"
+async-trait = "0.1"
 html2text = { version = "0.17.1", default-features = false, features = ["xml"] }
 
 [dev-dependencies]
