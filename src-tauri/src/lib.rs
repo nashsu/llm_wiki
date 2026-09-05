@@ -5,6 +5,7 @@ mod commands;
 mod cors;
 mod panic_guard;
 mod proxy;
+mod secure_credentials;
 mod server_bind;
 mod tray;
 mod types;
@@ -405,7 +406,9 @@ fn load_agent_projects(app: &tauri::AppHandle) -> Vec<AgentProjectEntry> {
 fn load_agent_app_state(app: &tauri::AppHandle) -> Option<Value> {
     let path = app.path().app_data_dir().ok()?.join("app-state.json");
     let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    let mut parsed = serde_json::from_str(&raw).ok()?;
+    secure_credentials::hydrate_app_state(&mut parsed);
+    Some(parsed)
 }
 
 fn load_agent_runtime_config(app: &tauri::AppHandle) -> AgentRuntimeConfig {
@@ -580,6 +583,9 @@ pub fn run() {
             // research, captioning. See src-tauri/src/proxy.rs.
             if let Ok(dir) = app.path().app_data_dir() {
                 let store_path = dir.join("app-state.json");
+                if let Err(error) = secure_credentials::migrate_legacy_app_state_file(&store_path) {
+                    eprintln!("[credentials] secure migration deferred: {error}");
+                }
                 eprintln!("[proxy] reading from {}", store_path.display());
                 if let Some(cfg) = proxy::read_proxy_config_from_store(&store_path) {
                     let summary = proxy::apply_proxy_env(&cfg);
@@ -701,6 +707,9 @@ pub fn run() {
             commands::file_sync::get_file_change_queue,
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,
+            secure_credentials::secure_credential_set,
+            secure_credentials::secure_credential_get,
+            secure_credentials::secure_credential_delete,
             set_proxy_env,
             set_close_behavior,
         ])

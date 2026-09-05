@@ -72,6 +72,9 @@ epub = "2.1.5"
 mobi = "0.8"
 html2text = { version = "0.17.1", default-features = false, features = ["xml"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 

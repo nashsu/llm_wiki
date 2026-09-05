@@ -1,4 +1,5 @@
 import { load } from "@tauri-apps/plugin-store"
+import { invoke } from "@tauri-apps/api/core"
 import type { WikiProject } from "@/types/wiki"
 import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
@@ -49,25 +50,171 @@ const PROJECT_LLM_OVERRIDES_KEY = "projectLlmOverrides"
 const CUSTOM_LLM_PRESETS_KEY = "customLlmPresets"
 let projectLlmOverrideWrite = Promise.resolve()
 let customLlmPresetWrite = Promise.resolve()
+let providerConfigsWrite = Promise.resolve()
+
+type ApiKeyConfig = Pick<LlmConfig, "apiKey">
+const API_KEY_FIELD: "apiKey" = "apiKey"
+const unavailableCredentialSlots = new Set<string>()
+
+async function readSecureCredentialStrict(slot: string): Promise<string | null> {
+  const secret = await invoke<string | null>("secure_credential_get", { slot })
+  unavailableCredentialSlots.delete(slot)
+  return secret
+}
+
+async function writeSecureCredential(slot: string, secret: string): Promise<void> {
+  if (secret) {
+    await invoke("secure_credential_set", { slot, secret })
+  } else {
+    await invoke("secure_credential_delete", { slot })
+  }
+  unavailableCredentialSlots.delete(slot)
+}
+
+async function readSecureCredential(slot: string): Promise<string> {
+  try {
+    return (await readSecureCredentialStrict(slot)) ?? ""
+  } catch {
+    // Keep the application usable for keyless local providers when the OS
+    // credential service is locked or unavailable. Saves still fail loudly so
+    // a newly entered key is never discarded or downgraded to plaintext.
+    unavailableCredentialSlots.add(slot)
+    return ""
+  }
+}
+
+async function restoreSecureCredential(slot: string, secret: string | null): Promise<void> {
+  await writeSecureCredential(slot, secret ?? "")
+}
+
+async function saveCredentialBackedConfig<T extends ApiKeyConfig>(
+  storeKey: string,
+  credentialSlot: string,
+  config: T,
+): Promise<void> {
+  const store = await getStore()
+  const previousConfig = await store.get<T>(storeKey)
+  const skipCredentialWrite = !config.apiKey && unavailableCredentialSlots.has(credentialSlot)
+  const previousSecret = skipCredentialWrite
+    ? null
+    : await readSecureCredentialStrict(credentialSlot)
+  if (!skipCredentialWrite) {
+    await writeSecureCredential(credentialSlot, config.apiKey)
+  }
+  try {
+    await store.set(storeKey, { ...config, [API_KEY_FIELD]: "" })
+    await store.save()
+  } catch (error) {
+    if (!skipCredentialWrite) {
+      await restoreSecureCredential(credentialSlot, previousSecret).catch(() => {})
+    }
+    if (previousConfig) {
+      await store.set(storeKey, previousConfig).catch(() => {})
+    } else {
+      await store.delete(storeKey).catch(() => {})
+    }
+    await store.save().catch(() => {})
+    throw error
+  }
+}
+
+async function loadCredentialBackedConfig<T extends ApiKeyConfig>(
+  storeKey: string,
+  credentialSlot: string,
+): Promise<T | null> {
+  const store = await getStore()
+  const saved = await store.get<T>(storeKey)
+  if (!saved) return null
+
+  // One-time migration from releases that persisted credentials in
+  // app-state.json. Write the secret first; plaintext is removed only after
+  // secure storage confirms the write succeeded.
+  if (saved.apiKey) {
+    await writeSecureCredential(credentialSlot, saved.apiKey)
+    await store.set(storeKey, { ...saved, apiKey: "" })
+    await store.save()
+    return saved
+  }
+
+  const apiKey = await readSecureCredential(credentialSlot)
+  return { ...saved, apiKey }
+}
 
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
-  const store = await getStore()
-  await store.set(LLM_CONFIG_KEY, config)
+  await saveCredentialBackedConfig(LLM_CONFIG_KEY, "llm", config)
 }
 
 export async function loadLlmConfig(): Promise<LlmConfig | null> {
-  const store = await getStore()
-  return (await store.get<LlmConfig>(LLM_CONFIG_KEY)) ?? null
+  return loadCredentialBackedConfig<LlmConfig>(LLM_CONFIG_KEY, "llm")
 }
 
 export async function saveProviderConfigs(configs: ProviderConfigs): Promise<void> {
-  const store = await getStore()
-  await store.set(PROVIDER_CONFIGS_KEY, configs)
+  const write = providerConfigsWrite.then(async () => {
+    const store = await getStore()
+    const previous = (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? {}
+    const desiredCredentials = [
+      ...Object.entries(configs).map(([id, config]) => [
+        `provider:${id}`,
+        config.apiKey ?? "",
+      ] as const),
+      ...Object.keys(previous)
+        .filter((id) => !(id in configs))
+        .map((id) => [`provider:${id}`, ""] as const),
+    ]
+    const snapshots: Array<{ slot: string; previous: string | null; desired: string }> = []
+    for (const [slot, desired] of desiredCredentials) {
+      if (!desired && unavailableCredentialSlots.has(slot)) continue
+      snapshots.push({ slot, previous: await readSecureCredentialStrict(slot), desired })
+    }
+    const applied: typeof snapshots = []
+    try {
+      for (const snapshot of snapshots) {
+        await writeSecureCredential(snapshot.slot, snapshot.desired)
+        applied.push(snapshot)
+      }
+      const sanitized = Object.fromEntries(Object.entries(configs).map(([id, config]) => [
+        id,
+        { ...config, [API_KEY_FIELD]: "" },
+      ]))
+      await store.set(PROVIDER_CONFIGS_KEY, sanitized)
+      await store.save()
+    } catch (error) {
+      for (const snapshot of applied.reverse()) {
+        await restoreSecureCredential(snapshot.slot, snapshot.previous).catch(() => {})
+      }
+      await store.set(PROVIDER_CONFIGS_KEY, previous).catch(() => {})
+      await store.save().catch(() => {})
+      throw error
+    }
+  })
+  providerConfigsWrite = write.catch(() => {})
+  await write
 }
 
 export async function loadProviderConfigs(): Promise<ProviderConfigs | null> {
   const store = await getStore()
-  return (await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)) ?? null
+  const saved = await store.get<ProviderConfigs>(PROVIDER_CONFIGS_KEY)
+  if (!saved) return null
+
+  let migrated = false
+  const hydratedEntries = await Promise.all(Object.entries(saved).map(async ([id, config]) => {
+    if (config.apiKey) {
+      await writeSecureCredential(`provider:${id}`, config.apiKey)
+      migrated = true
+      return [id, config] as const
+    }
+    const apiKey = await readSecureCredential(`provider:${id}`)
+    return [id, { ...config, apiKey }] as const
+  }))
+  if (migrated) {
+    const sanitized = Object.fromEntries(Object.entries(saved).map(([id, config]) => [
+      id,
+      { ...config, apiKey: "" },
+    ]))
+    await store.set(PROVIDER_CONFIGS_KEY, sanitized)
+    await store.save()
+  }
+  return Object.fromEntries(hydratedEntries)
 }
 
 export async function saveCustomLlmPresets(presets: CustomLlmPreset[]): Promise<void> {
@@ -170,25 +317,21 @@ export async function loadSearchApiConfig(): Promise<SearchApiConfig | null> {
 const EMBEDDING_KEY = "embeddingConfig"
 
 export async function saveEmbeddingConfig(config: EmbeddingConfig): Promise<void> {
-  const store = await getStore()
-  await store.set(EMBEDDING_KEY, config)
+  await saveCredentialBackedConfig(EMBEDDING_KEY, "embedding", config)
 }
 
 export async function loadEmbeddingConfig(): Promise<EmbeddingConfig | null> {
-  const store = await getStore()
-  return (await store.get<EmbeddingConfig>(EMBEDDING_KEY)) ?? null
+  return loadCredentialBackedConfig<EmbeddingConfig>(EMBEDDING_KEY, "embedding")
 }
 
 const MULTIMODAL_KEY = "multimodalConfig"
 
 export async function saveMultimodalConfig(config: MultimodalConfig): Promise<void> {
-  const store = await getStore()
-  await store.set(MULTIMODAL_KEY, config)
+  await saveCredentialBackedConfig(MULTIMODAL_KEY, "multimodal", config)
 }
 
 export async function loadMultimodalConfig(): Promise<MultimodalConfig | null> {
-  const store = await getStore()
-  return (await store.get<MultimodalConfig>(MULTIMODAL_KEY)) ?? null
+  return loadCredentialBackedConfig<MultimodalConfig>(MULTIMODAL_KEY, "multimodal")
 }
 
 const MINERU_KEY = "mineruConfig"

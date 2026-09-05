@@ -4773,6 +4773,7 @@ dependencies = [
  "office_oxide",
  "pdfium-render",
  "reqwest 0.12.28",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",
