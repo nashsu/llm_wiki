@@ -2325,6 +2325,129 @@ fn project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provide
     serde_json::from_value(profile).ok()
 }
 
+/// Built-in preset ids the settings UI ships (src/components/settings/llm-presets.ts):
+/// `(preset id, backend provider, default base URL, default API mode)`.
+const BUILTIN_LLM_PRESETS: &[(&str, &str, Option<&str>, Option<&str>)] = &[
+    ("anthropic", "anthropic", None, None),
+    ("openai", "openai", None, None),
+    ("google", "google", None, None),
+    ("azure", "azure", None, None),
+    ("ollama", "ollama", Some("http://localhost:11434"), None),
+    ("claude-code-cli", "claude-code", None, None),
+    ("codex-cli", "codex-cli", None, None),
+    ("deepseek", "custom", Some("https://api.deepseek.com/v1"), Some("chat_completions")),
+    ("atlascloud", "custom", Some("https://api.atlascloud.ai/v1"), Some("chat_completions")),
+    ("groq", "custom", Some("https://api.groq.com/openai/v1"), Some("chat_completions")),
+    ("xai", "custom", Some("https://api.x.ai/v1"), Some("chat_completions")),
+    ("nvidia-nim", "custom", Some("https://integrate.api.nvidia.com/v1"), Some("chat_completions")),
+    ("kimi", "custom", Some("https://api.moonshot.ai/v1"), Some("chat_completions")),
+    ("kimi-cn", "custom", Some("https://api.moonshot.cn/v1"), Some("chat_completions")),
+    ("kimi-coding-plan", "custom", Some("https://api.kimi.com/coding/"), Some("chat_completions")),
+    ("zhipu", "custom", Some("https://open.bigmodel.cn/api/paas/v4"), Some("chat_completions")),
+    ("minimax-global", "custom", Some("https://api.minimax.io/anthropic"), Some("anthropic_messages")),
+];
+
+/// Resolve the Chat task's preset (Settings > Models > "Chat uses ...") the way
+/// `resolveTaskLlmConfig` does in src/lib/llm-task-routing.ts. Native API /
+/// MCP callers previously ignored this routing and always used the global
+/// `llmConfig`, so a desktop set to "Ingest: Claude Code CLI, Chat: Azure"
+/// answered API chats with the retrieval-only fallback because the backend
+/// HTTP agent cannot drive the CLI providers. Returns `None` when there is no
+/// routing, the preset is unknown, or it is not usable from the backend, so
+/// the caller falls back to `llmConfig` exactly as before.
+fn chat_preset_llm_config(parsed: &Value) -> Option<agent::provider::LlmConfig> {
+    let preset_id = parsed
+        .get("taskModelRouting")
+        .and_then(|routing| routing.get("chatPresetId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let override_value = parsed
+        .get("providerConfigs")
+        .and_then(|configs| configs.get(preset_id))
+        .and_then(Value::as_object);
+    let builtin = BUILTIN_LLM_PRESETS
+        .iter()
+        .find(|(id, _, _, _)| *id == preset_id);
+    let (provider, default_base_url, default_api_mode) = match builtin {
+        Some((_, provider, base_url, api_mode)) => (*provider, *base_url, *api_mode),
+        None if preset_id.starts_with("custom-") => {
+            let exists = parsed
+                .get("customLlmPresets")
+                .and_then(Value::as_array)
+                .map(|presets| {
+                    presets
+                        .iter()
+                        .any(|preset| preset.get("id").and_then(Value::as_str) == Some(preset_id))
+                })
+                .unwrap_or(false);
+            if !exists {
+                return None;
+            }
+            ("custom", None, Some("chat_completions"))
+        }
+        None => return None,
+    };
+    let get_str = |key: &str| {
+        override_value
+            .and_then(|o| o.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    let base_url = get_str("baseUrl").or_else(|| default_base_url.map(ToOwned::to_owned));
+    let mut config = serde_json::Map::new();
+    config.insert("provider".into(), json!(provider));
+    config.insert("apiKey".into(), json!(get_str("apiKey").unwrap_or_default()));
+    config.insert("model".into(), json!(get_str("model").unwrap_or_default()));
+    match provider {
+        "ollama" => {
+            config.insert("ollamaUrl".into(), json!(base_url.unwrap_or_default()));
+        }
+        "custom" | "azure" => {
+            config.insert("customEndpoint".into(), json!(base_url.unwrap_or_default()));
+        }
+        _ => {}
+    }
+    if provider == "custom" {
+        config.insert(
+            "apiMode".into(),
+            json!(get_str("apiMode").or_else(|| default_api_mode.map(ToOwned::to_owned))),
+        );
+    }
+    if let Some(o) = override_value {
+        for key in [
+            "azureApiVersion",
+            "maxContextSize",
+            "reasoning",
+            "streamingEnabled",
+            "customHeaders",
+        ] {
+            if let Some(value) = o.get(key) {
+                config.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    let config: agent::provider::LlmConfig = serde_json::from_value(Value::Object(config)).ok()?;
+    config.is_usable_for_backend_http().then_some(config)
+}
+
+/// The project-level override only when the user enabled it; `None` otherwise
+/// so task routing and the global config get their turn.
+fn enabled_project_llm_config(parsed: &Value, project_id: &str) -> Option<agent::provider::LlmConfig> {
+    let enabled = parsed
+        .get("projectLlmOverrides")
+        .and_then(|value| value.get(project_id))
+        .and_then(|value| value.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    if !enabled {
+        return None;
+    }
+    project_llm_config(parsed, project_id)
+}
+
 fn load_agent_runtime_config(app: &AppHandle, project_id: Option<&str>) -> AgentRuntimeConfig {
     let Some(parsed) = load_app_state(app) else {
         return AgentRuntimeConfig::default();
@@ -2334,8 +2457,11 @@ fn load_agent_runtime_config(app: &AppHandle, project_id: Option<&str>) -> Agent
             .get("embeddingConfig")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok()),
+        // Precedence mirrors the frontend: enabled project override -> Chat
+        // task preset (Settings > Models) -> global llmConfig.
         llm: project_id
-            .and_then(|id| project_llm_config(&parsed, id))
+            .and_then(|id| enabled_project_llm_config(&parsed, id))
+            .or_else(|| chat_preset_llm_config(&parsed))
             .or_else(|| {
                 parsed
                     .get("llmConfig")
@@ -3379,6 +3505,58 @@ mod tests {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         assert!(!allow_lan_access_missing);
+    }
+
+    #[test]
+    fn chat_preset_routes_api_chat_to_the_selected_provider() {
+        let state = json!({
+            "llmConfig": { "provider": "claude-code", "apiKey": "", "model": "claude-sonnet-5", "ollamaUrl": "", "customEndpoint": "" },
+            "taskModelRouting": { "chatPresetId": "azure", "ingestPresetId": null },
+            "providerConfigs": {
+                "azure": { "apiKey": "k", "baseUrl": "https://r.openai.azure.com", "model": "gpt-4o", "azureApiVersion": "2024-10-21" }
+            }
+        });
+        let cfg = chat_preset_llm_config(&state).expect("azure preset resolves");
+        assert_eq!(cfg.provider, "azure");
+        assert_eq!(cfg.model, "gpt-4o");
+        assert_eq!(cfg.api_key, "k");
+        assert_eq!(cfg.custom_endpoint, "https://r.openai.azure.com");
+        assert_eq!(cfg.azure_api_version.as_deref(), Some("2024-10-21"));
+
+        // CLI presets cannot be driven by the backend HTTP agent -> None, so
+        // the caller falls back to llmConfig exactly as before.
+        let cli = json!({
+            "taskModelRouting": { "chatPresetId": "claude-code-cli" },
+            "providerConfigs": { "claude-code-cli": { "model": "claude-sonnet-5" } }
+        });
+        assert!(chat_preset_llm_config(&cli).is_none());
+
+        // Known custom presets get their default endpoint and API mode.
+        let custom = json!({
+            "taskModelRouting": { "chatPresetId": "deepseek" },
+            "providerConfigs": { "deepseek": { "apiKey": "k", "model": "deepseek-chat" } }
+        });
+        let cfg = chat_preset_llm_config(&custom).expect("deepseek resolves");
+        assert_eq!(cfg.provider, "custom");
+        assert_eq!(cfg.custom_endpoint, "https://api.deepseek.com/v1");
+        assert_eq!(cfg.api_mode.as_deref(), Some("chat_completions"));
+
+        // No routing / unknown preset / deleted custom preset -> None.
+        assert!(chat_preset_llm_config(&json!({})).is_none());
+        assert!(chat_preset_llm_config(&json!({ "taskModelRouting": { "chatPresetId": "nope" } })).is_none());
+        assert!(chat_preset_llm_config(&json!({
+            "taskModelRouting": { "chatPresetId": "custom-gone" },
+            "providerConfigs": { "custom-gone": { "apiKey": "k", "model": "m", "baseUrl": "https://x/v1" } }
+        })).is_none());
+
+        // A disabled project override yields None so the chat preset applies.
+        let with_override = json!({
+            "llmConfig": { "provider": "openai", "apiKey": "g", "model": "gpt-global", "ollamaUrl": "", "customEndpoint": "" },
+            "taskModelRouting": { "chatPresetId": "azure" },
+            "providerConfigs": { "azure": { "apiKey": "k", "baseUrl": "https://r.openai.azure.com", "model": "gpt-4o" } },
+            "projectLlmOverrides": { "p": { "enabled": false, "presetId": "azure", "model": "" } }
+        });
+        assert!(enabled_project_llm_config(&with_override, "p").is_none());
     }
 
     #[test]
