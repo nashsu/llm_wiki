@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use tauri::AppHandle;
+use crate::app_ctx::AppCtx;
 use tiny_http::{Header, Method, Response, Server};
 
 use crate::cors::{local_cors_headers, request_origin};
@@ -53,7 +53,7 @@ pub fn all_projects() -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-pub fn start_clip_server(app: AppHandle) {
+pub fn start_clip_server(app: AppCtx) {
     thread::spawn(move || {
         let mut restart_count: u32 = 0;
 
@@ -335,7 +335,7 @@ fn address_is_loopback(address: Option<&std::net::SocketAddr>) -> bool {
         .unwrap_or(false)
 }
 
-fn request_is_authorized(app: &AppHandle, request: &tiny_http::Request) -> bool {
+fn request_is_authorized(app: &AppCtx, request: &tiny_http::Request) -> bool {
     let headers = request
         .headers()
         .iter()

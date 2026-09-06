@@ -1,13 +1,13 @@
 use std::fs;
 
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use crate::app_ctx::AppCtx;
 
 const DEFAULT_BIND_HOST: &str = "127.0.0.1";
 const PUBLIC_BIND_HOST: &str = "0.0.0.0";
 const BIND_HOST_ENV: &str = "LLM_WIKI_BIND_HOST";
 
-pub fn configured_bind_host(app: &AppHandle) -> String {
+pub fn configured_bind_host(app: &AppCtx) -> String {
     configured_env_bind_host()
         .or_else(|| configured_store_bind_host(app))
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string())
@@ -19,8 +19,8 @@ fn configured_env_bind_host() -> Option<String> {
         .and_then(|value| sanitize_bind_host(&value))
 }
 
-fn configured_store_bind_host(app: &AppHandle) -> Option<String> {
-    let path = app.path().app_data_dir().ok()?.join("app-state.json");
+fn configured_store_bind_host(app: &AppCtx) -> Option<String> {
+    let path = app.app_state_path();
     let raw = fs::read_to_string(path).ok()?;
     let parsed: Value = serde_json::from_str(&raw).ok()?;
     if allow_lan_access_from_state(&parsed) {

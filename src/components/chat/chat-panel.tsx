@@ -1,7 +1,6 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { convertFileSrc, invoke } from "@tauri-apps/api/core"
-import { listen } from "@tauri-apps/api/event"
+import { convertFileSrc, invoke, listen } from "@/lib/backend"
 import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText, ListTree, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePreview } from "./chat-message"

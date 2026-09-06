@@ -1,0 +1,19 @@
+services:
+  llm-wiki:
+    build: .
+    image: llm-wiki
+    ports:
+      - "8080:8080"
+    environment:
+      # Change this. Without it the server prints a random password at start.
+      LLM_WIKI_WEB_PASSWORD: change-me
+      # Optional: HTTP proxy for outbound LLM calls
+      # HTTPS_PROXY: http://proxy.local:3128
+    volumes:
+      - llm-wiki-data:/data
+      # Wiki projects live on the host; create/open them at /wikis/<name> in the UI.
+      - ./wikis:/wikis
+    restart: unless-stopped
+
+volumes:
+  llm-wiki-data:

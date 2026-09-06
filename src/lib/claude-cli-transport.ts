@@ -10,8 +10,7 @@
  * and forwards assistant text to `onToken`.
  */
 
-import { invoke } from "@tauri-apps/api/core"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { invoke, listen, type UnlistenFn } from "@/lib/backend"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { ChatMessage, RequestOverrides } from "./llm-providers"

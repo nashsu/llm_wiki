@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
-import { invoke } from "@tauri-apps/api/core"
-import { open, save } from "@tauri-apps/plugin-dialog"
+import { backend, invoke } from "@/lib/backend"
 import {
   Wrench,
   Loader2,
@@ -206,19 +205,22 @@ export function MaintenanceSection() {
 
   const handleExportProject = useCallback(async () => {
     if (!project) return
-    const destination = await save({ defaultPath: `${project.name}.llmwiki.zip`, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
+    const destination = await backend.dialog.save({ defaultPath: `${project.name}.llmwiki.zip`, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
     if (!destination) return
     setProjectToolBusy(true)
     try {
       await invoke("export_project_archive", { projectPath: project.path, destination })
+      // Desktop: the user already chose where the archive went. Web: the
+      // archive was written on the server, so hand it to the browser.
+      await backend.deliverFile(destination)
       setProjectToolStatus(t("settings.sections.maintenance.projectData.exported", { path: destination }))
     } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
   }, [project, t])
 
   const handleImportProject = useCallback(async () => {
-    const archive = await open({ multiple: false, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
+    const archive = await backend.dialog.open({ multiple: false, filters: [{ name: "LLM Wiki project", extensions: ["zip"] }] })
     if (!archive || Array.isArray(archive)) return
-    const destination = await open({ directory: true, multiple: false, createDirectories: true })
+    const destination = await backend.dialog.open({ directory: true, multiple: false, createDirectories: true })
     if (!destination || Array.isArray(destination)) return
     setProjectToolBusy(true)
     try {

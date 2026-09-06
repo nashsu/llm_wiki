@@ -11,7 +11,7 @@ use std::time::Duration;
 use md5::{Digest, Md5};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use crate::app_ctx::AppCtx;
 use walkdir::WalkDir;
 
 use crate::panic_guard::run_guarded;
@@ -149,11 +149,11 @@ fn default_source_watch_auto_ingest() -> bool {
     default_source_watch_config().auto_ingest
 }
 
-fn default_source_watch_include_extensions() -> Vec<String> {
+pub(crate) fn default_source_watch_include_extensions() -> Vec<String> {
     default_source_watch_config().include_extensions
 }
 
-fn default_source_watch_exclude_extensions() -> Vec<String> {
+pub(crate) fn default_source_watch_exclude_extensions() -> Vec<String> {
     default_source_watch_config().exclude_extensions
 }
 
@@ -186,15 +186,15 @@ struct FileSyncPayload {
     tasks: Vec<FileChangeTask>,
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn start_project_file_watcher(
-    app: AppHandle,
-    state: State<FileSyncState>,
+    app: AppCtx,
     project_id: String,
     project_path: String,
     source_watch_config: Option<SourceWatchConfig>,
 ) -> Result<FileChangeRescanResult, String> {
     run_guarded("start_project_file_watcher", || {
+        let state = app.state::<FileSyncState>();
         let root = PathBuf::from(project_path);
         let source_watch_config = normalize_source_watch_config(source_watch_config);
         let watcher_generation = WATCHER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
@@ -314,9 +314,10 @@ pub fn start_project_file_watcher(
     })
 }
 
-#[tauri::command]
-pub fn stop_project_file_watcher(state: State<FileSyncState>) -> Result<(), String> {
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn stop_project_file_watcher(app: AppCtx) -> Result<(), String> {
     run_guarded("stop_project_file_watcher", || {
+        let state = app.state::<FileSyncState>();
         WATCHER_GENERATION.fetch_add(1, Ordering::SeqCst);
         let mut inner = state.inner.lock().map_err(|_| "file sync state poisoned")?;
         inner.watcher = None;
@@ -326,9 +327,9 @@ pub fn stop_project_file_watcher(state: State<FileSyncState>) -> Result<(), Stri
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn rescan_project_files(
-    app: AppHandle,
+    app: AppCtx,
     project_id: String,
     project_path: String,
     source_watch_config: Option<SourceWatchConfig>,
@@ -348,7 +349,7 @@ pub fn rescan_project_files(
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_file_change_queue(project_path: String) -> Result<FileChangeQueue, String> {
     run_guarded("get_file_change_queue", || {
         let root = PathBuf::from(project_path);
@@ -356,9 +357,9 @@ pub fn get_file_change_queue(project_path: String) -> Result<FileChangeQueue, St
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn retry_file_change_task(
-    app: AppHandle,
+    app: AppCtx,
     project_id: String,
     project_path: String,
     task_id: String,
@@ -386,9 +387,9 @@ pub fn retry_file_change_task(
     })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn ignore_file_change_task(
-    app: AppHandle,
+    app: AppCtx,
     project_id: String,
     project_path: String,
     task_id: String,
@@ -420,7 +421,7 @@ pub fn mark_app_write_path(path: &Path) {
 }
 
 fn handle_changed_paths(
-    app: &AppHandle,
+    app: &AppCtx,
     root: &Path,
     project_id: &str,
     source_watch_config: &SourceWatchConfig,
@@ -481,7 +482,7 @@ fn handle_changed_paths(
 }
 
 fn maybe_periodic_rescan(
-    app: &AppHandle,
+    app: &AppCtx,
     root: &Path,
     project_id: &str,
     source_watch_config: &SourceWatchConfig,
@@ -509,7 +510,7 @@ fn maybe_periodic_rescan(
 }
 
 fn rescan_watch_roots(
-    app: &AppHandle,
+    app: &AppCtx,
     root: &Path,
     project_id: &str,
     source_watch_config: &SourceWatchConfig,
@@ -807,7 +808,7 @@ fn upsert_task(
 }
 
 fn process_queue(
-    app: &AppHandle,
+    app: &AppCtx,
     root: &Path,
     project_id: &str,
 ) -> Result<Vec<FileChangeTask>, String> {
@@ -1223,7 +1224,7 @@ fn merge_kind(existing: &FileChangeKind, incoming: &FileChangeKind) -> FileChang
     }
 }
 
-fn emit_queue(app: &AppHandle, project_id: &str, queue: &FileChangeQueue) {
+fn emit_queue(app: &AppCtx, project_id: &str, queue: &FileChangeQueue) {
     let payload = FileSyncPayload {
         project_id: project_id.to_string(),
         tasks: queue.tasks.clone(),
@@ -1231,7 +1232,7 @@ fn emit_queue(app: &AppHandle, project_id: &str, queue: &FileChangeQueue) {
     let _ = app.emit(EVENT_QUEUE_UPDATED, payload);
 }
 
-fn emit_changed_batch(app: &AppHandle, project_id: &str, tasks: Vec<FileChangeTask>) {
+fn emit_changed_batch(app: &AppCtx, project_id: &str, tasks: Vec<FileChangeTask>) {
     if tasks.is_empty() {
         return;
     }

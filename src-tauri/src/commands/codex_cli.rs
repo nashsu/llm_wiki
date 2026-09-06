@@ -14,7 +14,7 @@ use std::sync::{
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use crate::app_ctx::AppCtx;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -67,7 +67,7 @@ fn suppress_windows_console(_cmd: &mut Command) {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     let path = match find_codex_command().await {
         Ok(p) => p,
@@ -130,10 +130,9 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn codex_cli_spawn(
-    app: AppHandle,
-    state: State<'_, CodexCliState>,
+    app: AppCtx,
     stream_id: String,
     model: String,
     prompt: String,
@@ -141,6 +140,7 @@ pub async fn codex_cli_spawn(
     timeout_minutes: Option<u64>,
     working_directory: Option<String>,
 ) -> Result<(), String> {
+    let state = app.state::<CodexCliState>();
     if prompt.trim().is_empty() {
         return Err("No prompt to send to codex CLI".to_string());
     }
@@ -351,11 +351,12 @@ async fn resolve_codex_working_directory(value: Option<String>) -> Result<PathBu
         .map_err(|e| format!("Failed to canonicalize Codex CLI working directory {raw}: {e}"))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn codex_cli_kill(
-    state: State<'_, CodexCliState>,
+    app: AppCtx,
     stream_id: String,
 ) -> Result<(), String> {
+    let state = app.state::<CodexCliState>();
     if let Some(mut child) = state.children.lock().await.remove(&stream_id) {
         let _ = child.start_kill();
     }

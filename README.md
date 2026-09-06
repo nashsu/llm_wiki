@@ -417,6 +417,22 @@ npm run tauri dev      # Development
 npm run tauri build    # Production build
 ```
 
+### Web / Server Mode (self-hosted)
+
+The same frontend can run in a browser against a headless Rust server — no Tauri, no desktop session required. Single-user / small-team oriented: one shared password, cookie sessions, everything else identical to the desktop app (ingest, chat, graph, MCP API on `:19828`).
+
+```bash
+npm install && npm run build      # build the frontend into dist/
+npm run web:serve                 # llm-wiki-server on http://127.0.0.1:8080
+# or: docker compose up -d        # set LLM_WIKI_WEB_PASSWORD in docker-compose.yml
+```
+
+See [plans/web-server-mode.md](plans/web-server-mode.md) for flags, the security model, and the architecture of the host abstraction (`src/lib/backend/`, `src-tauri/src/web/`).
+
+### Connectors (external sources)
+
+**Settings → Connectors** pulls documents from other systems into `raw/sources/@<name>/` on a schedule, where they are ingested like any other source. Ships with a local-folder connector and Google Drive (bring-your-own OAuth client, delta sync, Docs/Sheets/Slides exported as Office files). New kinds implement one Rust trait plus a descriptor — see [plans/connectors.md](plans/connectors.md).
+
 ### Chrome Extension
 
 1. Open `chrome://extensions`

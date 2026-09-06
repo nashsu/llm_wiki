@@ -13,7 +13,7 @@
  * captioning lands, the same helper grows a `caption` field per
  * image and the markdown line uses that instead.
  */
-import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "@/lib/backend"
 import { copyFile, createDirectory, fileExists, readFileAsBase64 } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 

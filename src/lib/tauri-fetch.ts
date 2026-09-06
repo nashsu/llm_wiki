@@ -19,17 +19,9 @@
 
 import { useWikiStore } from "@/stores/wiki-store"
 import { isProxyActive, type ProxyConfig } from "@/lib/proxy-config"
+import { getBackend } from "@/lib/backend"
 
 let pluginFetchPromise: Promise<typeof globalThis.fetch> | null = null
-
-/**
- * True when running outside a browser / webview (vitest, SSR, any
- * Node-based tooling). The Tauri plugin is importable in Node
- * (resolution succeeds) but its internals reach for `window` at call
- * time, so we must avoid invoking it — guard BEFORE the dynamic
- * import rather than trying to .catch() an error that happens later.
- */
-const isNodeEnv = typeof window === "undefined"
 
 type PluginRequestInit = RequestInit & {
   danger?: {
@@ -54,36 +46,30 @@ export function withProxyTlsSettings(
 }
 
 /**
- * Returns a fetch function that routes through Tauri's HTTP plugin in
- * production, falling back to the platform's native fetch in non-Tauri
- * environments (tests / SSR / storybook). Call this once per request:
+ * Returns a fetch function for user-configured endpoints: Tauri's
+ * Rust-backed HTTP plugin on the desktop, the server-side proxy in web
+ * mode, and the platform fetch in tests / Node. Call this once per request:
  *
  *   const httpFetch = await getHttpFetch()
  *   const response = await httpFetch(url, opts)
  *
- * The promise is cached, so repeated calls don't re-import the plugin.
+ * The promise is cached, so repeated calls don't re-resolve the backend.
  */
 export function getHttpFetch(): Promise<typeof globalThis.fetch> {
   if (!pluginFetchPromise) {
-    if (isNodeEnv) {
-      // Bind so `this === globalThis` — Node's fetch requires it.
-      pluginFetchPromise = Promise.resolve(globalThis.fetch.bind(globalThis))
-    } else {
-      pluginFetchPromise = import("@tauri-apps/plugin-http")
-        .then((m) => {
-          const pluginFetch = m.fetch
-          const configuredFetch: typeof globalThis.fetch = (input, init) => {
-            // Read at request time so changing Network settings takes effect
-            // immediately. The option is deliberately scoped to the proxy
-            // toggle; disabling the proxy restores normal TLS verification.
-            const proxy = useWikiStore.getState().proxyConfig
-            const requestInit = withProxyTlsSettings(init, proxy)
-            return pluginFetch(input, requestInit)
-          }
-          return configuredFetch
-        })
-        .catch(() => globalThis.fetch.bind(globalThis))
-    }
+    const host = getBackend()
+    pluginFetchPromise = host.getFetch().then((hostFetch) => {
+      if (host.kind !== "tauri") return hostFetch
+      const configuredFetch: typeof globalThis.fetch = (input, init) => {
+        // Read at request time so changing Network settings takes effect
+        // immediately. The option is deliberately scoped to the proxy
+        // toggle; disabling the proxy restores normal TLS verification.
+        const proxy = useWikiStore.getState().proxyConfig
+        const requestInit = withProxyTlsSettings(init, proxy)
+        return hostFetch(input, requestInit)
+      }
+      return configuredFetch
+    })
   }
   return pluginFetchPromise
 }

@@ -1002,9 +1002,9 @@ pub fn extract_and_save_office_images(
 // `extract_pdf_images`, this also prevents the segfault that hit
 // when two PDF extractions raced on different workers.)
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn extract_pdf_images_cmd(path: String) -> Result<Vec<ExtractedImage>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         crate::panic_guard::run_guarded("extract_pdf_images", || {
             extract_pdf_images(&path, &ExtractOptions::default())
         })
@@ -1013,9 +1013,9 @@ pub async fn extract_pdf_images_cmd(path: String) -> Result<Vec<ExtractedImage>,
     .map_err(|e| format!("extract_pdf_images blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn extract_office_images_cmd(path: String) -> Result<Vec<ExtractedImage>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         crate::panic_guard::run_guarded("extract_office_images", || {
             extract_office_images(&path, &ExtractOptions::default())
         })
@@ -1024,13 +1024,13 @@ pub async fn extract_office_images_cmd(path: String) -> Result<Vec<ExtractedImag
     .map_err(|e| format!("extract_office_images blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn extract_and_save_pdf_images_cmd(
     source_path: String,
     dest_dir: String,
     rel_to: String,
 ) -> Result<Vec<SavedImage>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         crate::panic_guard::run_guarded("extract_and_save_pdf_images", || {
             extract_and_save_pdf_images(
                 &source_path,
@@ -1044,13 +1044,13 @@ pub async fn extract_and_save_pdf_images_cmd(
     .map_err(|e| format!("extract_and_save_pdf_images blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn extract_and_save_office_images_cmd(
     source_path: String,
     dest_dir: String,
     rel_to: String,
 ) -> Result<Vec<SavedImage>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         crate::panic_guard::run_guarded("extract_and_save_office_images", || {
             extract_and_save_office_images(
                 &source_path,

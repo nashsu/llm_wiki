@@ -31,6 +31,15 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // Web mode development: `npm run dev` + `llm-wiki-server` on :8080.
+    // The browser build talks to the same-origin `/web/*` routes, which
+    // Vite forwards to the Rust server here. Unused by `tauri dev`.
+    proxy: {
+      "/web": {
+        target: process.env.LLM_WIKI_SERVER_URL || "http://127.0.0.1:8080",
+        changeOrigin: false,
+      },
+    },
     hmr: host
       ? {
           protocol: "ws",

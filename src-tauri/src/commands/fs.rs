@@ -63,7 +63,7 @@ fn is_absolute_path_cross_platform(path: &str) -> bool {
     path.starts_with(r"\\") || path.starts_with("//")
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<String, String> {
     // `spawn_blocking` is REQUIRED, not a perf nicety. The body does
     // synchronous PDF/Office text extraction (pdfium FFI, calamine,
@@ -74,7 +74,7 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
     // UI, which is what motivated the async conversion in the first
     // place). `spawn_blocking` moves the work to tokio's blocking
     // pool where blocking-for-seconds is the contract.
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("read_file", || {
             let p = Path::new(&path);
             let ext = p
@@ -130,10 +130,10 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
 }
 
 /// Pre-process a file and cache the extracted text.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn preprocess_file(path: String) -> Result<String, String> {
     // See `read_file` above for why `spawn_blocking` is required.
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("preprocess_file", || {
             let p = Path::new(&path);
             let ext = p
@@ -1206,9 +1206,9 @@ fn extract_odf_text(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, S
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("write_file", || {
             require_absolute_path("write_file", &path)?;
             let p = Path::new(&path);
@@ -1233,11 +1233,11 @@ pub async fn write_file(path: String, contents: String) -> Result<(), String> {
     .map_err(|e| format!("write_file blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn write_file_base64(path: String, base64: String) -> Result<(), String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("write_file_base64", || {
             require_absolute_path("write_file_base64", &path)?;
             let bytes = B64
@@ -1259,9 +1259,9 @@ pub async fn write_file_base64(path: String, base64: String) -> Result<(), Strin
     .map_err(|e| format!("write_file_base64 blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn write_file_atomic(path: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("write_file_atomic", || {
             require_absolute_path("write_file_atomic", &path)?;
             let p = Path::new(&path);
@@ -1353,7 +1353,7 @@ fn apply_text_selection_edit_inner(
 /// Apply one Agent-proposed replacement without overwriting intervening user
 /// edits. The full prefix/selection/suffix snapshot is intentionally checked at
 /// the Rust write boundary; a frontend-only check would leave a TOCTOU window.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn apply_text_selection_edit(
     project_path: String,
     file_path: String,
@@ -1362,7 +1362,7 @@ pub async fn apply_text_selection_edit(
     suffix: String,
     replacement: String,
 ) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("apply_text_selection_edit", || {
             apply_text_selection_edit_inner(
                 &project_path,
@@ -1504,13 +1504,13 @@ fn safe_missing_page_stem(title: &str) -> String {
 /// Create a page for an unresolved wikilink. Filename allocation and the final
 /// write stay in Rust so UI callers cannot escape the project or overwrite an
 /// existing page, including through Windows device names or illegal characters.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_missing_wiki_page(
     project_path: String,
     title: String,
     content: Option<String>,
 ) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("create_missing_wiki_page", || {
             create_missing_wiki_page_inner(&project_path, &title, content.as_deref())
         })
@@ -1531,7 +1531,7 @@ fn entry_is_visible(name: &str, include_hidden: bool) -> bool {
     include_hidden || !name.starts_with('.')
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_directory(
     path: String,
     include_hidden: Option<bool>,
@@ -1539,7 +1539,7 @@ pub async fn list_directory(
 ) -> Result<Vec<FileNode>, String> {
     let include_hidden = include_hidden.unwrap_or(false);
     let max_depth = max_depth.unwrap_or(30).clamp(1, 30);
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("list_directory", || {
             let p = Path::new(&path);
             if !p.exists() {
@@ -1623,9 +1623,9 @@ fn build_tree(
     Ok(nodes)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn copy_file(source: String, destination: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("copy_file", || {
             let dest = Path::new(&destination);
             if let Some(parent) = dest.parent() {
@@ -1645,9 +1645,9 @@ pub async fn copy_file(source: String, destination: String) -> Result<(), String
 
 /// Recursively copy a directory, preserving structure.
 /// Returns list of copied file paths (destination paths).
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn copy_directory(source: String, destination: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("copy_directory", || {
             let src = Path::new(&source);
             let dest = Path::new(&destination);
@@ -1700,9 +1700,9 @@ pub async fn copy_directory(source: String, destination: String) -> Result<Vec<S
     .map_err(|e| format!("copy_directory blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn delete_file(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("delete_file", || {
             let p = Path::new(&path);
             file_sync::mark_app_write_path(p);
@@ -1756,12 +1756,12 @@ fn is_windows_transient_delete_error(err: &std::io::Error) -> bool {
 
 /// Find wiki pages that reference a given source file name.
 /// Scans all .md files under wiki/ for the source filename in frontmatter or content.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn find_related_wiki_pages(
     project_path: String,
     source_name: String,
 ) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("find_related_wiki_pages", || {
             let wiki_dir = Path::new(&project_path).join("wiki");
             if !wiki_dir.is_dir() {
@@ -1901,9 +1901,9 @@ fn collect_related_pages(
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_directory(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("create_directory", || {
             require_absolute_path("create_directory", &path)?;
             fs::create_dir_all(&path)
@@ -1933,10 +1933,10 @@ pub struct FileBase64 {
     pub mime_type: String,
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("read_file_as_base64", || {
             let bytes = fs::read(&path).map_err(|e| format!("Failed to read '{}': {}", path, e))?;
             let p = Path::new(&path);
@@ -1969,14 +1969,14 @@ pub async fn read_file_as_base64(path: String) -> Result<FileBase64, String> {
 
 /// Cheap existence check without reading or classifying the file.
 /// Returns true iff `path` refers to something on disk right now.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn file_exists(path: String) -> Result<bool, String> {
     // `Path::exists()` does a `stat(2)` syscall — fast on a hot
     // cache, but a blocking syscall nonetheless. Wrapping it keeps
     // the rule "no sync IO on tokio worker threads" uniform across
     // every fs command rather than carving out an exception that's
     // easy to violate later.
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("file_exists", || Ok(Path::new(&path).exists()))
     })
     .await
@@ -1985,9 +1985,9 @@ pub async fn file_exists(path: String) -> Result<bool, String> {
 
 /// Get the last modified timestamp of a file in milliseconds since Unix epoch.
 /// Returns 0 if the file doesn't exist or metadata can't be read.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("get_file_modified_time", || {
             let metadata = fs::metadata(&path)
                 .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
@@ -2004,9 +2004,9 @@ pub async fn get_file_modified_time(path: String) -> Result<u64, String> {
     .map_err(|e| format!("get_file_modified_time blocking task join error: {e}"))?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_file_size(path: String) -> Result<u64, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("get_file_size", || {
             let metadata = fs::metadata(&path)
                 .map_err(|e| format!("Failed to get metadata for '{}': {}", path, e))?;
@@ -2018,10 +2018,10 @@ pub async fn get_file_size(path: String) -> Result<u64, String> {
 }
 
 /// Compute MD5 hash of a file. Returns the hex-encoded hash string.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_file_md5(path: String) -> Result<String, String> {
     use md5::{Digest, Md5};
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::rt::spawn_blocking(move || {
         run_guarded("get_file_md5", || {
             let mut file = fs::File::open(&path)
                 .map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
@@ -2280,7 +2280,7 @@ mod tests {
     /// runner before it can report.
     ///
     /// `multi_thread` flavor: `read_file` now uses
-    /// `tauri::async_runtime::spawn_blocking`, which moves work onto
+    /// `crate::rt::spawn_blocking`, which moves work onto
     /// the tokio blocking pool. The blocking pool requires a multi-
     /// threaded runtime — the default `#[tokio::test]` is single-
     /// threaded current-thread, on which `.await` of a `spawn_blocking`

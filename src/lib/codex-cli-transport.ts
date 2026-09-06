@@ -6,8 +6,7 @@
  * over stdin, and emits each JSONL stdout line back as `codex-cli:{streamId}`.
  */
 
-import { invoke } from "@tauri-apps/api/core"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { invoke, listen, type UnlistenFn } from "@/lib/backend"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { ChatMessage, ContentBlock, RequestOverrides } from "./llm-providers"

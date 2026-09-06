@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle, Plus, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "@/lib/backend"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
