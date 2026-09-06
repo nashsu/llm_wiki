@@ -38,6 +38,15 @@ npm run web:check      # cargo check（server feature）
 cargo check --manifest-path src-tauri/Cargo.toml   # 桌面 feature
 ```
 
+## 我們在上游之外改了什麼（除了 web mode / connectors）
+
+| 日期 | 改動 | 位置 |
+|------|------|------|
+| 2026-09-06 | RPC 路徑護欄：web 模式下 `read_file` / `write_file` / `list_directory` / `copy_*` / `delete_file` 等原生檔案指令只允許碰已登錄專案資料夾與資料目錄（與 `/web/file` 同一份白名單），本 session 內 `open_project` / `create_project` / `import_project_archive` 過的資料夾立即生效 | `src-tauri/src/web/rpc.rs`（`PATH_GUARDED_COMMANDS`）、`src-tauri/src/web/mod.rs`（`path_is_allowed_lenient`、`remember_opened_root`） |
+| 2026-09-06 | 本機 API / MCP 的 chat 尊重 Settings → Models 的「Chat 使用的 preset」（`taskModelRouting.chatPresetId` + `providerConfigs`），之前只讀全域 `llmConfig`，若全域是 Claude Code CLI 就退化成只列搜尋結果 | `src-tauri/src/api_server.rs`（`chat_preset_llm_config`、`enabled_project_llm_config`） |
+
+上游若之後自己修了同一件事，合併時以上游為準、刪掉我們的版本即可。
+
 ## 衝突熱區
 
 上游改動最常和我們撞到的檔案：`src-tauri/src/lib.rs`（指令註冊改走 `app_commands.rs`）、`src-tauri/Cargo.toml`（features）、`src/main.tsx` / `src/App.tsx`（WebGate）、`src/lib/tauri-fetch.ts`（改走 `src/lib/backend/`）。上游新增 Tauri 指令時，記得同步加到 `src-tauri/src/web/rpc.rs` 的對應表，否則 web 版會缺該功能。

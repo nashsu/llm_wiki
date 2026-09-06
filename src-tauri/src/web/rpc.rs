@@ -10,6 +10,7 @@
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::path::Path;
 
 use crate::app_ctx::AppCtx;
 use crate::{agent, app_commands, commands, proxy};
@@ -115,6 +116,61 @@ pub const COMMANDS: &[&str] = &[
     "web_runtime_info",
 ];
 
+/// Commands that take filesystem paths straight from the browser. Every web
+/// caller shares one password, so raw filesystem access is confined to the
+/// registered project folders and the data directory — the same allow-list
+/// `/web/file` uses. Project registration (`create_project`, `open_project`,
+/// `import_project_archive`) is deliberately not listed: choosing a new
+/// project folder is how roots get added.
+const PATH_GUARDED_COMMANDS: &[&str] = &[
+    "read_file",
+    "read_file_as_base64",
+    "write_file",
+    "write_file_base64",
+    "write_file_atomic",
+    "apply_text_selection_edit",
+    "create_missing_wiki_page",
+    "list_directory",
+    "copy_file",
+    "copy_directory",
+    "preprocess_file",
+    "delete_file",
+    "find_related_wiki_pages",
+    "create_directory",
+    "file_exists",
+    "get_file_modified_time",
+    "get_file_size",
+    "get_file_md5",
+    "list_file_history",
+    "restore_file_history",
+    "get_file_history_stats",
+    "get_file_history_settings",
+    "set_file_history_settings",
+    "clear_file_history",
+    "export_project_archive",
+    "extract_pdf_images_cmd",
+    "extract_office_images_cmd",
+    "extract_and_save_pdf_images_cmd",
+    "extract_and_save_office_images_cmd",
+];
+
+/// camelCase argument keys that carry a filesystem path.
+const PATH_ARG_KEYS: &[&str] = &[
+    "path",
+    "source",
+    "destination",
+    "projectPath",
+    "filePath",
+    "targetPath",
+    "archivePath",
+    "outputDir",
+    "outputPath",
+    "pdfPath",
+    "docPath",
+    "sourcePath",
+    "destDir",
+];
+
 fn parse<T: DeserializeOwned>(args: &Value) -> Result<T, String> {
     serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))
 }
@@ -145,7 +201,37 @@ macro_rules! args {
 
 /// Dispatch one command. Unknown names yield `Err(UNKNOWN_COMMAND)`.
 pub async fn dispatch(ctx: &AppCtx, name: &str, args: Value) -> Result<Value, String> {
+    let result = dispatch_inner(ctx, name, args).await;
+    if let Ok(value) = &result {
+        if matches!(name, "open_project" | "create_project" | "import_project_archive") {
+            if let Some(path) = value
+                .get("path")
+                .or_else(|| value.get("projectPath"))
+                .and_then(Value::as_str)
+            {
+                super::remember_opened_root(path);
+            }
+        }
+    }
+    result
+}
+
+async fn dispatch_inner(ctx: &AppCtx, name: &str, args: Value) -> Result<Value, String> {
     let ctx = ctx.clone();
+    if PATH_GUARDED_COMMANDS.contains(&name) {
+        for key in PATH_ARG_KEYS {
+            if let Some(raw) = args.get(*key).and_then(Value::as_str) {
+                if !super::path_is_allowed_lenient(&ctx, Path::new(raw)) {
+                    if name == "file_exists" {
+                        return out(false);
+                    }
+                    return Err(format!(
+                        "Path is outside every registered project and the data directory: {raw}"
+                    ));
+                }
+            }
+        }
+    }
     match name {
         // ── fs ──────────────────────────────────────────────────────────
         "read_file" => {
@@ -885,6 +971,34 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "commands missing from web RPC: {missing:?}");
+    }
+
+    #[test]
+    fn path_guard_confines_fs_commands_to_known_roots() {
+        let data = std::env::temp_dir().join(format!(
+            "llm-wiki-guard-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&data).unwrap();
+        let ctx = AppCtx::headless(data.clone(), None);
+        // Inside the data dir: existing and not-yet-existing targets pass.
+        assert!(crate::web::path_is_allowed_lenient(&ctx, &data));
+        assert!(crate::web::path_is_allowed_lenient(&ctx, &data.join("new-file.md")));
+        assert!(crate::web::path_is_allowed_lenient(&ctx, &data.join("sub").join("deeper.md")));
+        // Escapes and unrelated locations are denied.
+        assert!(!crate::web::path_is_allowed_lenient(&ctx, &data.join("..").join("escape.md")));
+        assert!(!crate::web::path_is_allowed_lenient(&ctx, &std::env::temp_dir().join("outside.md")));
+        assert!(!crate::web::path_is_allowed_lenient(&ctx, Path::new("relative/file.md")));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(dispatch(&ctx, "read_file", json!({ "path": "C:/Windows/win.ini" })))
+            .unwrap_err();
+        assert!(err.contains("outside"), "{err}");
+        let exists = rt
+            .block_on(dispatch(&ctx, "file_exists", json!({ "path": "C:/Windows/win.ini" })))
+            .unwrap();
+        assert_eq!(exists, json!(false));
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]

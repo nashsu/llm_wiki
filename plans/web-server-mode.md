@@ -67,7 +67,14 @@ Single-user / small-team self-hosting, deliberately simple:
   app). No password + non-loopback bind = a random password is generated and
   printed on stdout, so the server is never silently exposed.
 * `/web/file` only serves paths inside registered project folders or the data
-  dir. `/web/proxy` is reachable only after authentication (an authenticated
+  dir. The same allow-list is enforced on the RPC bridge for every raw
+  filesystem command (`read_file`, `write_file*`, `list_directory`,
+  `copy_*`, `delete_file`, file history, extraction, archive export …) —
+  see `PATH_GUARDED_COMMANDS` in `web/rpc.rs`. Folders opened, created or
+  imported through the bridge in this server session count as registered
+  immediately (the persisted registry is written by the frontend only after
+  `open_project` returns). Project registration commands themselves are
+  unguarded on purpose: picking a new folder is how roots get added. `/web/proxy` is reachable only after authentication (an authenticated
   user can already point the app at any URL through Settings, so this adds no
   new capability).
 * Put TLS in front (Caddy / nginx / Tailscale) for anything beyond a LAN.

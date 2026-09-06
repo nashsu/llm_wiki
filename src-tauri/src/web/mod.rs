@@ -591,7 +591,29 @@ struct FileQuery {
     download: Option<String>,
 }
 
-fn allowed_roots(ctx: &AppCtx) -> Vec<PathBuf> {
+/// Project folders opened, created or imported through the RPC bridge during
+/// this server's lifetime. The persisted registry (`app-state.json`) is written
+/// by the frontend *after* `open_project` returns, so without this set the
+/// first reads of a freshly opened project (and every purely API-driven
+/// client) would be refused by the path allow-list.
+fn opened_roots() -> &'static std::sync::Mutex<Vec<PathBuf>> {
+    static ROOTS: std::sync::OnceLock<std::sync::Mutex<Vec<PathBuf>>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+pub(super) fn remember_opened_root(path: &str) {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    if let Ok(mut roots) = opened_roots().lock() {
+        if !roots.iter().any(|root| root == &path) {
+            roots.push(path);
+        }
+    }
+}
+
+pub(super) fn allowed_roots(ctx: &AppCtx) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = crate::app_commands::load_agent_projects(ctx)
         .into_iter()
         .map(|p| PathBuf::from(p.path))
@@ -601,10 +623,13 @@ fn allowed_roots(ctx: &AppCtx) -> Vec<PathBuf> {
     if !current.is_empty() {
         roots.push(PathBuf::from(current));
     }
+    if let Ok(opened) = opened_roots().lock() {
+        roots.extend(opened.iter().cloned());
+    }
     roots
 }
 
-fn path_is_allowed(ctx: &AppCtx, candidate: &Path) -> bool {
+pub(super) fn path_is_allowed(ctx: &AppCtx, candidate: &Path) -> bool {
     let Ok(canonical) = candidate.canonicalize() else {
         return false;
     };
@@ -613,6 +638,32 @@ fn path_is_allowed(ctx: &AppCtx, candidate: &Path) -> bool {
             .map(|root| canonical.starts_with(root))
             .unwrap_or(false)
     })
+}
+
+/// Like [`path_is_allowed`] but for targets that may not exist yet (writes,
+/// directory creation): the nearest existing ancestor is canonicalised and
+/// checked against the allow-list, and the not-yet-existing tail must not
+/// contain `.` / `..` components. Used by the RPC bridge to confine raw
+/// filesystem commands to registered project folders and the data dir.
+pub(super) fn path_is_allowed_lenient(ctx: &AppCtx, candidate: &Path) -> bool {
+    if !candidate.is_absolute() {
+        return false;
+    }
+    let mut probe = candidate.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    while !probe.exists() {
+        match (probe.file_name(), probe.parent()) {
+            (Some(name), Some(parent)) => {
+                tail.push(name.to_os_string());
+                probe = parent.to_path_buf();
+            }
+            _ => return false,
+        }
+    }
+    if tail.iter().any(|part| part == ".." || part == ".") {
+        return false;
+    }
+    path_is_allowed(ctx, &probe)
 }
 
 async fn file(
