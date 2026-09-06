@@ -16,7 +16,7 @@
 | PR | 分支 | 狀態 |
 |----|------|------|
 | [nashsu/llm_wiki#729](https://github.com/nashsu/llm_wiki/pull/729) RFC: Web/Server mode + Connectors | `web-mode` | Draft，等維護者回覆方向；已提議拆成三個 PR |
-| fix(api): honor the Chat task preset for local API / MCP chat | `fix/api-chat-preset`（從 `main` 分出，worktree 在 `D:\llm_wiki-fix`） | 見下方連結 |
+| [nashsu/llm_wiki#730](https://github.com/nashsu/llm_wiki/pull/730) fix(api): honor the Chat task preset for local API / MCP chat | `fix/api-chat-preset`（從 `main` 分出，worktree 在 `D:\llm_wiki-fix`） | 開放中，1 檔 +179/−1，api_server 測試 37/37 |
 
 上游若合併了 `fix/api-chat-preset`，同步後 `web-mode` 內的同一段程式碼會以上游版本為準。
 
