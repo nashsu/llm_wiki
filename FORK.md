@@ -7,9 +7,18 @@
 | 名稱 | 用途 |
 |------|------|
 | remote `upstream` | 原始專案 `nashsu/llm_wiki`，只拉不推 |
-| remote `origin` | 你自己的 GitHub repo（尚未設定，見下方） |
+| remote `origin` | 你的 fork：https://github.com/johnsonafool/llm_wiki |
 | branch `main` | 永遠等於 `upstream/main`，不放自己的改動 |
 | branch `web-mode` | 我們的版本：`main` + web/server mode + connectors |
+
+## 已送出的上游 PR
+
+| PR | 分支 | 狀態 |
+|----|------|------|
+| [nashsu/llm_wiki#729](https://github.com/nashsu/llm_wiki/pull/729) RFC: Web/Server mode + Connectors | `web-mode` | Draft，等維護者回覆方向；已提議拆成三個 PR |
+| fix(api): honor the Chat task preset for local API / MCP chat | `fix/api-chat-preset`（從 `main` 分出，worktree 在 `D:\llm_wiki-fix`） | 見下方連結 |
+
+上游若合併了 `fix/api-chat-preset`，同步後 `web-mode` 內的同一段程式碼會以上游版本為準。
 
 ## 設定自己的遠端（一次性）
 
