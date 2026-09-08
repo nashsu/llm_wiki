@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read as IoRead;
 use std::path::Path;
@@ -1096,6 +1097,20 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
     let mut workbook = open_workbook_auto(path)
         .map_err(|e| format!("Failed to open spreadsheet '{}': {}", path, e))?;
 
+    // calamine 0.34's `builtin_format_by_id` only knows the English
+    // built-in date IDs (14–22, 45, 47). ECMA-376 also defines IDs 27–36
+    // as CJK date/time formats (e.g. `31` = `yyyy年m月d日`), and Chinese
+    // and Japanese Excel emit them heavily. Those cells fall through to
+    // `Data::Float` with a raw Excel serial like `45761`. Side-parse the
+    // xlsx zip once up front to build coordinate overrides that carry an
+    // ISO date; skipped for xls/ods (calamine handles those correctly
+    // and they have no xlsx zip structure).
+    let date_overrides = if is_xlsx_path(path) {
+        xlsx_cjk_date_overrides(path)
+    } else {
+        HashMap::new()
+    };
+
     let mut result = String::new();
     let sheet_names = workbook.sheet_names().to_vec();
 
@@ -1109,28 +1124,45 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
                 result.push_str(&format!("## {}\n\n", sheet_name));
             }
 
+            let sheet_overrides = date_overrides.get(sheet_name);
+            let (start_row, start_col) = range.start().unwrap_or((0, 0));
+
             let mut rows: Vec<Vec<String>> = Vec::new();
             let mut max_cols = 0;
 
-            for row in range.rows() {
+            for (row_idx, row) in range.rows().enumerate() {
                 let cells: Vec<String> = row
                     .iter()
-                    .map(|cell| match cell {
-                        Data::Empty => String::new(),
-                        Data::String(s) => s.clone(),
-                        Data::Float(f) => {
-                            if *f == (*f as i64) as f64 {
-                                format!("{}", *f as i64)
-                            } else {
-                                format!("{:.2}", f)
+                    .enumerate()
+                    .map(|(col_idx, cell)| {
+                        if matches!(cell, Data::Float(_)) {
+                            let abs = (
+                                start_row + row_idx as u32,
+                                start_col + col_idx as u32,
+                            );
+                            if let Some(iso) =
+                                sheet_overrides.and_then(|m| m.get(&abs))
+                            {
+                                return iso.clone();
                             }
                         }
-                        Data::Int(i) => i.to_string(),
-                        Data::Bool(b) => b.to_string(),
-                        Data::DateTime(dt) => format!("{}", dt),
-                        Data::DateTimeIso(s) => s.clone(),
-                        Data::DurationIso(s) => s.clone(),
-                        Data::Error(e) => format!("ERR:{:?}", e),
+                        match cell {
+                            Data::Empty => String::new(),
+                            Data::String(s) => s.clone(),
+                            Data::Float(f) => {
+                                if *f == (*f as i64) as f64 {
+                                    format!("{}", *f as i64)
+                                } else {
+                                    format!("{:.2}", f)
+                                }
+                            }
+                            Data::Int(i) => i.to_string(),
+                            Data::Bool(b) => b.to_string(),
+                            Data::DateTime(dt) => format!("{}", dt),
+                            Data::DateTimeIso(s) => s.clone(),
+                            Data::DurationIso(s) => s.clone(),
+                            Data::Error(e) => format!("ERR:{:?}", e),
+                        }
                     })
                     .collect();
                 if cells.len() > max_cols {
@@ -1170,6 +1202,314 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
     } else {
         Ok(result)
     }
+}
+
+fn is_xlsx_path(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| {
+            let s = s.to_ascii_lowercase();
+            matches!(s.as_str(), "xlsx" | "xlsm")
+        })
+        .unwrap_or(false)
+}
+
+/// See the CJK-format explanation in `extract_spreadsheet`. This helper
+/// opens the xlsx zip directly, walks `xl/styles.xml` to find which
+/// cellXf indices carry a CJK built-in date format id (27–36), then
+/// walks each sheet to record the (row, col) coordinates of those
+/// cells with their Excel serial pre-converted to an ISO string.
+///
+/// Returns an empty map on any I/O or parse error, or when no CJK
+/// built-in date styles are used — callers pay no per-cell lookup cost
+/// on the common path.
+fn xlsx_cjk_date_overrides(path: &str) -> HashMap<String, HashMap<(u32, u32), String>> {
+    let empty: HashMap<String, HashMap<(u32, u32), String>> = HashMap::new();
+    let Ok(file) = fs::File::open(path) else {
+        return empty;
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return empty;
+    };
+
+    let Some(styles_xml) = read_zip_file(&mut zip, "xl/styles.xml") else {
+        return empty;
+    };
+
+    // Any of the 27–36 IDs *could* be redefined by a <numFmt> entry — in
+    // which case calamine reads the custom format string and its detector
+    // handles it correctly. Skip those to avoid double-handling.
+    let overridden_ids = parse_overridden_numfmt_ids(&styles_xml);
+    let cjk_style_ids = parse_cjk_date_cellxf_ids(&styles_xml, &overridden_ids);
+    if cjk_style_ids.is_empty() {
+        return empty;
+    }
+
+    let workbook_xml = read_zip_file(&mut zip, "xl/workbook.xml").unwrap_or_default();
+    let is_1904 =
+        workbook_xml.contains("date1904=\"1\"") || workbook_xml.contains("date1904=\"true\"");
+    let rels_xml = read_zip_file(&mut zip, "xl/_rels/workbook.xml.rels").unwrap_or_default();
+    let sheets = parse_workbook_sheet_paths(&workbook_xml, &rels_xml);
+
+    let mut out: HashMap<String, HashMap<(u32, u32), String>> = HashMap::new();
+    for (sheet_name, sheet_path) in sheets {
+        let Some(sheet_xml) = read_zip_file(&mut zip, &sheet_path) else {
+            continue;
+        };
+        let overrides = collect_sheet_cjk_date_cells(&sheet_xml, &cjk_style_ids, is_1904);
+        if !overrides.is_empty() {
+            out.insert(sheet_name, overrides);
+        }
+    }
+    out
+}
+
+fn parse_overridden_numfmt_ids(styles_xml: &str) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    let Some(block) = find_element_body(styles_xml, "numFmts") else {
+        return out;
+    };
+    for tag in iter_opening_tags(block, "numFmt") {
+        if let Some(id) = xml_attr(tag, "numFmtId").and_then(|v| v.parse::<u16>().ok()) {
+            out.insert(id);
+        }
+    }
+    out
+}
+
+fn parse_cjk_date_cellxf_ids(styles_xml: &str, overridden: &HashSet<u16>) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    let Some(block) = find_element_body(styles_xml, "cellXfs") else {
+        return out;
+    };
+    for (idx, tag) in iter_opening_tags(block, "xf").enumerate() {
+        if let Some(id) = xml_attr(tag, "numFmtId").and_then(|v| v.parse::<u16>().ok()) {
+            if (27..=36).contains(&id) && !overridden.contains(&id) {
+                out.insert(idx);
+            }
+        }
+    }
+    out
+}
+
+fn parse_workbook_sheet_paths(workbook_xml: &str, rels_xml: &str) -> Vec<(String, String)> {
+    let mut rid_to_target: HashMap<String, String> = HashMap::new();
+    for tag in iter_opening_tags(rels_xml, "Relationship") {
+        if let (Some(id), Some(target)) = (xml_attr(tag, "Id"), xml_attr(tag, "Target")) {
+            rid_to_target.insert(id, target);
+        }
+    }
+    let mut out = Vec::new();
+    for tag in iter_opening_tags(workbook_xml, "sheet") {
+        let name = xml_attr(tag, "name");
+        let rid = xml_attr(tag, "r:id").or_else(|| xml_attr(tag, "id"));
+        if let (Some(name), Some(rid)) = (name, rid) {
+            if let Some(target) = rid_to_target.get(&rid) {
+                let target = target.trim_start_matches('/');
+                let path = if target.starts_with("xl/") {
+                    target.to_string()
+                } else {
+                    format!("xl/{}", target)
+                };
+                out.push((name, path));
+            }
+        }
+    }
+    out
+}
+
+fn collect_sheet_cjk_date_cells(
+    sheet_xml: &str,
+    cjk_style_ids: &HashSet<usize>,
+    is_1904: bool,
+) -> HashMap<(u32, u32), String> {
+    let mut out = HashMap::new();
+    for tag in iter_opening_tags(sheet_xml, "c") {
+        let Some(cell_ref) = xml_attr(tag, "r") else {
+            continue;
+        };
+        let Some(style_id) = xml_attr(tag, "s").and_then(|s| s.parse::<usize>().ok()) else {
+            continue;
+        };
+        if !cjk_style_ids.contains(&style_id) {
+            continue;
+        }
+        // Self-closing `<c ... />` has no <v> child to convert.
+        if tag.ends_with("/>") {
+            continue;
+        }
+        // `tag` is always a subslice of `sheet_xml` (produced by
+        // `iter_opening_tags`), so pointer arithmetic recovers a valid
+        // byte offset into the parent buffer.
+        let tag_offset = tag.as_ptr() as usize - sheet_xml.as_ptr() as usize;
+        let body_start = tag_offset + tag.len();
+        let Some(close_rel) = sheet_xml[body_start..].find("</c>") else {
+            continue;
+        };
+        let body = &sheet_xml[body_start..body_start + close_rel];
+        let Some(value_text) = element_text(body, "v") else {
+            continue;
+        };
+        let Ok(serial) = value_text.trim().parse::<f64>() else {
+            continue;
+        };
+        let Some(iso) = excel_serial_to_iso(serial, is_1904) else {
+            continue;
+        };
+        let Some(coord) = parse_a1_cell_ref(&cell_ref) else {
+            continue;
+        };
+        out.insert(coord, iso);
+    }
+    out
+}
+
+fn excel_serial_to_iso(serial: f64, is_1904: bool) -> Option<String> {
+    use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
+    if !serial.is_finite() || serial < 0.0 {
+        return None;
+    }
+    let whole_days = serial.trunc() as i64;
+    let fractional = serial.fract().abs();
+    let base = if is_1904 {
+        NaiveDate::from_ymd_opt(1904, 1, 1)?
+    } else if whole_days < 60 {
+        // Excel numbers 1900-01-01 as serial 1 for values below the
+        // phantom leap day, so base at 1899-12-31.
+        NaiveDate::from_ymd_opt(1899, 12, 31)?
+    } else if whole_days == 60 {
+        // The infamous 1900-02-29 that Excel invented — no valid real
+        // date to return. Bail out so the raw serial stays visible.
+        return None;
+    } else {
+        NaiveDate::from_ymd_opt(1899, 12, 30)?
+    };
+    let date = base.checked_add_signed(ChronoDuration::days(whole_days))?;
+    if fractional < 1e-9 {
+        Some(date.format("%Y-%m-%d").to_string())
+    } else {
+        let secs = (fractional * 86_400.0).round() as i64 % 86_400;
+        let time = NaiveTime::from_hms_opt(
+            (secs / 3_600) as u32,
+            ((secs % 3_600) / 60) as u32,
+            (secs % 60) as u32,
+        )?;
+        Some(
+            NaiveDateTime::new(date, time)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )
+    }
+}
+
+fn parse_a1_cell_ref(cell_ref: &str) -> Option<(u32, u32)> {
+    let split = cell_ref.bytes().position(|b| b.is_ascii_digit())?;
+    if split == 0 {
+        return None;
+    }
+    let (letters, digits) = cell_ref.split_at(split);
+    let mut col: u32 = 0;
+    for c in letters.bytes() {
+        let c = c.to_ascii_uppercase();
+        if !c.is_ascii_uppercase() {
+            return None;
+        }
+        col = col.checked_mul(26)?.checked_add((c - b'A') as u32 + 1)?;
+    }
+    let col = col.checked_sub(1)?;
+    let row: u32 = digits.parse().ok()?;
+    Some((row.checked_sub(1)?, col))
+}
+
+// --- Small XML helpers (naive but sufficient for xlsx style/sheet parts,
+// which never put target attributes inside CDATA or comments). ---
+
+fn xml_attr(tag: &str, name: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let name_bytes = name.as_bytes();
+    let mut i = 0;
+    while i + name_bytes.len() + 2 < bytes.len() {
+        let sep = bytes[i];
+        let is_sep = matches!(sep, b' ' | b'\t' | b'\n' | b'\r');
+        if is_sep
+            && bytes[i + 1..].starts_with(name_bytes)
+            && bytes.get(i + 1 + name_bytes.len()) == Some(&b'=')
+        {
+            let q = *bytes.get(i + 1 + name_bytes.len() + 1)?;
+            if q != b'"' && q != b'\'' {
+                i += 1;
+                continue;
+            }
+            let value_start = i + 1 + name_bytes.len() + 2;
+            let mut j = value_start;
+            while j < bytes.len() && bytes[j] != q {
+                j += 1;
+            }
+            if j >= bytes.len() {
+                return None;
+            }
+            let raw = std::str::from_utf8(&bytes[value_start..j]).ok()?;
+            return Some(decode_xml_entities(raw));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_element_body<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
+    let open = format!("<{}", name);
+    let close = format!("</{}>", name);
+    let start = xml.find(&open)?;
+    let after_open = start + xml[start..].find('>')? + 1;
+    let end = xml[after_open..].find(&close)? + after_open;
+    Some(&xml[after_open..end])
+}
+
+struct OpeningTagIter<'a> {
+    xml: &'a str,
+    needle: String,
+    pos: usize,
+}
+
+impl<'a> Iterator for OpeningTagIter<'a> {
+    type Item = &'a str;
+    fn next(&mut self) -> Option<&'a str> {
+        loop {
+            let rel = self.xml[self.pos..].find(&self.needle)?;
+            let start = self.pos + rel;
+            let after_name = start + self.needle.len();
+            // Confirm this is actually an opening tag for the target
+            // element and not e.g. `<col` when looking for `<c`.
+            let next_char = self.xml.as_bytes().get(after_name).copied().unwrap_or(0);
+            if !matches!(next_char, b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') {
+                self.pos = after_name;
+                continue;
+            }
+            let end_rel = self.xml[start..].find('>')?;
+            let end = start + end_rel;
+            let tag = &self.xml[start..=end];
+            self.pos = end + 1;
+            return Some(tag);
+        }
+    }
+}
+
+fn iter_opening_tags<'a>(xml: &'a str, name: &str) -> OpeningTagIter<'a> {
+    OpeningTagIter {
+        xml,
+        needle: format!("<{}", name),
+        pos: 0,
+    }
+}
+
+fn element_text(xml: &str, name: &str) -> Option<String> {
+    let open = format!("<{}", name);
+    let close = format!("</{}>", name);
+    let start = xml.find(&open)?;
+    let after_open = start + xml[start..].find('>')? + 1;
+    let end = xml[after_open..].find(&close)? + after_open;
+    Some(decode_xml_entities(&xml[after_open..end]))
 }
 
 /// Extract OpenDocument format text (basic).
@@ -2152,6 +2492,43 @@ mod tests {
         )
     }
 
+    /// Xlsx that stores a date using Excel's built-in numFmtId 31
+    /// (`yyyy年m月d日`) — one of the CJK builtin date formats calamine's
+    /// `builtin_format_by_id` doesn't recognize. The cell holds Excel
+    /// serial 44562, which is 2022-01-01 in the default 1900 date
+    /// system.
+    fn cjk_builtin_date_xlsx() -> std::path::PathBuf {
+        tmp_zip_with_entries(
+            "xlsx",
+            &[
+                (
+                    "[Content_Types].xml",
+                    r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>"#,
+                ),
+                (
+                    "_rels/.rels",
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+                ),
+                (
+                    "xl/workbook.xml",
+                    r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+                ),
+                (
+                    "xl/_rels/workbook.xml.rels",
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#,
+                ),
+                (
+                    "xl/styles.xml",
+                    r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="31" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>"#,
+                ),
+                (
+                    "xl/worksheets/sheet1.xml",
+                    r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>日期</t></is></c></row><row r="2"><c r="A2" s="1"><v>44562</v></c></row></sheetData></worksheet>"#,
+                ),
+            ],
+        )
+    }
+
     fn minimal_odt() -> std::path::PathBuf {
         tmp_zip_with_entries(
             "odt",
@@ -2205,6 +2582,30 @@ mod tests {
             }
             fs::remove_file(path).unwrap();
         }
+    }
+
+    /// Regression for https://github.com/nashsu/llm_wiki/issues/736 —
+    /// CJK-locale Excel stores dates using the built-in numFmtIds 27–36
+    /// (`31` = `yyyy年m月d日`, `32` = `m月d日`, etc.). Calamine's
+    /// `builtin_format_by_id` only recognizes the English builtin IDs
+    /// (14–22, 45, 47), so those cells arrive as `Data::Float` carrying
+    /// a raw Excel serial like `44562`. `extract_spreadsheet` must
+    /// side-parse styles/sheet XML and swap in an ISO date string so the
+    /// downstream ingest LLM doesn't treat the serial as an anomaly.
+    #[test]
+    fn extract_spreadsheet_converts_cjk_builtin_date_format_ids() {
+        let path = cjk_builtin_date_xlsx();
+        let output = extract_spreadsheet(path.to_str().unwrap()).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(
+            !output.contains("44562"),
+            "raw Excel serial should not appear in output: {output}"
+        );
+        assert!(
+            output.contains("2022-01-01"),
+            "expected converted date 2022-01-01 in output: {output}"
+        );
     }
 
     #[test]
