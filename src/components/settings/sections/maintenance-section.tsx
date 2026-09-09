@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { useWikiStore } from "@/stores/wiki-store"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
-import { runDuplicateDetection } from "@/lib/dedup-runner"
+import { runDuplicateDetection, type DuplicateDetectionProgress } from "@/lib/dedup-runner"
 import { addNotDuplicate } from "@/lib/dedup-storage"
 import {
   enqueueMerge,
@@ -71,6 +71,7 @@ export function MaintenanceSection() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [groups, setGroups] = useState<GroupUiEntry[]>([])
   const [scanCompleted, setScanCompleted] = useState(false)
+  const [scanProgress, setScanProgress] = useState<DuplicateDetectionProgress | null>(null)
   const [projectToolStatus, setProjectToolStatus] = useState<string | null>(null)
   const [projectToolBusy, setProjectToolBusy] = useState(false)
   const [historyStats, setHistoryStats] = useState<FileHistoryStats | null>(null)
@@ -254,8 +255,11 @@ export function MaintenanceSection() {
     setScanError(null)
     setGroups([])
     setScanCompleted(false)
+    setScanProgress({ stage: "loading", completed: 0, total: 1 })
     try {
-      const detected = await runDuplicateDetection(project.path, llmConfig)
+      const detected = await runDuplicateDetection(project.path, llmConfig, {
+        onProgress: setScanProgress,
+      })
       setGroups(
         detected.map((g) => ({
           group: g,
@@ -268,6 +272,7 @@ export function MaintenanceSection() {
       setScanError(err instanceof Error ? err.message : String(err))
     } finally {
       setScanning(false)
+      setScanProgress(null)
     }
   }, [project, llmConfig])
 
@@ -539,9 +544,21 @@ export function MaintenanceSection() {
           {scanning ? (
             <>
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t("settings.sections.maintenance.dedup.scanning", {
-                defaultValue: "Scanning…",
-              })}
+              {scanProgress?.stage === "embedding" && scanProgress.total > 0
+                ? t("settings.sections.maintenance.dedup.embeddingProgress", {
+                    completed: scanProgress.completed,
+                    total: scanProgress.total,
+                    percent: Math.round((scanProgress.completed / scanProgress.total) * 100),
+                  })
+                : scanProgress?.stage === "scanning" && scanProgress.total > 0
+                  ? t("settings.sections.maintenance.dedup.scanningProgress", {
+                      completed: scanProgress.completed,
+                      total: scanProgress.total,
+                      percent: Math.round((scanProgress.completed / scanProgress.total) * 100),
+                    })
+                  : t("settings.sections.maintenance.dedup.scanning", {
+                      defaultValue: "Scanning…",
+                    })}
             </>
           ) : (
             t("settings.sections.maintenance.dedup.scanButton", {
@@ -549,6 +566,29 @@ export function MaintenanceSection() {
             })
           )}
         </Button>
+
+        {scanning && (scanProgress?.stage === "embedding" || scanProgress?.stage === "scanning") && scanProgress.total > 0 && (
+          <div className="space-y-1.5" role="status" aria-live="polite">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>{t(
+                scanProgress.stage === "embedding"
+                  ? "settings.sections.maintenance.dedup.embeddingDetail"
+                  : "settings.sections.maintenance.dedup.scanningDetail",
+                {
+                  completed: scanProgress.completed,
+                  total: scanProgress.total,
+                },
+              )}</span>
+              <span>{Math.round((scanProgress.completed / scanProgress.total) * 100)}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              <div
+                className="h-full rounded-full bg-foreground transition-[width] duration-300"
+                style={{ width: `${Math.round((scanProgress.completed / scanProgress.total) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {scanError && (
           <div className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/5 px-2 py-1.5 text-xs text-rose-700 dark:text-rose-400">
