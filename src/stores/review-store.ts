@@ -18,6 +18,10 @@ export interface ReviewItem {
   resolved: boolean
   resolvedAction?: string
   createdAt: number
+  /** AI triage score (0-100) from review-scorer. Optional; absent = unscored. */
+  aiScore?: number
+  aiTier?: "keep" | "maybe" | "drop"
+  aiReason?: string
 }
 
 interface ReviewState {
@@ -28,6 +32,8 @@ interface ReviewState {
   resolveItem: (id: string, action: string) => void
   dismissItem: (id: string) => void
   clearResolved: () => void
+  /** Apply AI triage scores; keeps existing scores when already set. */
+  setAiScores: (scores: Array<{ id: string; score: number; tier: "keep" | "maybe" | "drop"; reason: string }>) => void
 }
 
 /**
@@ -79,6 +85,9 @@ function mergeOptions(a: ReviewOption[], b: ReviewOption[]): ReviewOption[] {
 function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
   const resolved = a.resolved || b.resolved
   const resolvedAction = resolved ? a.resolvedAction ?? b.resolvedAction : undefined
+  // Scoring fields: prefer whichever side actually has a score; a raw
+  // re-ingest item (no score) must not wipe an existing judgment.
+  const aiScore = a.aiScore ?? b.aiScore
   return {
     ...a, // a.id is kept; both share it by construction
     resolved,
@@ -89,6 +98,9 @@ function mergeReviewItems(a: ReviewItem, b: ReviewItem): ReviewItem {
     searchQueries: unionField(a.searchQueries, b.searchQueries),
     options: mergeOptions(a.options, b.options),
     createdAt: Math.min(a.createdAt, b.createdAt),
+    aiScore,
+    aiTier: a.aiTier ?? b.aiTier,
+    aiReason: a.aiReason ?? b.aiReason,
   }
 }
 
@@ -178,5 +190,21 @@ export const useReviewStore = create<ReviewState>((set) => ({
   clearResolved: () =>
     set((state) => ({
       items: state.items.filter((item) => !item.resolved),
+    })),
+
+  setAiScores: (scores) =>
+    set((state) => ({
+      items: state.items.map((item) => {
+        const hit = scores.find((s) => s.id === item.id)
+        if (!hit) return item
+        // Never clobber an existing score.
+        if (item.aiScore !== undefined) return item
+        return {
+          ...item,
+          aiScore: hit.score,
+          aiTier: hit.tier,
+          aiReason: hit.reason,
+        }
+      }),
     })),
 }))

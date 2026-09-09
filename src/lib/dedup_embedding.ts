@@ -22,6 +22,8 @@ export interface CandidateOptions {
   threshold?: number
   maxPages?: number
   signal?: AbortSignal
+  /** Report embedding progress as completed pages and total pages. */
+  onProgress?: (completed: number, total: number) => void
   /**
    * If too many embeddings fail, callers should fall back to the old full scan
    * instead of silently missing most pages. Default: 0.8.
@@ -86,16 +88,21 @@ export function pageToEmbeddingText(page: Page, budget = 1500): string {
 export async function embedPages(
   pages: Page[],
   cfg: EmbeddingConfig,
-  opts: { signal?: AbortSignal; textBudgetChars?: number } = {},
+  opts: {
+    signal?: AbortSignal
+    textBudgetChars?: number
+    onProgress?: (completed: number, total: number) => void
+  } = {},
 ): Promise<Map<string, number[] | null>> {
   const out = new Map<string, number[] | null>()
   const budget = opts.textBudgetChars ?? 1500
-  for (const p of pages) {
+  for (const [index, p] of pages.entries()) {
     throwIfAborted(opts.signal)
     const text = pageToEmbeddingText(p, budget)
     const vec = await fetchEmbedding(text, cfg)
     throwIfAborted(opts.signal)
     out.set(p.id, vec)
+    opts.onProgress?.(index + 1, pages.length)
   }
   return out
 }
@@ -128,6 +135,7 @@ export async function candidatePairs(
   const embeddings = await embedPages(subset, cfg, {
     signal: opts.signal,
     textBudgetChars: opts.textBudgetChars,
+    onProgress: opts.onProgress,
   })
 
   const embeddedCount = [...embeddings.values()].filter((v) => v && v.length > 0).length
