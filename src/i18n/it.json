@@ -455,7 +455,17 @@
     "affectedPages": "Pagine",
     "allClear": "Tutto a posto — niente da revisionare",
     "resolvedDivider": "— Risolti —",
-    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}"
+    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}",
+    "scoreAll": "Valuta con AI",
+    "scoreMore": "Valuta rimanenti {{count}}",
+    "scoring": "Valutazione…",
+    "scoreHint": "Valuta tutte le revisioni in sospeso con AI, in batch (~50 per chiamata)",
+    "tierLabel": "Valore:",
+    "tierAll": "Tutti",
+    "tierKeep": "Tieni",
+    "tierMaybe": "Forse",
+    "tierDrop": "Scarta",
+    "tierEmpty": "Nessun elemento in questa fascia."
   },
   "settings": {
     "title": "Impostazioni",

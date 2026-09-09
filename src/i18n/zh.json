@@ -455,7 +455,17 @@
     "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —",
-    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}"
+    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}",
+    "scoreAll": "AI 评分",
+    "scoreMore": "评分剩余 {{count}} 条",
+    "scoring": "评分中…",
+    "scoreHint": "用 AI 给全部待审阅评分，分批进行（约 50 条/次调用）",
+    "tierLabel": "按价值筛选:",
+    "tierAll": "全部",
+    "tierKeep": "值得做",
+    "tierMaybe": "观望",
+    "tierDrop": "忽略",
+    "tierEmpty": "此档没有条目。"
   },
   "settings": {
     "title": "设置",

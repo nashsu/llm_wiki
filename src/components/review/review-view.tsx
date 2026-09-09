@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Lightbulb,
   MessageSquare,
+  Sparkles,
   X,
   Check,
   Trash2,
@@ -26,6 +27,7 @@ import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { useResearchStore } from "@/stores/research-store"
 import { reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
+import { scorePendingReviews, type ReviewTier } from "@/lib/review-scorer"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; color: string }> = {
   contradiction: { icon: AlertTriangle, color: "text-amber-500" },
@@ -45,6 +47,8 @@ export function ReviewView() {
   const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
   const [refreshing, setRefreshing] = useState(false)
+  const [scoring, setScoring] = useState(false)
+  const [tierFilter, setTierFilter] = useState<ReviewTier | "all">("all")
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
   const [workingReviewIds, setWorkingReviewIds] = useState<Set<string>>(() => new Set())
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
@@ -373,6 +377,53 @@ export function ReviewView() {
     setSelectedReviewIds((current) => new Set([...current].filter((id) => !queuedIds.has(id))))
   }, [appDialog, items, project, selectedReviewIds, t])
 
+  // ── AI triage scoring ────────────────────────────────────────────────
+  const unscored = useMemo(() => pending.filter((i) => i.aiScore === undefined), [pending])
+  const scoredCount = pending.length - unscored.length
+
+  const handleScoreAll = useCallback(async () => {
+    if (!project || scoring || unscored.length === 0) return
+    setScoring(true)
+    try {
+      await scorePendingReviews(unscored)
+      // Refresh from disk? No: the lib wrote into the same store instance.
+      // The store update already happened via setAiScores; nothing to do.
+    } finally {
+      setScoring(false)
+    }
+  }, [project, scoring, unscored])
+
+  const tierCounts = useMemo(() => {
+    const c: Record<ReviewTier, number> = { keep: 0, maybe: 0, drop: 0 }
+    for (const i of pending) {
+      if (i.aiTier) c[i.aiTier]++
+    }
+    return c
+  }, [pending])
+
+  const visiblePending = useMemo(() => {
+    if (tierFilter === "all") return pending
+    return pending.filter((i) => i.aiTier === tierFilter)
+  }, [pending, tierFilter])
+
+  // Selecting a tier chip = select all items in that tier (so existing
+  // batch actions — research / resolve / dismiss — apply to the tier).
+  const handleTierChipClick = useCallback(
+    (tier: ReviewTier | "all") => {
+      const next = tierFilter === tier ? "all" : tier
+      setTierFilter(next)
+      if (next !== "all") {
+        // Select all items in that tier so existing batch actions
+        // (research / resolve / dismiss) apply to the whole tier.
+        setSelectedReviewIds((s) => {
+          const ids = new Set(pending.filter((i) => i.aiTier === next).map((i) => i.id))
+          return new Set([...s, ...ids])
+        })
+      }
+    },
+    [pending, tierFilter],
+  )
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -385,6 +436,23 @@ export function ReviewView() {
           )}
         </h2>
         <div className="flex items-center gap-1">
+          {unscored.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleScoreAll}
+              disabled={scoring || !project}
+              className="text-xs"
+              title={t("review.scoreHint", "Score all pending reviews with AI (batched, one LLM call per ~50 items)")}
+            >
+              <Sparkles className={`mr-1 h-3 w-3 ${scoring ? "animate-pulse" : ""}`} />
+              {scoring
+                ? t("review.scoring", "Scoring…")
+                : scoredCount > 0
+                  ? t("review.scoreMore", "Score remaining {{count}}")
+                  : t("review.scoreAll", "AI 评分")}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -404,6 +472,40 @@ export function ReviewView() {
           )}
         </div>
       </div>
+
+      {scoredCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2 text-xs">
+          <span className="mr-1 text-muted-foreground">{t("review.tierLabel", "按价值筛选")}</span>
+          {(["all", "keep", "maybe", "drop"] as const).map((tier) => {
+            const count = tier === "all" ? pending.length : tierCounts[tier as ReviewTier]
+            const active = tierFilter === tier
+            return (
+              <button
+                key={tier}
+                onClick={() => handleTierChipClick(tier)}
+                className={`rounded-full border px-2.5 py-1 transition-colors ${
+                  active
+                    ? tier === "keep"
+                      ? "border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                      : tier === "drop"
+                        ? "border-rose-500 bg-rose-500/15 text-rose-700 dark:text-rose-400"
+                        : "border-foreground bg-foreground/10"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {tier === "all"
+                  ? t("review.tierAll")
+                  : tier === "keep"
+                    ? t("review.tierKeep")
+                    : tier === "maybe"
+                      ? t("review.tierMaybe")
+                      : t("review.tierDrop")}{" "}
+                <span className="ml-0.5 font-semibold">{count}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {pending.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
@@ -457,7 +559,7 @@ export function ReviewView() {
           </div>
         ) : (
           <div className="flex flex-col gap-2 p-3">
-            {pending.map((item) => (
+            {visiblePending.map((item) => (
               <ReviewCard
                 key={item.id}
                 item={item}
@@ -469,7 +571,12 @@ export function ReviewView() {
                 error={reviewErrors[item.id]}
               />
             ))}
-            {resolved.length > 0 && pending.length > 0 && (
+            {visiblePending.length === 0 && (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                {t("review.tierEmpty")}
+              </div>
+            )}
+            {resolved.length > 0 && visiblePending.length > 0 && (
               <div className="my-2 text-center text-xs text-muted-foreground">
                 {t("review.resolvedDivider")}
               </div>
@@ -549,13 +656,33 @@ function ReviewCard({
           <Icon className={`h-4 w-4 shrink-0 ${config.color}`} />
           <span className="font-medium">{item.title}</span>
         </div>
-        <button
-          onClick={() => onDismiss(item.id)}
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {item.aiScore !== undefined && (
+            <span
+              title={item.aiReason}
+              className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                item.aiTier === "keep"
+                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                  : item.aiTier === "drop"
+                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                    : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {item.aiScore}
+            </span>
+          )}
+          <button
+            onClick={() => onDismiss(item.id)}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
+
+      {item.aiReason && (
+        <p className="mb-2 text-xs italic text-muted-foreground">{item.aiReason}</p>
+      )}
 
       <p className="mb-3 text-xs text-muted-foreground">{item.description}</p>
 

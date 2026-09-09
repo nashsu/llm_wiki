@@ -455,7 +455,17 @@
     "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —",
-    "actionFailed": "The action failed and remains pending. You can retry: {{error}}"
+    "actionFailed": "The action failed and remains pending. You can retry: {{error}}",
+    "scoreAll": "AI score",
+    "scoreMore": "Score remaining {{count}}",
+    "scoring": "Scoring…",
+    "scoreHint": "Score all pending reviews with AI, batched (~50 per LLM call)",
+    "tierLabel": "Value:",
+    "tierAll": "All",
+    "tierKeep": "Keep",
+    "tierMaybe": "Maybe",
+    "tierDrop": "Drop",
+    "tierEmpty": "No items in this tier."
   },
   "settings": {
     "title": "Settings",
