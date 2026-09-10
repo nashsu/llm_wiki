@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { hasConfiguredDeepResearchSources, hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
+import {
+  getDeepResearchConfigurationIssue,
+  hasConfiguredDeepResearchSources,
+  hasConfiguredSearchProvider,
+  resolveSearchConfig,
+  toggleSearchProvider,
+  webSearch,
+} from "./web-search"
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -123,5 +130,35 @@ describe("webSearch", () => {
       deepResearchSource: "both",
       anyTxt: { enabled: false, endpoint: "" },
     })).toBe(false)
+  })
+
+  it("does not activate an unconfigured provider over a configured provider", () => {
+    const current = {
+      provider: "tavily" as const,
+      apiKey: "tavily-key",
+      providerConfigs: {
+        tavily: { apiKey: "tavily-key" },
+        serpapi: { serpApiEngine: "google" as const },
+      },
+      deepResearchSource: "web" as const,
+    }
+
+    expect(toggleSearchProvider(current, "serpapi")).toEqual({
+      ok: false,
+      issue: { kind: "missing-api-key", provider: "serpapi" },
+    })
+    expect(resolveSearchConfig(current).provider).toBe("tavily")
+  })
+
+  it("explains which selected provider is incomplete", () => {
+    expect(getDeepResearchConfigurationIssue({
+      provider: "serpapi",
+      apiKey: "",
+      providerConfigs: {
+        tavily: { apiKey: "tavily-key" },
+        serpapi: { serpApiEngine: "google" },
+      },
+      deepResearchSource: "web",
+    })).toEqual({ kind: "missing-api-key", provider: "serpapi" })
   })
 })

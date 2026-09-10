@@ -100,6 +100,10 @@
   "research": {
     "title": "深度研究",
     "notConfigured": "深度研究信息来源尚未配置。请到设置 → 外部信息源中配置网页搜索或 AnyTXT。",
+    "noWebProvider": "当前没有启用网页搜索 Provider。请到设置 → 外部信息源中启用一个已配置的 Provider。",
+    "providerMissingApiKey": "当前选中的 {{provider}} 缺少 API Key。请完成配置，或启用另一个已配置的网页搜索 Provider。",
+    "providerMissingUrl": "当前选中的 {{provider}} 缺少实例 URL。请完成配置，或启用另一个已配置的网页搜索 Provider。",
+    "anyTxtNotConfigured": "深度研究已选择 AnyTXT，但它尚未启用或缺少端点。请到设置 → 外部信息源中完成配置。",
     "activeBadge": "{{running}} 个运行中{{queued, plural, =0 {} other {，{{queued}} 个排队中}}}",
     "inputPlaceholder": "输入研究主题...",
     "emptyTitle": "还没有研究任务",
@@ -726,6 +730,7 @@
         "deactivate": "停用",
         "configuredBadge": "已配置",
         "activeBadge": "活跃",
+        "incompleteBadge": "配置不完整",
         "savedBadge": "已保存",
         "instanceUrl": "实例 URL",
         "ollamaHint": "使用官方 Ollama Web Search API（`https://ollama.com/api/web_search`），需要填写 Ollama API Key。",
@@ -746,7 +751,8 @@
         "firecrawlIpBlocked": "Firecrawl 匿名搜索已被当前 IP 拦截。请切换其他网页搜索 Provider，或尝试更换网络。",
         "firecrawlNetworkError": "无法连接 Firecrawl Search。请检查网络，或切换其他网页搜索 Provider。",
         "firecrawlInvalidJson": "Firecrawl 返回了无效响应。请稍后重试，或切换其他网页搜索 Provider。",
-        "configureBeforeTesting": "请先配置"
+        "configureBeforeTesting": "请先配置",
+        "configureBeforeActivating": "请先完成此 Provider 的配置，再启用它。"
       },
       "network": {
         "title": "网络",
