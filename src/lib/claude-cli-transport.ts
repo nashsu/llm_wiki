@@ -99,6 +99,81 @@ export function createClaudeCodeStreamParser() {
   }
 }
 
+/**
+ * True when a raw stdout line is a stream-json frame reporting that the
+ * CLI invocation itself failed.
+ *
+ * Claude Code reports a failed run — an expired OAuth session, a
+ * rejected model, an upstream API error — as a `result` event carrying
+ * `is_error: true`, with the human-readable cause in its `result`
+ * field. Note the `subtype` on such a frame still reads `"success"`,
+ * so `is_error` is the only reliable signal. `parseLine()` deliberately
+ * ignores every `result` frame (a *successful* one carries nothing but
+ * a summary), so an error has to be recognized here, before the frame
+ * is written off as unrecognized output.
+ */
+export function isCliErrorFrame(rawLine: string): boolean {
+  const line = rawLine.trim()
+  if (!line) return false
+  let evt: unknown
+  try {
+    evt = JSON.parse(line)
+  } catch {
+    return false
+  }
+  if (!evt || typeof evt !== "object") return false
+  const obj = evt as Record<string, unknown>
+  // A bare `error` event (older CLI builds) is an error by construction.
+  if (obj.type === "error") return true
+  if (obj.is_error === true) return true
+  // `is_api_error_message` is the flag the CLI sets on retried API
+  // failures; `outcome`/`status` cover hook-response and status frames.
+  if (obj.is_api_error_message === true) return true
+  if (obj.outcome === "error" || obj.status === "failed") return true
+  return false
+}
+
+/**
+ * Pull the human-readable cause out of the error frames in a block of
+ * captured stdout. Returns the first one found, or `""` when the text
+ * holds no error frame or the frame carries no message field — callers
+ * fall back to showing the raw dump in that case.
+ */
+export function extractStreamJsonError(stdout: string): string {
+  for (const line of stdout.split("\n")) {
+    if (!isCliErrorFrame(line)) continue
+    let evt: unknown
+    try {
+      evt = JSON.parse(line.trim())
+    } catch {
+      continue
+    }
+    const obj = evt as Record<string, unknown>
+    for (const key of ["result", "error", "message", "stderr"]) {
+      const value = obj[key]
+      if (typeof value === "string" && value.trim()) return value.trim()
+      // `error` is sometimes an object envelope rather than a string.
+      if (value && typeof value === "object") {
+        const nested = (value as Record<string, unknown>).message
+        if (typeof nested === "string" && nested.trim()) return nested.trim()
+      }
+    }
+  }
+  return ""
+}
+
+/**
+ * Phrasings that mean "the CLI has no usable credentials". Claude Code
+ * reports this on stderr as `Unauthenticated:`, but an expired OAuth
+ * session instead arrives on stdout as a `result` frame reading
+ * "Failed to authenticate: OAuth session expired and could not be
+ * refreshed" — the wording is reversed from the stderr form and the
+ * session is the subject rather than the object, so `authentication
+ * .*failed` does not match it. Both spellings are matched here.
+ */
+const AUTH_FAILURE_RE =
+  /unauthenticated|please.*log\s*in|authentication.*failed|failed to authenticate|oauth session expired|could not be refreshed/i
+
 // Tauri's `invoke` typing requires the payload object to satisfy
 // `Record<string, unknown>` (an index signature). Plain interfaces
 // don't provide one, so we use a `type` alias with the explicit
@@ -176,6 +251,30 @@ export async function streamClaudeCodeCli(
     unparsedSize += line.length + 1
   }
 
+  // Frames the CLI used to report its own failure get their own buffer
+  // rather than competing for the capped one above. The session-init
+  // frame alone can exhaust that budget before the run even starts, and
+  // it is the *last* frame that names why the run failed — so sharing
+  // the budget risks discarding exactly the line the user needs.
+  const cliErrorLines: string[] = []
+  function captureCliError(line: string) {
+    if (isCliErrorFrame(line)) cliErrorLines.push(line)
+  }
+
+  // Error frames first (so the cause is what `extractStreamJsonError`
+  // finds), then the remaining diagnostics, de-duplicated.
+  function collectStdoutDiagnostics(): string {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const line of [...cliErrorLines, ...unparsedLines]) {
+      const key = line.trim()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      out.push(line)
+    }
+    return out.join("\n")
+  }
+
   const cleanup = () => {
     unlistenData?.()
     unlistenDone?.()
@@ -222,6 +321,7 @@ export async function streamClaudeCodeCli(
         // child later exits non-zero with empty stderr — at that
         // point this captured stdout is the only diagnostic the
         // user has.
+        captureCliError(event.payload)
         captureUnparsed(event.payload)
       }
     })
@@ -238,14 +338,14 @@ export async function streamClaudeCodeCli(
         if (code !== null && code !== undefined && code !== 0) {
           finishWith(() =>
             onError(
-              new Error(buildExitError(code, stderr, unparsedLines.join("\n"))),
+              new Error(buildExitError(code, stderr, collectStdoutDiagnostics())),
             ),
           )
         } else if (!emittedToken) {
           // CLI exited successfully but produced no assistant text.
           // Surface this as an explicit error so the ingest pipeline
           // retries rather than silently writing an empty stub page.
-          const details = stderr || unparsedLines.join("\n").trim()
+          const details = stderr || collectStdoutDiagnostics().trim()
           finishWith(() =>
             onError(new Error(
               details
@@ -315,8 +415,8 @@ export async function streamClaudeCodeCli(
  *      logged out. We surface that case explicitly because users
  *      otherwise mis-diagnose it as an LLM Wiki bug.
  *   2. unparsedStdout — stdout lines the parser didn't recognize
- *      (non-JSON, unknown event types, the stream-json `error`
- *      event shape). Used as a fallback when stderr is empty —
+ *      (non-JSON, unknown event types, the stream-json `result` /
+ *      `error` event shapes). Used as a fallback when stderr is empty —
  *      claude sometimes writes its real diagnostic to stdout via
  *      the stream-json channel, and our parser silently drops
  *      anything it doesn't classify, leaving users with no info
@@ -324,23 +424,41 @@ export async function streamClaudeCodeCli(
  *   3. Neither — silent exit. We can't help much here other than
  *      telling the user to reproduce in a terminal where they can
  *      see whatever output the CLI does produce.
+ *
+ * The auth check runs against stderr *and* the cause extracted from
+ * the stdout error frames. An expired OAuth session is reported on
+ * stdout only, with stderr left empty, so checking stderr alone missed
+ * the one case the friendly message exists for and left the user
+ * reading a raw JSON dump. (#708)
  */
 export function buildExitError(
   code: number,
   stderr: string,
   unparsedStdout: string = "",
 ): string {
-  if (/unauthenticated|please.*log\s*in|authentication.*failed/i.test(stderr)) {
+  const cliError = extractStreamJsonError(unparsedStdout)
+  if (AUTH_FAILURE_RE.test(stderr) || AUTH_FAILURE_RE.test(cliError)) {
+    const detail = stderr.trim() || cliError
     return [
       "Claude Code CLI is not authenticated.",
       "Please open a terminal and run `claude` to complete the OAuth login,",
       "then retry. (LLM Wiki only spawns the binary — it can't run the",
       "login flow on your behalf.)",
-      stderr ? `\n\n— stderr —\n${stderr}` : "",
+      detail ? `\n\n— reported by the CLI —\n${detail}` : "",
     ].join(" ").trim()
   }
   if (stderr) {
     return `claude CLI exited with code ${code}: ${stderr}`
+  }
+  // The CLI named a cause in a structured error frame. Lead with it
+  // rather than making the user find it inside a JSON wall.
+  if (cliError) {
+    const rest = unparsedStdout.replace(cliError, "").trim()
+    return [
+      `claude CLI exited with code ${code} (no stderr).`,
+      `Reported by the CLI: ${cliError}`,
+      rest ? `\nFull output:\n${unparsedStdout.trim()}` : "",
+    ].join(" ").trim()
   }
   if (unparsedStdout.trim()) {
     return [
