@@ -17,7 +17,7 @@
  *   - Any src starting with `/` (absolute) is wrapped with
  *     `convertFileSrc` directly — the path is the filesystem
  *     absolute path.
- *   - **A relative src is resolved against the rendering markdown
+*   - **A relative src is resolved against the rendering markdown
  *     file's own directory** when that directory is known
  *     (`currentFileDir`). This is how Obsidian — and every other
  *     markdown tool — resolves images, and it's what lets
