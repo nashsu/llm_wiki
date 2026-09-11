@@ -7,9 +7,12 @@ import {
 } from "@/lib/azure-openai"
 import {
   isAdaptiveAnthropicModel,
+  isBigModelEndpoint,
   isGeminiThinkingLevelModel,
+  isGlmAtLeast,
   isOpenRouterEndpoint,
   normalizeReasoningForProvider,
+  parseGlmVersion,
 } from "@/lib/reasoning-capabilities"
 
 /**
@@ -365,10 +368,6 @@ function isXiaomiMimoEndpoint(config: LlmConfig): boolean {
   return /\.?xiaomimimo\.com(?::|\/|$)/i.test(config.customEndpoint)
 }
 
-function isBigModelEndpoint(config: LlmConfig): boolean {
-  return /(?:^|\/\/)open\.bigmodel\.cn(?:[:/]|$)/i.test(config.customEndpoint)
-}
-
 function isGlmVisionModel(model: string): boolean {
   const normalized = model.trim().toLowerCase()
   return /(?:^|[-_.])glm[-_.]5v[-_.]turbo(?:[-_.]|$)/i.test(normalized)
@@ -447,6 +446,44 @@ function adaptXiaomiMimoBody(
   }
 }
 
+function adaptBigModelBody(
+  config: LlmConfig,
+  body: Record<string, unknown>,
+  reasoning: ReasoningConfig,
+): void {
+  if (!isBigModelEndpoint(config.customEndpoint)) return
+  const version = parseGlmVersion(config.model)
+  // Pre-4.5 GLM models (and non-GLM ids routed through BigModel) predate
+  // the thinking controls; the capability layer already narrows them to
+  // auto, so there is nothing to translate.
+  if (!version || !isGlmAtLeast(version, 4, 5)) return
+
+  if (reasoning.mode === "off") {
+    // GLM-5.3+ thinks unconditionally and rejects `thinking.type=disabled`
+    // with error 1210 ("该模型始终思考，不支持关闭思考；请使用 low、high 或
+    // max"). `reasoning_effort=low` is the floor those models expose, and it
+    // is what keeps structured ingest from spending the whole budget on
+    // `reasoning_content` and returning empty `content`.
+    if (isGlmAtLeast(version, 5, 3)) {
+      body.reasoning_effort = "low"
+    } else {
+      body.thinking = { type: "disabled" }
+    }
+    return
+  }
+
+  // `reasoning_effort` is a GLM-5.2+ field. Earlier generations only have
+  // the on/off toggle, which the capability layer reflects by never handing
+  // an effort level to this adapter for them.
+  if (
+    isGlmAtLeast(version, 5, 2)
+    && (reasoning.mode === "low" || reasoning.mode === "high" || reasoning.mode === "max")
+  ) {
+    body.thinking = { type: "enabled" }
+    body.reasoning_effort = reasoning.mode
+  }
+}
+
 function buildOpenAiCompatibleBody(
   config: LlmConfig,
   messages: ChatMessage[],
@@ -463,6 +500,7 @@ function buildOpenAiCompatibleBody(
   adaptOpenAiStrictCompletionBody(config, body)
   adaptKimiBody(config, body)
   adaptXiaomiMimoBody(config, body, reasoning)
+  adaptBigModelBody(config, body, reasoning)
 
   if (config.provider === "custom" && isOpenRouterEndpoint(config.customEndpoint)) {
     if (reasoning.mode === "custom" && reasoning.budgetTokens !== undefined) {
@@ -751,7 +789,7 @@ function assertMiniMaxImageSupport(url: string, model: string, messages: ChatMes
 }
 
 function assertBigModelImageSupport(config: LlmConfig, messages: ChatMessage[]): void {
-  if (!isBigModelEndpoint(config) || !hasImageContent(messages) || isGlmVisionModel(config.model)) return
+  if (!isBigModelEndpoint(config.customEndpoint) || !hasImageContent(messages) || isGlmVisionModel(config.model)) return
   throw new Error(
     "Zhipu BigModel image input is supported only by GLM vision models. Switch to glm-5v-turbo, glm-4.6v, glm-4.5v, or glm-4v-plus.",
   )
@@ -760,7 +798,7 @@ function assertBigModelImageSupport(config: LlmConfig, messages: ChatMessage[]):
 export function supportsImageInput(config: LlmConfig): boolean {
   if (config.provider === "codex-cli") return false
   if (config.provider === "minimax") return isMiniMaxM3Model(config.model)
-  if (isBigModelEndpoint(config)) return isGlmVisionModel(config.model)
+  if (isBigModelEndpoint(config.customEndpoint)) return isGlmVisionModel(config.model)
   if ((config.provider === "custom") && (config.apiMode ?? "chat_completions") === "anthropic_messages") {
     const url = buildAnthropicUrl(config.customEndpoint)
     return !isOfficialMiniMaxAnthropicUrl(url) || isMiniMaxM3Model(config.model)

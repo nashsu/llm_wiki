@@ -16,6 +16,7 @@ const THINKING_REQUIRED_LEVELS = ["auto", "low", "medium", "high", "max"] as con
 const OLLAMA_LEVELS = ["auto", "off", "low", "medium", "high", "max"] as const
 const TOGGLE_LEVELS = ["auto", "off"] as const
 const DEEPSEEK_LEVELS = ["auto", "off", "high", "max"] as const
+const GLM_EFFORT_LEVELS = ["auto", "off", "low", "high", "max"] as const
 
 function capabilities(
   modes: readonly ReasoningMode[],
@@ -63,6 +64,45 @@ export function isOpenRouterEndpoint(endpoint: string): boolean {
   }
 }
 
+export function isBigModelEndpoint(endpoint: string): boolean {
+  return /(?:^|\/\/)open\.bigmodel\.cn(?:[:/]|$)/i.test(endpoint)
+}
+
+export interface GlmVersion {
+  major: number
+  minor: number
+}
+
+/**
+ * Generation of a Zhipu GLM model id: "glm-4.7-flash" → 4.7, "glm-5v-turbo"
+ * → 5.0, "GLM-5.3-Flash" → 5.3. Lines without a generation number (glm-z1-*)
+ * and non-GLM ids return null.
+ */
+export function parseGlmVersion(model: string): GlmVersion | null {
+  const match = /(?:^|[-_./])glm[-_.]?(\d+)(?:\.(\d+))?/i.exec(model.trim())
+  if (!match) return null
+  return { major: Number(match[1]), minor: match[2] ? Number(match[2]) : 0 }
+}
+
+export function isGlmAtLeast(version: GlmVersion, major: number, minor: number): boolean {
+  return version.major > major || (version.major === major && version.minor >= minor)
+}
+
+/**
+ * Zhipu's thinking controls arrived generation by generation: `thinking.type`
+ * ("enabled" | "disabled") with GLM-4.5, `reasoning_effort` ("low" | "high" |
+ * "max") with GLM-5.2, and from GLM-5.3 thinking is always on and can only be
+ * dialed down. "off" stays offered on every 4.5+ model — the wire layer maps
+ * it to whatever the generation permits — while "medium" and custom budgets
+ * are not representable anywhere in the lineup.
+ * See docs.bigmodel.cn/cn/guide/capabilities/thinking.
+ */
+function glmReasoningModes(model: string): readonly ReasoningMode[] {
+  const version = parseGlmVersion(model)
+  if (!version || !isGlmAtLeast(version, 4, 5)) return AUTO_ONLY
+  return isGlmAtLeast(version, 5, 2) ? GLM_EFFORT_LEVELS : TOGGLE_LEVELS
+}
+
 /**
  * Resolve only capabilities that are part of the selected wire contract.
  * Generic custom gateways deliberately stay Auto-only: a vendor-looking
@@ -99,6 +139,9 @@ export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabi
     }
     if (/xiaomimimo\.com(?:[:/]|$)/.test(endpoint)) {
       return capabilities(TOGGLE_LEVELS)
+    }
+    if (isBigModelEndpoint(endpoint)) {
+      return capabilities(glmReasoningModes(config.model))
     }
     // Anthropic-compatible custom endpoints are not necessarily Anthropic
     // itself (MiniMax, Kimi and enterprise proxies differ), so omission is the

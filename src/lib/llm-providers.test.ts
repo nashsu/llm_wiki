@@ -25,8 +25,9 @@ import {
   supportsImageInput,
   type ChatMessage,
   type ContentBlock,
+  type RequestOverrides,
 } from "./llm-providers"
-import type { LlmConfig } from "@/stores/wiki-store"
+import type { LlmConfig, ReasoningConfig, ReasoningMode } from "@/stores/wiki-store"
 
 const TINY_PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABXvMqOgAAAABJRU5ErkJggg=="
@@ -671,6 +672,88 @@ describe("reasoning controls", () => {
     expect(provider.url).toBe("https://token-plan-cn.xiaomimimo.com/v1/chat/completions")
     expect(body.temperature).toBeUndefined()
     expect(body.max_completion_tokens).toBe(4096)
+  })
+
+  function glmBody(model: string, reasoning: ReasoningConfig, temperature?: number): Record<string, unknown> {
+    const cfg = mkConfig({
+      provider: "custom",
+      model,
+      customEndpoint: "https://open.bigmodel.cn/api/paas/v4",
+      apiMode: "chat_completions",
+    })
+    const overrides: RequestOverrides = { reasoning }
+    if (temperature !== undefined) overrides.temperature = temperature
+    return getProviderConfig(cfg)
+      .buildBody([{ role: "user", content: "hi" }], overrides) as Record<string, unknown>
+  }
+
+  it("maps GLM-4.5..5.2 reasoning off to thinking disabled on the BigModel endpoint", () => {
+    for (const model of ["glm-4.7-flash", "glm-4.5", "glm-5.1", "glm-5v-turbo"]) {
+      const body = glmBody(model, { mode: "off" }, 0.1)
+      expect(body.thinking).toEqual({ type: "disabled" })
+      expect(body.reasoning_effort).toBeUndefined()
+      expect(body.temperature).toBe(0.1)
+    }
+  })
+
+  it("maps always-thinking GLM-5.3+ reasoning off to reasoning_effort low, never thinking disabled", () => {
+    // GLM-5.3 rejects `thinking.type=disabled` with error 1210; the lowest
+    // effort level is the only way to stop reasoning-only empty responses.
+    for (const model of ["glm-5.3-flash", "GLM-5.3", "glm-5.10"]) {
+      const body = glmBody(model, { mode: "off" })
+      expect(body.reasoning_effort).toBe("low")
+      expect(body.thinking).toBeUndefined()
+    }
+  })
+
+  it("maps GLM-5.2+ effort levels to thinking enabled plus reasoning_effort", () => {
+    const effortModes: ReasoningMode[] = ["low", "high", "max"]
+    for (const mode of effortModes) {
+      const body = glmBody("glm-5.3-flash", { mode })
+      expect(body.thinking).toEqual({ type: "enabled" })
+      expect(body.reasoning_effort).toBe(mode)
+    }
+  })
+
+  it("leaves GLM requests untouched on auto and on unrepresentable modes", () => {
+    const normalized: ReasoningConfig[] = [
+      { mode: "auto" },
+      { mode: "medium" },
+      { mode: "custom", budgetTokens: 2048 },
+    ]
+    for (const reasoning of normalized) {
+      const body = glmBody("glm-5.3-flash", reasoning)
+      expect(body.thinking).toBeUndefined()
+      expect(body.reasoning_effort).toBeUndefined()
+    }
+    // Toggle-only generations normalize effort levels away instead of sending them.
+    const toggleOnly = glmBody("glm-4.7", { mode: "high" })
+    expect(toggleOnly.thinking).toBeUndefined()
+    expect(toggleOnly.reasoning_effort).toBeUndefined()
+  })
+
+  it("does not send thinking controls to pre-4.5 GLM models or non-GLM ids on BigModel", () => {
+    for (const model of ["glm-4-flash-250414", "glm-4v-plus", "glm-z1-flash"]) {
+      const body = glmBody(model, { mode: "off" })
+      expect(body.thinking).toBeUndefined()
+      expect(body.reasoning_effort).toBeUndefined()
+    }
+  })
+
+  it("does not apply GLM thinking controls to GLM model ids on a generic gateway", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "glm-5.3-flash",
+      customEndpoint: "https://gateway.example/v1",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
   })
 
   it("uses Bearer auth for Xiaomi MiMo Token Plan Anthropic wire", () => {
