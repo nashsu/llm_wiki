@@ -4,6 +4,7 @@ import en from "./en.json"
 import it from "./it.json"
 import zh from "./zh.json"
 import ru from "./ru.json"
+import ko from "./ko.json"
 
 i18n.use(initReactI18next).init({
   resources: {
@@ -11,6 +12,7 @@ i18n.use(initReactI18next).init({
     it: { translation: it },
     zh: { translation: zh },
     ru: { translation: ru },
+    ko: { translation: ko },
   },
   lng: "en",
   fallbackLng: "en",
