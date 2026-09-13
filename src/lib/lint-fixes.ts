@@ -1,6 +1,7 @@
 import { createDirectory, fileExists, writeFile } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { makeQuerySlug } from "@/lib/wiki-filename"
+import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
 export function lintLinkTarget(target: string): string {
   return normalizePath(target)
@@ -65,6 +66,14 @@ function stubTitleFromBrokenTarget(brokenTarget: string): string {
     .trim() || "Missing Page"
 }
 
+/** Derive the stub's frontmatter type from its destination folder so pages
+ *  written into knowledge folders stay visible in the graph and pass schema
+ *  routing. Only single-segment targets land in `queries/`, where `query`
+ *  remains correct. */
+export function stubPageType(relativePath: string): string {
+  return inferWikiTypeFromPath(`wiki/${relativePath}`) ?? "query"
+}
+
 export async function ensureBrokenLinkStub(
   projectPath: string,
   brokenTarget: string,
@@ -81,7 +90,7 @@ export async function ensureBrokenLinkStub(
   const date = new Date().toISOString().slice(0, 10)
   const content = [
     "---",
-    "type: query",
+    `type: ${stubPageType(relativePath)}`,
     `title: "${title.replace(/"/g, '\\"')}"`,
     `created: ${date}`,
     `updated: ${date}`,
