@@ -94,6 +94,18 @@ interface ContextDetailItem extends MessageReference {
   category: ContextDetailCategory
 }
 
+const BACKEND_AGENT_UNAVAILABLE_ERROR =
+  "Backend Agent LLM is not configured or the selected Chat model is unavailable. Check Settings > Models and try again."
+
+function isLocalCliProvider(provider: string): boolean {
+  return provider === "claude-code" || provider === "codex-cli"
+}
+
+function isBackendAgentUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes(BACKEND_AGENT_UNAVAILABLE_ERROR)
+}
+
 function contextDetailCategory(reference: MessageReference): ContextDetailCategory {
   const source = reference.source?.trim().toLowerCase()
   if (source === "graph") return "graph"
@@ -1062,36 +1074,59 @@ export function ChatPanel() {
                   .map((block) => block.text)
                   .join("\n"),
           }))
-        const backendResponse = await invoke<BackendAgentResponse>("agent_start_turn", {
-          projectId: project?.id ?? "current",
-          llmConfig,
-          request: {
-            message: text,
-            sessionId: convId,
-            runId: backendRunId,
-            persistSession: false,
-            mode: sendOptions.agentMode,
-            retrievalMode: sendOptions.retrievalMode,
-            tools: {
-              wiki: true,
-              web: sendOptions.useWebSearch,
-              anytxt: sendOptions.useAnyTxtSearch,
+        let backendResponse: BackendAgentResponse
+        try {
+          backendResponse = await invoke<BackendAgentResponse>("agent_start_turn", {
+            projectId: project?.id ?? "current",
+            llmConfig,
+            request: {
+              message: text,
+              sessionId: convId,
+              runId: backendRunId,
+              persistSession: false,
+              mode: sendOptions.agentMode,
+              retrievalMode: sendOptions.retrievalMode,
+              tools: {
+                wiki: true,
+                web: sendOptions.useWebSearch,
+                anytxt: sendOptions.useAnyTxtSearch,
+              },
+              topK: sendOptions.agentMode === "deep" ? 8 : 5,
+              includeContent: sendOptions.agentMode === "deep",
+              skills: requestSkills,
+              contextFiles: sendOptions.contextFiles,
+              skillMode: requestedSkillMode,
+              historyExplicit: true,
+              approvedShellCommands: sendOptions.approvedShellCommands ?? [],
+              shellCommand: sendOptions.shellCommand,
+              history: priorWireMessages,
+              images: images.map((image) => ({
+                mediaType: image.mediaType,
+                dataBase64: image.dataBase64,
+              })),
             },
-            topK: sendOptions.agentMode === "deep" ? 8 : 5,
-            includeContent: sendOptions.agentMode === "deep",
-            skills: requestSkills,
-            contextFiles: sendOptions.contextFiles,
-            skillMode: requestedSkillMode,
-            historyExplicit: true,
-            approvedShellCommands: sendOptions.approvedShellCommands ?? [],
-            shellCommand: sendOptions.shellCommand,
-            history: priorWireMessages,
-            images: images.map((image) => ({
-              mediaType: image.mediaType,
-              dataBase64: image.dataBase64,
-            })),
-          },
-        })
+          })
+        } catch (error) {
+          // Local CLI providers are the actual answer generator in this
+          // branch. The Rust Agent command is only a best-effort retrieval
+          // phase, and it intentionally has no HTTP LLM configured for CLI
+          // providers. An empty project (or an explicit skill-only turn with
+          // no wiki hits) used to surface that internal retrieval condition as
+          // a fatal chat error, preventing the local CLI from answering at
+          // all. Continue with an empty context and let the configured CLI
+          // handle the request; real CLI and transport errors still surface
+          // from streamChat below.
+          if (!isLocalCliProvider(llmConfig.provider) || !isBackendAgentUnavailableError(error)) {
+            throw error
+          }
+          backendResponse = {
+            sessionId: convId,
+            mode: sendOptions.agentMode,
+            message: "",
+            references: [],
+            toolEvents: [],
+          }
+        }
         if (!isCurrentRun()) return
 
         const backendReferences = (backendResponse.references ?? []).map(backendReferenceToMessageReference)

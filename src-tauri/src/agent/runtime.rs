@@ -308,7 +308,8 @@ impl AgentRuntime {
         let fallback_wiki_search = should_fallback_wiki_search(
             planner_unavailable_or_failed,
             &request.tools,
-            skills.is_empty(),
+            request.skill_mode,
+            !skills.is_empty(),
         );
         let should_search_wiki =
             router.should_search_wiki || planned_has("wiki.search") || fallback_wiki_search;
@@ -2915,9 +2916,20 @@ fn retrieval_added_evidence(
 fn should_fallback_wiki_search(
     planner_unavailable_or_failed: bool,
     tools: &super::types::AgentToolOptions,
-    skills_empty: bool,
+    skill_mode: AgentSkillMode,
+    has_skills: bool,
 ) -> bool {
-    planner_unavailable_or_failed && tools.wiki && skills_empty
+    // The UI sends the complete enabled-skill candidate set in Auto mode. That
+    // does not mean the user asked for a skill turn. Treating that candidate
+    // set as an active skill turn suppresses the deterministic wiki fallback
+    // when the configured provider is a local CLI (which cannot run the Rust
+    // HTTP planner), and the chat then fails before the CLI gets any context.
+    // Only an explicitly selected skill should opt out of the plain wiki
+    // fallback. Keep the `has_skills` guard so an explicit empty skill request
+    // retains the existing offline behavior.
+    planner_unavailable_or_failed
+        && tools.wiki
+        && (!has_skills || matches!(skill_mode, AgentSkillMode::Auto))
 }
 
 fn build_agent_loop_system(base_system: &str, retrieval_mode: AgentRetrievalMode) -> String {
@@ -4111,7 +4123,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn planner_unavailable_skill_turn_does_not_fall_back_to_wiki_search() {
+    async fn planner_unavailable_auto_skill_turn_falls_back_to_wiki_search() {
         let project = temp_project("skill-no-fallback");
         fs::create_dir_all(project.join(".llm-wiki").join("skills").join("demo")).unwrap();
         fs::write(
@@ -4137,7 +4149,7 @@ mod tests {
             None,
             None,
         );
-        let error = runtime
+        let response = runtime
             .run_once(AgentChatRequest {
                 message: "你现在有哪些 skill 可以使用？".to_string(),
                 session_id: Some("s1".to_string()),
@@ -4155,9 +4167,15 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap_err();
+            .unwrap();
 
-        assert!(error.contains("Chat model is unavailable"));
+        assert!(response.ok);
+        assert_eq!(response.references.len(), 1);
+        assert_eq!(response.references[0].path, "wiki/concepts/skills.md");
+        assert!(response
+            .tool_events
+            .iter()
+            .any(|event| event.tool == "wiki.search"));
     }
 
     #[tokio::test]
@@ -5665,15 +5683,36 @@ mod tests {
     }
 
     #[test]
-    fn fallback_wiki_search_is_only_for_plain_non_skill_turns() {
+    fn fallback_wiki_search_allows_auto_skill_discovery() {
         let tools = AgentToolOptions {
             wiki: true,
             web: false,
             anytxt: false,
         };
-        assert!(should_fallback_wiki_search(true, &tools, true));
-        assert!(!should_fallback_wiki_search(false, &tools, true));
-        assert!(!should_fallback_wiki_search(true, &tools, false));
+        assert!(should_fallback_wiki_search(
+            true,
+            &tools,
+            AgentSkillMode::Explicit,
+            false,
+        ));
+        assert!(should_fallback_wiki_search(
+            true,
+            &tools,
+            AgentSkillMode::Auto,
+            true,
+        ));
+        assert!(!should_fallback_wiki_search(
+            true,
+            &tools,
+            AgentSkillMode::Explicit,
+            true,
+        ));
+        assert!(!should_fallback_wiki_search(
+            false,
+            &tools,
+            AgentSkillMode::Explicit,
+            false,
+        ));
         assert!(!should_fallback_wiki_search(
             true,
             &AgentToolOptions {
@@ -5681,7 +5720,8 @@ mod tests {
                 web: false,
                 anytxt: false,
             },
-            true,
+            AgentSkillMode::Explicit,
+            false,
         ));
     }
 
