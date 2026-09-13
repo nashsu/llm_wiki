@@ -24,8 +24,12 @@ export interface CommunityInfo {
   id: number
   nodeCount: number
   cohesion: number // intra-community edge density
+  meanIntraDegree: number // average links per page into the same community (2 * intraEdges / nodeCount); unlike density it does not decay with community size
   topNodes: string[] // top nodes by linkCount (labels)
 }
+
+/** Communities whose pages average fewer intra-community links than this are flagged as sparse in insights. */
+export const SPARSE_CLUSTER_MIN_MEAN_INTRA_DEGREE = 2
 
 export interface WikiGraphResult {
   nodes: GraphNode[]

@@ -2,7 +2,7 @@ import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 import type { CommunityInfo, GraphEdge } from "./wiki-graph"
 
-/** Run Louvain community detection and compute cohesion per community. */
+/** Run Louvain community detection and compute cohesion and mean intra-degree per community. */
 export function detectCommunities(
   nodes: { id: string; label: string; linkCount: number }[],
   edges: GraphEdge[],
@@ -51,8 +51,12 @@ export function detectCommunities(
   const communities: CommunityInfo[] = []
   for (const [communityId, memberIds] of groups) {
     const nodeCount = memberIds.length
+    const intraEdges = intraEdgesByCommunity.get(communityId) ?? 0
     const possibleEdges = nodeCount > 1 ? (nodeCount * (nodeCount - 1)) / 2 : 1
-    const cohesion = (intraEdgesByCommunity.get(communityId) ?? 0) / possibleEdges
+    const cohesion = intraEdges / possibleEdges
+    // Mean intra-degree stays constant as the community grows, unlike cohesion
+    // (density), which decays as O(1/n) and flags every large cluster.
+    const meanIntraDegree = nodeCount > 0 ? (2 * intraEdges) / nodeCount : 0
     const topNodes = [...memberIds]
       .sort(
         (left, right) =>
@@ -61,7 +65,7 @@ export function detectCommunities(
       )
       .slice(0, 5)
       .map((id) => nodeInfo.get(id)?.label ?? id)
-    communities.push({ id: communityId, nodeCount, cohesion, topNodes })
+    communities.push({ id: communityId, nodeCount, cohesion, meanIntraDegree, topNodes })
   }
 
   communities.sort((left, right) => right.nodeCount - left.nodeCount)

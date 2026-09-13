@@ -1,4 +1,9 @@
-import type { GraphNode, GraphEdge, CommunityInfo } from "./wiki-graph"
+import {
+  SPARSE_CLUSTER_MIN_MEAN_INTRA_DEGREE,
+  type GraphNode,
+  type GraphEdge,
+  type CommunityInfo,
+} from "./wiki-graph"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,7 +113,7 @@ export function findSurprisingConnections(
 /**
  * Detect knowledge gaps based on graph structure:
  * - Isolated nodes (degree ≤ 1)
- * - Sparse communities (cohesion < 0.15 with ≥ 3 nodes)
+ * - Sparse communities (mean intra-degree < 2 with ≥ 3 nodes)
  * - Bridge nodes (high betweenness — connected to multiple communities)
  */
 export function detectKnowledgeGaps(
@@ -136,13 +141,16 @@ export function detectKnowledgeGaps(
     })
   }
 
-  // 2. Sparse communities (low cohesion)
+  // 2. Sparse communities (weak internal linking)
+  // Threshold on mean intra-degree, not density: density decays as O(1/n), so a
+  // fixed cohesion cutoff flags every community larger than ~55 pages regardless
+  // of how well linked it is.
   for (const comm of communities) {
-    if (comm.cohesion < 0.15 && comm.nodeCount >= 3) {
+    if (comm.meanIntraDegree < SPARSE_CLUSTER_MIN_MEAN_INTRA_DEGREE && comm.nodeCount >= 3) {
       gaps.push({
         type: "sparse-community",
         title: `Sparse cluster: ${comm.topNodes[0] ?? `Community ${comm.id}`}`,
-        description: `${comm.nodeCount} pages with cohesion ${comm.cohesion.toFixed(2)} — internal connections are weak.`,
+        description: `${comm.nodeCount} pages average ${comm.meanIntraDegree.toFixed(1)} links to other pages in this cluster — internal connections are weak.`,
         nodeIds: nodes.filter((n) => n.community === comm.id).map((n) => n.id),
         suggestion: `This knowledge area lacks internal cross-references. Consider adding links between these pages or researching to fill gaps.`,
       })

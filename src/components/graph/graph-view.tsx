@@ -13,7 +13,7 @@ import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
-import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
+import { buildWikiGraph, SPARSE_CLUSTER_MIN_MEAN_INTRA_DEGREE, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
 import { findSurprisingConnections, detectKnowledgeGaps, type SurprisingConnection, type KnowledgeGap } from "@/lib/graph-insights"
 import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
@@ -1468,8 +1468,8 @@ export function GraphView() {
                         {c.topNodes[0] ?? `${t("graph.cluster", { id: c.id })}`}
                       </span>
                       <span className="text-muted-foreground/60 ml-auto shrink-0">{c.nodeCount}</span>
-                      {c.cohesion < 0.15 && c.nodeCount >= 3 && (
-                        <span className="text-amber-500 shrink-0" title={`Low cohesion: ${c.cohesion.toFixed(2)}`}>!</span>
+                      {c.meanIntraDegree < SPARSE_CLUSTER_MIN_MEAN_INTRA_DEGREE && c.nodeCount >= 3 && (
+                        <span className="text-amber-500 shrink-0" title={`Low internal linking: avg ${c.meanIntraDegree.toFixed(1)} links/page`}>!</span>
                       )}
                     </div>
                   ))}
