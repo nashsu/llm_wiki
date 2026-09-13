@@ -26,6 +26,10 @@ async function loadBuildWikiIndex() {
   return mod.buildWikiIndex
 }
 
+async function loadSweepModule() {
+  return import("./sweep-reviews")
+}
+
 function mdFile(name: string): FileNode {
   return { name, path: `/project/wiki/${name}`, is_dir: false }
 }
@@ -41,6 +45,7 @@ describe("buildWikiIndex", () => {
     const index = await buildWikiIndex("/project")
 
     expect(index.byTitle.has("attention mechanism")).toBe(false)
+    expect(index.byTitleSlug.has("attention-mechanism")).toBe(false)
     expect(index.pages[0].title).toBeNull()
   })
 
@@ -52,5 +57,37 @@ describe("buildWikiIndex", () => {
     const index = await buildWikiIndex("/project")
 
     expect(index.byTitle.has("real title")).toBe(true)
+  })
+
+  it("indexes the frontmatter title's slug for timestamped filenames", async () => {
+    const buildWikiIndex = await loadBuildWikiIndex()
+    mockListDirectory.mockResolvedValue([mdFile("clash-detection-2026-09-06-143052.md")])
+    mockReadFile.mockResolvedValue("---\ntitle: Clash Detection\n---\n# Clash Detection\n")
+
+    const index = await buildWikiIndex("/project")
+
+    expect(index.byTitleSlug.has("clash-detection")).toBe(true)
+  })
+})
+
+describe("pageExists", () => {
+  it("resolves a candidate name against a timestamped page via its title slug", async () => {
+    const { buildWikiIndex, pageExists } = await loadSweepModule()
+    mockListDirectory.mockResolvedValue([mdFile("clash-detection-2026-09-06-143052.md")])
+    mockReadFile.mockResolvedValue("---\ntitle: Clash Detection\n---\n# Clash Detection\n")
+
+    const index = await buildWikiIndex("/project")
+
+    expect(pageExists("clash-detection", index)).toBe(true)
+  })
+
+  it("does not match unrelated candidate names via the slug index", async () => {
+    const { buildWikiIndex, pageExists } = await loadSweepModule()
+    mockListDirectory.mockResolvedValue([mdFile("clash-detection-2026-09-06-143052.md")])
+    mockReadFile.mockResolvedValue("---\ntitle: Clash Detection\n---\n# Clash Detection\n")
+
+    const index = await buildWikiIndex("/project")
+
+    expect(pageExists("completely-unrelated", index)).toBe(false)
   })
 })

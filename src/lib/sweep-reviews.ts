@@ -18,6 +18,7 @@ import { streamChat } from "@/lib/llm-client"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { normalizeReviewTitle } from "@/lib/review-utils"
+import { makeQuerySlug } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { parseFrontmatter } from "@/lib/frontmatter"
@@ -32,6 +33,7 @@ interface WikiPageSummary {
 interface WikiIndex {
   byId: Set<string>
   byTitle: Set<string>
+  byTitleSlug: Set<string>
   pages: WikiPageSummary[]
 }
 
@@ -54,6 +56,7 @@ export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
   const pp = normalizePath(projectPath)
   const byId = new Set<string>()
   const byTitle = new Set<string>()
+  const byTitleSlug = new Set<string>()
   const pages: WikiPageSummary[] = []
 
   try {
@@ -71,6 +74,14 @@ export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
         if (typeof fmTitle === "string" && fmTitle.trim()) {
           title = fmTitle.trim()
           byTitle.add(title.toLowerCase())
+          // Timestamped filenames ("clash-detection-2026-09-06-143052") can
+          // never match a candidate's bare name, so also index the title's
+          // slug. Skip titles with no letters/digits: makeQuerySlug falls
+          // back to "query" for those, which would let unrelated garbage
+          // candidates collide with every such page.
+          if (/[\p{L}\p{N}]/u.test(title)) {
+            byTitleSlug.add(makeQuerySlug(title))
+          }
         }
       } catch {
         // skip unreadable files
@@ -82,7 +93,7 @@ export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
     // no wiki directory yet
   }
 
-  return { byId, byTitle, pages }
+  return { byId, byTitle, byTitleSlug, pages }
 }
 
 /**
@@ -108,8 +119,12 @@ function extractCandidateNames(item: ReviewItem): string[] {
   return Array.from(names)
 }
 
-/** Check if a candidate name matches an existing wiki page */
-function pageExists(name: string, index: WikiIndex): boolean {
+/**
+ * Check if a candidate name matches an existing wiki page.
+ *
+ * @internal Exported for unit tests only.
+ */
+export function pageExists(name: string, index: WikiIndex): boolean {
   const normalized = name.trim().toLowerCase()
   if (!normalized) return false
 
@@ -119,6 +134,11 @@ function pageExists(name: string, index: WikiIndex): boolean {
 
   // Exact title match (from frontmatter)
   if (index.byTitle.has(normalized)) return true
+
+  // Slug of the frontmatter title — catches pages whose filename carries a
+  // timestamp suffix ("clash-detection-2026-09-06-143052") so a candidate
+  // named after the missing page still resolves.
+  if (index.byTitleSlug.has(makeQuerySlug(normalized))) return true
 
   return false
 }

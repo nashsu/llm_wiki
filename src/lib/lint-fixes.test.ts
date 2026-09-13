@@ -12,6 +12,7 @@ import {
   appendWikilink,
   ensureBrokenLinkStub,
   rewriteWikilinkTarget,
+  stubPageType,
   stubRelativePathFromBrokenTarget,
 } from "./lint-fixes"
 
@@ -90,5 +91,63 @@ describe("ensureBrokenLinkStub", () => {
 
   it("keeps explicit wiki subdirectories when building stub paths", () => {
     expect(stubRelativePathFromBrokenTarget("concepts/Foo Bar")).toBe("concepts/foo-bar.md")
+  })
+
+  it("writes the folder-derived type into a knowledge-folder stub", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "concepts/Foo Bar")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/concepts/foo-bar.md",
+      expect.stringContaining("type: concept"),
+    )
+  })
+
+  it("writes the folder-derived type for entities stubs", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "entities/Foo Bar")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/entities/foo-bar.md",
+      expect.stringContaining("type: entity"),
+    )
+  })
+
+  it("keeps type: query for single-segment stubs under queries/", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "Foo Bar")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/queries/foo-bar.md",
+      expect.stringContaining("type: query"),
+    )
+  })
+
+  it("uses the folder name as type for unrecognized directories", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "standards/Foo Bar")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/standards/foo-bar.md",
+      expect.stringContaining("type: standards"),
+    )
+  })
+})
+
+describe("stubPageType", () => {
+  it("derives the type from a known knowledge folder", () => {
+    expect(stubPageType("concepts/foo-bar.md")).toBe("concept")
+  })
+
+  it("keeps query for single-segment stubs under queries/", () => {
+    expect(stubPageType("queries/foo-bar.md")).toBe("query")
+  })
+
+  it("falls back to the folder name for unrecognized directories", () => {
+    expect(stubPageType("standards/foo-bar.md")).toBe("standards")
   })
 })
