@@ -18,6 +18,17 @@ import type { ChatMessage, RequestOverrides } from "./llm-providers"
 import type { StreamCallbacks } from "./llm-client"
 
 /**
+ * A parser is a callable that maps one stream-json line to the
+ * assistant text it contains. `onFatalError` is an optional side
+ * channel: a `result` event with `is_error: true` carries the CLI's
+ * authoritative failure message (e.g. an expired OAuth session), and
+ * the parser reports it there instead of silently dropping the event.
+ */
+type ClaudeCodeStreamParser = ((rawLine: string) => string | null) & {
+  onFatalError?: (message: string) => void
+}
+
+/**
  * Public parse entry point. Given one stream-json line from claude's
  * stdout, returns any assistant text it contains (or null for events
  * that carry no user-visible text: session init, tool_use, result, etc.).
@@ -28,14 +39,14 @@ import type { StreamCallbacks } from "./llm-client"
  * real token-level deltas. To avoid double-counting, we prefer deltas
  * when they arrive and skip the fat `assistant` events after seeing one.
  */
-export function createClaudeCodeStreamParser() {
+export function createClaudeCodeStreamParser(): ClaudeCodeStreamParser {
   let sawDelta = false
   // Track the running text we have emitted for the current assistant
   // turn via `assistant` events so we can diff new content off the end
   // and only emit what wasn't already streamed.
   let emittedFromAssistant = ""
 
-  return function parseLine(rawLine: string): string | null {
+  const parseLine: ClaudeCodeStreamParser = (rawLine: string): string | null => {
     const line = rawLine.trim()
     if (!line) return null
 
@@ -94,9 +105,25 @@ export function createClaudeCodeStreamParser() {
       return text
     }
 
+    // A `result` event normally carries only the turn summary, but when
+    // `is_error` is set it holds the CLI's authoritative fatal error —
+    // e.g. "Failed to authenticate: OAuth session expired..." (note the
+    // misleading `"subtype":"success"`). claude reports auth failures on
+    // stdout this way — there is no separate `error` event and stderr
+    // stays empty — so surface the `result` text via onFatalError rather
+    // than discarding the event into the unparsed-stdout dump. (#708)
+    if (type === "result" && obj.is_error === true) {
+      if (typeof obj.result === "string" && obj.result.trim()) {
+        parseLine.onFatalError?.(obj.result)
+      }
+      return null
+    }
+
     // Ignore session init, tool_use, result summary, unknown types.
     return null
   }
+
+  return parseLine
 }
 
 // Tauri's `invoke` typing requires the payload object to satisfy
@@ -142,6 +169,13 @@ export async function streamClaudeCodeCli(
 
   const streamId = crypto.randomUUID()
   const parse = createClaudeCodeStreamParser()
+  // Fatal errors reported inside a stream-json `result` event (an
+  // expired OAuth session, for instance) land here instead of being
+  // buried in the unparsed-stdout dump below.
+  let fatalResultError = ""
+  parse.onFatalError = (message) => {
+    fatalResultError = message
+  }
 
   let unlistenData: UnlistenFn | undefined
   let unlistenDone: UnlistenFn | undefined
@@ -238,14 +272,16 @@ export async function streamClaudeCodeCli(
         if (code !== null && code !== undefined && code !== 0) {
           finishWith(() =>
             onError(
-              new Error(buildExitError(code, stderr, unparsedLines.join("\n"))),
+              new Error(
+                buildExitError(code, stderr, unparsedLines.join("\n"), fatalResultError),
+              ),
             ),
           )
         } else if (!emittedToken) {
           // CLI exited successfully but produced no assistant text.
           // Surface this as an explicit error so the ingest pipeline
           // retries rather than silently writing an empty stub page.
-          const details = stderr || unparsedLines.join("\n").trim()
+          const details = fatalResultError || stderr || unparsedLines.join("\n").trim()
           finishWith(() =>
             onError(new Error(
               details
@@ -308,20 +344,26 @@ export async function streamClaudeCodeCli(
  * we used to throw was correct but unactionable — users had to
  * read JSON-shaped stderr text to figure out what to do.
  *
- * Three diagnostic sources, used in priority order:
- *   1. stderr — the canonical place. The most common content is
- *      `Unauthenticated:` from Claude Code itself, meaning the
- *      user's ~/.claude OAuth token expired / was revoked / they
- *      logged out. We surface that case explicitly because users
- *      otherwise mis-diagnose it as an LLM Wiki bug.
- *   2. unparsedStdout — stdout lines the parser didn't recognize
- *      (non-JSON, unknown event types, the stream-json `error`
- *      event shape). Used as a fallback when stderr is empty —
- *      claude sometimes writes its real diagnostic to stdout via
- *      the stream-json channel, and our parser silently drops
- *      anything it doesn't classify, leaving users with no info
- *      at all.
- *   3. Neither — silent exit. We can't help much here other than
+ * Four diagnostic sources, used in priority order:
+ *   1. auth failure — the most common fatal case. Detected by
+ *      pattern-matching stderr AND resultError together, because
+ *      claude reports an expired/revoked OAuth session in different
+ *      places depending on version: `Unauthenticated:` on stderr, or
+ *      a `{"type":"result","is_error":true,"result":"Failed to
+ *      authenticate: ..."}` event on stdout with empty stderr (#708).
+ *      Surfaced explicitly because users otherwise mis-diagnose it
+ *      as an LLM Wiki bug.
+ *   2. resultError — the `result` text extracted from an is_error
+ *      result event. It's the CLI's own one-line failure
+ *      description, so it beats dumping raw stdout JSON at the user.
+ *   3. stderr — other stderr diagnostics.
+ *   4. unparsedStdout — stdout lines the parser didn't recognize
+ *      (non-JSON, unknown event shapes). Used as a fallback when
+ *      stderr is empty — claude sometimes writes its real diagnostic
+ *      to stdout via the stream-json channel, and our parser
+ *      silently drops anything it doesn't classify, leaving users
+ *      with no info at all.
+ *   5. Neither — silent exit. We can't help much here other than
  *      telling the user to reproduce in a terminal where they can
  *      see whatever output the CLI does produce.
  */
@@ -329,15 +371,27 @@ export function buildExitError(
   code: number,
   stderr: string,
   unparsedStdout: string = "",
+  resultError: string = "",
 ): string {
-  if (/unauthenticated|please.*log\s*in|authentication.*failed/i.test(stderr)) {
+  // Match stderr and the extracted result text together: the auth
+  // failure travels on either channel depending on CLI version.
+  const diagnostics = `${stderr}\n${resultError}`
+  if (
+    /unauthenticated|please.*log\s*in|authentication.*failed|failed to authenticate|oauth session expired/i.test(
+      diagnostics,
+    )
+  ) {
     return [
       "Claude Code CLI is not authenticated.",
       "Please open a terminal and run `claude` to complete the OAuth login,",
       "then retry. (LLM Wiki only spawns the binary — it can't run the",
       "login flow on your behalf.)",
       stderr ? `\n\n— stderr —\n${stderr}` : "",
+      resultError ? `\n\n— result —\n${resultError}` : "",
     ].join(" ").trim()
+  }
+  if (resultError.trim()) {
+    return `claude CLI exited with code ${code}: ${resultError}`
   }
   if (stderr) {
     return `claude CLI exited with code ${code}: ${stderr}`
