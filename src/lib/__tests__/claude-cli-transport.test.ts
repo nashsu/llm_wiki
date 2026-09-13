@@ -133,6 +133,46 @@ describe("createClaudeCodeStreamParser", () => {
     expect(parse(JSON.stringify({ type: "future_type_we_dont_know" }))).toBeNull()
   })
 
+  it("signals a fatal error via onFatalError when a result event has is_error: true", () => {
+    // Real-user scenario (#708): an expired OAuth session makes claude
+    // report the fatal error inside a `result` event on stdout — not on
+    // stderr and not as a separate `error` event. The parser must hand
+    // the `result` text to onFatalError instead of discarding the line.
+    const parse = createClaudeCodeStreamParser()
+    const onFatalError = vi.fn()
+    parse.onFatalError = onFatalError
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: "Failed to authenticate: OAuth session expired and could not be refreshed",
+    })
+    expect(parse(line)).toBeNull()
+    expect(onFatalError).toHaveBeenCalledTimes(1)
+    expect(onFatalError).toHaveBeenCalledWith(
+      "Failed to authenticate: OAuth session expired and could not be refreshed",
+    )
+  })
+
+  it("does not fire onFatalError for an is_error result without a usable result string", () => {
+    const parse = createClaudeCodeStreamParser()
+    const onFatalError = vi.fn()
+    parse.onFatalError = onFatalError
+    expect(parse(JSON.stringify({ type: "result", is_error: true }))).toBeNull()
+    expect(parse(JSON.stringify({ type: "result", is_error: true, result: 42 }))).toBeNull()
+    expect(parse(JSON.stringify({ type: "result", is_error: true, result: "   " }))).toBeNull()
+    expect(onFatalError).not.toHaveBeenCalled()
+  })
+
+  it("does not fire onFatalError for successful result events", () => {
+    const parse = createClaudeCodeStreamParser()
+    const onFatalError = vi.fn()
+    parse.onFatalError = onFatalError
+    expect(parse(JSON.stringify({ type: "result", subtype: "success", result: "done" }))).toBeNull()
+    expect(parse(JSON.stringify({ type: "result", is_error: false, result: "done" }))).toBeNull()
+    expect(onFatalError).not.toHaveBeenCalled()
+  })
+
   it("returns null for malformed JSON or blank lines", () => {
     const parse = createClaudeCodeStreamParser()
     expect(parse("")).toBeNull()
@@ -386,6 +426,59 @@ describe("streamClaudeCodeCli", () => {
     )
   })
 
+  it("shows the auth hint when an is_error result reports an expired OAuth session", async () => {
+    // #708: claude exits 1 with empty stderr once the local OAuth
+    // session expires; the real error travels in a stream-json `result`
+    // event on stdout. The user must see the login hint, not the raw
+    // JSON blob that line used to be dumped as.
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamClaudeCodeCli(
+      {
+        provider: "claude-code",
+        apiKey: "",
+        model: "claude-sonnet-4-6",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 200000,
+      },
+      [{ role: "user", content: "ping" }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(
+      `claude-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "Failed to authenticate: OAuth session expired and could not be refreshed",
+      }),
+    )
+    tauriMocks.emit(`claude-cli:${payload.streamId}:done`, { code: 1, stderr: "" })
+
+    await stream
+
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toMatch(/not authenticated/i)
+    expect(message).toContain("`claude`")
+    expect(message).toMatch(/terminal/i)
+    expect(message).not.toContain("is_error")
+    expect(message).not.toMatch(/couldn't parse/)
+    expect(callbacks.onToken).not.toHaveBeenCalled()
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+  })
+
   it("does not spawn when the signal is already aborted", async () => {
     const controller = new AbortController()
     controller.abort()
@@ -445,6 +538,52 @@ describe("buildExitError", () => {
 
   it("matches the case-insensitive Authentication failed variant", () => {
     const msg = buildExitError(1, "Authentication failed (401)")
+    expect(msg).toMatch(/not authenticated/i)
+  })
+
+  it("recognizes an auth failure carried in the result text (the #708 case)", () => {
+    // claude reports an expired OAuth session via a stream-json result
+    // event on stdout, with stderr empty — the message must still land
+    // on the friendly login hint.
+    const msg = buildExitError(
+      1,
+      "",
+      "",
+      "Failed to authenticate: OAuth session expired and could not be refreshed",
+    )
+    expect(msg).toMatch(/not authenticated/i)
+    expect(msg).toMatch(/`claude`/)
+    expect(msg).toMatch(/terminal/i)
+    expect(msg).not.toMatch(/couldn't parse/)
+  })
+
+  it("prefers the auth hint over the raw unparsed stdout dump", () => {
+    // Before #708 the user saw the JSON wall below instead of the
+    // login hint, because the auth check only ever looked at stderr.
+    const dump =
+      '{"type":"system","subtype":"init","session_id":"abc"}\n' +
+      '{"type":"result","is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed"}'
+    const msg = buildExitError(
+      1,
+      "",
+      dump,
+      "Failed to authenticate: OAuth session expired and could not be refreshed",
+    )
+    expect(msg).toMatch(/not authenticated/i)
+    expect(msg).toContain("`claude`")
+    expect(msg).not.toContain("is_error")
+    expect(msg).not.toMatch(/couldn't parse/)
+  })
+
+  it("surfaces a non-auth result error instead of the JSON dump", () => {
+    const msg = buildExitError(1, "", "", "Invalid API key provided")
+    expect(msg).toContain("Invalid API key provided")
+    expect(msg).toContain("code 1")
+    expect(msg).not.toMatch(/couldn't parse/)
+  })
+
+  it("matches the OAuth-session-expired phrasing without the authenticate prefix", () => {
+    const msg = buildExitError(1, "", "", "OAuth session expired and could not be refreshed")
     expect(msg).toMatch(/not authenticated/i)
   })
 
