@@ -271,6 +271,67 @@ describe("streamChat — buffered streaming responses", () => {
     expect(onDone).toHaveBeenCalledTimes(1)
     expect(onError).not.toHaveBeenCalled()
   })
+
+  it("surfaces a length finish_reason so callers can detect truncation", async () => {
+    const body = [
+      openAiSseToken("partial analysis"),
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onDone = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken: vi.fn(), onDone, onError: vi.fn() },
+    )
+
+    expect(onDone).toHaveBeenCalledWith({ finishReason: "length" })
+  })
+
+  it("surfaces a normal stop finish_reason on clean completion", async () => {
+    const body = [
+      openAiSseToken("done"),
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+      "data: [DONE]",
+      "",
+    ].join("\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onDone = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken: vi.fn(), onDone, onError: vi.fn() },
+    )
+
+    expect(onDone).toHaveBeenCalledWith({ finishReason: "stop" })
+  })
+
+  it("leaves finishReason undefined when the gateway sends no terminal frame", async () => {
+    const body = [openAiSseToken("opaque gateway"), ""].join("\n")
+    mockHttpFetch.mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }))
+    const onDone = vi.fn()
+
+    await streamChat(
+      customStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken: vi.fn(), onDone, onError: vi.fn() },
+    )
+
+    expect(onDone).toHaveBeenCalledWith({ finishReason: undefined })
+  })
 })
 
 describe("streamChat — non-streaming HTTP responses", () => {

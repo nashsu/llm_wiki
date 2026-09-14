@@ -69,6 +69,7 @@ interface ProviderConfig {
   headers: Record<string, string>
   buildBody: (messages: ChatMessage[], overrides?: RequestOverrides) => unknown
   parseStream: (line: string) => string | null
+  parseFinishReason?: (line: string) => string | null
   parseResponse: (payload: unknown) => string
   streaming: boolean
 }
@@ -180,6 +181,53 @@ function parseOpenAiLine(line: string): string | null {
       choices: Array<{ delta: { content?: string } }>
     }
     return parsed.choices?.[0]?.delta?.content ?? null
+  } catch {
+    return null
+  }
+}
+
+function parseOpenAiFinishReason(line: string): string | null {
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
+  if (data === "[DONE]") return null
+  try {
+    const parsed = JSON.parse(data) as {
+      choices?: Array<{ finish_reason?: string | null }>
+    }
+    const reason = parsed.choices?.[0]?.finish_reason
+    return typeof reason === "string" && reason ? reason : null
+  } catch {
+    return null
+  }
+}
+
+export function parseAnthropicFinishReason(line: string): string | null {
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
+  try {
+    const parsed = JSON.parse(data) as {
+      type?: string
+      delta?: { stop_reason?: string | null }
+    }
+    if (parsed.type === "message_delta") {
+      const reason = parsed.delta?.stop_reason
+      return typeof reason === "string" && reason ? reason : null
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function parseGoogleFinishReason(line: string): string | null {
+  if (!line.startsWith("data:")) return null
+  const data = line.slice(5).trim()
+  try {
+    const parsed = JSON.parse(data) as {
+      candidates?: Array<{ finishReason?: string }>
+    }
+    const reason = parsed.candidates?.[0]?.finishReason
+    return typeof reason === "string" && reason ? reason : null
   } catch {
     return null
   }
@@ -934,6 +982,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           model,
         }),
         parseStream: parseOpenAiLine,
+        parseFinishReason: parseOpenAiFinishReason,
         parseResponse: parseOpenAiResponse,
         streaming,
       }
@@ -951,6 +1000,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           }
         },
         parseStream: parseAnthropicLine,
+        parseFinishReason: parseAnthropicFinishReason,
         parseResponse: parseAnthropicResponse,
         streaming,
       }
@@ -975,6 +1025,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           reasoning: effectiveReasoning(config, overrides),
         }),
         parseStream: parseGoogleLine,
+        parseFinishReason: parseGoogleFinishReason,
         parseResponse: parseGoogleResponse,
         streaming,
       }
@@ -994,6 +1045,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         buildBody: (messages, overrides) =>
           buildOpenAiCompatibleBody(config, messages, overrides, streaming),
         parseStream: parseOpenAiLine,
+        parseFinishReason: parseOpenAiFinishReason,
         parseResponse: parseOpenAiResponse,
         streaming,
       }
@@ -1021,6 +1073,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           model,
         }),
         parseStream: parseOpenAiLine,
+        parseFinishReason: parseOpenAiFinishReason,
         parseResponse: parseOpenAiResponse,
         streaming,
       }
@@ -1044,6 +1097,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           }
         },
         parseStream: parseAnthropicLine,
+        parseFinishReason: parseAnthropicFinishReason,
         parseResponse: parseAnthropicResponse,
         streaming,
       }
@@ -1078,6 +1132,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
             }
           },
           parseStream: parseAnthropicLine,
+          parseFinishReason: parseAnthropicFinishReason,
           parseResponse: parseAnthropicResponse,
           streaming,
         }
@@ -1118,6 +1173,7 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
           return body
         },
         parseStream: parseOpenAiLine,
+        parseFinishReason: parseOpenAiFinishReason,
         parseResponse: parseOpenAiResponse,
         streaming,
       }

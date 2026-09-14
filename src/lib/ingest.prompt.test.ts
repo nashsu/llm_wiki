@@ -7,6 +7,7 @@ import {
   computeIngestReviewMaxTokens,
   computeIngestSourceBudget,
   formatIngestWarningLogEntry,
+  isLengthTruncation,
   splitSourceIntoSemanticChunks,
 } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -204,6 +205,16 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
     expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
     expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
+  })
+
+  it("recognizes only length-style finish reasons as truncation", () => {
+    expect(isLengthTruncation("length")).toBe(true)
+    expect(isLengthTruncation("max_tokens")).toBe(true)
+    expect(isLengthTruncation("MAX_TOKENS")).toBe(true)
+    expect(isLengthTruncation("stop")).toBe(false)
+    expect(isLengthTruncation("end_turn")).toBe(false)
+    expect(isLengthTruncation("STOP")).toBe(false)
+    expect(isLengthTruncation(undefined)).toBe(false)
   })
 
   it("scales source budget from the configured context window instead of a fixed 50k cap", () => {

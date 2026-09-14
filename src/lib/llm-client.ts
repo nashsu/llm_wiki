@@ -10,8 +10,20 @@ export { isFetchNetworkError } from "./tauri-fetch"
 export interface StreamCallbacks {
   onToken: (token: string) => void
   onReasoningToken?: (token: string) => void
-  onDone: () => void
+  /**
+   * Called when the stream ends without a transport-level error.
+   * `info.finishReason` is the provider's stop/length signal when the
+   * wire emits one (OpenAI `finish_reason`, Anthropic `stop_reason`,
+   * Google `finishReason`); it is undefined for CLI transports and
+   * gateways that never send a terminal frame. Callers must NOT treat
+   * undefined as either success or truncation.
+   */
+  onDone: (info?: StreamDoneInfo) => void
   onError: (error: Error) => void
+}
+
+export interface StreamDoneInfo {
+  finishReason?: string
 }
 
 function bufferedStreamCallbacks(callbacks: StreamCallbacks): StreamCallbacks {
@@ -20,10 +32,10 @@ function bufferedStreamCallbacks(callbacks: StreamCallbacks): StreamCallbacks {
   return {
     onToken: (token) => { content += token },
     onReasoningToken: (token) => { reasoning += token },
-    onDone: () => {
+    onDone: (info) => {
       if (reasoning) callbacks.onReasoningToken?.(reasoning)
       if (content) callbacks.onToken(content)
-      callbacks.onDone()
+      callbacks.onDone(info)
     },
     onError: callbacks.onError,
   }
@@ -177,6 +189,7 @@ export async function streamChat(
   requestOverrides?: RequestOverrides,
 ): Promise<void> {
   const { onToken, onDone, onError } = callbacks
+  let finishReason: string | undefined
 
   // Claude Code CLI uses a subprocess transport (stdin/stdout), not
   // HTTP. Dispatch before getProviderConfig — that function throws for
@@ -375,6 +388,8 @@ export async function streamChat(
 
     reasoningCharsObserved += countReasoningCharsInLine(trimmed)
     recordReasoning(trimmed)
+    const parsedFinishReason = providerConfig.parseFinishReason?.(trimmed)
+    if (parsedFinishReason) finishReason = parsedFinishReason
     const token = providerConfig.parseStream(trimmed)
     if (token !== null) {
       recordToken(token)
@@ -444,7 +459,7 @@ export async function streamChat(
       return
     }
 
-    onDone()
+    onDone({ finishReason })
   } catch (err) {
     // The abort can reach us two ways: a real AbortError, or — when the
     // Tauri HTTP plugin tears down the body stream — a bare *string*
