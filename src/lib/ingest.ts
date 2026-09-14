@@ -1033,6 +1033,7 @@ async function autoIngestImpl(
   let analysis = precomputedAnalysis
 
   if (!analysis) {
+    let analysisFinishReason: string | undefined
     await streamChat(
       llmConfig,
       [
@@ -1041,7 +1042,7 @@ async function autoIngestImpl(
       ],
       {
         onToken: (token) => { analysis += token },
-        onDone: () => {},
+        onDone: (info) => { analysisFinishReason = info?.finishReason },
         onError: (err) => {
           activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
         },
@@ -1049,6 +1050,19 @@ async function autoIngestImpl(
       signal,
       { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: 4096 },
     )
+
+    // The single-pass analysis hit max_tokens: the output was cut mid-way
+    // (observed in the wild as a truncated entity table with every later
+    // required section missing). Surface a warning so the truncation is
+    // visible in the ingest warning log; the partial analysis is used as-is.
+    if (isLengthTruncation(analysisFinishReason)) {
+      const truncationWarning =
+        `Single-pass analysis output truncated at max_tokens=4096 ` +
+        `(finish_reason=${analysisFinishReason}, source_chars=${sourceContext.length}, ` +
+        `partial_analysis_chars=${analysis.length}); the analysis may be incomplete`
+      console.warn(`[ingest:truncation] ${truncationWarning}`)
+      await appendIngestWarningLog(pp, sourceIdentity, [truncationWarning])
+    }
   }
 
   // A silent `return []` here would look like success to the queue
@@ -2584,6 +2598,12 @@ export function computeIngestGenerationMaxTokens(maxContextSize: number | undefi
   return INGEST_GENERATION_TOKENS_DEFAULT
 }
 
+export function isLengthTruncation(finishReason: string | undefined): boolean {
+  if (!finishReason) return false
+  const normalized = finishReason.toLowerCase()
+  return normalized === "length" || normalized === "max_tokens"
+}
+
 export function computeIngestReviewMaxTokens(maxContextSize: number | undefined): number {
   return Math.min(8_192, Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)))
 }
@@ -2923,6 +2943,7 @@ async function analyzeLongSourceInChunks(
 
     let raw = ""
     let hadError = false
+    let finishReason: string | undefined
     await streamChat(
       llmConfig,
       [
@@ -2939,7 +2960,7 @@ async function analyzeLongSourceInChunks(
       ],
       {
         onToken: (token) => { raw += token },
-        onDone: () => {},
+        onDone: (info) => { finishReason = info?.finishReason },
         onError: (err) => {
           hadError = true
           activity.updateItem(activityId, { status: "error", detail: `Chunk analysis failed: ${err.message}` })
@@ -2951,6 +2972,18 @@ async function analyzeLongSourceInChunks(
 
     throwIfIngestAborted(signal, activityId)
     if (hadError) throw new Error("Chunk analysis stream failed")
+
+    // max_tokens truncation: this chunk's analysis was cut mid-way.
+    // Surface a warning so the truncation is visible in the ingest
+    // warning log; the partial chunk analysis is used as-is.
+    if (isLengthTruncation(finishReason)) {
+      const truncationWarning =
+        `Chunk ${chunk.index}/${chunk.total} analysis output truncated at max_tokens=4096 ` +
+        `(finish_reason=${finishReason}, partial_analysis_chars=${raw.length}); ` +
+        `this chunk's analysis may be incomplete`
+      console.warn(`[ingest:truncation] ${truncationWarning}`)
+      await appendIngestWarningLog(projectPath, sourceIdentity, [truncationWarning])
+    }
 
     const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()
     const nextDigest = extractMarkedSection(raw, "Updated Global Digest")
