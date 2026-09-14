@@ -436,7 +436,7 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wiki.read_page".to_string(),
-            description: "Read a project wiki markdown page by project-relative path.".to_string(),
+            description: "Read a project markdown file by project-relative path: a wiki page under wiki/, or an original source document under raw/sources/. Wiki pages list their originals in `sources:` frontmatter; read those paths when primary-source evidence is needed.".to_string(),
             effects: vec![ToolEffect::Read],
             parameters: Some(serde_json::json!({
                 "type": "object",
@@ -2308,10 +2308,66 @@ fn extract_frontmatter_list(content: &str, key: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// Wiki `sources:` frontmatter records originals relative to raw/sources/
+/// (`Analyst/Theme/post.pdf.md`). Resolve that form under raw/sources/ when the
+/// path names no top-level project area and the file exists there.
+///
+/// Also accepts wiki link forms a model copies out of a page: `[[slug]]`,
+/// `[[slug|alias]]`, `sources/slug`, or a wiki path without `.md`.
+fn resolve_source_relative_path(project_path: &str, rel: &str) -> String {
+    let root = Path::new(project_path);
+    let unlinked = rel.trim().trim_start_matches("[[").trim_end_matches("]]");
+    let rel = unlinked.split('|').next().unwrap_or(unlinked).trim();
+    let lower = rel.to_ascii_lowercase();
+    if rel.split('/').any(|segment| segment == "..") {
+        return rel.to_string();
+    }
+    if lower.starts_with("wiki/") && !lower.ends_with(".md") {
+        let with_extension = format!("{rel}.md");
+        if root.join(&with_extension).is_file() {
+            return with_extension;
+        }
+    }
+    if lower.starts_with("wiki/")
+        || lower.starts_with("raw/")
+        || lower == "purpose.md"
+        || lower == "schema.md"
+    {
+        return rel.to_string();
+    }
+    let candidate = format!("raw/sources/{rel}");
+    if root.join(&candidate).is_file() {
+        return candidate;
+    }
+    if !lower.ends_with(".md") {
+        let direct = format!("wiki/{rel}.md");
+        if root.join(&direct).is_file() {
+            return direct;
+        }
+        if !rel.contains('/') {
+            let file_name = format!("{rel}.md");
+            if let Some(found) = WalkDir::new(root.join("wiki"))
+                .into_iter()
+                .filter_map(Result::ok)
+                .find(|entry| {
+                    entry.file_type().is_file()
+                        && entry.file_name().to_str() == Some(file_name.as_str())
+                })
+            {
+                return relative_to_project(project_path, found.path());
+            }
+        }
+    }
+    rel.to_string()
+}
+
 pub fn read_wiki_page(project_path: &str, rel_path: &str) -> Result<String, String> {
-    let rel = normalize_rel_path(rel_path);
-    if !is_public_read_rel(&rel) || !rel.to_ascii_lowercase().starts_with("wiki/") {
-        return Err("wiki.read_page path must stay under wiki/".to_string());
+    let rel = resolve_source_relative_path(project_path, &normalize_rel_path(rel_path));
+    let lower = rel.to_ascii_lowercase();
+    if !is_public_read_rel(&rel)
+        || !(lower.starts_with("wiki/") || lower.starts_with("raw/sources/"))
+    {
+        return Err("wiki.read_page path must stay under wiki/ or raw/sources/".to_string());
     }
     let path = safe_project_join(project_path, &rel)?;
     let meta = fs::metadata(&path).map_err(|err| format!("Failed to read page metadata: {err}"))?;
@@ -2403,9 +2459,28 @@ pub fn search_sources(
     if !root.exists() {
         return Ok(Vec::new());
     }
+    // Occurrences recorded per term per file, and how close two terms must sit
+    // to count as co-occurring when choosing the snippet window.
+    // A post about one company names it far more than 20 times, so a low cap
+    // hid the late passage that actually answers the query.
+    const MAX_TERM_OCCURRENCES: usize = 400;
+    const PROXIMITY_WINDOW_BYTES: usize = 300;
+
+    struct SourceCandidate {
+        rel: String,
+        title: String,
+        content: String,
+        phrase_idx: Option<usize>,
+        occurrences: Vec<Vec<usize>>,
+        name_hits: Vec<bool>,
+    }
+
     let lower_query = query.to_lowercase();
     let query_terms = source_query_terms(&lower_query);
-    let mut refs = Vec::new();
+    let multi_term = query_terms.len() > 1;
+    let mut candidates = Vec::new();
+    let mut document_frequency = vec![0usize; query_terms.len()];
+    let mut searched_files = 0usize;
     let mut seen_files = 0usize;
     for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
         if !entry.file_type().is_file() {
@@ -2478,41 +2553,155 @@ pub fn search_sources(
         } else {
             continue;
         };
+        searched_files += 1;
         let lower = content.to_lowercase();
-        let matched = std::iter::once(lower_query.as_str())
-            .chain(query_terms.iter().map(String::as_str))
-            .find_map(|term| lower.find(term).map(|idx| (idx, term.len())));
-        let Some((byte_idx, _matched_len)) = matched else {
+        let phrase_idx = lower.find(lower_query.as_str());
+        let occurrences: Vec<Vec<usize>> = query_terms
+            .iter()
+            .map(|term| {
+                lower
+                    .match_indices(term.as_str())
+                    .map(|(idx, _)| idx)
+                    .take(MAX_TERM_OCCURRENCES)
+                    .collect()
+            })
+            .collect();
+        if phrase_idx.is_none() && occurrences.iter().all(Vec::is_empty) {
             continue;
-        };
-        refs.push(AgentReference {
+        }
+        for (count, found) in document_frequency.iter_mut().zip(&occurrences) {
+            if !found.is_empty() {
+                *count += 1;
+            }
+        }
+        let lower_name = entry.file_name().to_string_lossy().to_lowercase();
+        candidates.push(SourceCandidate {
+            name_hits: query_terms
+                .iter()
+                .map(|term| lower_name.contains(term.as_str()))
+                .collect(),
             title: entry
                 .path()
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(&rel)
                 .to_string(),
-            path: rel,
-            kind: "source".to_string(),
-            snippet: Some(snippet_around_byte(
-                &content,
-                byte_idx,
-                MAX_SOURCE_SNIPPET_CHARS,
-            )),
-            score: None,
-            knowledge_context: None,
+            rel,
+            content,
+            phrase_idx,
+            occurrences,
         });
-        if refs.len() >= top_k.clamp(1, 10) {
-            break;
-        }
     }
-    Ok(refs)
+
+    // Rank by how much of the query a file covers, weighting each term by how
+    // rare it is across the searched files. Unweighted, words such as "post"
+    // or "original" that appear nearly everywhere outrank the specific terms
+    // that identify the document; unranked, walk order decides.
+    let file_count = searched_files.max(1) as f64;
+    let idf: Vec<f64> = document_frequency
+        .iter()
+        .map(|&df| (1.0 + file_count / df.max(1) as f64).ln())
+        .collect();
+    let mut refs: Vec<(f64, AgentReference)> = candidates
+        .into_iter()
+        .map(|candidate| {
+            let mut score = 0.0;
+            for (i, found) in candidate.occurrences.iter().enumerate() {
+                if !found.is_empty() {
+                    score += idf[i];
+                }
+                if candidate.name_hits[i] {
+                    score += idf[i] * 0.5;
+                }
+            }
+            // Centre the snippet where the most informative terms cluster,
+            // which is usually the passage that answers the query.
+            let mut best_window = (0.0f64, candidate.phrase_idx.unwrap_or(0));
+            for &pos in candidate.occurrences.iter().flatten() {
+                let window: f64 = candidate
+                    .occurrences
+                    .iter()
+                    .zip(&idf)
+                    .filter(|(found, _)| has_occurrence_near(found, pos, PROXIMITY_WINDOW_BYTES))
+                    .map(|(_, weight)| weight)
+                    .sum();
+                if window > best_window.0 {
+                    best_window = (window, pos);
+                }
+            }
+            score += best_window.0 * 0.5;
+            let byte_idx = match candidate.phrase_idx {
+                Some(idx) if multi_term => {
+                    score += idf.iter().sum::<f64>();
+                    idx
+                }
+                _ => best_window.1,
+            };
+            (
+                score,
+                AgentReference {
+                    title: candidate.title,
+                    path: candidate.rel,
+                    kind: "source".to_string(),
+                    snippet: Some(snippet_around_byte(
+                        &candidate.content,
+                        byte_idx,
+                        MAX_SOURCE_SNIPPET_CHARS,
+                    )),
+                    score: None,
+                    knowledge_context: None,
+                },
+            )
+        })
+        .collect();
+    refs.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.path.cmp(&b.1.path))
+    });
+    Ok(refs
+        .into_iter()
+        .take(top_k.clamp(1, 10))
+        .map(|(_, reference)| reference)
+        .collect())
+}
+
+/// Whether `sorted` (ascending byte offsets) has an entry within `window` of `pos`.
+fn has_occurrence_near(sorted: &[usize], pos: usize, window: usize) -> bool {
+    let start = sorted.partition_point(|&p| p + window < pos);
+    sorted.get(start).is_some_and(|&p| p <= pos + window)
 }
 
 fn source_query_terms(query: &str) -> Vec<String> {
-    query
+    let mut terms: Vec<String> = Vec::new();
+    let candidates = query
         .split(|c: char| c.is_whitespace() || matches!(c, ',' | '，' | ';' | '；' | ':' | '：'))
-        .map(str::trim)
+        // Quotation marks and edge punctuation are not part of a term:
+        // `"acme"` and `analyst's` must still match `acme` and `analyst`.
+        .map(|term| {
+            let term = term.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\''
+                        | '“'
+                        | '”'
+                        | '‘'
+                        | '’'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '?'
+                        | '!'
+                        | '.'
+                        | '*'
+                        | '`'
+                )
+            });
+            term.strip_suffix("'s")
+                .or_else(|| term.strip_suffix("’s"))
+                .unwrap_or(term)
+        })
         .filter(|term| term.chars().count() >= 2)
         .filter(|term| {
             !matches!(
@@ -2525,10 +2714,57 @@ fn source_query_terms(query: &str) -> Vec<String> {
                     | "原始资料"
                     | "原始文件"
                     | "源文件"
+                    // Common English words match nearly every document and
+                    // would otherwise dominate ranking.
+                    | "the"
+                    | "and"
+                    | "for"
+                    | "with"
+                    | "what"
+                    | "which"
+                    | "who"
+                    | "how"
+                    | "why"
+                    | "when"
+                    | "did"
+                    | "does"
+                    | "was"
+                    | "were"
+                    | "are"
+                    | "is"
+                    | "his"
+                    | "her"
+                    | "its"
+                    | "of"
+                    | "in"
+                    | "on"
+                    | "to"
+                    | "at"
+                    | "by"
+                    | "an"
+                    | "or"
+                    | "as"
+                    | "be"
+                    | "it"
+                    | "this"
+                    | "that"
+                    | "from"
+                    | "about"
+                    | "one"
+                    // Words describing the request rather than the content.
+                    | "quote"
+                    | "quoted"
+                    | "verbatim"
+                    | "wording"
+                    | "exact"
             )
-        })
-        .map(ToString::to_string)
-        .collect()
+        });
+    for term in candidates {
+        if !terms.iter().any(|existing| existing == term) {
+            terms.push(term.to_string());
+        }
+    }
+    terms
 }
 
 fn safe_project_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
@@ -2752,7 +2988,13 @@ fn relative_to_project(project_path: &str, path: &Path) -> String {
 }
 
 fn snippet_around_byte(content: &str, byte_idx: usize, max_chars: usize) -> String {
-    let char_idx = content[..byte_idx.min(content.len())].chars().count();
+    // Offsets come from a lowercased copy, whose byte lengths can differ for
+    // some characters; step back to a boundary rather than panic on a slice.
+    let mut byte_idx = byte_idx.min(content.len());
+    while !content.is_char_boundary(byte_idx) {
+        byte_idx -= 1;
+    }
+    let char_idx = content[..byte_idx].chars().count();
     let start = char_idx.saturating_sub(max_chars / 2);
     let mut snippet = content
         .chars()
@@ -2821,6 +3063,167 @@ mod tests {
     fn read_wiki_page_rejects_traversal() {
         let err = read_wiki_page("/tmp/project", "../secret.md").unwrap_err();
         assert!(err.contains("wiki.read_page"));
+    }
+
+    #[test]
+    fn read_wiki_page_reads_raw_sources_but_not_hidden_or_other_paths() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-read-source-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("raw/sources/Analyst")).unwrap();
+        fs::create_dir_all(root.join("raw/other")).unwrap();
+        fs::create_dir_all(root.join(".llm-wiki")).unwrap();
+        fs::write(
+            root.join("raw/sources/Analyst/2026-08-05 - Post - Full.pdf.md"),
+            "Our DCF for Acme is $42.",
+        )
+        .unwrap();
+        fs::write(root.join("raw/other/notes.md"), "not public").unwrap();
+        fs::write(root.join(".llm-wiki/app-state.json"), "{}").unwrap();
+        let project = root.to_str().unwrap();
+
+        let body = read_wiki_page(
+            project,
+            "raw/sources/Analyst/2026-08-05 - Post - Full.pdf.md",
+        )
+        .unwrap();
+        assert!(body.contains("DCF for Acme"));
+        assert!(read_wiki_page(project, "raw/other/notes.md").is_err());
+        assert!(read_wiki_page(project, ".llm-wiki/app-state.json").is_err());
+        assert!(read_wiki_page(project, "raw/sources/../other/notes.md").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_sources_ranks_files_by_query_coverage_not_walk_order() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-source-rank-{}", Uuid::new_v4()));
+        let source_dir = root.join("raw").join("sources");
+        fs::create_dir_all(source_dir.join("A")).unwrap();
+        fs::create_dir_all(source_dir.join("Z")).unwrap();
+        for i in 0..12 {
+            fs::write(
+                source_dir.join("A").join(format!("noise-{i:02}.md")),
+                "Rates stay low for longer.",
+            )
+            .unwrap();
+        }
+        fs::write(
+            source_dir.join("Z").join("target.md"),
+            "Our DCF for Acme is $42, a low-risk high-margin name.",
+        )
+        .unwrap();
+
+        let refs =
+            search_sources(root.to_str().unwrap(), "DCF Acme low risk high margin", 10).unwrap();
+        assert_eq!(refs[0].path, "raw/sources/Z/target.md");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_sources_weights_rare_terms_over_common_ones() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-source-idf-{}", Uuid::new_v4()));
+        let source_dir = root.join("raw").join("sources");
+        fs::create_dir_all(source_dir.join("common")).unwrap();
+        for i in 0..20 {
+            fs::write(
+                source_dir.join("common").join(format!("post-{i:02}.md")),
+                "Original post, full classification notes from the author.",
+            )
+            .unwrap();
+        }
+        fs::write(
+            source_dir.join("common").join("generic.md"),
+            "Original post with classification and more original post text.",
+        )
+        .unwrap();
+        fs::write(source_dir.join("specific.md"), "Our DCF for Acme is $42.").unwrap();
+
+        let refs = search_sources(
+            root.to_str().unwrap(),
+            "Analyst DCF Acme original post classification",
+            10,
+        )
+        .unwrap();
+        assert_eq!(refs[0].path, "raw/sources/specific.md");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_sources_snippet_centres_on_clustered_terms() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-source-snippet-{}", Uuid::new_v4()));
+        let source_dir = root.join("raw").join("sources");
+        fs::create_dir_all(&source_dir).unwrap();
+        let filler = "Unrelated market commentary. ".repeat(60);
+        fs::write(
+            source_dir.join("post.md"),
+            format!(
+                "Acme reported results today. {filler}Our DCF for Acme is $42, low-risk/high-margin."
+            ),
+        )
+        .unwrap();
+
+        let refs = search_sources(root.to_str().unwrap(), "DCF Acme risk margin", 5).unwrap();
+        assert!(refs[0].snippet.as_deref().unwrap().contains("$42"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_wiki_page_resolves_source_relative_paths_from_frontmatter() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-read-relative-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("raw/sources/Analyst/Theme")).unwrap();
+        fs::write(
+            root.join("raw/sources/Analyst/Theme/2026-08-05 - Post - Full.pdf.md"),
+            "Body of the original.",
+        )
+        .unwrap();
+        let project = root.to_str().unwrap();
+
+        let body =
+            read_wiki_page(project, "Analyst/Theme/2026-08-05 - Post - Full.pdf.md").unwrap();
+        assert!(body.contains("Body of the original"));
+        assert!(read_wiki_page(project, "Analyst/Theme/missing.pdf.md").is_err());
+        assert!(
+            read_wiki_page(project, "../Analyst/Theme/2026-08-05 - Post - Full.pdf.md").is_err()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_wiki_page_resolves_wiki_link_forms() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-read-link-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("wiki/sources")).unwrap();
+        fs::create_dir_all(root.join("wiki/findings")).unwrap();
+        fs::write(
+            root.join("wiki/sources/12-analyst--note--abc.md"),
+            "# Source page",
+        )
+        .unwrap();
+        fs::write(root.join("wiki/findings/acme-fair-value.md"), "# Finding").unwrap();
+        let project = root.to_str().unwrap();
+
+        for link in [
+            "[[12-analyst--note--abc]]",
+            "[[12-analyst--note--abc|January note]]",
+            "sources/12-analyst--note--abc",
+        ] {
+            assert!(
+                read_wiki_page(project, link)
+                    .unwrap()
+                    .contains("Source page"),
+                "{link}"
+            );
+        }
+        assert!(read_wiki_page(project, "wiki/findings/acme-fair-value")
+            .unwrap()
+            .contains("Finding"));
+        assert!(read_wiki_page(project, "[[no-such-page]]").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_query_terms_strip_quotes_possessives_and_request_words() {
+        assert_eq!(
+            source_query_terms(r#""acme" "dcf" analyst's (margin) quote the original post?"#),
+            vec!["acme", "dcf", "analyst", "margin", "original", "post"]
+        );
     }
 
     #[test]
