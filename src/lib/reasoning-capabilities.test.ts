@@ -20,6 +20,18 @@ describe("reasoning capabilities", () => {
     expect(normalizeReasoningForProvider(cfg, { mode: "off" })).toEqual({ mode: "auto" })
   })
 
+  it("offers Zhipu BigModel an on/off thinking toggle on every bigmodel.cn path", () => {
+    for (const endpoint of [
+      "https://open.bigmodel.cn/api/paas/v4",
+      "https://open.bigmodel.cn/api/coding/paas/v4",
+    ]) {
+      const cfg = { ...config("custom", "glm-5.3-flash"), customEndpoint: endpoint }
+      expect(resolveReasoningCapabilities(cfg).modes).toEqual(["auto", "off"])
+      expect(normalizeReasoningForProvider(cfg, { mode: "off" })).toEqual({ mode: "off" })
+      expect(normalizeReasoningForProvider(cfg, { mode: "high" })).toEqual({ mode: "auto" })
+    }
+  })
+
   it("offers OpenRouter's documented reasoning controls only on its endpoint", () => {
     const cfg = {
       ...config("custom", "vendor/reasoning-model"),

@@ -491,6 +491,16 @@ function buildOpenAiCompatibleBody(
     return body
   }
 
+  if (config.provider === "custom" && isBigModelEndpoint(config)) {
+    // Zhipu documents `thinking.type` as the only thinking control on
+    // /chat/completions, and GLM-5 (especially the coding-plan gateway,
+    // whose default reasoning level is max) thinks unless told not to.
+    if (reasoning.mode === "off") {
+      body.thinking = { type: "disabled" }
+    }
+    return body
+  }
+
   if (config.provider === "ollama") {
     // Ollama's OpenAI-compatible /v1/chat/completions maps reasoning
     // control onto `reasoning_effort` ("high"|"medium"|"low"|"none";

@@ -637,6 +637,44 @@ describe("reasoning controls", () => {
     expect(body.max_reasoning_tokens).toBeUndefined()
   })
 
+  it("maps Zhipu BigModel reasoning off to thinking disabled", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "glm-5.3-flash",
+      customEndpoint: "https://open.bigmodel.cn/api/coding/paas/v4",
+      apiMode: "chat_completions",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "disabled" })
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it("leaves Zhipu BigModel thinking to the server unless reasoning is off", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "glm-5.3",
+      customEndpoint: "https://open.bigmodel.cn/api/paas/v4",
+      apiMode: "chat_completions",
+    })
+    const auto = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "auto" } },
+    ) as Record<string, unknown>
+    expect(auto.thinking).toBeUndefined()
+
+    // Effort levels are not a BigModel control; they normalize to auto.
+    const high = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "high" } },
+    ) as Record<string, unknown>
+    expect(high.thinking).toBeUndefined()
+    expect(high.reasoning_effort).toBeUndefined()
+  })
+
   it("maps Xiaomi MiMo reasoning off to thinking disabled and max_completion_tokens", () => {
     const cfg = mkConfig({
       provider: "custom",
