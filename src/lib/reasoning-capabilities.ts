@@ -100,6 +100,11 @@ export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabi
     if (/xiaomimimo\.com(?:[:/]|$)/.test(endpoint)) {
       return capabilities(TOGGLE_LEVELS)
     }
+    // Zhipu BigModel documents only `thinking.type` enabled/disabled on its
+    // OpenAI-compatible wire, including the coding-plan gateway paths.
+    if (/open\.bigmodel\.cn(?:[:/]|$)/.test(endpoint)) {
+      return capabilities(TOGGLE_LEVELS)
+    }
     // Anthropic-compatible custom endpoints are not necessarily Anthropic
     // itself (MiniMax, Kimi and enterprise proxies differ), so omission is the
     // only portable default. Users can select a first-party preset when they

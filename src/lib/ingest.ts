@@ -10,6 +10,7 @@ import {
   listDirectory,
 } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
+import { streamIngestChat } from "@/lib/ingest-llm-stream"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { parseWithMineruResult } from "@/lib/mineru"
@@ -50,6 +51,9 @@ const LONG_SOURCE_CHUNK_MIN = 12_000
 const LONG_SOURCE_CHUNK_MAX = 60_000
 const LONG_SOURCE_DIGEST_MAX = 15_000
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
+// Thinking-capable endpoints count reasoning tokens against this cap; 4K
+// let long chains of thought end the reply before any analysis text.
+const INGEST_ANALYSIS_MAX_TOKENS = 32_768
 const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
 const INGEST_GENERATION_TOKENS_256K = 24_576
@@ -1033,7 +1037,7 @@ async function autoIngestImpl(
   let analysis = precomputedAnalysis
 
   if (!analysis) {
-    await streamChat(
+    await streamIngestChat(
       llmConfig,
       [
         { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext, schema) },
@@ -1047,7 +1051,7 @@ async function autoIngestImpl(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: 4096 },
+      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: INGEST_ANALYSIS_MAX_TOKENS },
     )
   }
 
@@ -1065,7 +1069,7 @@ async function autoIngestImpl(
 
   let generation = ""
 
-  await streamChat(
+  await streamIngestChat(
     llmConfig,
     [
       { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
@@ -1119,7 +1123,7 @@ async function autoIngestImpl(
   if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
     let reviewStageHadError = false
     try {
-      await streamChat(
+      await streamIngestChat(
         llmConfig,
         [
           {
@@ -1194,7 +1198,7 @@ async function autoIngestImpl(
     let repairOutput = ""
     let repairFailed = false
     try {
-      await streamChat(
+      await streamIngestChat(
         llmConfig,
         [
           {
@@ -2923,7 +2927,7 @@ async function analyzeLongSourceInChunks(
 
     let raw = ""
     let hadError = false
-    await streamChat(
+    await streamIngestChat(
       llmConfig,
       [
         { role: "system", content: systemPrompt },
@@ -2946,7 +2950,7 @@ async function analyzeLongSourceInChunks(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: 4096 },
+      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: INGEST_ANALYSIS_MAX_TOKENS },
     )
 
     throwIfIngestAborted(signal, activityId)
