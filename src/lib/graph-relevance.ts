@@ -121,20 +121,24 @@ function extractWikilinks(content: string): string[] {
   return links
 }
 
+function buildTargetIndex(nodeIds: ReadonlySet<string>): ReadonlyMap<string, string> {
+  const index = new Map<string, string>()
+  for (const id of nodeIds) {
+    const normalized = id.toLowerCase().replace(/\s+/g, "-")
+    // All legacy fallback checks reduce to this normalized key. Keep the first
+    // ID in iteration order when multiple IDs share an alias.
+    if (!index.has(normalized)) index.set(normalized, id)
+  }
+  return index
+}
+
 function resolveTarget(
   raw: string,
   nodeIds: ReadonlySet<string>,
+  targetIndex: ReadonlyMap<string, string>,
 ): string | null {
   if (nodeIds.has(raw)) return raw
-
-  const normalized = raw.toLowerCase().replace(/\s+/g, "-")
-  for (const id of nodeIds) {
-    const idLower = id.toLowerCase()
-    if (idLower === normalized) return id
-    if (idLower === raw.toLowerCase()) return id
-    if (idLower.replace(/\s+/g, "-") === normalized) return id
-  }
-  return null
+  return targetIndex.get(raw.toLowerCase().replace(/\s+/g, "-")) ?? null
 }
 
 function getNeighbors(node: RetrievalNode): ReadonlySet<string> {
@@ -206,6 +210,8 @@ export async function buildRetrievalGraph(
   }
 
   const nodeIds = new Set(rawNodes.map((n) => n.id))
+  // Build once per uncached graph: O(N) indexing + O(E) lookups, not O(N * E).
+  const targetIndex = buildTargetIndex(nodeIds)
 
   // Second pass: resolve links and build graph nodes
   const outLinksMap = new Map<string, Set<string>>()
@@ -218,7 +224,7 @@ export async function buildRetrievalGraph(
 
   for (const raw of rawNodes) {
     for (const linkTarget of raw.rawLinks) {
-      const resolvedId = resolveTarget(linkTarget, nodeIds)
+      const resolvedId = resolveTarget(linkTarget, nodeIds, targetIndex)
       if (resolvedId === null || resolvedId === raw.id) continue
       outLinksMap.get(raw.id)!.add(resolvedId)
       inLinksMap.get(resolvedId)!.add(raw.id)
