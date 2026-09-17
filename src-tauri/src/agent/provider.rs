@@ -642,17 +642,17 @@ fn anthropic_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String>
     let key = config.api_key.trim();
     if !key.is_empty() {
         let name = if requires_bearer_auth(url) {
-            "Authorization"
+            "authorization"
         } else {
             "x-api-key"
         };
-        let value = if name == "Authorization" {
+        let value = if name == "authorization" {
             format!("Bearer {key}")
         } else {
             key.to_string()
         };
         headers.insert(
-            HeaderName::from_static(name),
+            name,
             HeaderValue::from_str(&value)
                 .map_err(|err| format!("Invalid API key header: {err}"))?,
         );
@@ -1141,6 +1141,20 @@ mod tests {
             .custom_headers
             .insert("X-Bad".into(), "ok\r\nInjected: yes".into());
         assert!(custom_headers(&config).is_err());
+    }
+
+    #[test]
+    fn anthropic_headers_use_bearer_for_minimax() {
+        let cfg = config("custom");
+        let headers = anthropic_headers(&cfg, "https://api.minimax.io/anthropic/v1/messages")
+            .unwrap();
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+        assert!(headers.get("x-api-key").is_none());
+
+        let headers =
+            anthropic_headers(&cfg, "https://api.anthropic.com/v1/messages").unwrap();
+        assert_eq!(headers.get("x-api-key").unwrap(), "key");
+        assert!(headers.get("authorization").is_none());
     }
 
     #[test]
