@@ -84,11 +84,37 @@ describe("ensureBrokenLinkStub", () => {
     expect(fsMocks.createDirectory).toHaveBeenCalledWith("/project/wiki/queries")
     expect(fsMocks.writeFile).toHaveBeenCalledWith(
       "/project/wiki/queries/foo-bar.md",
-      expect.stringContaining("title: \"Foo Bar\""),
+      expect.stringContaining('title: "Foo Bar"'),
     )
+    const written = fsMocks.writeFile.mock.calls[0][1] as string
+    expect(written).toContain("type: query")
   })
 
   it("keeps explicit wiki subdirectories when building stub paths", () => {
     expect(stubRelativePathFromBrokenTarget("concepts/Foo Bar")).toBe("concepts/foo-bar.md")
+  })
+
+  it("derives stub type from destination folder so pages stay in the graph", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "concepts/Clash Detection")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/concepts/clash-detection.md",
+      expect.stringContaining("type: concept"),
+    )
+    const written = fsMocks.writeFile.mock.calls[0][1] as string
+    expect(written).not.toMatch(/^type: query$/m)
+    expect(written).toContain('title: "Clash Detection"')
+  })
+
+  it("uses custom folder names as stub types for unknown wiki dirs", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "standards/iso-19650")
+
+    const written = fsMocks.writeFile.mock.calls[0][1] as string
+    expect(written).toContain("type: standards")
+    expect(written).not.toMatch(/^type: query$/m)
   })
 })
