@@ -35,6 +35,7 @@ import {
   extractAndSaveSourceImages,
   extractAndSaveMarkdownImages,
   buildImageMarkdownSection,
+  markdownImageDestination,
   type SavedImage,
 } from "@/lib/extract-source-images"
 import { captionMarkdownImages, loadCaptionCache } from "@/lib/image-caption-pipeline"
@@ -63,7 +64,7 @@ function appendSavedImageRefsForCaption(content: string, images: SavedImage[]): 
   const refs = images
     .map((img) => img.relPath)
     .filter(Boolean)
-    .map((relPath) => `![](${relPath})`)
+    .map((relPath) => `![](${markdownImageDestination(relPath)})`)
   if (refs.length === 0) return content
   return `${content}\n\n## Referenced Local Images\n\n${refs.join("\n")}\n`
 }

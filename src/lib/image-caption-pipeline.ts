@@ -167,7 +167,13 @@ async function writeCache(projectPath: string, cache: CaptionCache): Promise<voi
  *     handled — we don't generate them either. Add support if
  *     it matters.
  */
-const MD_IMAGE_RE = /(!\[)([^\]]*)(\]\()([^)\s]+)(\))/g
+const MD_IMAGE_RE = /(!\[)([^\]]*)(\]\()(<[^>\n]+>|[^)\s]+)(\))/g
+
+/** Strip CommonMark `<...>` brackets from a destination. Paths with
+ *  spaces (e.g. `media/My PDF/img-1.png`) are written in that form. */
+function unbracketDestination(dest: string): string {
+  return dest.startsWith("<") ? dest.slice(1, -1) : dest
+}
 
 interface ImageRef {
   full: string // the entire `![alt](url)` substring
@@ -215,7 +221,7 @@ function findImageReferences(markdown: string): ImageRef[] {
     out.push({
       full: m[0],
       alt: m[2],
-      url: m[4],
+      url: unbracketDestination(m[4]),
       index: m.index,
       length: m[0].length,
     })
@@ -501,7 +507,7 @@ export async function captionMarkdownImages(
   const enrichedMarkdown = markdown.replace(
     MD_IMAGE_RE,
     (whole, openBang, _alt, closeBracket, url, closeParen) => {
-      const caption = captionByUrl.get(url)
+      const caption = captionByUrl.get(unbracketDestination(url))
       if (!caption) return whole
       const safe = caption
         .replace(/[\r\n]+/g, " ") // collapse newlines

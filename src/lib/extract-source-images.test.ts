@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { findLocalMarkdownImageRefs } from "./extract-source-images"
+import { findLocalMarkdownImageRefs, markdownImageDestination } from "./extract-source-images"
 
 describe("findLocalMarkdownImageRefs", () => {
   it("extracts Obsidian and markdown local image references", () => {
@@ -19,5 +19,13 @@ describe("findLocalMarkdownImageRefs", () => {
 ![[draft.txt]]
 `)
     expect(refs).toEqual([])
+  })
+})
+
+describe("markdownImageDestination", () => {
+  it("wraps paths with spaces or parentheses in angle brackets (#768)", () => {
+    expect(markdownImageDestination("media/My PDF/img-1.png")).toBe("<media/My PDF/img-1.png>")
+    expect(markdownImageDestination("media/report(1)/img-1.png")).toBe("<media/report(1)/img-1.png>")
+    expect(markdownImageDestination("media/my-pdf/img-1.png")).toBe("media/my-pdf/img-1.png")
   })
 })

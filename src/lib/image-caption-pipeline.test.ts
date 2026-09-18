@@ -67,9 +67,33 @@ describe("findImageReferences (helper)", () => {
     expect(refs).toHaveLength(1)
     expect(refs[0].url).toBe("z.png")
   })
+
+  it("matches angle-bracket destinations with spaces (#768)", () => {
+    const refs = __test.findImageReferences("![](<media/My PDF/img-1.png>) ![](media/my-pdf/img-2.png)")
+    expect(refs.map((r) => r.url)).toEqual(["media/My PDF/img-1.png", "media/my-pdf/img-2.png"])
+    expect(refs[0].full).toBe("![](<media/My PDF/img-1.png>)")
+  })
+
+  it("does not swallow a title into the destination", () => {
+    const refs = __test.findImageReferences('![](<media/My PDF/a.png> "t") ![](b.png "t")')
+    expect(refs).toEqual([])
+  })
 })
 
 describe("captionMarkdownImages", () => {
+  it("captions an angle-bracket path with spaces and keeps the brackets (#768)", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("a red square")
+
+    const out = await captionMarkdownImages("/proj", "![](<media/My PDF/img-1.png>)", cfg, {
+      urlToAbsPath: (url) => `/proj/wiki/${url}`,
+    })
+
+    expect(out.freshCaptions).toBe(1)
+    expect(mockReadBase64).toHaveBeenCalledWith("/proj/wiki/media/My PDF/img-1.png")
+    expect(out.enrichedMarkdown).toBe("![a red square](<media/My PDF/img-1.png>)")
+  })
+
   it("returns input unchanged when there are no image references", async () => {
     const out = await captionMarkdownImages("/proj", "no images here", cfg)
     expect(out.enrichedMarkdown).toBe("no images here")

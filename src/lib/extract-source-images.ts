@@ -270,6 +270,12 @@ export async function extractAndSaveMarkdownImages(
  * inline at page breaks; that requires the text extractor to emit
  * page boundaries, which it doesn't yet.
  */
+/** Markdown image destination for a relative path. Paths with spaces or
+ *  parentheses need CommonMark's `<...>` form or the image ref breaks. */
+export function markdownImageDestination(path: string): string {
+  return /[\s()]/.test(path) ? `<${path}>` : path
+}
+
 export function buildImageMarkdownSection(
   images: SavedImage[],
   captionsBySha?: Map<string, string>,
@@ -316,7 +322,7 @@ export function buildImageMarkdownSection(
       // page number anyway.
       const caption = captionsBySha?.get(img.sha256)
       const alt = caption ? sanitize(caption) : ""
-      lines.push(`![${alt}](${img.relPath})`)
+      lines.push(`![${alt}](${markdownImageDestination(img.relPath)})`)
     }
     lines.push("")
   }
