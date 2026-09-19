@@ -13,7 +13,7 @@ import type { LlmConfig } from "@/stores/wiki-store"
 import { enqueueBatch } from "@/lib/ingest-queue"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
-import { getFileName, getFileStem, getRelativePath, normalizePath } from "@/lib/path-utils"
+import { getFileName, getFileStem, getRelativePath, normalizePath, vectorPageIdFromWikiPath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
@@ -606,13 +606,19 @@ export async function cleanupDeletedWikiPages(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   const deletedInfos = relativePaths
-    .map((path) => ({ slug: getFileStem(path), title: "" }))
+    .map((path) => ({
+      slug: getFileStem(path),
+      pageId: vectorPageIdFromWikiPath(path),
+      title: "",
+    }))
     .filter((info) => info.slug.length > 0 && !info.slug.startsWith("."))
 
   if (deletedInfos.length === 0) return
 
   for (const info of deletedInfos) {
-    await removePageEmbedding(pp, info.slug)
+    if (info.pageId) {
+      await removePageEmbedding(pp, info.pageId)
+    }
     try {
       await deleteFile(`${pp}/wiki/media/${info.slug}`)
     } catch {

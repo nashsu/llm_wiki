@@ -117,9 +117,9 @@ describe("makeAvailableResearchFilePath", () => {
   it("derives the vector page id from the final collision-safe path", () => {
     expect(researchPageIdFromPath(
       "/project/wiki/queries/research-topic-2026-08-20-120000-research-41-2.md",
-    )).toBe("research-topic-2026-08-20-120000-research-41-2")
+    )).toBe("queries__research-topic-2026-08-20-120000-research-41-2")
     expect(researchPageIdFromPath("C:\\project\\wiki\\queries\\research-topic-3.MD"))
-      .toBe("research-topic-3")
+      .toBe("queries__research-topic-3")
   })
 })
 

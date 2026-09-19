@@ -25,7 +25,7 @@ import { readFile, listDirectory } from "@/commands/fs"
 import { invoke } from "@tauri-apps/api/core"
 import type { EmbeddingConfig } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
-import { normalizePath } from "@/lib/path-utils"
+import { normalizePath, vectorPageIdFromWikiPath } from "@/lib/path-utils"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
 import { parseFrontmatter } from "@/lib/frontmatter"
 
@@ -532,9 +532,10 @@ export async function embedAllPages(
       if (node.is_dir && node.children) {
         walk(node.children)
       } else if (!node.is_dir && node.name.endsWith(".md")) {
-        const id = node.name.replace(/\.md$/, "")
-        if (!["index", "log", "overview", "purpose", "schema"].includes(id)) {
-          mdFiles.push({ id, path: node.path })
+        const stem = node.name.replace(/\.md$/i, "")
+        if (!["index", "log", "overview", "purpose", "schema"].includes(stem)) {
+          const id = vectorPageIdFromWikiPath(node.path) || stem
+          if (id) mdFiles.push({ id, path: node.path })
         }
       }
     }

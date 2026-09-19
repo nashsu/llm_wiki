@@ -69,9 +69,10 @@ static VECTORSTORE_V2_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::RwL
     OnceLock::new();
 
 /// Validate page_id to prevent filter/path injection without rejecting
-/// legitimate Unicode wiki filenames. Page ids are wiki file stems; CJK
-/// letters, spaces, and punctuation such as `·` / `：` / `（` are valid page
-/// names, but quotes and separators are unsafe because we interpolate page_id
+/// legitimate Unicode wiki filenames. Page ids are schema-qualified wiki
+/// paths (`sources__mobile-architecture`); CJK letters, spaces, and
+/// punctuation such as `·` / `：` / `（` are valid page names, but quotes
+/// and separators are unsafe because we interpolate page_id
 /// into LanceDB filters (`page_id = '...'`) and derive debug chunk ids from it.
 /// Format/invisible characters are rejected so visually identical ids cannot
 /// differ only by soft hyphen, zero-width, bidi, tag, or separator characters.
@@ -1091,6 +1092,35 @@ mod tests_v2 {
             .unwrap();
 
         assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn v2_schema_qualified_same_stem_pages_coexist_without_clobber() {
+        let p = tmp_project();
+        let pp = p.to_string_lossy().to_string();
+        let sources = "sources__mobile-architecture";
+        let entities = "entities__mobile-architecture";
+
+        vector_upsert_chunks(pp.clone(), sources.into(), make_chunks(sources, 2, 16))
+            .await
+            .unwrap();
+        vector_upsert_chunks(pp.clone(), entities.into(), make_chunks(entities, 3, 16))
+            .await
+            .unwrap();
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 5);
+
+        vector_upsert_chunks(pp.clone(), sources.into(), make_chunks(sources, 1, 16))
+            .await
+            .unwrap();
+        assert_eq!(vector_count_chunks(pp.clone()).await.unwrap(), 4);
+
+        let hits = vector_search_chunks(pp.clone(), fake_embedding(0, 16), 20)
+            .await
+            .unwrap();
+        let page_ids: std::collections::BTreeSet<_> =
+            hits.iter().map(|hit| hit.page_id.as_str()).collect();
+        assert!(page_ids.contains(sources));
+        assert!(page_ids.contains(entities));
     }
 
     #[tokio::test]

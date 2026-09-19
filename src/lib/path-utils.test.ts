@@ -6,6 +6,7 @@ import {
   getFileStem,
   getRelativePath,
   isAbsolutePath,
+  vectorPageIdFromWikiPath,
 } from "./path-utils"
 
 describe("normalizePath", () => {
@@ -133,6 +134,28 @@ describe("getRelativePath", () => {
 
   it("keeps Unix paths case-sensitive", () => {
     expect(getRelativePath("/Project/wiki/note.md", "/project")).toBe("/Project/wiki/note.md")
+  })
+})
+
+describe("vectorPageIdFromWikiPath", () => {
+  it("keys embeddings by schema-qualified path so same stems coexist", () => {
+    expect(vectorPageIdFromWikiPath("wiki/sources/mobile-architecture.md")).toBe(
+      "sources__mobile-architecture",
+    )
+    expect(vectorPageIdFromWikiPath("wiki/entities/mobile-architecture.md")).toBe(
+      "entities__mobile-architecture",
+    )
+    expect(vectorPageIdFromWikiPath("/proj/wiki/sources/AGENTS.md")).toBe("sources__AGENTS")
+    expect(vectorPageIdFromWikiPath("C:\\proj\\wiki\\entities\\agents.md")).toBe(
+      "entities__agents",
+    )
+    expect(vectorPageIdFromWikiPath("wiki/page.md")).toBe("page")
+    expect(vectorPageIdFromWikiPath("wiki/concepts/some-deep/nested/page.md")).toBe(
+      "concepts__some-deep__nested__page",
+    )
+    expect(vectorPageIdFromWikiPath("wiki/concepts/foo.bar.md")).toBe("concepts__foo.bar")
+    expect(vectorPageIdFromWikiPath("/")).toBe("")
+    expect(vectorPageIdFromWikiPath("wiki/sources/.md")).toBe("")
   })
 })
 
