@@ -361,7 +361,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **macOS close-to-hide** — close button hides window (app stays running in background), click dock icon to restore, Cmd+Q to quit
 - **Windows/Linux close confirmation** — confirmation dialog before quitting to prevent accidental data loss
 - **Tauri v2** — native desktop on macOS, Windows, Linux
-- **GitHub Actions CI/CD** — automated builds for macOS (ARM + Intel), Windows (.msi), Linux (.deb / .AppImage)
+- **GitHub Actions CI/CD** — automated builds for macOS (Apple Silicon), Windows (.msi), Linux (.deb / .AppImage)
 
 ### 19. Other Additions
 
@@ -398,7 +398,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 ### Pre-built Binaries
 
 Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
-- **macOS**: `.dmg` (Apple Silicon + Intel)
+- **macOS**: `.dmg` (Apple Silicon; Intel builds are not published)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
 
