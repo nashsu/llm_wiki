@@ -369,7 +369,7 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 - **macOS close-to-hide** — close button은 창을 숨깁니다(앱은 background에서 계속 실행). dock icon을 클릭하면 복원되고 Cmd+Q로 종료합니다
 - **Windows/Linux 종료 확인** — 실수로 데이터를 잃지 않도록 종료 전 확인 대화상자 표시
 - **Tauri v2** — macOS, Windows, Linux에서 native desktop 제공
-- **GitHub Actions CI/CD** — macOS(ARM + Intel), Windows(.msi), Linux(.deb / .AppImage) 자동 빌드
+- **GitHub Actions CI/CD** — macOS(Apple Silicon), Windows(.msi), Linux(.deb / .AppImage) 자동 빌드
 
 ### 19. 기타 추가 사항
 
@@ -407,7 +407,7 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 
 [Releases](https://github.com/nashsu/llm_wiki/releases)에서 다운로드하세요.
 
-- **macOS**: `.dmg`(Apple Silicon + Intel)
+- **macOS**: `.dmg`(Apple Silicon; Intel 빌드는 아직 배포되지 않음)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
 
