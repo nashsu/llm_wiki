@@ -24,7 +24,7 @@ const MAX_HASH_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_RETRY_COUNT: u32 = 3;
 const APP_WRITE_IGNORE_MS: i64 = 4_000;
 const QUEUE_EMIT_EVERY: usize = 25;
-const LINUX_RESCAN_INTERVAL_MS: i64 = 10_000;
+const PERIODIC_RESCAN_INTERVAL_MS: i64 = 10_000;
 const DEFAULT_SOURCE_WATCH_CONFIG_JSON: &str =
     include_str!("../../../src/lib/source-watch-defaults.json");
 
@@ -480,6 +480,13 @@ fn handle_changed_paths(
     Ok(())
 }
 
+/// True when the watcher worker should hash-scan watch roots again.
+/// Used on every OS: `notify` can stall under load on Windows too, and
+/// a Linux-only timer left those stalls dead until app restart.
+fn periodic_rescan_due(last_periodic_rescan: i64, now: i64) -> bool {
+    now.saturating_sub(last_periodic_rescan) >= PERIODIC_RESCAN_INTERVAL_MS
+}
+
 fn maybe_periodic_rescan(
     app: &AppHandle,
     root: &Path,
@@ -488,7 +495,7 @@ fn maybe_periodic_rescan(
     watcher_generation: u64,
     last_periodic_rescan: &mut i64,
 ) {
-    if !cfg!(target_os = "linux") || now_ms() - *last_periodic_rescan < LINUX_RESCAN_INTERVAL_MS {
+    if !periodic_rescan_due(*last_periodic_rescan, now_ms()) {
         return;
     }
     *last_periodic_rescan = now_ms();
@@ -1876,5 +1883,12 @@ mod tests {
         assert_eq!(changed_count, QUEUE_EMIT_EVERY);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn periodic_rescan_is_due_after_interval_on_every_platform() {
+        assert!(!periodic_rescan_due(0, PERIODIC_RESCAN_INTERVAL_MS - 1));
+        assert!(periodic_rescan_due(0, PERIODIC_RESCAN_INTERVAL_MS));
+        assert!(periodic_rescan_due(1_000, 1_000 + PERIODIC_RESCAN_INTERVAL_MS));
     }
 }
