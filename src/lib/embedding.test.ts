@@ -1596,7 +1596,46 @@ describe("embedAllPages", () => {
     const upsertCalls = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_chunks")
     expect(upsertCalls).toHaveLength(2)
     const pageIds = upsertCalls.map((c) => (c[1] as { pageId: string }).pageId).sort()
-    expect(pageIds).toEqual(["attention", "rope"])
+    expect(pageIds).toEqual(["rope", "sub__attention"])
+  })
+
+  it("indexes same-stem pages in different schema dirs under distinct page ids", async () => {
+    listDirectoryMock.mockResolvedValueOnce([
+      {
+        name: "sources",
+        path: "/proj/wiki/sources",
+        is_dir: true,
+        children: [
+          {
+            name: "mobile-architecture.md",
+            path: "/proj/wiki/sources/mobile-architecture.md",
+            is_dir: false,
+          },
+        ],
+      },
+      {
+        name: "entities",
+        path: "/proj/wiki/entities",
+        is_dir: true,
+        children: [
+          {
+            name: "mobile-architecture.md",
+            path: "/proj/wiki/entities/mobile-architecture.md",
+            is_dir: false,
+          },
+        ],
+      },
+    ])
+    readFileMock.mockResolvedValue("# Title\n\nBody.")
+    mockHttpFetch.mockImplementation(async () => okResponse([0.5]))
+
+    const count = await embedAllPages("/proj", cfg)
+    expect(count).toBe(2)
+    const pageIds = mockInvoke.mock.calls
+      .filter((c) => c[0] === "vector_upsert_chunks")
+      .map((c) => (c[1] as { pageId: string }).pageId)
+      .sort()
+    expect(pageIds).toEqual(["entities__mobile-architecture", "sources__mobile-architecture"])
   })
 
   it("clears the chunk table before a forced rebuild", async () => {

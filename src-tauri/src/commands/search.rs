@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+use crate::commands::page_embedding::vector_page_id_from_wiki_path;
 use crate::commands::vectorstore;
 use crate::panic_guard::run_guarded_async;
 
@@ -343,7 +344,7 @@ pub async fn search_project_inner(
     };
     let query_phrase = trim_query_punctuation(&query.to_lowercase());
     let mut results = Vec::new();
-    let mut page_paths_by_stem = BTreeMap::new();
+    let mut page_paths_by_id: BTreeMap<String, String> = BTreeMap::new();
     let mut graph_pages = BTreeMap::new();
 
     let wiki_root = Path::new(&project_path).join("wiki");
@@ -366,19 +367,26 @@ pub async fn search_project_inner(
                 Ok(content) => content,
                 Err(_) => continue,
             };
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                let previous = page_paths_by_stem.insert(
-                    stem.to_string(),
-                    relative_to_project(&project_path, entry.path()),
-                );
-                if let Some(previous) = previous {
-                    eprintln!(
-                        "[Search] duplicate wiki page stem '{stem}': '{previous}' and '{}' share one vector page_id",
-                        relative_to_project(&project_path, entry.path())
-                    );
+            let relative_path = relative_to_project(&project_path, entry.path());
+            if let Some(page_id) = vector_page_id_from_wiki_path(&relative_path) {
+                if let Some(previous) = page_paths_by_id.get(&page_id) {
+                    if previous != &relative_path
+                        && vector_page_id_from_wiki_path(previous).as_deref()
+                            == Some(page_id.as_str())
+                    {
+                        eprintln!(
+                            "[Search] duplicate vector page_id '{page_id}': '{previous}' and '{relative_path}' share one vector identity"
+                        );
+                    }
+                }
+                page_paths_by_id.insert(page_id.clone(), relative_path.clone());
+                let stem = file_stem(&relative_path);
+                if !stem.is_empty() && stem != page_id {
+                    page_paths_by_id
+                        .entry(stem)
+                        .or_insert_with(|| relative_path.clone());
                 }
             }
-            let relative_path = relative_to_project(&project_path, entry.path());
             let title = extract_title(
                 &content,
                 entry
@@ -439,7 +447,7 @@ pub async fn search_project_inner(
                     }
                     materialize_vector_only_results(
                         &vector_results,
-                        &page_paths_by_stem,
+                        &page_paths_by_id,
                         &project_path,
                         &mut results,
                         include_content,
@@ -489,7 +497,12 @@ fn apply_rrf_scores(
 ) {
     for result in results {
         let token = token_rank.get(&normalize_path(&result.path)).copied();
-        let vector = vector_rank.get(&file_stem(&result.path)).copied();
+        let vector_key = vector_identity(&result.path);
+        let stem = file_stem(&result.path);
+        let vector = vector_rank
+            .get(&vector_key)
+            .copied()
+            .or_else(|| vector_rank.get(&stem).copied());
         let mut rrf = 0.0;
         if let Some(rank) = token {
             rrf += 1.0 / (RRF_K + rank as f64);
@@ -497,7 +510,11 @@ fn apply_rrf_scores(
         if let Some(rank) = vector {
             rrf += 1.0 / (RRF_K + rank as f64);
         }
-        if let Some(score) = vector_score.get(&file_stem(&result.path)).copied() {
+        if let Some(score) = vector_score
+            .get(&vector_key)
+            .copied()
+            .or_else(|| vector_score.get(&stem).copied())
+        {
             result.vector_score = Some(score);
         }
         result.score = rrf;
@@ -761,17 +778,24 @@ async fn search_by_embedding(
 
 fn materialize_vector_only_results(
     vector_results: &[PageVectorResult],
-    page_paths_by_stem: &BTreeMap<String, String>,
+    page_paths_by_id: &BTreeMap<String, String>,
     project_path: &str,
     results: &mut Vec<ProjectSearchResult>,
     include_content: bool,
 ) {
-    let mut known: BTreeSet<String> = results.iter().map(|r| file_stem(&r.path)).collect();
+    let mut known = BTreeSet::new();
+    for result in results.iter() {
+        known.insert(vector_identity(&result.path));
+        let stem = file_stem(&result.path);
+        if !stem.is_empty() {
+            known.insert(stem);
+        }
+    }
     for vr in vector_results {
         if known.contains(&vr.id) {
             continue;
         }
-        if let Some(rel) = page_paths_by_stem.get(&vr.id) {
+        if let Some(rel) = page_paths_by_id.get(&vr.id) {
             let path = Path::new(project_path).join(rel);
             let Ok(content) = fs::read_to_string(&path) else {
                 continue;
@@ -794,6 +818,11 @@ fn materialize_vector_only_results(
                 graph_related_to: Vec::new(),
             });
             known.insert(vr.id.clone());
+            known.insert(vector_identity(rel));
+            let stem = file_stem(rel);
+            if !stem.is_empty() {
+                known.insert(stem);
+            }
         }
     }
 }
@@ -1655,6 +1684,10 @@ fn file_stem(path: &str) -> String {
         .to_string()
 }
 
+fn vector_identity(path: &str) -> String {
+    vector_page_id_from_wiki_path(path).unwrap_or_else(|| file_stem(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1960,6 +1993,35 @@ mod tests {
     }
 
     #[test]
+    fn rrf_scores_same_stem_pages_in_different_schema_dirs_independently() {
+        let mut results = vec![
+            result("wiki/sources/mobile-architecture.md"),
+            result("wiki/entities/mobile-architecture.md"),
+        ];
+        let token_rank = BTreeMap::from([
+            ("wiki/sources/mobile-architecture.md".to_string(), 1),
+            ("wiki/entities/mobile-architecture.md".to_string(), 2),
+        ]);
+        let vector_rank = BTreeMap::from([
+            ("sources__mobile-architecture".to_string(), 1),
+            ("entities__mobile-architecture".to_string(), 2),
+        ]);
+        let vector_score = BTreeMap::from([
+            ("sources__mobile-architecture".to_string(), 0.95),
+            ("entities__mobile-architecture".to_string(), 0.8),
+        ]);
+
+        apply_rrf_scores(&mut results, &token_rank, &vector_rank, &vector_score);
+
+        assert_eq!(results[0].path, "wiki/sources/mobile-architecture.md");
+        assert_eq!(results[0].vector_score, Some(0.95));
+        assert!((results[0].score - (1.0 / 61.0 + 1.0 / 61.0)).abs() < 0.000001);
+        assert_eq!(results[1].path, "wiki/entities/mobile-architecture.md");
+        assert_eq!(results[1].vector_score, Some(0.8));
+        assert!((results[1].score - (1.0 / 62.0 + 1.0 / 62.0)).abs() < 0.000001);
+    }
+
+    #[test]
     fn search_mode_distinguishes_keyword_vector_and_hybrid() {
         assert_eq!(search_mode(false, 0, 0), "keyword");
         assert_eq!(search_mode(true, 3, 0), "vector");
@@ -2010,6 +2072,66 @@ mod tests {
         assert_eq!(results[0].vector_score, Some(0.91));
         assert!(results[0].snippet.contains("Section > Detail"));
         assert!(results[0].snippet.contains("semantic chunk"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn vector_only_materialization_keeps_same_stem_sibling_in_another_schema_dir() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/sources/mobile-architecture.md",
+            "---\ntitle: Source Architecture\n---\n\n# Source\n\nsource body.",
+        );
+        write_page(
+            &root,
+            "wiki/entities/mobile-architecture.md",
+            "---\ntitle: Entity Architecture\n---\n\n# Entity\n\nentity body.",
+        );
+        let vector_results = vec![
+            PageVectorResult {
+                id: "sources__mobile-architecture".to_string(),
+                score: 0.9,
+                chunk_text: "source chunk".to_string(),
+                heading_path: String::new(),
+            },
+            PageVectorResult {
+                id: "entities__mobile-architecture".to_string(),
+                score: 0.8,
+                chunk_text: "entity chunk".to_string(),
+                heading_path: String::new(),
+            },
+        ];
+        let mut results = vec![result("wiki/sources/mobile-architecture.md")];
+        let pages = BTreeMap::from([
+            (
+                "sources__mobile-architecture".to_string(),
+                "wiki/sources/mobile-architecture.md".to_string(),
+            ),
+            (
+                "entities__mobile-architecture".to_string(),
+                "wiki/entities/mobile-architecture.md".to_string(),
+            ),
+        ]);
+
+        materialize_vector_only_results(
+            &vector_results,
+            &pages,
+            &root.to_string_lossy(),
+            &mut results,
+            false,
+        );
+
+        assert_eq!(results.len(), 2);
+        let paths: BTreeSet<_> = results.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains("wiki/sources/mobile-architecture.md"));
+        assert!(paths.contains("wiki/entities/mobile-architecture.md"));
+        let entity = results
+            .iter()
+            .find(|r| r.path == "wiki/entities/mobile-architecture.md")
+            .unwrap();
+        assert_eq!(entity.vector_score, Some(0.8));
+        assert!(entity.snippet.contains("entity chunk"));
         let _ = fs::remove_dir_all(root);
     }
 
