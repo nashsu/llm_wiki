@@ -65,9 +65,15 @@ export function isOpenRouterEndpoint(endpoint: string): boolean {
 
 /**
  * Resolve only capabilities that are part of the selected wire contract.
- * Generic custom gateways deliberately stay Auto-only: a vendor-looking
- * model name does not prove that an aggregator accepts that vendor's private
- * request fields.
+ *
+ * Generic custom gateways expose `auto` and `off` only. A vendor-looking model
+ * name still does not prove that an aggregator accepts that vendor's private
+ * *effort* scale (low/medium/high/custom), so those stay unrepresentable. But
+ * "stop thinking" is a user intent, not a vendor feature: v0.6.7 dropped it
+ * (`401bf26`) and left a thinking model behind a generic gateway with no way to
+ * be stopped, so its whole output budget could go to chain-of-thought
+ * (issue #743). The body builder maps `off` onto portable disable fields and
+ * llm-client retries without them if the gateway rejects them.
  */
 export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabilities {
   if (config.provider === "claude-code" || config.provider === "codex-cli") {
@@ -93,18 +99,32 @@ export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabi
   }
   if (config.provider === "custom") {
     const endpoint = config.customEndpoint.toLowerCase()
+    // Decide the wire first: a vendor-looking domain must not unlock a control
+    // the Anthropic wire cannot honour, and the code does ship Anthropic-wire
+    // presets on vendor domains (Xiaomi, Kimi, Moonshot).
+    if ((config.apiMode ?? "chat_completions") === "anthropic_messages") {
+      // On the Anthropic wire `off` and `auto` build byte-identical bodies —
+      // thinking is only ever *enabled* explicitly — so an off control there
+      // would promise a guarantee we cannot make for a third-party gateway
+      // (it may enable thinking by default, and the Messages API has no
+      // "disable" flag). Keep it auto-only, as before.
+      return capabilities(AUTO_ONLY)
+    }
     if (isOpenRouterEndpoint(endpoint)) return capabilities(BUDGET_LEVELS)
     if (/api\.deepseek\.(?:com|cn)(?:[:/]|$)/.test(endpoint)) {
-      return capabilities(DEEPSEEK_LEVELS)
+      // Only DeepSeek V4 accepts the thinking parameter; for every other model
+      // on that domain the builder sends nothing, so no level is representable.
+      return capabilities(/deepseek[-_]?v4/i.test(config.model) ? DEEPSEEK_LEVELS : AUTO_ONLY)
     }
     if (/xiaomimimo\.com(?:[:/]|$)/.test(endpoint)) {
       return capabilities(TOGGLE_LEVELS)
     }
-    // Anthropic-compatible custom endpoints are not necessarily Anthropic
-    // itself (MiniMax, Kimi and enterprise proxies differ), so omission is the
-    // only portable default. Users can select a first-party preset when they
-    // need vendor-specific controls.
-    return capabilities(AUTO_ONLY)
+    // "off" is only offerable once the user has said *how* to express it. With
+    // no strategy we would send no field at all, so an off control would be a
+    // promise the wire cannot keep; `none` therefore stays auto-only, which is
+    // also exactly the behaviour of every earlier version.
+    if ((config.reasoningDisable ?? "none") === "none") return capabilities(AUTO_ONLY)
+    return capabilities(TOGGLE_LEVELS)
   }
   return capabilities(AUTO_ONLY)
 }

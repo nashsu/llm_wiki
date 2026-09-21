@@ -25,16 +25,19 @@ vi.mock("@/commands/fs", () => realFs)
 let pendingResponses: string[] = []
 let streamCallCount = 0
 let afterStreamToken: ((callIndex: number, token: string) => void) | null = null
-vi.mock("./llm-client", () => ({
-  streamChat: vi.fn(async (_cfg, _msgs, cb) => {
+vi.mock("./llm-client", () => {
+  const streamChat = vi.fn(async (_cfg, _msgs, cb) => {
     streamCallCount += 1
     const callIndex = streamCallCount
     const resp = pendingResponses.shift() ?? ""
     cb.onToken(resp)
     afterStreamToken?.(callIndex, resp)
     cb.onDone()
-  }),
-}))
+  })
+  // ingest routes its analysis passes through the reasoning-retry wrapper; both
+  // names share one implementation so call sequencing is unchanged.
+  return { streamChat, streamChatWithReasoningRetry: streamChat }
+})
 
 import { autoIngest } from "./ingest"
 import { useWikiStore } from "@/stores/wiki-store"

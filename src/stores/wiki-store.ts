@@ -24,6 +24,26 @@ export interface ReasoningConfig {
   budgetTokens?: number
 }
 
+/**
+ * How a generic custom endpoint is told to stop thinking when reasoning is
+ * `off`. The OpenAI-compatible wire has no portable "disable" field — each
+ * vendor family spells it differently — so the method is opt-in and defaults to
+ * sending nothing at all, which is what every earlier version did. Guessing a
+ * vendor field for an unknown gateway risks turning a working ingest into an
+ * HTTP 400, so the user picks the method their endpoint documents.
+ */
+export type ReasoningDisableStrategy =
+  /** Default: send no reasoning field at all (let the endpoint decide). */
+  | "none"
+  /** `chat_template_kwargs: { enable_thinking: false }` — vLLM / SGLang / llama.cpp (--jinja). */
+  | "chat_template_kwargs"
+  /** `enable_thinking: false` — DashScope / Qwen OpenAI-compatible mode. */
+  | "enable_thinking"
+  /** `thinking: { type: "disabled" }` — DeepSeek-native, Zhipu, Xiaomi MiMo. */
+  | "thinking_disabled"
+  /** `reasoning_effort: "none"` — OpenAI-style knobs, the field Ollama uses. */
+  | "reasoning_effort_none"
+
 interface LlmConfig {
   provider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
   apiKey: string
@@ -44,6 +64,12 @@ interface LlmConfig {
    * Defaults to "off", which is what ingest hardcoded before this was settable.
    */
   ingestReasoning?: ReasoningConfig
+  /**
+   * Custom endpoints only: how to express "stop thinking" when reasoning is
+   * `off`. Missing/"none" sends nothing (the long-standing behaviour), so
+   * existing setups keep behaving exactly as before.
+   */
+  reasoningDisable?: ReasoningDisableStrategy
   /**
    * Local CLI providers only. When true, LLM Wiki asks Claude/Codex CLI
    * to ignore user-level rules/config/MCP/tool state where the CLI exposes
@@ -345,6 +371,8 @@ export interface ProviderOverride {
   reasoning?: ReasoningConfig
   /** Reasoning used by structured ingest calls; defaults to off. */
   ingestReasoning?: ReasoningConfig
+  /** See `ReasoningDisableStrategy`; custom presets only. */
+  reasoningDisable?: ReasoningDisableStrategy
   localCliIsolation?: boolean
   codexCliTimeoutMinutes?: number
   requestTimeoutMinutes?: number

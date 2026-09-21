@@ -9,7 +9,7 @@ import {
   writeFile,
   listDirectory,
 } from "@/commands/fs"
-import { streamChat } from "@/lib/llm-client"
+import { streamChat, streamChatWithReasoningRetry } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { parseWithMineruResult } from "@/lib/mineru"
@@ -54,6 +54,8 @@ const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
 const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
+const INGEST_ANALYSIS_TOKENS_MIN = 8_192
+const INGEST_ANALYSIS_TOKENS_MAX = 16_384
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
 const AGGREGATE_WIKI_PATHS = ["wiki/index.md", "wiki/overview.md", "wiki/log.md"] as const
@@ -591,18 +593,40 @@ export async function autoIngest(
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
-  return withProjectLock(
-    `ingest-source\0${pp}\0${sp}`,
-    () => autoIngestImpl(
-      projectPath,
-      sourcePath,
-      llmConfig,
-      signal,
-      folderContext,
-      onFileWritten,
-      options,
-    ),
-  )
+  // One sink for the whole run. A failure anywhere — including inside the
+  // commit phase, after the ingest warnings were assembled — must still report
+  // a downgrade: the queue records only the thrown message, and the ingest
+  // warning log is never written on that path.
+  const notices = createIngestNoticeSink()
+  try {
+    return await withProjectLock(
+      `ingest-source\0${pp}\0${sp}`,
+      () => autoIngestImpl(
+        projectPath,
+        sourcePath,
+        llmConfig,
+        signal,
+        folderContext,
+        onFileWritten,
+        options,
+        notices,
+      ),
+    )
+  } catch (err) {
+    const failure = err instanceof Error ? err : new Error(String(err))
+    const message = notices.appendedTo(failure.message)
+    if (message !== failure.message) {
+      if (notices.activityId) {
+        useActivityStore.getState().updateItem(notices.activityId, {
+          status: "error",
+          detail: message,
+        })
+      }
+      // Keep the error identity and stack; only its message grows.
+      failure.message = message
+    }
+    throw failure
+  }
 }
 
 function throwIfIngestAborted(signal: AbortSignal | undefined, activityId?: string): void {
@@ -668,6 +692,8 @@ async function autoIngestImpl(
   folderContext?: string,
   onFileWritten?: (relativePath: string) => void,
   options?: AutoIngestOptions,
+  // Created by `autoIngest`, which also reports the notices when this throws.
+  notices: IngestNoticeSink = createIngestNoticeSink(),
 ): Promise<string[]> {
   const pp = normalizePath(projectPath)
   const sp = normalizePath(sourcePath)
@@ -688,6 +714,8 @@ async function autoIngestImpl(
     detail: "Reading source...",
     filesWritten: [],
   })
+  // So a later failure can attach collected notices to the visible activity item.
+  notices.activityId = activityId
 
   // ── MinerU preprocessing for PDF files ──
   const lowerExt = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() : ""
@@ -1013,6 +1041,7 @@ async function autoIngestImpl(
       sourceBudget,
       activityId,
       signal,
+      notices,
     )
     if (longSourcePlan.chunked) {
       sourceContext = longSourcePlan.sourceContext
@@ -1033,7 +1062,7 @@ async function autoIngestImpl(
   let analysis = precomputedAnalysis
 
   if (!analysis) {
-    await streamChat(
+    await streamChatWithReasoningRetry(
       llmConfig,
       [
         { role: "system", content: buildAnalysisPrompt(purpose, index, sourceContext, schema) },
@@ -1041,13 +1070,18 @@ async function autoIngestImpl(
       ],
       {
         onToken: (token) => { analysis += token },
+        onNotice: (notice) => { notices.push(notice) },
         onDone: () => {},
         onError: (err) => {
           activity.updateItem(activityId, { status: "error", detail: `Analysis failed: ${err.message}` })
         },
       },
       signal,
-      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: 4096 },
+      {
+        temperature: 0.1,
+        reasoning: resolveIngestReasoning(llmConfig),
+        max_tokens: computeIngestAnalysisMaxTokens(llmConfig.maxContextSize),
+      },
     )
   }
 
@@ -1056,6 +1090,7 @@ async function autoIngestImpl(
   // processNext's catch-block path (retry / mark failed) engages.
   const analysisActivity = useActivityStore.getState().items.find((i) => i.id === activityId)
   if (analysisActivity?.status === "error") {
+    // `autoIngest` attaches any collected downgrade notices to this throw.
     throw new Error(analysisActivity.detail || "Analysis stream failed")
   }
 
@@ -1065,7 +1100,12 @@ async function autoIngestImpl(
 
   let generation = ""
 
-  await streamChat(
+  // Same recovery as the analysis pass: a thinking endpoint that spends this
+  // budget on chain-of-thought ends the stream with no FILE blocks, which used
+  // to surface as "Generation failed" and lose the page exactly like #743's
+  // analysis failure. The retry only fires when nothing was generated, so it
+  // can never emit duplicate FILE blocks.
+  await streamChatWithReasoningRetry(
     llmConfig,
     [
       { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
@@ -1096,6 +1136,7 @@ async function autoIngestImpl(
     ],
     {
       onToken: (token) => { generation += token },
+      onNotice: (notice) => { notices.push(notice) },
       onDone: () => {},
       onError: (err) => {
         activity.updateItem(activityId, { status: "error", detail: `Generation failed: ${err.message}` })
@@ -1119,7 +1160,7 @@ async function autoIngestImpl(
   if (!signal?.aborted && shouldRunDedicatedReviewStage(generation)) {
     let reviewStageHadError = false
     try {
-      await streamChat(
+      await streamChatWithReasoningRetry(
         llmConfig,
         [
           {
@@ -1141,6 +1182,7 @@ async function autoIngestImpl(
         ],
         {
           onToken: (token) => { reviewSuggestionOutput += token },
+        onNotice: (notice) => { notices.push(notice) },
           onDone: () => {},
           onError: (err) => {
             reviewStageHadError = true
@@ -1180,6 +1222,8 @@ async function autoIngestImpl(
   throwIfIngestAborted(signal, activityId)
   const writtenPaths = writeResult.writtenPaths
   const writeWarnings = writeResult.warnings
+  // Transport-level downgrades reported while streaming (see IngestNoticeSink).
+  writeWarnings.push(...notices.drain())
   const hardFailures = writeResult.hardFailures
   let unrecoveredTruncatedPaths = uniqueNormalizedPaths(
     writeResult.truncatedPaths.filter((path) =>
@@ -1194,7 +1238,7 @@ async function autoIngestImpl(
     let repairOutput = ""
     let repairFailed = false
     try {
-      await streamChat(
+      await streamChatWithReasoningRetry(
         llmConfig,
         [
           {
@@ -1218,6 +1262,7 @@ async function autoIngestImpl(
         ],
         {
           onToken: (token) => { repairOutput += token },
+        onNotice: (notice) => { notices.push(notice) },
           onDone: () => {},
           onError: (err) => {
             repairFailed = true
@@ -1286,6 +1331,9 @@ async function autoIngestImpl(
       )
     }
   }
+
+  // Notices raised by the repair stage land here, after the earlier drain.
+  writeWarnings.push(...notices.drain())
 
   try {
     if (await updateWikiIndexDeterministically(pp, writtenPaths)) {
@@ -2588,6 +2636,24 @@ export function computeIngestReviewMaxTokens(maxContextSize: number | undefined)
   return Math.min(8_192, Math.max(4_096, Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)))
 }
 
+/**
+ * Output budget for the analysis pass (step 1/2) and its long-source chunk
+ * variant.
+ *
+ * Analysis is a bounded structured extraction, so half the generation
+ * allowance is the right size for the *answer* — but a thinking-capable
+ * endpoint spends part of that same budget on chain-of-thought before it
+ * writes anything. Pinning this at a flat 4096 let a reasoning model consume
+ * the entire allowance on CoT and end the stream with empty `content`, which
+ * surfaced as "Analysis failed: ... no actual response content" and silently
+ * lost the page (issue #743). Scale with the context window like generation
+ * does, with a floor that leaves room for the thinking and the answer.
+ */
+export function computeIngestAnalysisMaxTokens(maxContextSize: number | undefined): number {
+  const halfGeneration = Math.floor(computeIngestGenerationMaxTokens(maxContextSize) / 2)
+  return Math.min(INGEST_ANALYSIS_TOKENS_MAX, Math.max(INGEST_ANALYSIS_TOKENS_MIN, halfGeneration))
+}
+
 function splitOversizedBlock(block: string, targetChars: number): string[] {
   if (block.length <= targetChars * 1.25) return [block]
 
@@ -2869,6 +2935,53 @@ function buildChunkAnalysisUserPrompt(
   ].filter(Boolean).join("\n")
 }
 
+/**
+ * Collects non-fatal transport notices for one ingest run — for example a
+ * gateway rejecting the stop-thinking field the user chose, which means this
+ * request silently continued with thinking enabled.
+ *
+ * One shared, de-duplicated sink serves every streamed stage (chunk analysis,
+ * analysis, generation, review, repair) so a downgrade is equally visible
+ * wherever it happens and a retried stage cannot repeat the same warning. It is
+ * drained into the ingest warnings on success, or appended to the thrown error
+ * when the run dies before those warnings exist.
+ */
+export interface IngestNoticeSink {
+  push: (notice: string) => void
+  /** Everything seen so far, de-duplicated (used by failure exits). */
+  all: () => string[]
+  /** Take the notices not yet reported to the ingest warning list. */
+  drain: () => string[]
+  /** Message with every notice attached, or unchanged when there are none. */
+  appendedTo: (message: string) => string
+  /** Activity item to update when the run fails before warnings exist. */
+  activityId?: string
+}
+
+export function createIngestNoticeSink(): IngestNoticeSink {
+  const seen = new Set<string>()
+  const history: string[] = []
+  let pending: string[] = []
+  return {
+    push: (notice) => {
+      if (seen.has(notice)) return
+      seen.add(notice)
+      history.push(notice)
+      pending.push(notice)
+    },
+    all: () => [...history],
+    drain: () => {
+      const drained = pending
+      pending = []
+      return drained
+    },
+    appendedTo: (message) => {
+      const notices = [...history]
+      return notices.length === 0 ? message : `${message} (${notices.join("; ")})`
+    },
+  }
+}
+
 async function analyzeLongSourceInChunks(
   projectPath: string,
   llmConfig: LlmConfig,
@@ -2882,6 +2995,7 @@ async function analyzeLongSourceInChunks(
   sourceBudget: number,
   activityId: string,
   signal?: AbortSignal,
+  notices?: IngestNoticeSink,
 ): Promise<LongSourcePlan> {
   const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
   const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
@@ -2923,7 +3037,7 @@ async function analyzeLongSourceInChunks(
 
     let raw = ""
     let hadError = false
-    await streamChat(
+    await streamChatWithReasoningRetry(
       llmConfig,
       [
         { role: "system", content: systemPrompt },
@@ -2939,6 +3053,7 @@ async function analyzeLongSourceInChunks(
       ],
       {
         onToken: (token) => { raw += token },
+        onNotice: (notice) => { notices?.push(notice) },
         onDone: () => {},
         onError: (err) => {
           hadError = true
@@ -2946,7 +3061,11 @@ async function analyzeLongSourceInChunks(
         },
       },
       signal,
-      { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: 4096 },
+      {
+        temperature: 0.1,
+        reasoning: resolveIngestReasoning(llmConfig),
+        max_tokens: computeIngestAnalysisMaxTokens(llmConfig.maxContextSize),
+      },
     )
 
     throwIfIngestAborted(signal, activityId)

@@ -3,6 +3,7 @@ import {
   buildAnalysisPrompt,
   buildGenerationPrompt,
   buildPageMergeSystemPrompt,
+  computeIngestAnalysisMaxTokens,
   computeIngestGenerationMaxTokens,
   computeIngestReviewMaxTokens,
   computeIngestSourceBudget,
@@ -204,6 +205,19 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
     expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
     expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
+  })
+
+  it("gives the analysis pass a budget that survives extended thinking", () => {
+    // Issue #743: a flat 4096 let a reasoning model spend the whole allowance
+    // on chain-of-thought and return no answer, losing the page.
+    expect(computeIngestAnalysisMaxTokens(64_000)).toBe(8_192)
+    expect(computeIngestAnalysisMaxTokens(128_000)).toBe(8_192)
+    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(12_288)
+    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(16_384)
+
+    for (const contextSize of [undefined, 0, 8_192, 64_000, 128_000, 256_000, 1_000_000]) {
+      expect(computeIngestAnalysisMaxTokens(contextSize)).toBeGreaterThan(4_096)
+    }
   })
 
   it("scales source budget from the configured context window instead of a fixed 50k cap", () => {

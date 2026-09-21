@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { useWikiStore, type LlmConfig, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
+import { useWikiStore, type LlmConfig, type ProviderOverride, type ReasoningConfig, type ReasoningDisableStrategy, type ReasoningMode } from "@/stores/wiki-store"
 import { availableLlmPresets, findLlmPreset, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
 import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
@@ -15,6 +15,7 @@ import { testLlmConnection, testLlmFunction, type ProviderTestResult } from "@/l
 import { projectLlmProfile, resolveProjectLlmConfig } from "@/lib/llm-task-routing"
 import { saveProjectLlmOverride } from "@/lib/project-store"
 import { normalizeReasoningForProvider, resolveReasoningCapabilities } from "@/lib/reasoning-capabilities"
+import { usesNativeReasoningMapping } from "@/lib/llm-providers"
 
 const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 
@@ -382,6 +383,9 @@ function PresetRow({
   const reasoning = ov.reasoning ?? { mode: "auto" as const }
   // "off" by default: what ingest hardcoded before it was settable.
   const ingestReasoning = ov.ingestReasoning ?? { mode: "off" as const }
+  // Custom wire only: how to tell the endpoint to stop thinking. "none" sends
+  // nothing, which is the behaviour every earlier version had.
+  const reasoningDisable = ov.reasoningDisable ?? "none"
   const localCliIsolation = ov.localCliIsolation === true
   const codexCliTimeoutMinutes = Math.max(1, Math.min(240, ov.codexCliTimeoutMinutes ?? 10))
   const requestTimeoutMinutes = Math.max(1, Math.min(1440, ov.requestTimeoutMinutes ?? 30))
@@ -779,6 +783,41 @@ function PresetRow({
             title={t("settings.sections.llm.reasoning.ingestTitle")}
             hint={t("settings.sections.llm.reasoning.ingestHint")}
           />
+
+          {preset.provider === "custom"
+            && apiMode === "chat_completions"
+            // Endpoints with their own reasoning mapping (OpenRouter, DeepSeek
+            // V4, Xiaomi MiMo) ignore this choice, so offering it would imply a
+            // control we do not honour.
+            && !usesNativeReasoningMapping(resolvedConfig) && (
+            <div className="space-y-2">
+              <Label>{t("settings.sections.llm.reasoning.disableTitle")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sections.llm.reasoning.disableHint")}
+              </p>
+              <select
+                value={reasoningDisable}
+                onChange={(e) => onChange({
+                  reasoningDisable: e.target.value as ReasoningDisableStrategy,
+                })}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="none">{t("settings.sections.llm.reasoning.disableNone")}</option>
+                <option value="chat_template_kwargs">
+                  {t("settings.sections.llm.reasoning.disableChatTemplateKwargs")}
+                </option>
+                <option value="enable_thinking">
+                  {t("settings.sections.llm.reasoning.disableEnableThinking")}
+                </option>
+                <option value="thinking_disabled">
+                  {t("settings.sections.llm.reasoning.disableThinkingDisabled")}
+                </option>
+                <option value="reasoning_effort_none">
+                  {t("settings.sections.llm.reasoning.disableReasoningEffortNone")}
+                </option>
+              </select>
+            </div>
+          )}
 
           <div className="space-y-2 rounded-md border p-3">
             <div>

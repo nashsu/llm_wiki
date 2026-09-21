@@ -620,6 +620,14 @@
           "custom": "自定义",
           "budgetTokens": "thinking token 预算",
 
+          "disableTitle": "关闭思考的方式",
+          "disableHint": "当 reasoning 选为「关闭」时，用哪个字段告诉这个端点停止思考。默认不发送任何字段 —— 对不确定的网关最安全；请选择你的端点文档里写明的方式。",
+          "disableNone": "不发送（默认）",
+          "disableChatTemplateKwargs": "chat_template_kwargs（vLLM / SGLang / llama.cpp）",
+          "disableEnableThinking": "enable_thinking（DashScope / 通义）",
+          "disableThinkingDisabled": "thinking.type=disabled（DeepSeek / 智谱 / MiMo）",
+          "disableReasoningEffortNone": "reasoning_effort=none（OpenAI 风格 / Ollama）",
+
           "hint": "控制聊天时的推理强度；文档摄取使用下方的独立设置。",
           "ingestTitle": "导入时的推理",
           "ingestHint": "通常应关闭：导入需要结构化输出，推理只会增加耗时而无助于质量。仅当模型拒绝在关闭推理的情况下运行时才调高。"

@@ -620,6 +620,14 @@
           "custom": "Personalizzato",
           "budgetTokens": "token di budget per il ragionamento",
 
+          "disableTitle": "Metodo per disattivare il ragionamento",
+          "disableHint": "Come dire a questo endpoint di smettere di ragionare quando il ragionamento è disattivato. Il valore predefinito non invia nulla, la scelta più sicura per un gateway sconosciuto; scegli il metodo documentato dal tuo endpoint.",
+          "disableNone": "Non inviare nulla (predefinito)",
+          "disableChatTemplateKwargs": "chat_template_kwargs (vLLM / SGLang / llama.cpp)",
+          "disableEnableThinking": "enable_thinking (DashScope / Qwen)",
+          "disableThinkingDisabled": "thinking.type=disabled (DeepSeek / Zhipu / MiMo)",
+          "disableReasoningEffortNone": "reasoning_effort=none (stile OpenAI / Ollama)",
+
           "hint": "Controlla il ragionamento per la chat. L'elaborazione dei documenti usa l'impostazione separata qui sotto.",
           "ingestTitle": "Ragionamento durante l'ingest",
           "ingestHint": "Di norma va tenuto spento: l'ingest chiede output strutturato e il ragionamento costa tempo senza migliorarlo. Alzalo solo se il modello si rifiuta di funzionare con il ragionamento disattivato."

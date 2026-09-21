@@ -620,6 +620,14 @@
           "custom": "Custom",
           "budgetTokens": "thinking budget tokens",
 
+          "disableTitle": "Stop-thinking method",
+          "disableHint": "How this endpoint is told to stop thinking when reasoning is Off. The default sends nothing, the safest choice for an unknown gateway; pick the method your endpoint documents.",
+          "disableNone": "Send nothing (default)",
+          "disableChatTemplateKwargs": "chat_template_kwargs (vLLM / SGLang / llama.cpp)",
+          "disableEnableThinking": "enable_thinking (DashScope / Qwen)",
+          "disableThinkingDisabled": "thinking.type=disabled (DeepSeek / Zhipu / MiMo)",
+          "disableReasoningEffortNone": "reasoning_effort=none (OpenAI style / Ollama)",
+
           "hint": "Controls reasoning for chat. Document ingest uses the separate setting below.",
           "ingestTitle": "Reasoning during ingest",
           "ingestHint": "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled."

@@ -22,6 +22,7 @@ import {
   parseAnthropicResponse,
   parseGoogleResponse,
   parseOpenAiResponse,
+  resolveReasoningWirePlan,
   supportsImageInput,
   type ChatMessage,
   type ContentBlock,
@@ -744,19 +745,24 @@ describe("reasoning controls", () => {
     expect(body.messages).toEqual([{ role: "user", content: "Hi" }])
   })
 
-  it("does not infer Qwen private parameters on generic custom endpoints", () => {
+  it("does not infer Qwen private parameters from a model name alone", () => {
     const cfg = mkConfig({
       provider: "custom",
       model: "Qwen3.5-122B",
       customEndpoint: "http://127.0.0.1:8000/v1",
       apiMode: "chat_completions",
     })
+    // `auto` leaves the gateway alone: a vendor-looking model name does not
+    // prove the endpoint accepts chat_template_kwargs. Only an explicit `off`
+    // opts into the portable disable fields, and a gateway that then rejects
+    // them is handled by the retry-without-reasoning fallback in llm-client.
     const body = getProviderConfig(cfg).buildBody(
       [{ role: "user", content: "hi" }],
-      { reasoning: { mode: "off" } },
+      { reasoning: { mode: "auto" } },
     ) as Record<string, unknown>
 
     expect(body.chat_template_kwargs).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
   })
 
   it("strips temperature for Kimi/Moonshot OpenAI-compatible endpoints", () => {
@@ -784,6 +790,165 @@ describe("reasoning controls", () => {
 
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 })
     expect(body.temperature).toBeUndefined()
+  })
+
+  it("keeps answer headroom instead of leaving extended thinking a one-token reply", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "high" }, max_tokens: 8192 },
+    ) as Record<string, unknown>
+
+    // `max_tokens` is the total allowance (thinking + answer). The previous
+    // `budgetTokens + 1` produced max_tokens 8193 with an 8192 thinking budget,
+    // i.e. one token for the answer — and a single answer character would hide
+    // it from the reasoning-only diagnostic.
+    expect(body.max_tokens).toBe(8192)
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8192 - 1024 })
+  })
+
+  it("leaves thinking off when the allowance cannot fit it plus an answer", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "high" }, max_tokens: 512 },
+    ) as Record<string, unknown>
+
+    // Previously this inflated the caller's 512-token request to 8193.
+    expect(body.thinking).toBeUndefined()
+    expect(body.max_tokens).toBe(512)
+  })
+
+  it("enables thinking only from the allowance where thinking plus an answer fit", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-4-5-20250929" })
+    // 1025..2047 cannot hold 1024 thinking tokens *and* an answer, so thinking
+    // stays off rather than leaving the reply one or two tokens.
+    const cases: Array<[number, unknown]> = [
+      [1024, undefined],
+      [1025, undefined],
+      [2047, undefined],
+      [2048, { type: "enabled", budget_tokens: 1024 }],
+      [4096, { type: "enabled", budget_tokens: 3072 }],
+    ]
+    for (const [maxTokens, expected] of cases) {
+      const body = getProviderConfig(cfg).buildBody(
+        [{ role: "user", content: "hi" }],
+        { reasoning: { mode: "high" }, max_tokens: maxTokens },
+      ) as Record<string, unknown>
+
+      expect(body.thinking, `max_tokens=${maxTokens}`).toEqual(expected)
+      expect(body.max_tokens, `max_tokens=${maxTokens}`).toBe(maxTokens)
+    }
+  })
+
+  it("reports a native wire plan for endpoints that own their mapping", () => {
+    const cases: Array<[Partial<LlmConfig>, unknown]> = [
+      [
+        { model: "mimo-v2.5", customEndpoint: "https://token-plan-cn.xiaomimimo.com/v1" },
+        { source: "native", fields: ["thinking"] },
+      ],
+      [
+        { model: "vendor/reasoning", customEndpoint: "https://openrouter.ai/api/v1" },
+        { source: "native", fields: ["reasoning"] },
+      ],
+      [
+        { model: "deepseek-v4-flash", customEndpoint: "https://api.deepseek.com/v1" },
+        { source: "native", fields: ["thinking"] },
+      ],
+      [
+        // DeepSeek domain, but only V4 accepts the thinking parameter.
+        { model: "deepseek-chat", customEndpoint: "https://api.deepseek.com/v1" },
+        { source: "none", fields: [] },
+      ],
+      [
+        { model: "x", customEndpoint: "https://gateway.example/v1", reasoningDisable: "thinking_disabled" },
+        { source: "explicit", fields: ["thinking"] },
+      ],
+      [
+        { model: "x", customEndpoint: "https://gateway.example/v1" },
+        { source: "none", fields: [] },
+      ],
+    ]
+
+    for (const [over, expected] of cases) {
+      const cfg = mkConfig({ provider: "custom", apiMode: "chat_completions", ...over })
+      expect(resolveReasoningWirePlan(cfg, { reasoning: { mode: "off" } }), JSON.stringify(over))
+        .toEqual(expected)
+    }
+  })
+
+  it("never double-applies a leftover method on a native endpoint", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "mimo-v2.5",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/v1",
+      reasoningDisable: "chat_template_kwargs",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" } },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "disabled" })
+    expect(body.chat_template_kwargs).toBeUndefined()
+  })
+
+  it("keeps the wire plan and the request body in agreement", () => {
+    const explicitFieldFor: Record<string, string> = {
+      chat_template_kwargs: "chat_template_kwargs",
+      enable_thinking: "enable_thinking",
+      thinking_disabled: "thinking",
+      reasoning_effort_none: "reasoning_effort",
+    }
+    const cases: Array<Partial<LlmConfig>> = [
+      { model: "qwen3", customEndpoint: "https://gateway.example/v1", reasoningDisable: "chat_template_kwargs" },
+      { model: "qwen3", customEndpoint: "https://gateway.example/v1", reasoningDisable: "enable_thinking" },
+      { model: "qwen3", customEndpoint: "https://gateway.example/v1", reasoningDisable: "thinking_disabled" },
+      { model: "qwen3", customEndpoint: "https://gateway.example/v1", reasoningDisable: "reasoning_effort_none" },
+      { model: "qwen3", customEndpoint: "https://gateway.example/v1" },
+      { model: "mimo-v2.5", customEndpoint: "https://token-plan-cn.xiaomimimo.com/v1", reasoningDisable: "chat_template_kwargs" },
+      { model: "deepseek-v4-flash", customEndpoint: "https://api.deepseek.com/v1", reasoningDisable: "chat_template_kwargs" },
+      { model: "vendor/x", customEndpoint: "https://openrouter.ai/api/v1", reasoningDisable: "chat_template_kwargs" },
+    ]
+
+    for (const over of cases) {
+      const cfg = mkConfig({ provider: "custom", apiMode: "chat_completions", ...over })
+      const overrides = { reasoning: { mode: "off" as const }, max_tokens: 4096 }
+      const plan = resolveReasoningWirePlan(cfg, overrides)
+      const body = getProviderConfig(cfg).buildBody(
+        [{ role: "user", content: "hi" }],
+        overrides,
+      ) as Record<string, unknown>
+      const label = JSON.stringify(over)
+
+      if (plan.source === "explicit") {
+        const present = Object.values(explicitFieldFor).filter((field) => body[field] !== undefined)
+        expect(present, label).toEqual([...plan.fields])
+      } else if (over.reasoningDisable) {
+        // Native or absent plan: the generic field must never ride along.
+        expect(body[explicitFieldFor[over.reasoningDisable]], label).toBeUndefined()
+      }
+    }
+  })
+
+  it("reports no plan on the Anthropic wire or when reasoning is not off", () => {    const anthropicWire = mkConfig({
+      provider: "custom",
+      model: "mimo-v2.5",
+      customEndpoint: "https://token-plan-cn.xiaomimimo.com/anthropic",
+      apiMode: "anthropic_messages",
+      reasoningDisable: "enable_thinking",
+    })
+    expect(resolveReasoningWirePlan(anthropicWire, { reasoning: { mode: "off" } }))
+      .toEqual({ source: "none", fields: [] })
+
+    const auto = mkConfig({
+      provider: "custom",
+      model: "x",
+      customEndpoint: "https://gateway.example/v1",
+      reasoningDisable: "enable_thinking",
+    })
+    expect(resolveReasoningWirePlan(auto, { reasoning: { mode: "auto" } }))
+      .toEqual({ source: "none", fields: [] })
   })
 
   it("keeps cacheable system blocks when Anthropic extended thinking is enabled", () => {
@@ -908,6 +1073,70 @@ describe("reasoning controls", () => {
       { reasoning: { mode: "auto" } },
     ) as Record<string, unknown>
 
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it("sends exactly the stop-thinking field the user selected", () => {
+    const cases = [
+      ["chat_template_kwargs", { chat_template_kwargs: { enable_thinking: false } }],
+      ["enable_thinking", { enable_thinking: false }],
+      ["thinking_disabled", { thinking: { type: "disabled" } }],
+      ["reasoning_effort_none", { reasoning_effort: "none" }],
+    ] as const
+
+    for (const [reasoningDisable, expected] of cases) {
+      const cfg = mkConfig({
+        provider: "custom",
+        model: "Qwen3-32B",
+        customEndpoint: "https://gateway.example/v1",
+        reasoningDisable,
+      })
+      const body = getProviderConfig(cfg).buildBody(
+        [{ role: "user", content: "hi" }],
+        { reasoning: { mode: "off" }, temperature: 0.1, max_tokens: 4096 },
+      ) as Record<string, unknown>
+
+      // One field per method: mixing them would mean a gateway that accepts one
+      // and rejects the other loses both on the 400 fallback.
+      expect(body).toMatchObject(expected)
+      const disableFields = ["chat_template_kwargs", "enable_thinking", "thinking", "reasoning_effort"]
+        .filter((field) => body[field] !== undefined)
+      expect(disableFields).toHaveLength(1)
+    }
+  })
+
+  it("sends nothing for off while no stop-thinking method is configured", () => {
+    // The default contract: an untouched config behaves exactly as it did before
+    // the selector existed, even with reasoning off.
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "Qwen3-32B",
+      customEndpoint: "https://gateway.example/v1",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "off" }, temperature: 0.1, max_tokens: 4096 },
+    ) as Record<string, unknown>
+
+    expect(body.chat_template_kwargs).toBeUndefined()
+    expect(body.enable_thinking).toBeUndefined()
+    expect(body.thinking).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it("sends no stop-thinking fields to a custom gateway when reasoning is auto", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      model: "Qwen3-32B",
+      customEndpoint: "https://gateway.example/v1",
+      reasoningDisable: "chat_template_kwargs",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "auto" } },
+    ) as Record<string, unknown>
+
+    expect(body.chat_template_kwargs).toBeUndefined()
     expect(body.reasoning_effort).toBeUndefined()
   })
 })

@@ -115,6 +115,27 @@ describe("resolveConfig", () => {
     expect(resolved.ingestReasoning).toEqual({ mode: "low" })
   })
 
+  it("carries the custom stop-thinking method into the resolved config", () => {
+    const preset: LlmPreset = {
+      id: "qwen",
+      label: "Qwen",
+      provider: "custom",
+      baseUrl: "http://localhost:8000/v1",
+      defaultModel: "Qwen3.5-122B",
+      apiMode: "chat_completions",
+    }
+
+    // Selecting a method has to survive resolution, or the settings row would
+    // save a value the runtime config drops and `off` would stay inert.
+    const selected = resolveConfig(preset, { reasoningDisable: "enable_thinking" }, fallbackConfig())
+    expect(selected.reasoningDisable).toBe("enable_thinking")
+
+    // Untouched presets keep the omission default, i.e. the pre-selector
+    // behaviour of sending no stop-thinking field at all.
+    const untouched = resolveConfig(preset, {}, fallbackConfig())
+    expect(untouched.reasoningDisable).toBe("none")
+  })
+
   it("preserves an explicit non-streaming provider preference", () => {
     const preset: LlmPreset = {
       id: "openai",

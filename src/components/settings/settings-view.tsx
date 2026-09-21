@@ -130,6 +130,7 @@ function initialDraft(
     apiMode: llm.apiMode,
     reasoning: llm.reasoning,
     ingestReasoning: llm.ingestReasoning,
+    reasoningDisable: llm.reasoningDisable,
     localCliIsolation: llm.localCliIsolation === true,
     embeddingEnabled: embed.enabled,
     embeddingEndpoint: embed.endpoint,
@@ -369,6 +370,7 @@ export function SettingsView() {
       apiMode: draft.provider === "custom" ? draft.apiMode : undefined,
       reasoning: draft.reasoning,
       ingestReasoning: draft.ingestReasoning,
+      reasoningDisable: draft.provider === "custom" ? draft.reasoningDisable : undefined,
       localCliIsolation: draft.localCliIsolation,
     }
     const newEmbed = {

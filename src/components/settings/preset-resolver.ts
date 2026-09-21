@@ -65,6 +65,9 @@ export function resolveConfig(
       apiMode: ov.apiMode ?? preset.apiMode ?? "chat_completions",
       reasoning,
       ingestReasoning,
+      // Custom wire only: carried so the settings row can show the saved method
+      // and the provider layer can act on it.
+      reasoningDisable: ov.reasoningDisable ?? "none",
       localCliIsolation: false,
       requestTimeoutMinutes,
       customHeaders,

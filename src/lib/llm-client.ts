@@ -1,6 +1,10 @@
 import type { LlmConfig } from "@/stores/wiki-store"
 import { isAzureOpenAiEndpoint } from "@/lib/azure-openai"
-import { getProviderConfig, type RequestOverrides } from "./llm-providers"
+import {
+  getProviderConfig,
+  resolveReasoningWirePlan,
+  type RequestOverrides,
+} from "./llm-providers"
 import { getHttpFetch, isFetchNetworkError } from "./tauri-fetch"
 import { countReasoningCharsInLine, extractReasoningTextFromLine } from "./reasoning-detector"
 
@@ -10,6 +14,13 @@ export { isFetchNetworkError } from "./tauri-fetch"
 export interface StreamCallbacks {
   onToken: (token: string) => void
   onReasoningToken?: (token: string) => void
+  /**
+   * Non-fatal, user-visible note about a decision the transport made (e.g. a
+   * gateway rejecting the stop-thinking field and the request continuing with
+   * thinking enabled). Callers that surface warnings to the user should pass
+   * this through; it never replaces onDone/onError.
+   */
+  onNotice?: (notice: string) => void
   onDone: () => void
   onError: (error: Error) => void
 }
@@ -161,6 +172,54 @@ function shouldRetryWithoutTemperature(
   )
 }
 
+/**
+ * Field names the provider layer adds when a generic custom gateway is asked to
+ * stop thinking (`reasoning: { mode: "off" }`). A gateway that does not know
+ * them answers 400/422; we then re-issue the request without the field so an
+ * ingest still runs instead of failing outright.
+ */
+function shouldRetryWithoutReasoningFields(
+  config: LlmConfig,
+  status: number,
+  requestOverrides?: RequestOverrides,
+): boolean {
+  if (status !== 400 && status !== 422) return false
+  // Recovery-first: any 400/422 on a request that carried an explicit
+  // stop-thinking field gets one retry without it. Only retrying when the error
+  // text happens to name the field would hand the user a hard failure — a lost
+  // page — in exactly the situation where the field is the most likely cause
+  // (an unknown gateway rejecting an unknown key often says only "invalid
+  // request body"). The cost of being wrong is one extra request; the cost of
+  // not trying can be the whole import. The single retry is bounded, and its
+  // notice states only what the two outcomes actually prove.
+  //
+  // Which field, and whether the request carried one at all, comes from the
+  // wire plan — never from re-deriving it here.
+  return resolveReasoningWirePlan(config, requestOverrides).source === "explicit"
+}
+
+/** The field a rejected explicit plan carried, for the user-visible notice. */
+function fieldNameForReasoningDisable(
+  config: LlmConfig,
+  requestOverrides?: RequestOverrides,
+): string {
+  return resolveReasoningWirePlan(config, requestOverrides).fields[0] ?? "the stop-thinking field"
+}
+
+/**
+ * Deliver a non-fatal notice. Observational callbacks must never be able to
+ * break the transport state machine, so a throwing handler is swallowed (and
+ * reported) rather than propagated.
+ */
+function raiseNotice(callbacks: StreamCallbacks, notice: string): void {
+  try {
+    if (callbacks.onNotice) callbacks.onNotice(notice)
+    else console.warn(`[llm-client] ${notice}`)
+  } catch (err) {
+    console.warn("[llm-client] notice handler threw", err)
+  }
+}
+
 export async function streamChat(
   config: LlmConfig,
   messages: import("./llm-providers").ChatMessage[],
@@ -176,7 +235,31 @@ export async function streamChat(
    */
   requestOverrides?: RequestOverrides,
 ): Promise<void> {
-  const { onToken, onDone, onError } = callbacks
+  const { onToken } = callbacks
+
+  // Release the backstop timer and the user-abort listener when this attempt
+  // settles. Every path below settles through onDone/onError, and callers now
+  // retry (reasoning-only, temperature, budget), so leaving them attached kept
+  // a 30-minute timer plus a listener on the caller's long-lived signal alive
+  // for every attempt.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let detachUserAbort: (() => void) | undefined
+  const settle = () => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId)
+      timeoutId = undefined
+    }
+    detachUserAbort?.()
+    detachUserAbort = undefined
+  }
+  const onDone = () => {
+    settle()
+    callbacks.onDone()
+  }
+  const onError = (error: Error) => {
+    settle()
+    callbacks.onError(error)
+  }
 
   // Claude Code CLI uses a subprocess transport (stdin/stdout), not
   // HTTP. Dispatch before getProviderConfig — that function throws for
@@ -217,18 +300,29 @@ export async function streamChat(
 
   if (typeof AbortSignal.timeout === "function") {
     timeoutController = new AbortController()
-    const timeoutId = setTimeout(() => {
+    timeoutId = setTimeout(() => {
       timeoutFired = true
       timeoutController?.abort()
     }, timeoutMs)
 
     if (signal) {
-      signal.addEventListener("abort", () => {
-        clearTimeout(timeoutId)
+      const onUserAbort = () => {
         timeoutController?.abort()
-      })
+      }
+      signal.addEventListener("abort", onUserAbort)
+      detachUserAbort = () => signal.removeEventListener("abort", onUserAbort)
     }
     combinedSignal = timeoutController.signal
+  }
+
+  // An abort that happened *before* this call registered its listener never
+  // fires it, so the transport would still put the request on the wire — the
+  // 400 fallback can race exactly like this (the caller cancels while the first
+  // response is being read). Cancellation wins here, silently, like any other
+  // cancel.
+  if (signal?.aborted) {
+    onDone()
+    return
   }
 
   let response: Response
@@ -282,7 +376,57 @@ export async function streamChat(
     }
     if (shouldRetryWithoutTemperature(config, response.status, errorDetail, requestOverrides)) {
       const { temperature: _temperature, ...retryOverrides } = requestOverrides ?? {}
+      // Hand the backstop to the re-issued request instead of leaving this
+      // attempt's timer attached.
+      settle()
       return streamChat(config, messages, callbacks, signal, retryOverrides)
+    }
+    if (shouldRetryWithoutReasoningFields(config, response.status, requestOverrides)) {
+      // Hand the backstop to the re-issued request first: a throwing notice
+      // handler must not be able to skip cleanup or the retry itself.
+      settle()
+      const field = fieldNameForReasoningDisable(config, requestOverrides)
+      const retryOverrides = {
+        ...(requestOverrides ?? {}),
+        reasoning: { mode: "auto" as const },
+      }
+      let retrySucceeded = false
+      let retryFailure: Error | undefined
+      await streamChat(
+        config,
+        messages,
+        {
+          onToken,
+          onReasoningToken: callbacks.onReasoningToken,
+          onNotice: callbacks.onNotice,
+          onDone: () => { retrySucceeded = true },
+          onError: (err) => { retryFailure = err },
+        },
+        signal,
+        retryOverrides,
+      )
+      if (retrySucceeded) {
+        // State only what the two outcomes prove: the first request failed and
+        // the retry without the field worked. Whether the gateway objected to
+        // the field, and what it does with thinking by default, is not something
+        // this code can know.
+        if (!signal?.aborted) {
+          raiseNotice(
+            callbacks,
+            `The first request failed with ${response.status}; retrying without ` +
+            `${field} succeeded, so this answer uses the endpoint's default thinking behaviour.`,
+          )
+        }
+        // Deliver the notice before the terminal callback: callers finalize
+        // (and persist warnings) on onDone.
+        callbacks.onDone()
+      } else {
+        callbacks.onError(new Error(
+          `${errorDetail} (retrying without ${field} also failed: ` +
+          `${retryFailure?.message ?? "unknown error"})`,
+        ))
+      }
+      return
     }
     if (
       response.status === 404 &&
@@ -476,5 +620,173 @@ export async function streamChat(
     onError(err instanceof Error ? err : new Error(String(err)))
   } finally {
     reader.releaseLock()
+  }
+}
+
+/**
+ * Upper bound for the automatic reasoning-budget retry. Big enough to hold a
+ * long chain-of-thought *and* its answer on any current model; small enough
+ * that the retry still fits the per-request ceiling gateways commonly impose.
+ */
+export const REASONING_RETRY_MAX_TOKENS = 32_768
+
+/**
+ * Never retry below this. A 4x bump from a small budget can still be too tight
+ * for a model that already spent thousands of tokens thinking.
+ */
+const REASONING_RETRY_FLOOR_TOKENS = 16_384
+
+/**
+ * Empty (non-streaming) responses are the same failure the reasoning-only
+ * diagnostic describes: on a non-streaming wire the endpoint collapses to a
+ * bare `content: ""`, so a thinking model that never answered looks identical
+ * to a broken endpoint. Retrying it once with a larger budget is the
+ * non-streaming equivalent of the reasoning-only retry.
+ */
+export function isEmptyNonStreamingResponseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return message === "Model returned an empty non-streaming response"
+}
+
+/**
+ * Both shapes that mean "the model produced no answer at all".
+ */
+function isRetryableEmptyAnswerError(error: Error): boolean {
+  return isReasoningOnlyResponseError(error) || isEmptyNonStreamingResponseError(error)
+}
+
+/**
+ * Report the first failure as the root cause and keep the retry's own error
+ * attached. Without this, a retry that fails for a different reason (a gateway
+ * capping `max_tokens`, say) replaced the diagnostic the user actually needs —
+ * and the message must keep matching `isReasoningOnlyResponseError`, which is
+ * prefix-anchored.
+ */
+function describeRetryFailure(first: Error, retriedBudget: number | undefined, retry: Error): Error {
+  return new Error(`${first.message} (retried with max_tokens=${retriedBudget}: ${retry.message})`)
+}
+
+/**
+ * Output budget to try next after an empty answer, or `null` when the current
+ * budget already sits at the ceiling. Returning `null` matters: re-sending an
+ * identical request would fail identically, so the caller should surface the
+ * original diagnostic instead of burning a round trip.
+ */
+function nextReasoningRetryBudget(
+  overrides?: RequestOverrides,
+  ceiling = REASONING_RETRY_MAX_TOKENS,
+): number | null {
+  const current = overrides?.max_tokens ?? 4_096
+  const bumped = Math.min(ceiling, Math.max(current * 4, REASONING_RETRY_FLOOR_TOKENS))
+  return bumped > current ? bumped : null
+}
+
+export interface ReasoningRetryOptions {
+  /**
+   * Upper bound for the retried output budget, defaulting to
+   * `REASONING_RETRY_MAX_TOKENS`. Experimental: no production caller knows the
+   * endpoint's real output ceiling yet, so this exists for callers that do (and
+   * for tests). Re-issuing above that ceiling only replaces the diagnostic with
+   * an HTTP 400.
+   */
+  maxTokensCeiling?: number
+}
+
+/**
+ * `streamChat` with at most **one** recovery attempt when an endpoint produces
+ * no answer at all (reasoning-only stream, or an empty non-streaming response).
+ *
+ * Structured call sites (ingest analysis, generation, long-source chunk
+ * analysis) hand the model a fixed output budget. An endpoint that thinks
+ * before answering spends part of that same budget on chain-of-thought, and
+ * when the thinking alone fills it the stream ends on a clean stop with zero
+ * `content` — which `streamChat` reports as the "produced N characters of
+ * reasoning ... but no actual response content" diagnostic. Nothing about the
+ * request was invalid, so the fix is to give the model room to finish thinking
+ * *and* write, rather than fail the ingest and drop the page.
+ *
+ * Exactly one extra attempt is made (a single budget bump), so the request
+ * amplification stays bounded even combined with `streamChat`'s own 400
+ * fallbacks. The retry is taken only when the first attempt emitted no content
+ * at all, so a caller can never observe duplicated content. Reasoning tokens
+ * are forwarded as they arrive, so a retried attempt replays them; the
+ * structured callers this exists for do not subscribe to reasoning.
+ */
+export async function streamChatWithReasoningRetry(
+  config: LlmConfig,
+  messages: import("./llm-providers").ChatMessage[],
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  requestOverrides?: RequestOverrides,
+  options?: ReasoningRetryOptions,
+): Promise<void> {
+  let overrides = requestOverrides
+  let firstFailure: Error | undefined
+  let retriedBudget: number | undefined
+
+  for (;;) {
+    // Count characters, not callbacks. `streamChat` raises the reasoning-only
+    // diagnostic on `contentCharsEmitted === 0`, and OpenAI-compatible
+    // gateways put `content: ""` in both the role-only opening chunk and the
+    // finish_reason chunk of an otherwise ordinary stream. Treating those empty
+    // deltas as "the model answered" made the retry unreachable on exactly the
+    // endpoints it exists for — the #743 case. Keeping the same accounting as
+    // the detector guarantees the retry fires exactly when the diagnostic does.
+    let contentChars = 0
+
+    // Every path in streamChat settles through onDone or onError, so resolving
+    // from the callbacks — and catching a stray rejection — cannot hang.
+    const error = await new Promise<Error | undefined>((resolve) => {
+      void streamChat(
+        config,
+        messages,
+        {
+          onToken: (token) => {
+            contentChars += token.length
+            callbacks.onToken(token)
+          },
+          onReasoningToken: callbacks.onReasoningToken,
+          onNotice: callbacks.onNotice,
+          onDone: () => resolve(undefined),
+          onError: (err) => resolve(err),
+        },
+        signal,
+        overrides,
+      ).catch((err: unknown) => {
+        resolve(err instanceof Error ? err : new Error(String(err)))
+      })
+    })
+
+    // Success and user cancellation both settle this way; neither retries.
+    if (error === undefined) {
+      callbacks.onDone()
+      return
+    }
+
+    // The single extra attempt already happened: report the original diagnostic
+    // as the root cause, with whatever the retry hit attached to it.
+    if (firstFailure !== undefined) {
+      callbacks.onError(describeRetryFailure(firstFailure, retriedBudget, error))
+      return
+    }
+
+    if (contentChars === 0 && isRetryableEmptyAnswerError(error)) {
+      const bumped = nextReasoningRetryBudget(overrides, options?.maxTokensCeiling)
+      if (bumped !== null) {
+        // A cancel that lands between the diagnostic and the re-issue must win,
+        // otherwise we start an attempt that is already aborted.
+        if (signal?.aborted) {
+          callbacks.onDone()
+          return
+        }
+        firstFailure = error
+        retriedBudget = bumped
+        overrides = { ...overrides, max_tokens: bumped }
+        continue
+      }
+    }
+
+    callbacks.onError(error)
+    return
   }
 }

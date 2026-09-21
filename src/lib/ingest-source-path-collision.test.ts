@@ -20,8 +20,8 @@ let abortDuringReview: AbortController | null = null
 let interactiveGenerationOverride = ""
 let mergeRequestCount = 0
 
-vi.mock("./llm-client", () => ({
-  streamChat: vi.fn(async (_cfg, messages, cb) => {
+vi.mock("./llm-client", () => {
+  const streamChat = vi.fn(async (_cfg, messages, cb) => {
     const systemPrompt = String(messages?.[0]?.content ?? "")
     const userPrompt = String(messages?.[1]?.content ?? "")
 
@@ -121,8 +121,11 @@ vi.mock("./llm-client", () => ({
       generationSuffix,
     ].join("\n"))
     cb.onDone()
-  }),
-}))
+  })
+  // ingest routes its analysis passes through the reasoning-retry wrapper; both
+  // names share one implementation so mockStreamChat assertions stay accurate.
+  return { streamChat, streamChatWithReasoningRetry: streamChat }
+})
 
 vi.mock("./mineru", () => ({
   parseWithMineru: vi.fn(),
