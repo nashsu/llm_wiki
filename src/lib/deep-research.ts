@@ -5,7 +5,7 @@ import { currentWikiDate } from "./ingest"
 import { fileExists, writeFile, readFile } from "@/commands/fs"
 import { useWikiStore, type LlmConfig, type SearchApiConfig } from "@/stores/wiki-store"
 import { useResearchStore } from "@/stores/research-store"
-import { normalizePath } from "@/lib/path-utils"
+import { normalizePath, vectorPageIdFromWikiPath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
@@ -75,8 +75,7 @@ export function addResearchTaskDiscriminator(fileName: string, taskId: string): 
 }
 
 export function researchPageIdFromPath(filePath: string): string {
-  const fileName = filePath.split(/[\\/]/).pop() || filePath
-  return fileName.replace(/\.md$/i, "")
+  return vectorPageIdFromWikiPath(filePath)
 }
 
 interface ResearchSourceDeps {

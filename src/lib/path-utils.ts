@@ -33,6 +33,32 @@ export function getFileStem(p: string): string {
   return lastDot > 0 ? name.slice(0, lastDot) : name
 }
 
+/**
+ * Vector-store identity for a wiki markdown path.
+ *
+ * LanceDB page ids cannot contain `/`, so the wiki-relative path
+ * without `.md` is encoded with `__` between directory segments:
+ * `wiki/sources/mobile-architecture.md` → `sources__mobile-architecture`.
+ * Pages that share a filename stem across schema directories therefore
+ * keep distinct embeddings.
+ */
+export function vectorPageIdFromWikiPath(path: string): string {
+  const normalized = normalizePath(path)
+  let wikiRel = ""
+  if (normalized === "wiki" || normalized.startsWith("wiki/")) {
+    wikiRel = normalized.slice("wiki/".length)
+  } else {
+    const idx = normalized.indexOf("/wiki/")
+    wikiRel = idx >= 0 ? normalized.slice(idx + "/wiki/".length) : getFileName(normalized)
+  }
+  if (!wikiRel) return ""
+  const withoutExt = wikiRel.toLowerCase().endsWith(".md")
+    ? wikiRel.slice(0, -3)
+    : wikiRel
+  if (!withoutExt || withoutExt.endsWith("/")) return ""
+  return withoutExt.replace(/\//g, "__")
+}
+
 // Windows drive-letter and UNC paths are case-insensitive; fold them for
 // comparison purposes only (never for the paths actually returned/written).
 function caseFoldPath(normalized: string): string {

@@ -105,7 +105,7 @@ pub async fn embed_wiki_page(
         )
     })?;
 
-    let page_id = page_path
+    let stem = page_path
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
@@ -114,12 +114,17 @@ pub async fn embed_wiki_page(
                 PageEmbeddingErrorKind::InvalidRequest,
                 "Invalid wiki page name",
             )
-        })?
-        .to_string();
+        })?;
+    let page_id = vector_page_id_from_wiki_path(&normalized_path).ok_or_else(|| {
+        PageEmbeddingError::new(
+            PageEmbeddingErrorKind::InvalidRequest,
+            "Invalid wiki page name",
+        )
+    })?;
     vectorstore::validate_page_id_for_v2(&page_id)
         .map_err(|err| PageEmbeddingError::new(PageEmbeddingErrorKind::InvalidRequest, err))?;
     if matches!(
-        page_id.to_ascii_lowercase().as_str(),
+        stem.to_ascii_lowercase().as_str(),
         "index" | "log" | "overview"
     ) {
         return Err(PageEmbeddingError::new(
@@ -127,7 +132,7 @@ pub async fn embed_wiki_page(
             "Aggregate wiki pages index.md, log.md, and overview.md are maintained by the app and are not vector-indexed",
         ));
     }
-    ensure_unique_page_stem(project_path, &page_path, &page_id)?;
+    ensure_unique_vector_page_id(project_path, &page_path, &page_id)?;
 
     let revision = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
     let fingerprint = embedding_fingerprint(&revision, &config);
@@ -148,7 +153,7 @@ pub async fn embed_wiki_page(
         }
     }
 
-    let title = extract_title(&content, &page_id);
+    let title = extract_title(&content, stem);
     let chunk_chars = config
         .max_chunk_chars
         .unwrap_or(DEFAULT_CHUNK_CHARS)
@@ -285,12 +290,52 @@ fn embedding_fingerprint(revision: &str, config: &SearchEmbeddingConfig) -> Stri
     )
 }
 
-fn ensure_unique_page_stem(
+/// Vector identity for a wiki markdown path.
+/// `wiki/sources/mobile-architecture.md` → `sources__mobile-architecture`.
+/// `/` is disallowed in LanceDB page_id filters, so directory segments
+/// are encoded with `__`.
+pub(crate) fn vector_page_id_from_wiki_path(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
+    let wiki_rel = wiki_relative_markdown(&normalized)?;
+    let without_ext = strip_markdown_extension(wiki_rel);
+    if without_ext.is_empty() || without_ext.ends_with('/') {
+        return None;
+    }
+    Some(without_ext.replace('/', "__"))
+}
+
+fn wiki_relative_markdown(normalized: &str) -> Option<&str> {
+    if let Some(rest) = normalized.strip_prefix("wiki/") {
+        return Some(rest);
+    }
+    if let Some(idx) = normalized.find("/wiki/") {
+        return Some(&normalized[idx + "/wiki/".len()..]);
+    }
+    let name = Path::new(normalized).file_name()?.to_str()?;
+    (!name.is_empty()).then_some(name)
+}
+
+fn strip_markdown_extension(name: &str) -> &str {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b".md") {
+        &name[..name.len() - 3]
+    } else {
+        name
+    }
+}
+
+fn ensure_unique_vector_page_id(
     project_path: &str,
     page_path: &Path,
     page_id: &str,
 ) -> Result<(), PageEmbeddingError> {
-    let wiki_root = fs::canonicalize(Path::new(project_path).join("wiki")).map_err(|err| {
+    let project = fs::canonicalize(project_path).map_err(|err| {
+        PageEmbeddingError::new(
+            PageEmbeddingErrorKind::NotFound,
+            format!("Failed to resolve project path: {err}"),
+        )
+    })?;
+    let wiki_root = fs::canonicalize(project.join("wiki")).map_err(|err| {
         PageEmbeddingError::new(
             PageEmbeddingErrorKind::NotFound,
             format!("Failed to resolve project wiki directory: {err}"),
@@ -307,19 +352,22 @@ fn ensure_unique_page_stem(
                 .extension()
                 .and_then(|value| value.to_str())
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-                && entry
-                    .path()
-                    .file_stem()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|stem| stem.eq_ignore_ascii_case(page_id))
         })
-        .filter_map(|entry| fs::canonicalize(entry.path()).ok())
-        .filter(|path| path != page_path);
+        .filter_map(|entry| {
+            let canon = fs::canonicalize(entry.path()).ok()?;
+            if &canon == page_path {
+                return None;
+            }
+            let relative = canon.strip_prefix(&project).ok()?;
+            let other_id =
+                vector_page_id_from_wiki_path(&relative.to_string_lossy().replace('\\', "/"))?;
+            other_id.eq_ignore_ascii_case(page_id).then_some(canon)
+        });
     if let Some(collision) = collisions.next() {
         return Err(PageEmbeddingError::new(
             PageEmbeddingErrorKind::Conflict,
             format!(
-                "Cannot index this page because another wiki page has the same filename stem: {}",
+                "Cannot index this page because another wiki page has the same vector page id: {}",
                 collision.to_string_lossy()
             ),
         ));
@@ -805,14 +853,50 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_stems_in_different_wiki_folders_are_rejected() {
+    fn vector_page_id_is_schema_qualified_so_same_stems_do_not_collide() {
+        assert_eq!(
+            vector_page_id_from_wiki_path("wiki/sources/mobile-architecture.md").as_deref(),
+            Some("sources__mobile-architecture")
+        );
+        assert_eq!(
+            vector_page_id_from_wiki_path("wiki/entities/mobile-architecture.md").as_deref(),
+            Some("entities__mobile-architecture")
+        );
+        assert_eq!(
+            vector_page_id_from_wiki_path("wiki/nested/page.md").as_deref(),
+            Some("nested__page")
+        );
+        assert_eq!(
+            vector_page_id_from_wiki_path("wiki/page.md").as_deref(),
+            Some("page")
+        );
+        assert_eq!(
+            vector_page_id_from_wiki_path("/proj/wiki/sources/AGENTS.md").as_deref(),
+            Some("sources__AGENTS")
+        );
+        assert_eq!(
+            vector_page_id_from_wiki_path("C:\\proj\\wiki\\entities\\agents.md").as_deref(),
+            Some("entities__agents")
+        );
+        assert_ne!(
+            vector_page_id_from_wiki_path("wiki/sources/AGENTS.md"),
+            vector_page_id_from_wiki_path("wiki/entities/agents.md")
+        );
+        assert_eq!(vector_page_id_from_wiki_path("/"), None);
+        assert_eq!(vector_page_id_from_wiki_path("wiki/sources/.md"), None);
+    }
+
+    #[test]
+    fn same_stem_pages_in_different_wiki_folders_are_not_conflicts() {
         let root = project();
         let first = root.join("wiki/nested/page.md");
         fs::write(&first, "# First").unwrap();
         fs::create_dir_all(root.join("wiki/other")).unwrap();
         fs::write(root.join("wiki/other/page.md"), "# Second").unwrap();
-        let error = ensure_unique_page_stem(root.to_str().unwrap(), &first, "page").unwrap_err();
-        assert_eq!(error.kind, PageEmbeddingErrorKind::Conflict);
+        let first_id = vector_page_id_from_wiki_path("wiki/nested/page.md").unwrap();
+        let second_id = vector_page_id_from_wiki_path("wiki/other/page.md").unwrap();
+        assert_ne!(first_id, second_id);
+        ensure_unique_vector_page_id(root.to_str().unwrap(), &first, &first_id).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 

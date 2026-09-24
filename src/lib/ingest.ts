@@ -16,7 +16,7 @@ import { parseWithMineruResult } from "@/lib/mineru"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
-import { getFileName, normalizePath } from "@/lib/path-utils"
+import { getFileName, getFileStem, normalizePath, vectorPageIdFromWikiPath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
@@ -1435,12 +1435,13 @@ async function autoIngestImpl(
     try {
       const { embedPage } = await import("@/lib/embedding")
       for (const wpath of writtenPaths) {
-        const pageId = wpath.split("/").pop()?.replace(/\.md$/, "") ?? ""
-        if (!pageId || ["index", "log", "overview"].includes(pageId)) continue
+        const stem = getFileStem(wpath)
+        const pageId = vectorPageIdFromWikiPath(wpath)
+        if (!pageId || ["index", "log", "overview"].includes(stem.toLowerCase())) continue
         try {
           const content = await readFile(`${pp}/${wpath}`)
           const fmTitle = parseFrontmatter(content).frontmatter?.title
-          const title = typeof fmTitle === "string" && fmTitle.trim() ? fmTitle.trim() : pageId
+          const title = typeof fmTitle === "string" && fmTitle.trim() ? fmTitle.trim() : stem || pageId
           await embedPage(pp, pageId, title, content, embCfg)
         } catch {
           // non-critical
@@ -3215,7 +3216,13 @@ async function reembedSourceSummary(
     const fmTitle = parseFrontmatter(content).frontmatter?.title
     const title = typeof fmTitle === "string" && fmTitle.trim() ? fmTitle.trim() : sourceIdentity
     const { embedPage } = await import("@/lib/embedding")
-    await embedPage(pp, sourceSummarySlug, title, content, embCfg)
+    await embedPage(
+      pp,
+      vectorPageIdFromWikiPath(sourceSummaryFullPath) || `sources__${sourceSummarySlug}`,
+      title,
+      content,
+      embCfg,
+    )
     console.log(`[ingest:caption] re-embedded ${sourceSummarySlug} with captioned alt text`)
   } catch (err) {
     console.warn(
