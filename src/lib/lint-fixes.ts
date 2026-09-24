@@ -1,6 +1,7 @@
 import { createDirectory, fileExists, writeFile } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { makeQuerySlug } from "@/lib/wiki-filename"
+import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
 
 export function lintLinkTarget(target: string): string {
   return normalizePath(target)
@@ -79,9 +80,12 @@ export async function ensureBrokenLinkStub(
   await createDirectory(parent)
   const title = stubTitleFromBrokenTarget(brokenTarget)
   const date = new Date().toISOString().slice(0, 10)
+  // Derive type from destination folder so stubs stay visible in the graph
+  // and pass schema routing (query nodes are hidden by wiki-graph HIDDEN_TYPES).
+  const stubType = inferWikiTypeFromPath(fullPath) ?? "query"
   const content = [
     "---",
-    "type: query",
+    `type: ${stubType}`,
     `title: "${title.replace(/"/g, '\\"')}"`,
     `created: ${date}`,
     `updated: ${date}`,
