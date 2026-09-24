@@ -49,10 +49,9 @@ let queueEpoch = 0
  *  In-memory only: not persisted, reset to false on restoreQueue and
  *  clearQueueState. */
 let paused = false
-/** Pending task IDs loaded from disk on startup/project open. These are
- *  intentionally not auto-run to avoid surprise LLM/MinerU spend when the
- *  app opens. New live tasks still run; if a live enqueue touches the same
- *  source, it promotes that restored task out of this set. */
+/** Task IDs skipped by processNext until resumeProcessing() or a live
+ *  enqueue/retry promotes them. restoreQueue no longer parks ordinary
+ *  persisted pending work here — those auto-resume after restart. */
 let restoredPausedTaskIds = new Set<string>()
 /** UUID of the currently-active project. Used as a stale-context guard
  *  in processNext: if this changes mid-ingest (user switched projects),
@@ -827,8 +826,9 @@ export async function pauseQueue(): Promise<void> {
 
 /**
  * Load queue from disk. Called on app startup and when opening / switching
- * to a project. Restored pending tasks are hydrated but not auto-run; the
- * user can resume them from the Activity panel. New live enqueues still run.
+ * to a project. Restored pending tasks (including processing tasks reset
+ * after an interrupted run) auto-resume. User pause via pauseProcessing()
+ * is session-only and is cleared here. New live enqueues still run.
  * `pauseQueue()` must have been called first (or the active project already
  * cleared) so that in-memory state is not contaminated from the previous
  * project.
@@ -879,18 +879,13 @@ export async function restoreQueue(
   }
 
   queue = mine
-  restoredPausedTaskIds = new Set(
-    queue
-      .filter((t) => t.status === "pending" && !t.autoStart)
-      .map((t) => t.id),
-  )
   await saveQueue(pp)
 
   const pending = queue.filter((t) => t.status === "pending").length
   const failed = queue.filter((t) => t.status === "failed").length
 
   if (pending > 0 || restored > 0) {
-    console.log(`[Ingest Queue] Restored: ${pending} pending paused for manual resume, ${failed} failed, ${restored} reset from interrupted`)
+    console.log(`[Ingest Queue] Restored: ${pending} pending, ${failed} failed, ${restored} reset from interrupted`)
     processNext(projectId)
   }
 }
