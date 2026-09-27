@@ -276,6 +276,7 @@
       "unsupported-type": "Этот тип файла не поддерживается для обработки.",
       "sensitive-config": "Файлы конфигурации нельзя обрабатывать.",
       "no-llm": "Не настроена доступная LLM. Задайте модель или API-ключ в настройках.",
+      "all-excluded": "Все источники в этой папке исключены из обработки.",
       "unknown": "Этот файл нельзя обработать."
     },
     "ingestStatus": {
@@ -303,6 +304,11 @@
     "searchPlaceholder": "Фильтр источников по имени или пути",
     "clearSearch": "Очистить фильтр источников",
     "noSearchResults": "Нет источников по запросу «{{query}}»",
+    "filterByIngestStatus": "Фильтр по статусу обработки",
+    "filterAll": "Все файлы",
+    "filterIngested": "Обработаны",
+    "filterNotIngested": "Не обработаны",
+    "noIngestFilterResults": "Нет источников по текущему фильтру",
     "filteredSourceCount": "{{count}} из {{total}} источников",
     "sourceCount_plural": "{{count}} источников"
   },

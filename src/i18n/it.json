@@ -276,6 +276,7 @@
       "unsupported-type": "Questo tipo di file non è supportato per l'acquisizione.",
       "sensitive-config": "I file di configurazione non possono essere acquisiti.",
       "no-llm": "Nessun LLM utilizzabile configurato. Imposta un modello o una chiave API nelle Impostazioni.",
+      "all-excluded": "Tutte le fonti di questa cartella sono escluse dall'acquisizione.",
       "unknown": "Questo file non può essere acquisito."
     },
     "ingestStatus": {
@@ -303,6 +304,11 @@
     "searchPlaceholder": "Filtra le fonti per nome o percorso",
     "clearSearch": "Cancella filtro fonti",
     "noSearchResults": "Nessuna fonte corrisponde a “{{query}}”",
+    "filterByIngestStatus": "Filtra per stato di acquisizione",
+    "filterAll": "Tutti i file",
+    "filterIngested": "Acquisiti",
+    "filterNotIngested": "Da acquisire",
+    "noIngestFilterResults": "Nessuna fonte corrisponde al filtro attuale",
     "filteredSourceCount": "{{count}} di {{total}} fonti",
     "sourceCount_plural": "{{count}} fonti"
   },

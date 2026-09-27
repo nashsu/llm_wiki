@@ -22,10 +22,13 @@ import {
   getIngestBlockReason,
   importSourceFiles,
   importSourceFolder,
+  isIngestableSourcePath,
   type SkippedSourceImport,
   type SourceImportResult,
 } from "@/lib/source-lifecycle"
-import { filterRawSourceTree } from "@/lib/source-filter"
+import { filterRawSourceTree, isSensitiveConfigSourceFile } from "@/lib/source-filter"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { saveSourceWatchConfig } from "@/lib/project-store"
 import { normalizeSourceWatchConfig, sourceRelativeKey } from "@/lib/source-watch-config"
@@ -39,6 +42,7 @@ const SOURCE_TREE_INITIAL_ROWS = 160
 const SOURCE_TREE_LOAD_BATCH = 160
 const IMPORT_SKIP_INITIAL_ROWS = 100
 type SourceIngestStatus = "not-ingested" | "ingested" | IngestTask["status"]
+type SourceIngestFilter = "all" | "ingested" | "not-ingested"
 
 export function SourcesView() {
   const { t } = useTranslation()
@@ -64,6 +68,7 @@ export function SourcesView() {
   const [ingestedIdentities, setIngestedIdentities] = useState<string[]>([])
   const [queueSnapshot, setQueueSnapshot] = useState<IngestTask[]>(() => [...getQueue()])
   const [sourceQuery, setSourceQuery] = useState("")
+  const [ingestFilter, setIngestFilter] = useState<SourceIngestFilter>("all")
   /**
    * Path of the source-tree node currently in "click again to
    * confirm delete" state. Lifted up here (rather than living
@@ -148,8 +153,11 @@ export function SourcesView() {
     return statuses
   }, [ingestedIdentities, project, queueSnapshot])
   const filteredSources = useMemo(
-    () => filterSourceTreeByQuery(sources, sourceQuery),
-    [sourceQuery, sources],
+    () => filterSourceTreeByQuery(
+      filterSourceTreeByIngestStatus(sources, sourceStatuses, ingestFilter),
+      sourceQuery,
+    ),
+    [ingestFilter, sourceQuery, sourceStatuses, sources],
   )
   const totalSourceCount = useMemo(() => countFiles(sources), [sources])
   const filteredSourceCount = useMemo(() => countFiles(filteredSources), [filteredSources])
@@ -384,6 +392,10 @@ export function SourcesView() {
 
   async function handleIngest(node: FileNode) {
     if (!project || ingestingPath) return
+    if (node.is_dir) {
+      await handleIngestFolder(node)
+      return
+    }
     const reason = getIngestBlockReason(node.path, llmConfig)
     if (reason) {
       await appDialog.alert({
@@ -405,6 +417,43 @@ export function SourcesView() {
       await enqueueSourceIngest(project, [node.path], llmConfig)
     } catch (err) {
       console.error("Failed to enqueue ingest:", err)
+    } finally {
+      setIngestingPath(null)
+    }
+  }
+
+  // Folder ingest: pre-filter to ingestable, non-sensitive, non-excluded
+  // files (same per-file checks as getIngestBlockReason above, plus the
+  // exclusion filter inside enqueueSourceIngest), enqueue only those —
+  // unsupported files are silently skipped. Alerts only when nothing in
+  // the folder can be ingested, when everything left is excluded, or when
+  // no usable LLM is configured.
+  async function handleIngestFolder(node: FileNode) {
+    if (!project || ingestingPath) return
+    const candidates = collectAllFilesIncludingDot(node)
+      .map((f) => f.path)
+      .filter((p) => isIngestableSourcePath(p) && !isSensitiveConfigSourceFile(p))
+    if (candidates.length === 0) {
+      await appDialog.alert({ message: t("sources.ingestBlocked.unsupported-type") })
+      return
+    }
+    const ingestable = candidates.filter((p) => {
+      const key = sourceRelativeKey(p)
+      return !excludedPaths.some((ex) => key === ex || key.startsWith(`${ex}/`))
+    })
+    if (ingestable.length === 0) {
+      await appDialog.alert({ message: t("sources.ingestBlocked.all-excluded") })
+      return
+    }
+    if (!hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))) {
+      await appDialog.alert({ message: t("sources.ingestBlocked.no-llm") })
+      return
+    }
+    setIngestingPath(node.path)
+    try {
+      await enqueueSourceIngest(project, ingestable, llmConfig)
+    } catch (err) {
+      console.error("Failed to enqueue folder ingest:", err)
     } finally {
       setIngestingPath(null)
     }
@@ -531,27 +580,39 @@ export function SourcesView() {
 
       {sources.length > 0 && (
         <div className="border-b px-4 py-2.5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={sourceQuery}
-              onChange={(event) => setSourceQuery(event.target.value)}
-              placeholder={t("sources.searchPlaceholder")}
-              aria-label={t("sources.searchPlaceholder")}
-              className="h-8 pl-8 pr-8"
-            />
-            {sourceQuery && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-0.5 top-1/2 h-7 w-7 -translate-y-1/2"
-                onClick={() => setSourceQuery("")}
-                aria-label={t("sources.clearSearch")}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
+          <div className="flex items-center gap-2">
+            <select
+              value={ingestFilter}
+              onChange={(event) => setIngestFilter(event.target.value as SourceIngestFilter)}
+              className="h-8 shrink-0 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
+              aria-label={t("sources.filterByIngestStatus")}
+            >
+              <option value="all">{t("sources.filterAll")}</option>
+              <option value="ingested">{t("sources.filterIngested")}</option>
+              <option value="not-ingested">{t("sources.filterNotIngested")}</option>
+            </select>
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={sourceQuery}
+                onChange={(event) => setSourceQuery(event.target.value)}
+                placeholder={t("sources.searchPlaceholder")}
+                aria-label={t("sources.searchPlaceholder")}
+                className="h-8 pl-8 pr-8"
+              />
+              {sourceQuery && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0.5 top-1/2 h-7 w-7 -translate-y-1/2"
+                  onClick={() => setSourceQuery("")}
+                  aria-label={t("sources.clearSearch")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -633,7 +694,9 @@ export function SourcesView() {
           </div>
         ) : filteredSources.length === 0 ? (
           <div className="flex h-32 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            {t("sources.noSearchResults", { query: sourceQuery.trim() })}
+            {sourceQuery.trim()
+              ? t("sources.noSearchResults", { query: sourceQuery.trim() })
+              : t("sources.noIngestFilterResults")}
           </div>
         ) : (
           <div className="p-2">
@@ -659,7 +722,7 @@ export function SourcesView() {
 
       <div className="flex items-center justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
         <span>
-          {sourceQuery.trim()
+          {sourceQuery.trim() || ingestFilter !== "all"
             ? t("sources.filteredSourceCount", {
                 count: filteredSourceCount,
                 total: totalSourceCount,
@@ -753,6 +816,36 @@ export function filterSourceTreeByQuery(
       .toLocaleLowerCase()
     if (haystack.includes(needle)) return node
     if (!node.is_dir || !node.children) return null
+    const children = node.children
+      .map(visit)
+      .filter((child): child is FileNode => child !== null)
+    return children.length > 0 ? { ...node, children } : null
+  }
+
+  return nodes.map(visit).filter((node): node is FileNode => node !== null)
+}
+
+/**
+ * Filters the source tree by per-file ingest status. Folders survive only
+ * when at least one descendant file matches, mirroring
+ * `filterSourceTreeByQuery`. "ingested" keeps files whose status is exactly
+ * "ingested"; "not-ingested" keeps everything else (never ingested, queued,
+ * processing, failed, cancelled). Status lookup matches the inline badge in
+ * `SourceTree`: `statuses.get(normalizePath(node.path)) ?? "not-ingested"`.
+ */
+export function filterSourceTreeByIngestStatus(
+  nodes: readonly FileNode[],
+  statuses: ReadonlyMap<string, SourceIngestStatus>,
+  mode: SourceIngestFilter,
+): FileNode[] {
+  if (mode === "all") return [...nodes]
+
+  const visit = (node: FileNode): FileNode | null => {
+    if (!node.is_dir) {
+      const status = statuses.get(normalizePath(node.path)) ?? "not-ingested"
+      return (mode === "ingested") === (status === "ingested") ? node : null
+    }
+    if (!node.children) return null
     const children = node.children
       .map(visit)
       .filter((child): child is FileNode => child !== null)
@@ -916,6 +1009,17 @@ function SourceTree({
                   onClick={() => onReveal(node)}
                 >
                   <FolderSearch className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  title={t("sources.ingest")}
+                  aria-label={t("sources.ingest")}
+                  disabled={ingestingPath === node.path}
+                  onClick={() => onIngest(node)}
+                >
+                  <BookOpen className="h-4 w-4" />
                 </Button>
                 <Button
                   variant="ghost"

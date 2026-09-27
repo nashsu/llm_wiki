@@ -276,6 +276,7 @@
       "unsupported-type": "This file type isn't supported for ingest.",
       "sensitive-config": "Config files can't be ingested.",
       "no-llm": "No usable LLM configured. Set a model or API key in Settings.",
+      "all-excluded": "Every source in this folder is excluded from ingest.",
       "unknown": "This file can't be ingested."
     },
     "ingestStatus": {
@@ -303,6 +304,11 @@
     "searchPlaceholder": "Filter sources by name or path",
     "clearSearch": "Clear source filter",
     "noSearchResults": "No sources match “{{query}}”",
+    "filterByIngestStatus": "Filter by ingest status",
+    "filterAll": "All files",
+    "filterIngested": "Ingested",
+    "filterNotIngested": "Not ingested",
+    "noIngestFilterResults": "No sources match the current filter",
     "filteredSourceCount": "{{count}} of {{total}} sources",
     "sourceCount_plural": "{{count}} sources"
   },

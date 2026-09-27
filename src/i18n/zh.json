@@ -276,6 +276,7 @@
       "unsupported-type": "该文件类型暂不支持摄取。",
       "sensitive-config": "配置文件不可摄取。",
       "no-llm": "尚未配置可用的 LLM，请在设置中配置模型或 API Key。",
+      "all-excluded": "该文件夹下的资料均已禁止摄取。",
       "unknown": "该文件无法摄取。"
     },
     "ingestStatus": {
@@ -303,6 +304,11 @@
     "searchPlaceholder": "按名称或路径筛选原始资料",
     "clearSearch": "清除资料筛选",
     "noSearchResults": "没有匹配“{{query}}”的原始资料",
+    "filterByIngestStatus": "按摄入状态筛选",
+    "filterAll": "所有文件",
+    "filterIngested": "已摄入",
+    "filterNotIngested": "未摄入",
+    "noIngestFilterResults": "没有符合筛选条件的资料",
     "filteredSourceCount": "显示 {{count}} / {{total}} 个资料",
     "sourceCount_plural": "{{count}} 个资料"
   },
