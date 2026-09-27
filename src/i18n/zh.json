@@ -52,7 +52,8 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
-    "updateAvailableSuffix": " · 有更新"
+    "updateAvailableSuffix": " · 有更新",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "新版本 {{version}} 已发布",
@@ -637,7 +638,8 @@
       "interface": "界面",
       "maintenance": "维护",
       "changelog": "更新日志",
-      "about": "关于"
+      "about": "关于",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -1186,6 +1188,35 @@
         "testing": "测试中...",
         "testSuccess": "连接成功",
         "testFailed": "测试失败"
+      },
+      "jira": {
+        "title": "Jira 集成",
+        "description": "连接 Jira Server / Data Center 实例，搜索工单并导出为项目内的 Markdown 文档。",
+        "baseUrl": "服务器地址",
+        "baseUrlHint": "实例根地址，例如 https://jira.example.com。使用 HTTP Basic 认证，仅支持 SSO 的登录方式不可用。",
+        "username": "用户名",
+        "password": "密码",
+        "showPassword": "显示密码",
+        "hidePassword": "隐藏密码",
+        "testConnection": "测试连接",
+        "testRunning": "测试中…",
+        "testOk": "已连接 {{title}}（Jira {{version}}）",
+        "passwordWarningTitle": "密码以明文保存",
+        "passwordWarning": "与应用内其他 API Key 一样，密码会被明文写入应用状态文件；能读取该文件的人即可看到密码。",
+        "acceptInvalidCerts": "跳过 TLS 证书校验",
+        "acceptInvalidCertsHint": "内网实例的证书不在系统信任库中时需要开启。开启后连接可被中间人拦截，请仅在确实因证书导致失败时使用。",
+        "userAgent": "User-Agent",
+        "userAgentHint": "部分企业网关只放行已知客户端；除非被代理拦截，否则保持默认值。",
+        "exportTitle": "导出",
+        "exportDir": "导出目录",
+        "exportDirHint": "相对路径以项目根目录为基准。当前解析为：",
+        "maxAttachmentMb": "附件下载大小上限（MB）",
+        "maxAttachmentMbHint": "超过该大小的附件仍会在文档中列出文件名，但不下载。",
+        "processFieldId": "「任务过程描述」字段 ID",
+        "processFieldIdHint": "对应文档中「任务过程描述」一节的自定义字段，可在工单的 XML/JSON 视图中找到；实例没有该字段时留空。",
+        "searchTitle": "搜索",
+        "scopeJql": "JQL 范围",
+        "scopeJqlHint": "会作为附加条件加入每次搜索。留空表示全站；填 project = AERDM 或 updated >= -365d 之类的范围，才能让「扫描最近工单」更有意义。"
       }
     }
   },
@@ -1350,5 +1381,52 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
+  },
+  "jira": {
+    "search": {
+      "searching": "搜索中…",
+      "empty": "输入标题的一部分或标签进行搜索；不输入内容时列出最近更新的工单。",
+      "noMatch": "没有符合当前条件的工单。",
+      "found": "{{count}} 个匹配工单",
+      "swept": "另已扫描最近更新的 {{count}} 个工单",
+      "limitReached": "已达扫描上限（{{count}}）",
+      "loadMore": "继续扫描更早的工单",
+      "unconfigured": "尚未配置 Jira。请在「设置 → Jira」中填写服务器地址、用户名和密码。"
+    },
+    "error": {
+      "title": "Jira 请求失败",
+      "config": "尚未配置 Jira",
+      "auth": "认证失败，请检查用户名和密码。",
+      "notFound": "未找到该工单。",
+      "network": "无法连接 Jira。"
+    },
+    "export": {
+      "export": "导出",
+      "exporting": "导出中…",
+      "exportingAttachments": "附件 {{completed}}/{{total}}",
+      "reExport": "重新导出",
+      "retry": "重试",
+      "done": "已导出到 {{path}}",
+      "overwriteMessage": "{{path}} 已存在，是否覆盖？",
+      "overwriteConfirm": "覆盖"
+    },
+    "exported": {
+      "loading": "加载中…",
+      "empty": "还没有导出过工单。",
+      "open": "打开",
+      "reveal": "在文件夹中显示",
+      "reExport": "重新导出",
+      "history": "该工单另有 {{count}} 份历史导出仍保留在磁盘上",
+      "openFailed": "无法打开导出的文件：{{error}}"
+    },
+    "searchPlaceholder": "按标题或标签搜索工单…",
+    "matchCase": "区分大小写",
+    "matchCaseHint": "区分大小写的匹配。只过滤已取得的结果，不会重新发起请求。",
+    "mode": {
+      "search": "搜索",
+      "exported": "已导出"
+    },
+    "refresh": "刷新",
+    "openJira": "打开 Jira"
   }
 }

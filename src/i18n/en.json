@@ -52,7 +52,8 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
-    "updateAvailableSuffix": " · update"
+    "updateAvailableSuffix": " · update",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "Version {{version}} is available",
@@ -637,7 +638,8 @@
       "interface": "Interface",
       "maintenance": "Maintenance",
       "changelog": "Changelog",
-      "about": "About"
+      "about": "About",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -1186,6 +1188,35 @@
         "testing": "Testing...",
         "testSuccess": "Connection successful",
         "testFailed": "Test failed"
+      },
+      "jira": {
+        "title": "Jira integration",
+        "description": "Connect to a Jira Server / Data Center instance to search issues and export them into the project as Markdown documents.",
+        "baseUrl": "Server address",
+        "baseUrlHint": "The instance root, e.g. https://jira.example.com. Credentials are sent over HTTP Basic, so an SSO-only login will not work.",
+        "username": "Username",
+        "password": "Password",
+        "showPassword": "Show password",
+        "hidePassword": "Hide password",
+        "testConnection": "Test connection",
+        "testRunning": "Testing…",
+        "testOk": "Connected to {{title}} (Jira {{version}})",
+        "passwordWarningTitle": "The password is stored in plain text",
+        "passwordWarning": "Like the other API keys this app keeps, it is written unencrypted into the application state file. Anyone who can read that file can read the password.",
+        "acceptInvalidCerts": "Skip TLS certificate verification",
+        "acceptInvalidCertsHint": "Needed for an intranet instance whose certificate is not in the system trust store. It also makes the connection interceptable by a man in the middle, so enable it only when the certificate really is what fails.",
+        "userAgent": "User-Agent",
+        "userAgentHint": "Some corporate gateways only let known clients through. Keep the default unless a proxy rejects it.",
+        "exportTitle": "Export",
+        "exportDir": "Export directory",
+        "exportDirHint": "Relative paths resolve against the project root. Currently resolved to:",
+        "maxAttachmentMb": "Largest attachment to download (MB)",
+        "maxAttachmentMbHint": "Larger attachments are still listed in the document by name, but not downloaded.",
+        "processFieldId": "「Task process description」 field id",
+        "processFieldIdHint": "The custom field rendered as 任务过程描述. Find it in the issue’s XML/JSON view; leave it empty if the instance has no such field.",
+        "searchTitle": "Search",
+        "scopeJql": "JQL scope",
+        "scopeJqlHint": "AND-ed into every search. Empty means the whole instance; a scope such as project = AERDM or updated >= -365d is what keeps the recent-issue scan meaningful."
       }
     }
   },
@@ -1350,5 +1381,52 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
+  },
+  "jira": {
+    "search": {
+      "searching": "Searching…",
+      "empty": "Type part of a title or a label to search. With the box empty, the most recently updated issues are listed.",
+      "noMatch": "No issue matches the current filter.",
+      "found": "{{count}} matching issue(s)",
+      "swept": "Also scanned the {{count}} most recently updated issues",
+      "limitReached": "scan limit reached ({{count}})",
+      "loadMore": "Scan older issues",
+      "unconfigured": "Jira is not configured yet. Fill in the server address, username and password under Settings → Jira."
+    },
+    "error": {
+      "title": "The Jira request failed",
+      "config": "Jira is not configured",
+      "auth": "Authentication failed — check the username and password.",
+      "notFound": "That issue was not found.",
+      "network": "Could not reach Jira."
+    },
+    "export": {
+      "export": "Export",
+      "exporting": "Exporting…",
+      "exportingAttachments": "attachments {{completed}}/{{total}}",
+      "reExport": "Export again",
+      "retry": "Retry",
+      "done": "Exported to {{path}}",
+      "overwriteMessage": "{{path}} already exists. Replace it?",
+      "overwriteConfirm": "Replace"
+    },
+    "exported": {
+      "loading": "Loading…",
+      "empty": "No issue has been exported yet.",
+      "open": "Open",
+      "reveal": "Show in folder",
+      "reExport": "Export again",
+      "history": "{{count}} older export(s) of this issue are still on disk",
+      "openFailed": "Cannot open the exported file: {{error}}"
+    },
+    "searchPlaceholder": "Search issues by title or label…",
+    "matchCase": "Match case",
+    "matchCaseHint": "Case-sensitive matching. Filters the results already retrieved — it does not send a new request.",
+    "mode": {
+      "search": "Search",
+      "exported": "Exported"
+    },
+    "refresh": "Refresh",
+    "openJira": "Open in Jira"
   }
 }

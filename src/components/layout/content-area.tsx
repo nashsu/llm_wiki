@@ -9,6 +9,7 @@ import { LintView } from "@/components/lint/lint-view"
 import { SearchView } from "@/components/search/search-view"
 import { GraphView } from "@/components/graph/graph-view"
 import { HistoryView } from "@/components/history/history-view"
+import { JiraView } from "@/components/jira/jira-view"
 import { PreviewPanel } from "./preview-panel"
 
 export function ContentArea() {
@@ -63,11 +64,21 @@ export function ContentArea() {
     if (activeView === "review") setHasMountedReview(true)
   }, [activeView])
 
+  // Same for JiraView: opening an exported document switches to the wiki
+  // preview, and coming back must land on the same search results and mode
+  // rather than a fresh empty search.
+  const [hasMountedJira, setHasMountedJira] = useState(activeView === "jira")
+
+  useEffect(() => {
+    if (activeView === "jira") setHasMountedJira(true)
+  }, [activeView])
+
   const keepSources = hasMountedSources || activeView === "sources"
   const keepSearch = hasMountedSearch || activeView === "search"
   const keepLint = hasMountedLint || activeView === "lint"
   const keepWiki = hasMountedWiki || activeView === "wiki"
   const keepReview = hasMountedReview || activeView === "review"
+  const keepJira = hasMountedJira || activeView === "jira"
 
   // Key the persistent views by project so switching projects remounts them
   // with cleared state instead of surfacing the previous project's results.
@@ -100,11 +111,17 @@ export function ContentArea() {
           <ReviewView key={project?.id} />
         </div>
       )}
+      {keepJira && (
+        <div className={activeView === "jira" ? "h-full" : "hidden"}>
+          <JiraView key={project?.id} />
+        </div>
+      )}
       {activeView !== "sources" &&
         activeView !== "search" &&
         activeView !== "lint" &&
         activeView !== "wiki" &&
-        activeView !== "review" && <ActiveContent activeView={activeView} />}
+        activeView !== "review" &&
+        activeView !== "jira" && <ActiveContent activeView={activeView} />}
     </>
   )
 }
@@ -126,6 +143,8 @@ function ActiveContent({
     case "sources":
       return null
     case "review":
+      return null
+    case "jira":
       return null
     case "lint":
       return null

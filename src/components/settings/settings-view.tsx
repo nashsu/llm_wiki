@@ -16,6 +16,7 @@ import {
   Server,
   Settings,
   FileText,
+  Ticket,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -43,6 +44,7 @@ import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
 import { FeishuNotifySection } from "./sections/feishu-notify-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
+import { JiraSection } from "./sections/jira-section"
 import { MineruSection } from "./sections/mineru-section"
 import { ApiServerSection } from "./sections/api-server-section"
 import { GeneralSection } from "./sections/general-section"
@@ -58,6 +60,7 @@ type CategoryId =
   | "web-search"
   | "network"
   | "source-watch"
+  | "jira"
   | "scheduled-import"
   | "mineru"
   | "api-server"
@@ -85,6 +88,7 @@ const CATEGORIES: Category[] = [
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "network", labelKey: "settings.categories.network", icon: Network },
   { id: "source-watch", labelKey: "settings.categories.sourceWatch", icon: FolderSync },
+  { id: "jira", labelKey: "settings.categories.jira", icon: Ticket },
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "mineru", labelKey: "settings.categories.mineru", icon: FileText },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
@@ -679,6 +683,9 @@ export function SettingsView() {
         return <NetworkSection draft={draft} setDraft={setDraft} />
       case "source-watch":
         return <SourceWatchSection draft={draft} setDraft={setDraft} projectReady={!!project} />
+      case "jira":
+        // Persists inline, like the LLM section — no draft / Save button.
+        return <JiraSection />
       case "scheduled-import":
         return <ScheduledImportSection draft={draft} setDraft={setDraft} />
       case "mineru":
@@ -759,8 +766,9 @@ export function SettingsView() {
 
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
+            - "jira" saves its own config on commit, outside the draft
             - "about" has no draft-bound fields */}
-        {active !== "about" && active !== "llm" && (
+        {active !== "about" && active !== "llm" && active !== "jira" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className={`text-xs ${saveError ? "text-destructive" : "text-muted-foreground"}`}>

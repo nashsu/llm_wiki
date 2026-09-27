@@ -38,11 +38,19 @@ type PluginRequestInit = RequestInit & {
   }
 }
 
-export function withProxyTlsSettings(
+/**
+ * Per-request TLS relaxation for a single admin-configured endpoint (today:
+ * an intranet Jira whose certificate chain isn't in the system trust store).
+ *
+ * Deliberately separate from the proxy's TLS setting: that one is process-wide
+ * and only takes effect after a restart, and forcing a user to enable a proxy
+ * they don't need just to reach one internal host is the worse trade.
+ */
+export function withTlsOverride(
   init: RequestInit | undefined,
-  proxy: ProxyConfig,
+  acceptInvalidCerts: boolean,
 ): PluginRequestInit | undefined {
-  if (!isProxyActive(proxy) || proxy.acceptInvalidCerts !== true) return init
+  if (!acceptInvalidCerts) return init
   const pluginInit = init as PluginRequestInit | undefined
   return {
     ...pluginInit,
@@ -51,6 +59,14 @@ export function withProxyTlsSettings(
       acceptInvalidCerts: true,
     },
   }
+}
+
+export function withProxyTlsSettings(
+  init: RequestInit | undefined,
+  proxy: ProxyConfig,
+): PluginRequestInit | undefined {
+  if (!isProxyActive(proxy)) return init
+  return withTlsOverride(init, proxy.acceptInvalidCerts === true)
 }
 
 /**

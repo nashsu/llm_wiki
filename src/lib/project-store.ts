@@ -1,8 +1,9 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, JiraConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
 import { normalizeFeishuConfig, type FeishuNotifyConfig } from "@/lib/feishu"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { normalizeJiraConfig } from "@/lib/jira-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
 import { DEFAULT_BACKGROUND_OPACITY, DEFAULT_BACKGROUND_BRIGHTNESS } from "@/stores/background-store"
@@ -167,6 +168,18 @@ export async function saveSearchApiConfig(config: SearchApiConfig): Promise<void
 export async function loadSearchApiConfig(): Promise<SearchApiConfig | null> {
   const store = await getStore()
   return (await store.get<SearchApiConfig>(SEARCH_API_KEY)) ?? null
+}
+
+const JIRA_CONFIG_KEY = "jiraConfig"
+
+export async function saveJiraConfig(config: JiraConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(JIRA_CONFIG_KEY, config)
+}
+
+export async function loadJiraConfig(): Promise<JiraConfig> {
+  const store = await getStore()
+  return normalizeJiraConfig(await store.get<Partial<JiraConfig>>(JIRA_CONFIG_KEY))
 }
 
 const EMBEDDING_KEY = "embeddingConfig"

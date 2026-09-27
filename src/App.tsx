@@ -9,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackgroundImage, loadBackgroundOpacity, loadBackgroundBrightness, loadFeishuConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackgroundImage, loadBackgroundOpacity, loadBackgroundBrightness, loadFeishuConfig, loadJiraConfig } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { useBackgroundStore } from "@/stores/background-store"
 import { BackgroundLayer } from "@/components/layout/background-layer"
@@ -386,6 +386,8 @@ function App() {
         if (savedSearchConfig) {
           useWikiStore.getState().setSearchApiConfig(savedSearchConfig)
         }
+        const savedJiraConfig = await loadJiraConfig()
+        useWikiStore.getState().setJiraConfig(savedJiraConfig)
         const savedEmbeddingConfig = await loadEmbeddingConfig()
         if (savedEmbeddingConfig) {
           useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)

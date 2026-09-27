@@ -52,7 +52,8 @@
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Cambia progetto",
     "updateAvailable": "Aggiornamento disponibile",
-    "updateAvailableSuffix": " · aggiorna"
+    "updateAvailableSuffix": " · aggiorna",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "La versione {{version}} è disponibile",
@@ -633,7 +634,8 @@
       "interface": "Interfaccia",
       "maintenance": "Manutenzione",
       "changelog": "Changelog",
-      "about": "Informazioni"
+      "about": "Informazioni",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -1182,6 +1184,35 @@
         "testing": "Test in corso...",
         "testSuccess": "Connessione riuscita",
         "testFailed": "Test non riuscito"
+      },
+      "jira": {
+        "title": "Integrazione Jira",
+        "description": "Connetti un’istanza Jira Server / Data Center per cercare issue ed esportarle nel progetto come documenti Markdown.",
+        "baseUrl": "Indirizzo del server",
+        "baseUrlHint": "La radice dell’istanza, es. https://jira.example.com. Le credenziali usano HTTP Basic, quindi un accesso solo SSO non funziona.",
+        "username": "Nome utente",
+        "password": "Password",
+        "showPassword": "Mostra password",
+        "hidePassword": "Nascondi password",
+        "testConnection": "Prova connessione",
+        "testRunning": "Verifica…",
+        "testOk": "Connesso a {{title}} (Jira {{version}})",
+        "passwordWarningTitle": "La password è memorizzata in chiaro",
+        "passwordWarning": "Come le altre chiavi API di questa applicazione, viene scritta senza cifratura nel file di stato dell’applicazione. Chi può leggere quel file può leggere la password.",
+        "acceptInvalidCerts": "Ignora la verifica del certificato TLS",
+        "acceptInvalidCertsHint": "Necessario per un’istanza intranet il cui certificato non è nell’archivio attendibile di sistema. Rende però la connessione intercettabile da un man in the middle: attivalo solo se il problema è davvero il certificato.",
+        "userAgent": "User-Agent",
+        "userAgentHint": "Alcuni gateway aziendali lasciano passare solo client noti. Mantieni il valore predefinito salvo rifiuto da parte di un proxy.",
+        "exportTitle": "Esportazione",
+        "exportDir": "Cartella di esportazione",
+        "exportDirHint": "I percorsi relativi sono risolti rispetto alla radice del progetto. Attualmente:",
+        "maxAttachmentMb": "Allegato massimo da scaricare (MB)",
+        "maxAttachmentMbHint": "Gli allegati più grandi sono comunque elencati nel documento con il loro nome, ma non vengono scaricati.",
+        "processFieldId": "Id del campo 「Task process description」",
+        "processFieldIdHint": "Il campo personalizzato mostrato come 任务过程描述. Lo trovi nella vista XML/JSON della issue; lascia vuoto se l’istanza non ha questo campo.",
+        "searchTitle": "Ricerca",
+        "scopeJql": "Ambito JQL",
+        "scopeJqlHint": "Aggiunto in AND a ogni ricerca. Vuoto significa tutta l’istanza; un ambito come project = AERDM o updated >= -365d rende utile la scansione delle issue recenti."
       }
     }
   },
@@ -1346,5 +1377,52 @@
     "minutesAgo": "{{count}} min fa",
     "hoursAgo": "{{count}} h fa",
     "daysAgo": "{{count}} g fa"
+  },
+  "jira": {
+    "search": {
+      "searching": "Ricerca…",
+      "empty": "Digita parte di un titolo o un’etichetta per cercare. Con il campo vuoto vengono elencate le issue aggiornate più di recente.",
+      "noMatch": "Nessuna issue corrisponde al filtro attuale.",
+      "found": "{{count}} issue corrispondenti",
+      "swept": "Sono state scansionate anche le {{count}} issue aggiornate più di recente",
+      "limitReached": "limite di scansione raggiunto ({{count}})",
+      "loadMore": "Scansiona issue più vecchie",
+      "unconfigured": "Jira non è ancora configurato. Inserisci indirizzo del server, nome utente e password in Impostazioni → Jira."
+    },
+    "error": {
+      "title": "La richiesta a Jira non è riuscita",
+      "config": "Jira non è configurato",
+      "auth": "Autenticazione non riuscita: controlla nome utente e password.",
+      "notFound": "Issue non trovata.",
+      "network": "Impossibile raggiungere Jira."
+    },
+    "export": {
+      "export": "Esporta",
+      "exporting": "Esportazione…",
+      "exportingAttachments": "allegati {{completed}}/{{total}}",
+      "reExport": "Esporta di nuovo",
+      "retry": "Riprova",
+      "done": "Esportato in {{path}}",
+      "overwriteMessage": "{{path}} esiste già. Sostituirlo?",
+      "overwriteConfirm": "Sostituisci"
+    },
+    "exported": {
+      "loading": "Caricamento…",
+      "empty": "Nessuna issue è stata ancora esportata.",
+      "open": "Apri",
+      "reveal": "Mostra nella cartella",
+      "reExport": "Esporta di nuovo",
+      "history": "{{count}} esportazioni precedenti di questa issue sono ancora su disco",
+      "openFailed": "Impossibile aprire il file esportato: {{error}}"
+    },
+    "searchPlaceholder": "Cerca issue per titolo o etichetta…",
+    "matchCase": "Maiuscole/minuscole",
+    "matchCaseHint": "Corrispondenza sensibile alle maiuscole. Filtra i risultati già ottenuti, senza inviare nuove richieste.",
+    "mode": {
+      "search": "Cerca",
+      "exported": "Esportati"
+    },
+    "refresh": "Aggiorna",
+    "openJira": "Apri in Jira"
   }
 }
