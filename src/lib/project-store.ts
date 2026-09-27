@@ -1,6 +1,7 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
 import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import { normalizeFeishuConfig, type FeishuNotifyConfig } from "@/lib/feishu"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
@@ -331,6 +332,20 @@ export async function loadGeneralConfig(): Promise<GeneralConfig> {
   const store = await getStore()
   const config = await store.get<Partial<GeneralConfig>>(GENERAL_CONFIG_KEY)
   return normalizeGeneralConfig(config)
+}
+
+const FEISHU_CONFIG_KEY = "feishuConfig"
+
+export async function saveFeishuConfig(config: FeishuNotifyConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(FEISHU_CONFIG_KEY, normalizeFeishuConfig(config))
+  await store.save()
+}
+
+export async function loadFeishuConfig(): Promise<FeishuNotifyConfig> {
+  const store = await getStore()
+  const config = await store.get<Partial<FeishuNotifyConfig>>(FEISHU_CONFIG_KEY)
+  return normalizeFeishuConfig(config)
 }
 
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"

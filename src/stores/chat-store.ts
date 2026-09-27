@@ -60,6 +60,7 @@ interface ChatState {
   maxHistoryMessages: number
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  notifyFeishu: boolean
   agentMode: ChatAgentMode
   retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
@@ -88,6 +89,7 @@ interface ChatState {
   setMaxHistoryMessages: (n: number) => void
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
+  setNotifyFeishu: (enabled: boolean) => void
   setAgentMode: (mode: ChatAgentMode) => void
   setRetrievalMode: (mode: ChatRetrievalMode) => void
   setSelectedSkills: (skills: string[]) => void
@@ -121,6 +123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maxHistoryMessages: 10,
   useWebSearch: false,
   useAnyTxtSearch: false,
+  notifyFeishu: false,
   agentMode: "standard",
   retrievalMode: "standard",
   selectedSkills: [],
@@ -329,6 +332,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
 
   setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
+
+  setNotifyFeishu: (notifyFeishu) => set({ notifyFeishu }),
 
   setAgentMode: (agentMode) => set({ agentMode }),
 

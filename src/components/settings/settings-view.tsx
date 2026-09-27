@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Bot,
   Binary,
+  Bell,
   Globe,
   Languages,
   Palette,
@@ -30,6 +31,7 @@ import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { normalizeFeishuConfig } from "@/lib/feishu"
 import { setIngestWorkerLimit } from "@/lib/ingest-queue"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
@@ -39,6 +41,7 @@ import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
 import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
+import { FeishuNotifySection } from "./sections/feishu-notify-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
 import { MineruSection } from "./sections/mineru-section"
 import { ApiServerSection } from "./sections/api-server-section"
@@ -58,6 +61,7 @@ type CategoryId =
   | "scheduled-import"
   | "mineru"
   | "api-server"
+  | "feishu"
   | "output"
   | "interface"
   | "maintenance"
@@ -84,6 +88,7 @@ const CATEGORIES: Category[] = [
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "mineru", labelKey: "settings.categories.mineru", icon: FileText },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
+  { id: "feishu", labelKey: "settings.categories.feishu", icon: Bell },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
@@ -102,6 +107,7 @@ function initialDraft(
   mineru: ReturnType<typeof useWikiStore.getState>["mineruConfig"],
   apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
   generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
+  feishuConfig: ReturnType<typeof useWikiStore.getState>["feishuConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
@@ -190,6 +196,7 @@ function initialDraft(
     apiToken: apiConfig.token,
     autostart: generalConfig.autostart,
     closeBehavior: generalConfig.closeBehavior,
+    feishuConfig: { ...feishuConfig },
     uiLanguage,
     theme: theme ?? "system",
     zoomLevel: zoomLevel ?? useZoomStore.getState().level,
@@ -222,6 +229,8 @@ export function SettingsView() {
   const setApiConfig = useWikiStore((s) => s.setApiConfig)
   const generalConfig = useWikiStore((s) => s.generalConfig)
   const setGeneralConfig = useWikiStore((s) => s.setGeneralConfig)
+  const feishuConfig = useWikiStore((s) => s.feishuConfig)
+  const setFeishuConfig = useWikiStore((s) => s.setFeishuConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -250,6 +259,7 @@ export function SettingsView() {
       mineruConfig,
       apiConfig,
       generalConfig,
+      feishuConfig,
       maxHistoryMessages,
       i18n.language,
       project?.path,
@@ -309,6 +319,7 @@ export function SettingsView() {
         mineruConfig,
         apiConfig,
         generalConfig,
+        feishuConfig,
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
@@ -330,6 +341,7 @@ export function SettingsView() {
     mineruConfig,
     apiConfig,
     generalConfig,
+    feishuConfig,
     maxHistoryMessages,
     project,
   ])
@@ -365,6 +377,8 @@ export function SettingsView() {
       loadApiConfig,
       saveGeneralConfig,
       loadGeneralConfig,
+      saveFeishuConfig,
+      loadFeishuConfig,
       saveZoomLevel,
       loadZoomLevel,
       saveBackgroundImage,
@@ -458,6 +472,7 @@ export function SettingsView() {
       autostart: draft.autostart,
       closeBehavior: draft.closeBehavior,
     }
+    const newFeishuConfig = normalizeFeishuConfig(draft.feishuConfig)
 
     // Push all config values to zustand before any awaited save below. The
     // settings draft resync effect runs after store updates; if any config stays
@@ -475,6 +490,7 @@ export function SettingsView() {
     setMineruConfig(newMineruConfig)
     setApiConfig(newApiConfig)
     setGeneralConfig(newGeneralConfig)
+    setFeishuConfig(newFeishuConfig)
 
     try {
       await saveLlmConfig(newLlm)
@@ -525,6 +541,7 @@ export function SettingsView() {
       }
 
       await saveGeneralConfig(newGeneralConfig)
+      await saveFeishuConfig(newFeishuConfig)
       try {
         if (newGeneralConfig.autostart) {
           await enableAutostart()
@@ -668,6 +685,8 @@ export function SettingsView() {
         return <MineruSection draft={draft} setDraft={setDraft} />
       case "api-server":
         return <ApiServerSection draft={draft} setDraft={setDraft} />
+      case "feishu":
+        return <FeishuNotifySection draft={draft} setDraft={setDraft} />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":

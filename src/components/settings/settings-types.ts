@@ -1,5 +1,6 @@
 import type { CustomApiMode } from "./llm-presets"
 import type { AzureModelFamily, CloseBehavior, MineruEffort, MineruLocalBackend, MineruModelVersion, MineruParseMethod, ReasoningConfig, SourceWatchConfig } from "@/stores/wiki-store"
+import type { FeishuNotifyConfig } from "@/lib/feishu"
 
 /**
  * Shape of the draft state each section reads from and writes into.
@@ -101,6 +102,9 @@ export interface SettingsDraft {
   mineruLocalServerUrl: string
   mineruToken: string
   mineruModelVersion: MineruModelVersion
+
+  // Feishu notify — push a truncated summary to Feishu after each AI reply
+  feishuConfig: FeishuNotifyConfig
 
   // Local HTTP API server
   apiEnabled: boolean

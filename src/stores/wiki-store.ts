@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
+import { DEFAULT_FEISHU_CONFIG, type FeishuNotifyConfig } from "@/lib/feishu"
 import {
   buildProjectPathIndexFromTree,
   createEmptyProjectPathIndex,
@@ -463,6 +464,7 @@ interface WikiState {
   mineruConfig: MineruConfig
   apiConfig: ApiConfig
   generalConfig: GeneralConfig
+  feishuConfig: FeishuNotifyConfig
   graphUiState: GraphUiState
   dataVersion: number
 
@@ -497,6 +499,7 @@ interface WikiState {
   setMineruConfig: (config: MineruConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setGeneralConfig: (config: GeneralConfig) => void
+  setFeishuConfig: (config: FeishuNotifyConfig) => void
   setGraphUiState: (state: GraphUiState | ((current: GraphUiState) => GraphUiState)) => void
   resetGraphUiState: () => void
   bumpDataVersion: () => void
@@ -696,6 +699,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     closeBehavior: "minimize",
   },
 
+  feishuConfig: DEFAULT_FEISHU_CONFIG,
+
   graphUiState: createDefaultGraphUiState(),
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
@@ -715,6 +720,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setGeneralConfig: (generalConfig) => set({ generalConfig }),
+  setFeishuConfig: (feishuConfig) => set({ feishuConfig }),
   setGraphUiState: (graphUiState) =>
     set((state) => ({
       graphUiState: typeof graphUiState === "function"

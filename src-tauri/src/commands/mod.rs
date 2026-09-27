@@ -3,6 +3,7 @@ mod cli_resolver;
 pub mod codex_cli;
 pub mod ebook;
 pub mod external_search;
+pub mod feishu;
 pub mod extract_images;
 pub mod file_history;
 pub mod file_sync;

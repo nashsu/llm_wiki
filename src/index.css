@@ -68,6 +68,9 @@
 
 :root {
     --window-titlebar-height: 0px;
+    /* 告知 WebView2 原生控件（select 弹层、滚动条、日期选择器等）按浅色渲染，
+       否则 <option> 继承深色主题的浅色文字、弹层底色却是系统白，导致看不见。 */
+    color-scheme: light;
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
@@ -103,6 +106,7 @@
 }
 
 .dark {
+    color-scheme: dark;
     --background: oklch(0.16 0.005 260);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0.005 260);
