@@ -48,6 +48,7 @@ const SHELL_OUTPUT_DRAIN_TIMEOUT_SECS: u64 = 1;
 const DEFAULT_ANYTXT_ENDPOINT: &str = "http://127.0.0.1:9920";
 const DEFAULT_ANYTXT_LIMIT: usize = 20;
 const ANYTXT_LAST_MODIFY_END: i64 = 2_147_483_647;
+const ANYTXT_GET_RESULT_METHOD: &str = "ATRpcServer.Searcher.V1.GetResult";
 static WIKI_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1326,6 +1327,32 @@ fn web_search_result_limit(provider: &str, requested: usize) -> usize {
     requested.clamp(1, provider_max)
 }
 
+/// Builds the `input` object for `ATRpcServer.Searcher.V1.GetResult`.
+///
+/// `limit` must be a JSON number: AnyTXT validates it as an integer, and a
+/// string value is rejected with `-32602 'limit' is outside its valid integer
+/// range` no matter what the digits are.
+fn build_anytxt_search_input(
+    pattern: &str,
+    filter_ext: &str,
+    filter_dir: &str,
+    limit: usize,
+) -> Value {
+    let mut input = json!({
+        "pattern": pattern,
+        "filterExt": filter_ext,
+        "lastModifyBegin": 0,
+        "lastModifyEnd": ANYTXT_LAST_MODIFY_END,
+        "limit": limit,
+        "offset": 0,
+        "order": 0
+    });
+    if !filter_dir.trim().is_empty() {
+        input["filterDir"] = Value::String(filter_dir.to_string());
+    }
+    input
+}
+
 pub async fn run_anytxt_search(
     query: &str,
     config: Option<AnyTxtConfig>,
@@ -1363,25 +1390,14 @@ pub async fn run_anytxt_search(
         .timeout(std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS))
         .build()
         .map_err(|err| format!("Failed to build AnyTXT client: {err}"))?;
-    let mut input = json!({
-        "pattern": pattern,
-        "filterExt": filter_ext,
-        "lastModifyBegin": 0,
-        "lastModifyEnd": ANYTXT_LAST_MODIFY_END,
-        "limit": limit.to_string(),
-        "offset": 0,
-        "order": 0
-    });
-    if !filter_dir.trim().is_empty() {
-        input["filterDir"] = Value::String(filter_dir);
-    }
+    let input = build_anytxt_search_input(&pattern, &filter_ext, &filter_dir, limit);
     let response = client
         .post(&endpoint)
         .header("Accept", "application/json")
         .json(&json!({
             "id": 1,
             "jsonrpc": "2.0",
-            "method": "ATRpcServer.Searcher.V1.GetResult",
+            "method": ANYTXT_GET_RESULT_METHOD,
             "params": { "input": input }
         }))
         .send()
@@ -1401,7 +1417,7 @@ pub async fn run_anytxt_search(
         .map_err(|_| format!("AnyTXT returned invalid JSON: {}", trim_text(&text, 300)))?;
     if let Some(error) = value.get("error") {
         return Err(format!(
-            "AnyTXT error: {}",
+            "AnyTXT error ({ANYTXT_GET_RESULT_METHOD}): {}",
             trim_text(&error.to_string(), 300)
         ));
     }
@@ -3884,5 +3900,36 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].path, "/docs/value.txt");
         assert_eq!(items[0].snippet, "from value");
+    }
+
+    #[test]
+    fn build_anytxt_search_input_sends_limit_as_number() {
+        let input = build_anytxt_search_input("煤矿", "*", "", 20);
+        let limit = input.get("limit").expect("limit field");
+        assert!(
+            limit.is_number(),
+            "limit must be a JSON number, got {limit:?}"
+        );
+        assert_eq!(limit.as_u64(), Some(20));
+    }
+
+    #[test]
+    fn build_anytxt_search_input_keeps_numeric_fields_numeric() {
+        let input = build_anytxt_search_input("query", "*.pdf", "/docs", 100);
+        for key in ["limit", "offset", "order", "lastModifyBegin", "lastModifyEnd"] {
+            let value = input
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} field missing"));
+            assert!(value.is_number(), "{key} must be a JSON number, got {value:?}");
+        }
+        assert_eq!(input["filterDir"], json!("/docs"));
+        assert_eq!(input["filterExt"], json!("*.pdf"));
+        assert_eq!(input["pattern"], json!("query"));
+    }
+
+    #[test]
+    fn build_anytxt_search_input_omits_empty_filter_dir() {
+        let input = build_anytxt_search_input("query", "*", "   ", 5);
+        assert!(input.get("filterDir").is_none());
     }
 }
