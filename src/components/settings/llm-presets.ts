@@ -214,6 +214,37 @@ export const LLM_PRESETS: LlmPreset[] = [
     suggestedContextSize: 128000,
   },
   {
+    id: "orcarouter",
+    label: "OrcaRouter",
+    hint: "api.orcarouter.ai",
+    provider: "custom",
+    baseUrl: "https://api.orcarouter.ai/v1",
+    defaultModel: "openai/gpt-5.5",
+    apiMode: "chat_completions",
+    // OrcaRouter is a multi-vendor model routing gateway exposing OpenAI,
+    // Anthropic, Google, DeepSeek, GLM, Kimi and other families behind a
+    // single OpenAI-compatible /v1/chat/completions endpoint, so it reuses
+    // the generic chat-completions wire like the other hosted gateways above.
+    // `orcarouter/auto` routes per request and is offered as a chip, but the
+    // default stays a concrete model. The full catalog is large and rotates;
+    // this is a practical subset and users can type any other id into the
+    // input.
+    suggestedModels: [
+      "orcarouter/auto",
+      "orcarouter/free",
+      "openai/gpt-5.5",
+      "openai/gpt-5.4-mini",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-haiku-4.5",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+      "z-ai/glm-5.2",
+      "kimi/kimi-k2.6",
+    ],
+    suggestedContextSize: 128000,
+  },
+  {
     id: "groq",
     label: "Groq",
     hint: "api.groq.com",

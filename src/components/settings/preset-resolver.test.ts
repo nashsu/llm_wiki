@@ -41,6 +41,26 @@ describe("resolveConfig", () => {
     expect(atlas?.suggestedModels).toContain("deepseek-ai/deepseek-v4-pro")
   })
 
+  it("exposes OrcaRouter as an OpenAI-compatible chat-completions preset", () => {
+    const orca = LLM_PRESETS.find((preset) => preset.id === "orcarouter")
+
+    expect(orca?.provider).toBe("custom")
+    expect(orca?.baseUrl).toBe("https://api.orcarouter.ai/v1")
+    expect(orca?.apiMode).toBe("chat_completions")
+    expect(orca?.defaultModel).toBe("openai/gpt-5.5")
+    expect(orca?.suggestedModels).toContain("orcarouter/auto")
+  })
+
+  it("resolves the OrcaRouter preset into a custom chat-completions config", () => {
+    const orca = LLM_PRESETS.find((preset) => preset.id === "orcarouter")!
+    const resolved = resolveConfig(orca, undefined, fallbackConfig())
+
+    expect(resolved.provider).toBe("custom")
+    expect(resolved.customEndpoint).toBe("https://api.orcarouter.ai/v1")
+    expect(resolved.apiMode).toBe("chat_completions")
+    expect(resolved.model).toBe("openai/gpt-5.5")
+  })
+
   it("keeps Xiaomi MiMo presets aligned with current official and Token Plan endpoints", () => {
     const mimo = LLM_PRESETS.find((preset) => preset.id === "xiaomi-mimo")
 
