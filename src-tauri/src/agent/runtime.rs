@@ -119,6 +119,11 @@ struct AgentLoopAction {
     fields: Option<Value>,
     #[serde(default)]
     questions: Option<Value>,
+    // Keys not modelled above. Models often nest tool arguments
+    // ({"input": {"path": ...}}) or use a synonym such as "file"; without
+    // this, serde dropped them and read_page failed with "requires path".
+    #[serde(flatten)]
+    extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -1407,6 +1412,7 @@ impl AgentRuntime {
                 request.retrieval_mode,
             ));
             retrieval_steps += 1;
+            let first_new_reference = references.len();
             let observation = self
                 .execute_agent_loop_tool(
                     request,
@@ -1422,6 +1428,42 @@ impl AgentRuntime {
                 )
                 .await?;
             observations.push(observation);
+
+            // Open the top originals in full. A 500-character excerpt rarely
+            // holds the passage a quotation needs, and models seldom chose to
+            // read on their own, so faithful answers quoted whichever snippet
+            // looked closest. Not counted against the retrieval budget.
+            const FAITHFUL_HYDRATED_SOURCES: usize = 2;
+            let top_sources: Vec<String> = references[first_new_reference..]
+                .iter()
+                .filter(|reference| reference.kind == "source")
+                .take(FAITHFUL_HYDRATED_SOURCES)
+                .map(|reference| reference.path.clone())
+                .collect();
+            for path in top_sources {
+                check_cancel(cancellation)?;
+                let read_action = AgentLoopAction {
+                    action: "tool".to_string(),
+                    tool: Some("wiki.read_page".to_string()),
+                    path: Some(path),
+                    ..AgentLoopAction::default()
+                };
+                let observation = self
+                    .execute_agent_loop_tool(
+                        request,
+                        &read_action,
+                        &permission_policy,
+                        &tool_registry,
+                        &skills,
+                        &mut references,
+                        &mut tool_events,
+                        &mut events,
+                        &event_sink,
+                        cancellation,
+                    )
+                    .await?;
+                observations.push(observation);
+            }
         }
 
         for iteration in 0..max_iterations {
@@ -2057,7 +2099,14 @@ impl AgentRuntime {
             };
         }
 
-        if let Err(err) = require_tool_permission(tool, request, permission_policy) {
+        // Faithful-source mode rejects generated wiki evidence, but opening an
+        // original under raw/sources/ is exactly the evidence it asks for.
+        let permission = if faithful_source_read_allowed(request, tool, action.path.as_deref()) {
+            permission_policy.require(AgentCapability::ReadSource)
+        } else {
+            require_tool_permission(tool, request, permission_policy)
+        };
+        if let Err(err) = permission {
             return Ok(record_loop_tool_rejection(
                 tool,
                 err,
@@ -2162,12 +2211,27 @@ impl AgentRuntime {
                 }))
             }
             "wiki.read_page" => {
+                // A model sometimes puts the location in `query`; accept it only
+                // when it plainly names a file or a wiki link.
+                let query_as_path = action.query.as_deref().map(str::trim).filter(|query| {
+                    let lower = query.to_ascii_lowercase();
+                    lower.ends_with(".md")
+                        || lower.starts_with("wiki/")
+                        || lower.starts_with("raw/sources/")
+                        || lower.starts_with("[[")
+                });
                 let path = action
                     .path
                     .as_deref()
                     .map(str::trim)
                     .filter(|path| !path.is_empty())
-                    .ok_or_else(|| "wiki.read_page requires path".to_string())?;
+                    .or(query_as_path)
+                    .ok_or_else(|| {
+                        format!(
+                            "wiki.read_page requires path (received keys: {})",
+                            describe_action_keys(action)
+                        )
+                    })?;
                 Ok(serde_json::json!({ "path": path }))
             }
             "skill.read_file" => {
@@ -2278,10 +2342,23 @@ impl AgentRuntime {
                     .and_then(Value::as_str)
                     .unwrap_or("wiki page");
                 let content = value.get("content").and_then(Value::as_str).unwrap_or("");
-                let mut summary = format!(
-                    "read {path}\n{}",
-                    trim_chars(&collapse_whitespace(content), 4_000)
-                );
+                // Original sources are primary evidence: give them more room
+                // than generated wiki pages, and say so when anything is cut.
+                // Paths without a wiki/ prefix are originals (possibly written
+                // source-relative, as wiki `sources:` frontmatter does).
+                let limit = if path.to_ascii_lowercase().starts_with("wiki/") {
+                    4_000
+                } else {
+                    16_000
+                };
+                let collapsed = collapse_whitespace(content);
+                let total = collapsed.chars().count();
+                let mut summary = format!("read {path}\n{}", trim_chars(&collapsed, limit));
+                if total > limit {
+                    summary.push_str(&format!(
+                        "\n[truncated: showed {limit} of {total} characters]"
+                    ));
+                }
                 if let Some(context) = value
                     .get("knowledgeContext")
                     .filter(|value| !value.is_null())
@@ -2912,6 +2989,10 @@ fn should_fallback_wiki_search(
     planner_unavailable_or_failed && tools.wiki && skills_empty
 }
 
+// Wiki pages summarise original sources, and a model can present a page's
+// wording as if quoted from the original it cites. Keep the two apart.
+const SOURCE_QUOTE_DISCIPLINE: &str = "\nSource discipline: present text in quotation marks as a quote from an original source only if that exact wording appeared in a raw/sources excerpt or file read during this request. Wiki page titles and summaries are not quotations of the original; attribute them to the wiki page path. Cite a raw/sources path as the basis of a claim only if you read that file or its excerpt contains the claim.";
+
 fn build_agent_loop_system(base_system: &str, retrieval_mode: AgentRetrievalMode) -> String {
     let smart_retrieval = if retrieval_mode == AgentRetrievalMode::Smart {
         "\nSmart retrieval is enabled. Treat retrieval as a bounded evidence loop: after every observation, identify only the unresolved evidence gap, then either issue one concise revised retrieval action or answer. Prefer reading/following already discovered pages before broadening the query. Do not repeat equivalent queries. Stop as soon as the available evidence supports a cited answer; optional background is not a reason to continue."
@@ -2919,7 +3000,7 @@ fn build_agent_loop_system(base_system: &str, retrieval_mode: AgentRetrievalMode
         ""
     };
     let faithful_retrieval = if retrieval_mode == AgentRetrievalMode::Faithful {
-        "\nFaithful-source mode is enabled by explicit user choice. Answer only from raw source excerpts returned by source.search or explicitly attached source files. Preserve quoted wording exactly and cite the source path beside every quotation or factual claim. Clearly distinguish verbatim quotations from explanation. Generated wiki pages, graph context, web results, AnyTXT results, and unsupported background knowledge are not evidence in this mode. If the available excerpts are insufficient, state that limitation instead of reconstructing or guessing."
+        "\nFaithful-source mode is enabled by explicit user choice. Answer only from raw source excerpts returned by source.search, original files under raw/sources/ read with wiki.read_page, or explicitly attached source files. When a source.search excerpt is relevant but does not contain the full answer, read that file with wiki.read_page before answering. Preserve quoted wording exactly and cite the source path beside every quotation or factual claim. Clearly distinguish verbatim quotations from explanation. Generated wiki pages, graph context, web results, AnyTXT results, and unsupported background knowledge are not evidence in this mode. If the available excerpts are insufficient, state that limitation instead of reconstructing or guessing."
     } else {
         ""
     };
@@ -2946,18 +3027,18 @@ Use tools when they are useful, then wait for the observation in the next turn b
 	Do not claim that a generated file exists until a workspace.write_file or shell.exec observation confirms it. In the final answer, mention only observed generated file paths.\n\
 	Converge quickly. Do not keep reading optional references, running optional validation, or polishing after the requested deliverable has been written. Prefer final as soon as the core user request is satisfied.\n\
 	Only use shell.exec when active skill instructions or the user's explicit request require command-line work after files have been written with workspace.write_file. Generated files must be written under the Agent workspace described above. Commands whose explicit file paths stay inside the Agent workspace can run without an approval prompt; commands that mention external paths, home directories, downloads, temp folders, or network URLs require approval.\n\
-Use wiki.write_page only when the user explicitly asks to create or update a wiki page. Existing pages are create-only unless allowOverwrite is explicitly justified by the user's request.{smart_retrieval}{faithful_retrieval}"
+Use wiki.write_page only when the user explicitly asks to create or update a wiki page. Existing pages are create-only unless allowOverwrite is explicitly justified by the user's request.{smart_retrieval}{faithful_retrieval}{SOURCE_QUOTE_DISCIPLINE}"
     )
 }
 
 fn build_agent_final_system(base_system: &str, retrieval_mode: AgentRetrievalMode) -> String {
     let faithful_retrieval = if retrieval_mode == AgentRetrievalMode::Faithful {
-        " Faithful-source mode remains in force: use only raw source excerpts or explicitly attached source files as evidence, cite their paths, preserve quotations exactly, and disclose insufficient evidence rather than guessing."
+        " Faithful-source mode remains in force: use only raw source excerpts, originals read from raw/sources/, or explicitly attached source files as evidence, cite their paths, preserve quotations exactly, and disclose insufficient evidence rather than guessing."
     } else {
         ""
     };
     format!(
-        "{base_system}\n\nThe retrieval phase is complete. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided.{faithful_retrieval} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
+        "{base_system}\n\nThe retrieval phase is complete. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided.{faithful_retrieval}{SOURCE_QUOTE_DISCIPLINE} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
     )
 }
 
@@ -3026,9 +3107,10 @@ fn build_agent_loop_user(
     if request.tools.wiki {
         if request.retrieval_mode == AgentRetrievalMode::Faithful {
             out.push_str("- source.search: search raw source excerpts. This is the only retrieval tool permitted in faithful-source mode.\n");
+            out.push_str("- wiki.read_page: read the full text of an original found by source.search. Only raw/sources/ paths are permitted in faithful-source mode.\n");
         } else {
             out.push_str("- wiki.search: retrieve wiki pages for factual or topical questions.\n");
-            out.push_str("- wiki.read_page: read a specific wiki markdown page by path.\n");
+            out.push_str("- wiki.read_page: read a specific wiki page (wiki/...) or original source document (raw/sources/...) by path. Wiki pages name their originals in `sources:` frontmatter; read those to verify primary-source claims.\n");
             out.push_str("- source.search: search raw source snippets.\n");
             out.push_str("- graph.search: retrieve relationships, neighbors, backlinks, dependencies, and connections between entities. Prefer it for relational questions and query with concise entity or concept names.\n");
             out.push_str(
@@ -3132,7 +3214,91 @@ fn normalize_agent_loop_action(mut action: AgentLoopAction) -> AgentLoopAction {
             action.tool = Some("user.ask".to_string());
         }
     }
+    if action.path.is_none() {
+        action.path = extra_path(&action.extra);
+    }
+    for nested_key in ["input", "arguments", "args", "parameters", "params"] {
+        let Some(Value::Object(nested)) = action.extra.get(nested_key) else {
+            continue;
+        };
+        if action.path.is_none() {
+            action.path = extra_string(nested, &["path"]).or_else(|| extra_path(nested));
+        }
+        if action.query.is_none() {
+            action.query = extra_string(nested, &["query", "q"]);
+        }
+    }
     action
+}
+
+// Keys models use for a page or file location instead of `path`.
+const PATH_SYNONYMS: &[&str] = &[
+    "file",
+    "filePath",
+    "file_path",
+    "page",
+    "pagePath",
+    "page_path",
+    "sourcePath",
+    "source_path",
+    "slug",
+    "link",
+    "ref",
+    "reference",
+    "target",
+];
+const PATH_LIST_KEYS: &[&str] = &["paths", "pages", "files"];
+
+fn extra_path(map: &serde_json::Map<String, Value>) -> Option<String> {
+    extra_string(map, PATH_SYNONYMS).or_else(|| {
+        PATH_LIST_KEYS.iter().find_map(|key| {
+            map.get(*key)?.as_array()?.iter().find_map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        })
+    })
+}
+
+/// Names the keys an action carried, so a rejection says what the model sent.
+fn describe_action_keys(action: &AgentLoopAction) -> String {
+    let mut keys: Vec<String> = [
+        ("query", action.query.is_some()),
+        ("title", action.title.is_some()),
+        ("description", action.description.is_some()),
+        ("content", action.content.is_some()),
+        ("skill", action.skill.is_some()),
+        ("command", action.command.is_some()),
+        ("answer", action.answer.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, present)| *present)
+    .map(|(key, _)| key.to_string())
+    .collect();
+    keys.extend(action.extra.iter().map(|(key, value)| match value {
+        Value::Object(nested) => format!(
+            "{key}{{{}}}",
+            nested.keys().cloned().collect::<Vec<_>>().join(",")
+        ),
+        _ => key.clone(),
+    }));
+    if keys.is_empty() {
+        "none".to_string()
+    } else {
+        keys.join(", ")
+    }
+}
+
+fn extra_string(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        map.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn is_agent_loop_tool_name(value: &str) -> bool {
@@ -3514,6 +3680,34 @@ fn agent_iteration_limit_answer(
         "\nOpen the generated file reference(s) to preview them. Some optional validation or follow-up steps may not have completed.",
     );
     answer
+}
+
+/// Whether faithful-source mode may run this tool call as a direct read of an
+/// original document: `wiki.read_page` on a path under `raw/sources/`.
+fn faithful_source_read_allowed(
+    request: &AgentChatRequest,
+    tool: &str,
+    path: Option<&str>,
+) -> bool {
+    request.retrieval_mode == AgentRetrievalMode::Faithful
+        && request.tools.wiki
+        && tool == "wiki.read_page"
+        && path.is_some_and(|path| {
+            let normalized = path.trim().replace('\\', "/");
+            let normalized = normalized.trim_start_matches('/').to_ascii_lowercase();
+            // Originals may be written source-relative, as wiki `sources:`
+            // frontmatter does; read_wiki_page resolves those under raw/sources/
+            // and rejects anything that does not land there or under wiki/.
+            let names_original = normalized.starts_with("raw/sources/")
+                || !(normalized.starts_with("wiki/")
+                    || normalized.starts_with("raw/")
+                    || normalized == "purpose.md"
+                    || normalized == "schema.md");
+            names_original
+                && !normalized
+                    .split('/')
+                    .any(|segment| segment == ".." || segment.starts_with('.'))
+        })
 }
 
 fn require_tool_permission(
@@ -5227,6 +5421,130 @@ mod tests {
                 .unwrap_err()
                 .contains("faithful-source mode"));
         }
+    }
+
+    #[test]
+    fn faithful_retrieval_allows_reading_originals_under_raw_sources_only() {
+        let tools = || AgentToolOptions {
+            wiki: true,
+            web: false,
+            anytxt: false,
+        };
+        let faithful = AgentChatRequest {
+            retrieval_mode: AgentRetrievalMode::Faithful,
+            tools: tools(),
+            ..AgentChatRequest::default()
+        };
+        let original =
+            "raw/sources/Analyst/Research Notes/2026-01-15 - Quarterly Note - Full.pdf.md";
+
+        assert!(faithful_source_read_allowed(
+            &faithful,
+            "wiki.read_page",
+            Some(original)
+        ));
+        for path in [
+            "wiki/findings/acme-fair-value-2026-01-15.md",
+            "raw/sources/../wiki/index.md",
+            "raw/sources/.cache/notes.txt",
+            ".llm-wiki/app-state.json",
+        ] {
+            assert!(!faithful_source_read_allowed(
+                &faithful,
+                "wiki.read_page",
+                Some(path)
+            ));
+        }
+        assert!(!faithful_source_read_allowed(
+            &faithful,
+            "wiki.read_page",
+            None
+        ));
+        assert!(!faithful_source_read_allowed(
+            &faithful,
+            "wiki.search",
+            Some(original)
+        ));
+
+        let standard = AgentChatRequest {
+            tools: tools(),
+            ..AgentChatRequest::default()
+        };
+        assert!(!faithful_source_read_allowed(
+            &standard,
+            "wiki.read_page",
+            Some(original)
+        ));
+    }
+
+    #[test]
+    fn faithful_retrieval_allows_source_relative_original_paths() {
+        let faithful = AgentChatRequest {
+            retrieval_mode: AgentRetrievalMode::Faithful,
+            tools: AgentToolOptions {
+                wiki: true,
+                web: false,
+                anytxt: false,
+            },
+            ..AgentChatRequest::default()
+        };
+        assert!(faithful_source_read_allowed(
+            &faithful,
+            "wiki.read_page",
+            Some("Analyst/Research Notes/2026-01-15 - Quarterly Note - Full.pdf.md")
+        ));
+        assert!(!faithful_source_read_allowed(
+            &faithful,
+            "wiki.read_page",
+            Some("raw/other/notes.md")
+        ));
+    }
+
+    #[test]
+    fn agent_loop_action_recovers_nested_or_synonym_path_and_query_keys() {
+        let nested = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","input":{"path":"raw/sources/A/post.md"}}"#,
+        );
+        assert_eq!(nested.path.as_deref(), Some("raw/sources/A/post.md"));
+
+        let synonym = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","file":"wiki/a.md"}"#,
+        );
+        assert_eq!(synonym.path.as_deref(), Some("wiki/a.md"));
+
+        let direct = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","path":"wiki/b.md","input":{"path":"wiki/c.md"}}"#,
+        );
+        assert_eq!(direct.path.as_deref(), Some("wiki/b.md"));
+
+        let query = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"source.search","arguments":{"query":"Acme fair value"}}"#,
+        );
+        assert_eq!(query.query.as_deref(), Some("Acme fair value"));
+    }
+
+    #[test]
+    fn agent_loop_action_recovers_path_lists_and_link_keys() {
+        let listed = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","paths":["wiki/a.md","wiki/b.md"]}"#,
+        );
+        assert_eq!(listed.path.as_deref(), Some("wiki/a.md"));
+
+        let slug = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","input":{"slug":"12-analyst--note"}}"#,
+        );
+        assert_eq!(slug.path.as_deref(), Some("12-analyst--note"));
+    }
+
+    #[test]
+    fn describe_action_keys_names_unmodelled_and_nested_keys() {
+        let action = parse_agent_loop_action(
+            r#"{"action":"tool","tool":"wiki.read_page","query":"x","args":{"uri":"a"},"note":"b"}"#,
+        );
+        let described = describe_action_keys(&action);
+        assert!(described.contains("query"), "{described}");
+        assert!(described.contains("args{uri}"), "{described}");
+        assert!(described.contains("note"), "{described}");
     }
 
     #[test]
