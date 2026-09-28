@@ -61,6 +61,12 @@ const INGEST_GENERATION_TOKENS_256K = 24_576
 const INGEST_GENERATION_TOKENS_512K = 32_768
 const INGEST_ANALYSIS_TOKENS_MIN = 4_096
 const INGEST_ANALYSIS_TOKENS_MAX = 8_192
+// Local patch (minimal): GLM 4.5+ on OpenAI-compatible custom endpoints
+// thinks by default and its reasoning tokens count against max_tokens, so
+// the content-sized caps above truncate the response mid-thinking with
+// zero content (measured: 8,134 of 8,192 tokens on reasoning). Raise the
+// ceiling for ingest calls instead of disabling thinking.
+const INGEST_GLM_THINKING_UNCAPPED_TOKENS = 131_072
 const CONSERVATIVE_CHARS_PER_OUTPUT_TOKEN = 4
 const REVIEW_STAGE_MIN_SIGNAL_CHARS = 10_000
 const REVIEW_STAGE_MIN_FILE_BLOCKS = 4
@@ -109,7 +115,25 @@ function ingestAnalysisRequest(config: LlmConfig): {
         : reasoning.mode === "custom"
           ? reasoning.budgetTokens ?? 0
           : 0
-  return { maxTokens: contentTokens + reasoningTokens, reasoning }
+  return {
+    maxTokens: glmThinkingAwareMaxTokens(config, contentTokens + reasoningTokens),
+    reasoning,
+  }
+}
+
+/**
+ * Local patch (minimal): see INGEST_GLM_THINKING_UNCAPPED_TOKENS. Applies to
+ * every ingest call that passes a content-sized max_tokens — analysis,
+ * generation, review suggestions, truncated-FILE repair. Non-GLM configs
+ * are unchanged.
+ */
+function glmThinkingAwareMaxTokens(config: LlmConfig, contentTokens: number): number {
+  if (config.provider !== "custom") return contentTokens
+  if (config.apiMode === "anthropic_messages") return contentTokens
+  if (isOpenRouterEndpoint(config.customEndpoint)) return contentTokens
+  return /(?:^|\/)glm[-_.]?(?:5|4\.[5-9]|zero)(?:[-_.\/]|$)/i.test(config.model.trim())
+    ? INGEST_GLM_THINKING_UNCAPPED_TOKENS
+    : contentTokens
 }
 
 const ingestImageExtractionPromises = new Map<string, Promise<SavedImage[]>>()
@@ -387,7 +411,7 @@ import {
   loadProjectWikiSchemaRouting,
   validateWikiPageRouting,
 } from "@/lib/wiki-schema"
-import { resolveIngestReasoning } from "@/lib/reasoning-capabilities"
+import { isOpenRouterEndpoint, resolveIngestReasoning } from "@/lib/reasoning-capabilities"
 
 // Legacy export kept for backward compatibility with existing diagnostic
 // tests. The live pipeline goes through parseFileBlocks() below, which
@@ -1187,7 +1211,10 @@ async function autoIngestImpl(
       {
         temperature: 0.1,
         reasoning: resolveIngestReasoning(llmConfig),
-        max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+        max_tokens: glmThinkingAwareMaxTokens(
+          llmConfig,
+          computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+        ),
       },
     )
   } catch (err) {
@@ -1252,7 +1279,10 @@ async function autoIngestImpl(
         {
           temperature: 0.1,
           reasoning: resolveIngestReasoning(llmConfig),
-          max_tokens: computeIngestReviewMaxTokens(llmConfig.maxContextSize),
+          max_tokens: glmThinkingAwareMaxTokens(
+            llmConfig,
+            computeIngestReviewMaxTokens(llmConfig.maxContextSize),
+          ),
         },
       )
     } catch (err) {
@@ -1335,7 +1365,10 @@ async function autoIngestImpl(
           // A repair must regenerate the complete FILE body. Reusing the
           // smaller review budget can immediately truncate the same long page
           // that exhausted the original response.
-          max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+          max_tokens: glmThinkingAwareMaxTokens(
+            llmConfig,
+            computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+          ),
         },
       )
       throwIfIngestAborted(signal, activityId)
