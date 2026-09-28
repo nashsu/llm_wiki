@@ -17,6 +17,9 @@ import {
   SERPAPI_ENGINE_OPTIONS,
   resolveSearchConfig,
   DEFAULT_FIRECRAWL_URL,
+  getSearchProviderConfigurationIssue,
+  selectSearchProvider,
+  toggleSearchProvider,
   webSearch,
 } from "@/lib/web-search"
 
@@ -110,14 +113,31 @@ export function WebSearchSection() {
   }
 
   function toggleActive(id: Exclude<SearchProvider, "none">) {
-    const nextProvider = resolvedConfig.provider === id ? "none" : id
-    persist(resolveSearchConfig({ ...resolvedConfig, provider: nextProvider })).catch(() => {})
+    const result = toggleSearchProvider(resolvedConfig, id)
+    if (!result.ok) {
+      setExpanded((prev) => ({ ...prev, [id]: true }))
+      setTestStatus((prev) => ({
+        ...prev,
+        [id]: {
+          state: "error",
+          message: t("settings.sections.webSearch.configureBeforeActivating"),
+        },
+      }))
+      return
+    }
+    setTestStatus((prev) => {
+      if (!prev[id]) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    persist(result.config).catch(() => {})
   }
 
   async function testProvider(id: Exclude<SearchProvider, "none">) {
     const runId = (testRunRef.current[id] ?? 0) + 1
     testRunRef.current[id] = runId
-    const testConfig = resolveSearchConfig({ ...resolvedConfig, provider: id })
+    const testConfig = selectSearchProvider(resolvedConfig, id)
     setTestStatus((prev) => ({
       ...prev,
       [id]: { state: "testing", message: t("settings.sections.webSearch.testRunning") },
@@ -292,18 +312,21 @@ export function WebSearchSection() {
         <Label>{t("settings.sections.webSearch.webProviders")}</Label>
         {SEARCH_PROVIDERS.map((provider) => {
           const override = resolvedConfig.providerConfigs?.[provider.id]
-          const isActive = resolvedConfig.provider === provider.id
-          const hasConfig = provider.configKind === "none"
-            ? true
-            : provider.id === "searxng"
-              ? !!override?.searXngUrl
-              : !!override?.apiKey
+          const isSelected = resolvedConfig.provider === provider.id
+          const providerConfig = selectSearchProvider(resolvedConfig, provider.id)
+          const hasConfig = getSearchProviderConfigurationIssue(providerConfig) === null
+          const isActive = isSelected && hasConfig
+          const needsConfiguration = isSelected && !hasConfig
           const isExpanded = !!expanded[provider.id]
           return (
             <div
               key={provider.id}
               className={`rounded-lg border transition-colors ${
-                isActive ? "border-primary/60 bg-primary/5" : "border-border"
+                needsConfiguration
+                  ? "border-destructive/60 bg-destructive/5"
+                  : isActive
+                    ? "border-primary/60 bg-primary/5"
+                    : "border-border"
               }`}
             >
               <div className="flex items-center gap-3 px-3 py-2.5">
@@ -333,6 +356,11 @@ export function WebSearchSection() {
                         {t("settings.sections.webSearch.activeBadge")}
                       </span>
                     )}
+                    {needsConfiguration && (
+                      <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                        {t("settings.sections.webSearch.incompleteBadge")}
+                      </span>
+                    )}
                     {savedId === provider.id && (
                       <span className="shrink-0 text-[10px] text-emerald-600">
                         {t("settings.sections.webSearch.savedBadge")}
@@ -348,15 +376,15 @@ export function WebSearchSection() {
                   type="button"
                   onClick={() => toggleActive(provider.id)}
                   className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                    isActive
+                    isSelected
                       ? "border-primary bg-primary"
                       : "border-muted-foreground/30 bg-muted-foreground/20 hover:bg-muted-foreground/30"
                   }`}
-                  aria-label={isActive ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
+                  aria-label={isSelected ? t("settings.sections.webSearch.deactivate") : t("settings.sections.webSearch.activate")}
                 >
                   <span
                     className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-1 ring-black/10 transition-transform ${
-                      isActive ? "translate-x-4" : "translate-x-0.5"
+                      isSelected ? "translate-x-4" : "translate-x-0.5"
                     }`}
                   />
                 </button>

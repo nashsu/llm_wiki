@@ -18,7 +18,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { writeFile, readFile, deleteFile, fileExists } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
-import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
+import { getDeepResearchConfigurationMessage } from "@/lib/research-source-feedback"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { availableReviewPageFileName, createReviewPageDrafts } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
@@ -93,8 +93,9 @@ export function ReviewView() {
     // Deep Research — must be checked FIRST before any fuzzy matching
     if (action === "__deep_research__" && project) {
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredDeepResearchSources(searchConfig)) {
-        await appDialog.alert({ message: t("research.notConfigured") })
+      const configurationMessage = getDeepResearchConfigurationMessage(searchConfig, t)
+      if (configurationMessage) {
+        await appDialog.alert({ message: configurationMessage })
         return
       }
       if (item) {
@@ -207,7 +208,7 @@ export function ReviewView() {
     } else if (actionLooksLikeResearch(action) && project) {
       // Actions with "research" trigger deep research, not just page creation
       const searchConfig = useWikiStore.getState().searchApiConfig
-      if (!hasConfiguredDeepResearchSources(searchConfig)) {
+      if (getDeepResearchConfigurationMessage(searchConfig, t)) {
         // No research source — fall through to create a page instead
         if (item) {
           handleResolve(id, "__create_page__:" + action)
@@ -372,8 +373,9 @@ export function ReviewView() {
     )
     if (eligibleItems.length === 0) return
     const state = useWikiStore.getState()
-    if (!hasConfiguredDeepResearchSources(state.searchApiConfig)) {
-      await appDialog.alert({ message: t("research.notConfigured") })
+    const configurationMessage = getDeepResearchConfigurationMessage(state.searchApiConfig, t)
+    if (configurationMessage) {
+      await appDialog.alert({ message: configurationMessage })
       return
     }
     queueResearchBatch(

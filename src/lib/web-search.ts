@@ -17,6 +17,30 @@ export interface WebSearchResult {
 
 export const DEFAULT_FIRECRAWL_URL = "https://api.firecrawl.dev"
 
+export const SEARCH_PROVIDER_LABELS: Record<Exclude<SearchProvider, "none">, string> = {
+  ollama: "Ollama",
+  tavily: "Tavily",
+  serpapi: "SerpApi",
+  searxng: "SearXNG",
+  firecrawl: "Firecrawl",
+  brave: "Brave Search",
+  bocha: "Bocha Search",
+}
+
+export type SearchProviderConfigurationIssue =
+  | { kind: "no-provider" }
+  | { kind: "missing-api-key"; provider: Exclude<SearchProvider, "none"> }
+  | { kind: "missing-url"; provider: "searxng" }
+
+export type DeepResearchConfigurationIssue =
+  | SearchProviderConfigurationIssue
+  | { kind: "anytxt-not-configured" }
+  | { kind: "no-sources-configured" }
+
+export type SearchProviderToggleResult =
+  | { ok: true; config: SearchApiConfig }
+  | { ok: false; issue: SearchProviderConfigurationIssue }
+
 export const SERPAPI_ENGINE_OPTIONS: { value: SerpApiEngine; label: string; hint: string }[] = [
   { value: "google", label: "Google Web", hint: "SerpApi Google Search API organic results" },
   { value: "google_news", label: "Google News", hint: "News-focused results" },
@@ -107,24 +131,97 @@ export function resolveSearchConfig(config: SearchApiConfig): SearchApiConfig {
   }
 }
 
-export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
+/**
+ * Select a provider without carrying the previous provider's denormalized
+ * top-level credentials into it. Provider-specific settings are canonical
+ * once `providerConfigs` exists; the top-level fields only describe the
+ * currently selected provider and support legacy persisted configs.
+ */
+export function selectSearchProvider(
+  config: SearchApiConfig,
+  provider: SearchProvider,
+): SearchApiConfig {
   const resolved = resolveSearchConfig(config)
-  if (resolved.provider === "none") return false
-  if (resolved.provider === "searxng") return Boolean(resolved.searXngUrl?.trim())
-  if (resolved.provider === "ollama") return Boolean(resolved.apiKey?.trim())
-  if (resolved.provider === "firecrawl") return true
-  return Boolean(resolved.apiKey?.trim())
+  if (provider === "none") {
+    return resolveSearchConfig({ ...resolved, provider: "none" })
+  }
+
+  const override = resolved.providerConfigs?.[provider]
+  return resolveSearchConfig({
+    ...resolved,
+    provider,
+    apiKey: override?.apiKey ?? "",
+    serpApiEngine: provider === "serpapi"
+      ? override?.serpApiEngine ?? "google"
+      : resolved.serpApiEngine,
+    searXngUrl: provider === "searxng"
+      ? override?.searXngUrl ?? ""
+      : resolved.searXngUrl,
+    searXngCategories: provider === "searxng"
+      ? override?.searXngCategories ?? ["general"]
+      : resolved.searXngCategories,
+    ollamaUrl: provider === "ollama"
+      ? override?.ollamaUrl ?? "https://ollama.com"
+      : resolved.ollamaUrl,
+  })
+}
+
+export function getSearchProviderConfigurationIssue(
+  config: SearchApiConfig,
+): SearchProviderConfigurationIssue | null {
+  const resolved = resolveSearchConfig(config)
+  if (resolved.provider === "none") return { kind: "no-provider" }
+  if (resolved.provider === "searxng") {
+    return resolved.searXngUrl?.trim()
+      ? null
+      : { kind: "missing-url", provider: "searxng" }
+  }
+  if (resolved.provider === "firecrawl") return null
+  return resolved.apiKey?.trim()
+    ? null
+    : { kind: "missing-api-key", provider: resolved.provider }
+}
+
+export function toggleSearchProvider(
+  config: SearchApiConfig,
+  provider: Exclude<SearchProvider, "none">,
+): SearchProviderToggleResult {
+  const resolved = resolveSearchConfig(config)
+  if (resolved.provider === provider) {
+    return { ok: true, config: selectSearchProvider(resolved, "none") }
+  }
+
+  const candidate = selectSearchProvider(resolved, provider)
+  const issue = getSearchProviderConfigurationIssue(candidate)
+  return issue
+    ? { ok: false, issue }
+    : { ok: true, config: candidate }
+}
+
+export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
+  return getSearchProviderConfigurationIssue(config) === null
+}
+
+export function getDeepResearchConfigurationIssue(
+  config: SearchApiConfig,
+): DeepResearchConfigurationIssue | null {
+  const resolved = resolveSearchConfig(config)
+  const source = resolved.deepResearchSource ?? "web"
+  const webIssue = getSearchProviderConfigurationIssue(resolved)
+  const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
+
+  if (source === "web") return webIssue
+  if (source === "anytxt") {
+    return anyTxtConfigured ? null : { kind: "anytxt-not-configured" }
+  }
+  if (webIssue === null || anyTxtConfigured) return null
+  return webIssue.kind === "no-provider"
+    ? { kind: "no-sources-configured" }
+    : webIssue
 }
 
 export function hasConfiguredDeepResearchSources(config: SearchApiConfig): boolean {
-  const resolved = resolveSearchConfig(config)
-  const source = resolved.deepResearchSource ?? "web"
-  const webConfigured = hasConfiguredSearchProvider(resolved)
-  const anyTxtConfigured = hasConfiguredAnyTxt(resolved.anyTxt)
-
-  if (source === "web") return webConfigured
-  if (source === "anytxt") return anyTxtConfigured
-  return webConfigured || anyTxtConfigured
+  return getDeepResearchConfigurationIssue(config) === null
 }
 
 export async function webSearch(
