@@ -518,6 +518,53 @@ describe("Azure OpenAI provider", () => {
     expect(body.temperature).toBeUndefined()
   })
 
+  it("auto-detects GPT-5 from an Azure deployment name that does not start with the model id", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "my-gpt-5-chat",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 2048 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBeUndefined()
+    expect(body.max_completion_tokens).toBe(2048)
+  })
+
+  it("auto-detects the dashless gpt5 spelling and o-series names in Azure deployments", () => {
+    for (const model of ["prod-gpt5", "o3-reasoning"]) {
+      const cfg = getProviderConfig(mkConfig({
+        provider: "azure",
+        model,
+        customEndpoint: "https://example-resource.openai.azure.com",
+      }))
+      const body = cfg.buildBody(
+        [{ role: "user", content: "hi" }],
+        { max_tokens: 1000 },
+      ) as Record<string, unknown>
+
+      expect(body.max_tokens, model).toBeUndefined()
+      expect(body.max_completion_tokens, model).toBe(1000)
+    }
+  })
+
+  it("keeps max_tokens for non-GPT-5 Azure deployments", () => {
+    const cfg = getProviderConfig(mkConfig({
+      provider: "azure",
+      model: "gpt-4o-chat",
+      customEndpoint: "https://example-resource.openai.azure.com",
+    }))
+    const body = cfg.buildBody(
+      [{ role: "user", content: "hi" }],
+      { max_tokens: 3000 },
+    ) as Record<string, unknown>
+
+    expect(body.max_tokens).toBe(3000)
+    expect(body.max_completion_tokens).toBeUndefined()
+  })
+
   it("applies explicit Azure model family to custom Azure endpoints", () => {
     const cfg = getProviderConfig(mkConfig({
       provider: "custom",
