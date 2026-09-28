@@ -86,17 +86,12 @@ export const LLM_PRESETS: LlmPreset[] = [
     label: "Claude Code CLI (local)",
     hint: "Uses the local `claude` binary — no API key needed",
     provider: "claude-code",
-    defaultModel: "claude-sonnet-4-6",
-    // Mirrors anthropic preset; the CLI forwards to the same Anthropic
-    // backend, so model ids are identical. Users with a subscription
-    // can pick Opus/Sonnet/Haiku here without paying an API key bill.
-    suggestedModels: [
-      "claude-opus-4-7",
-      "claude-opus-4-6",
-      "claude-sonnet-4-6",
-      "claude-sonnet-4-5-20250929",
-      "claude-haiku-4-5-20251001",
-    ],
+    defaultModel: "sonnet",
+    // claude-code-cli resolves bare tier aliases (opus/sonnet/fable/haiku) to
+    // whatever is currently "latest" for that tier by itself (confirmed via
+    // `claude --help`) — no dated model id to go stale, no discovery script
+    // needed. Mirrors anthropic preset naming only for the pinned fallback.
+    suggestedModels: ["sonnet", "opus", "fable", "haiku"],
     suggestedContextSize: 200000,
   },
   {
@@ -104,13 +99,11 @@ export const LLM_PRESETS: LlmPreset[] = [
     label: "Codex CLI (local)",
     hint: "Uses the local `codex` binary — no API key needed",
     provider: "codex-cli",
-    defaultModel: "gpt-5.4-mini",
+    defaultModel: "gpt-5.6-terra",
     suggestedModels: [
-      "gpt-5.4-mini",
-      "gpt-5.4",
-      "gpt-5.3-codex",
-      "gpt-5.3-codex-spark",
-      "gpt-5.2",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-5.6-luna",
     ],
     suggestedContextSize: 200000,
   },
