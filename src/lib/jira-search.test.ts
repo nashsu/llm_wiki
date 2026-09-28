@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest"
 import type { JiraIssueSummary } from "@/types/jira"
 import {
+  applyJiraFilters,
   buildJiraHaystack,
   buildJiraSearchJql,
+  dedupeJiraIssuesByKey,
+  effectiveJiraFilters,
+  EMPTY_JIRA_FILTERS,
+  extractJiraFilterOptions,
   filterJiraIssues,
+  filterJqlClauses,
+  hasActiveJiraFilters,
+  JIRA_FILTER_KEYS,
   jiraHighlightTokens,
+  JIRA_UNASSIGNED_VALUE,
   matchesJiraQuery,
   mergeJiraResults,
   normalizeForJiraMatch,
+  parseJiraIssueKeys,
   sanitizeJqlTextTerm,
   shouldRunSweep,
 } from "./jira-search"
@@ -25,32 +35,225 @@ function issue(
   return { id: key, key, fields: { summary, labels, updated } }
 }
 
+/** Issues carrying the five filter dimensions. */
+const ALL_DIMS = { title: true, keyword: true, issueKey: true }
+const FILTERED: JiraIssueSummary[] = [
+  {
+    id: "AERDM-1",
+    key: "AERDM-1",
+    fields: {
+      summary: "收音搜台",
+      project: { key: "AERDM", name: "DAB 项目" },
+      issuetype: { name: "Bug" },
+      status: { name: "待处理" },
+      assignee: { key: "JIRAUSER1", name: "wangjin", displayName: "王锦" },
+      reporter: { key: "JIRAUSER2", name: "shixy", displayName: "史晓宇" },
+    },
+  },
+  {
+    id: "AERDM-2",
+    key: "AERDM-2",
+    fields: {
+      summary: "I2C 时序",
+      project: { key: "AERDM", name: "DAB 项目" },
+      issuetype: { name: "任务" },
+      status: { name: "处理中" },
+      assignee: null,
+      reporter: { key: "JIRAUSER3", displayName: "赵舜弦" },
+    },
+  },
+  {
+    id: "MCU-3",
+    key: "MCU-3",
+    fields: {
+      summary: "boot 死机",
+      project: { key: "MCU" },
+      issuetype: { name: "Bug" },
+      status: { name: "处理中" },
+      assignee: { key: "JIRAUSER1", displayName: "王锦" },
+      reporter: { key: "JIRAUSER2", displayName: "史晓宇" },
+    },
+  },
+]
+
+describe("extractJiraFilterOptions", () => {
+  const options = extractJiraFilterOptions(FILTERED, "未分配")
+
+  it("counts and dedupes each dimension", () => {
+    expect(options.project.map((o) => [o.value, o.label, o.count])).toEqual([
+      ["AERDM", "AERDM — DAB 项目", 2],
+      ["MCU", "MCU", 1],
+    ])
+    // zh-Hans-CN collation orders CJK labels before Latin ones.
+    expect(options.issuetype.map((o) => o.value)).toEqual(["任务", "Bug"])
+    expect(options.issuetype.find((o) => o.value === "Bug")?.count).toBe(2)
+    expect(options.status.map((o) => o.value)).toEqual(["处理中", "待处理"])
+  })
+
+  it("maps a null user to the unassigned option, sinking it last", () => {
+    const assignee = options.assignee.map((o) => o.value)
+    expect(assignee[assignee.length - 1]).toBe(JIRA_UNASSIGNED_VALUE)
+    expect(options.assignee.find((o) => o.value === JIRA_UNASSIGNED_VALUE)?.label).toBe("未分配")
+    expect(options.assignee.find((o) => o.value === "王锦")?.count).toBe(2)
+    expect(options.reporter.map((o) => o.value)).toEqual(["史晓宇", "赵舜弦"])
+  })
+
+  it("renders every dimension for issues that lack the fields entirely", () => {
+    const bare = extractJiraFilterOptions([issue("X-1", "no fields")], "未分配")
+    expect(JIRA_FILTER_KEYS.every((key) => Array.isArray(bare[key]))).toBe(true)
+    expect(bare.status).toEqual([])
+  })
+})
+
+describe("applyJiraFilters", () => {
+  it("returns the list unchanged when every filter is empty", () => {
+    expect(applyJiraFilters(FILTERED, EMPTY_JIRA_FILTERS)).toEqual(FILTERED)
+  })
+
+  it("filters by one dimension", () => {
+    expect(
+      applyJiraFilters(FILTERED, { ...EMPTY_JIRA_FILTERS, project: "MCU" }).map((i) => i.key),
+    ).toEqual(["MCU-3"])
+    expect(
+      applyJiraFilters(FILTERED, { ...EMPTY_JIRA_FILTERS, status: "处理中" }).map((i) => i.key),
+    ).toEqual(["AERDM-2", "MCU-3"])
+  })
+
+  it("intersects multiple dimensions", () => {
+    expect(
+      applyJiraFilters(FILTERED, {
+        ...EMPTY_JIRA_FILTERS,
+        issuetype: "Bug",
+        assignee: "王锦",
+      }).map((i) => i.key),
+    ).toEqual(["AERDM-1", "MCU-3"])
+    expect(
+      applyJiraFilters(FILTERED, {
+        ...EMPTY_JIRA_FILTERS,
+        issuetype: "任务",
+        assignee: "王锦",
+      }),
+    ).toEqual([])
+  })
+
+  it("matches the unassigned marker against null users", () => {
+    expect(
+      applyJiraFilters(FILTERED, {
+        ...EMPTY_JIRA_FILTERS,
+        assignee: JIRA_UNASSIGNED_VALUE,
+      }).map((i) => i.key),
+    ).toEqual(["AERDM-2"])
+  })
+})
+
+describe("effectiveJiraFilters", () => {
+  it("keeps selections the result set still offers", () => {
+    const options = extractJiraFilterOptions(FILTERED, "未分配")
+    const filters = { ...EMPTY_JIRA_FILTERS, project: "MCU", status: "处理中" }
+    expect(effectiveJiraFilters(filters, options)).toEqual(filters)
+  })
+
+  it("drops selections that vanished from the result set", () => {
+    const options = extractJiraFilterOptions(FILTERED, "未分配")
+    const filters = { ...EMPTY_JIRA_FILTERS, project: "不存在", status: "待处理" }
+    expect(effectiveJiraFilters(filters, options)).toEqual({
+      ...EMPTY_JIRA_FILTERS,
+      status: "待处理",
+    })
+  })
+})
+
+describe("server-side filter clauses", () => {
+  it("carries each option's pre-escaped JQL clause", () => {
+    const options = extractJiraFilterOptions(FILTERED, "未分配")
+    expect(options.project.find((o) => o.value === "MCU")?.jql).toBe("project = MCU")
+    expect(options.issuetype.find((o) => o.value === "Bug")?.jql).toBe('issuetype = "Bug"')
+    expect(options.status.find((o) => o.value === "处理中")?.jql).toBe('status = "处理中"')
+    expect(options.assignee.find((o) => o.value === "王锦")?.jql).toBe('assignee = "wangjin"')
+    expect(options.assignee.find((o) => o.value === JIRA_UNASSIGNED_VALUE)?.jql).toBe("assignee is EMPTY")
+    expect(options.reporter.find((o) => o.value === "史晓宇")?.jql).toBe('reporter = "shixy"')
+  })
+
+  it("resolves the selections to clauses in toolbar order", () => {
+    const options = extractJiraFilterOptions(FILTERED, "未分配")
+    const clauses = filterJqlClauses(
+      { ...EMPTY_JIRA_FILTERS, status: "处理中", project: "AERDM" },
+      options,
+    )
+    expect(clauses).toEqual(["project = AERDM", 'status = "处理中"'])
+    expect(filterJqlClauses(EMPTY_JIRA_FILTERS, options)).toEqual([])
+  })
+
+  it("interpolates the clauses into both search modes", () => {
+    const withClauses = buildJiraSearchJql({
+      query: "box",
+      scopeJql: "project in (AERDM)",
+      mode: "narrow",
+      filterClauses: ["assignee is EMPTY", 'status = "处理中"'],
+    })
+    expect(withClauses).toBe(
+      '(project in (AERDM)) AND (assignee is EMPTY) AND (status = "处理中") AND ' +
+        '(summary ~ "box*" OR text ~ "box*") ORDER BY updated DESC',
+    )
+    const sweep = buildJiraSearchJql({
+      query: "",
+      scopeJql: "",
+      mode: "sweep",
+      filterClauses: ["project = MCU"],
+    })
+    expect(sweep).toBe("(project = MCU) ORDER BY updated DESC")
+  })
+
+  it("escapes quotes and backslashes inside a JQL string value", () => {
+    const hostile = issue("X-1", "x")
+    hostile.fields.status = { name: 'Re"open\\ed' }
+    const options = extractJiraFilterOptions([hostile], "未分配")
+    expect(options.status[0].jql).toBe('status = "Re\\"open\\\\ed"')
+  })
+})
+
+describe("dedupeJiraIssuesByKey", () => {
+  it("unions groups, first occurrence wins, no double counting", () => {
+    const merged = dedupeJiraIssuesByKey(FILTERED, [FILTERED[0], issue("NEW-9", "extra")])
+    expect(merged.map((i) => i.key)).toEqual(["AERDM-1", "AERDM-2", "MCU-3", "NEW-9"])
+    const options = extractJiraFilterOptions(merged, "未分配")
+    expect(options.assignee.find((o) => o.value === "王锦")?.count).toBe(2)
+  })
+})
+
+describe("hasActiveJiraFilters", () => {
+  it("is false only when every dimension is off", () => {
+    expect(hasActiveJiraFilters(EMPTY_JIRA_FILTERS)).toBe(false)
+    expect(hasActiveJiraFilters({ ...EMPTY_JIRA_FILTERS, reporter: "史晓宇" })).toBe(true)
+  })
+})
+
 describe("the acceptance case: BOX finds DAB_box 收音", () => {
   it.each(["BOX", "box", "Box", "bOx"])("matches on %s", (query) => {
-    expect(matchesJiraQuery(DAB, query, false)).toBe(true)
+    expect(matchesJiraQuery(DAB, query, false, ALL_DIMS)).toBe(true)
   })
 
   it("matches the CJK half of the title", () => {
-    expect(matchesJiraQuery(DAB, "收音", false)).toBe(true)
-    expect(matchesJiraQuery(DAB, "收音", true)).toBe(true)
+    expect(matchesJiraQuery(DAB, "收音", false, ALL_DIMS)).toBe(true)
+    expect(matchesJiraQuery(DAB, "收音", true, ALL_DIMS)).toBe(true)
   })
 
   it("matches a fragment that spans the underscore boundary", () => {
-    expect(matchesJiraQuery(DAB, "dab_box", false)).toBe(true)
-    expect(matchesJiraQuery(DAB, "ab_bo", false)).toBe(true)
+    expect(matchesJiraQuery(DAB, "dab_box", false, ALL_DIMS)).toBe(true)
+    expect(matchesJiraQuery(DAB, "ab_bo", false, ALL_DIMS)).toBe(true)
   })
 
   it("folds full-width input before comparing", () => {
-    expect(matchesJiraQuery(DAB, "ＢＯＸ", false)).toBe(true)
+    expect(matchesJiraQuery(DAB, "ＢＯＸ", false, ALL_DIMS)).toBe(true)
   })
 
   it("matches on a label alone", () => {
-    expect(matchesJiraQuery(DAB, "radio", false)).toBe(true)
-    expect(matchesJiraQuery(DAB, "RADIO", false)).toBe(true)
+    expect(matchesJiraQuery(DAB, "radio", false, ALL_DIMS)).toBe(true)
+    expect(matchesJiraQuery(DAB, "RADIO", false, ALL_DIMS)).toBe(true)
   })
 
   it("rejects a query the issue does not contain", () => {
-    expect(matchesJiraQuery(DAB, "bluetooth", false)).toBe(false)
+    expect(matchesJiraQuery(DAB, "bluetooth", false, ALL_DIMS)).toBe(false)
   })
 })
 
@@ -69,40 +272,135 @@ describe("matchCase", () => {
   })
 
   it("stops BOX from matching the lowercase title", () => {
-    expect(matchesJiraQuery(DAB, "BOX", true)).toBe(false)
-    expect(matchesJiraQuery(DAB, "Box", true)).toBe(false)
+    expect(matchesJiraQuery(DAB, "BOX", true, ALL_DIMS)).toBe(false)
+    expect(matchesJiraQuery(DAB, "Box", true, ALL_DIMS)).toBe(false)
   })
 
   it("still lets the exact-case substring through", () => {
-    expect(matchesJiraQuery(DAB, "DAB_box", true)).toBe(true)
-    expect(matchesJiraQuery(DAB, "box", true)).toBe(true)
+    expect(matchesJiraQuery(DAB, "DAB_box", true, ALL_DIMS)).toBe(true)
+    expect(matchesJiraQuery(DAB, "box", true, ALL_DIMS)).toBe(true)
   })
 
   it("never widens the result set", () => {
     const issues = [DAB, TIMING]
-    const insensitive = filterJiraIssues(issues, "BOX", false)
-    const sensitive = filterJiraIssues(issues, "BOX", true)
+    const insensitive = filterJiraIssues(issues, "BOX", false, ALL_DIMS)
+    const sensitive = filterJiraIssues(issues, "BOX", true, ALL_DIMS)
     expect(insensitive).toHaveLength(1)
     expect(sensitive).toHaveLength(0)
+  })
+})
+
+describe("search dimensions (client side)", () => {
+  it("title-only drops label and key matches", () => {
+    const dims = { title: true, keyword: false, issueKey: false }
+    expect(matchesJiraQuery(DAB, "DAB_box", false, dims)).toBe(true)
+    expect(matchesJiraQuery(DAB, "radio", false, dims)).toBe(false)
+    expect(matchesJiraQuery(DAB, "AERDM-1234", false, dims)).toBe(false)
+  })
+
+  it("keyword-only matches labels but not the bare title fragment", () => {
+    const dims = { title: false, keyword: true, issueKey: false }
+    expect(matchesJiraQuery(DAB, "radio", false, dims)).toBe(true)
+    // `收音` lives in the title, which keyword-only does not cover (labels only).
+    expect(matchesJiraQuery(DAB, "收音", false, dims)).toBe(false)
+  })
+
+  it("issue-key-only matches the key itself", () => {
+    const dims = { title: false, keyword: false, issueKey: true }
+    expect(matchesJiraQuery(DAB, "AERDM-1234", false, dims)).toBe(true)
+    expect(matchesJiraQuery(DAB, "aerdm-1234", false, dims)).toBe(true)
+    expect(matchesJiraQuery(DAB, "DAB_box", false, dims)).toBe(false)
+  })
+})
+
+describe("parseJiraIssueKeys", () => {
+  it("keeps well-formed keys, upper-cased", () => {
+    expect(parseJiraIssueKeys("aerdm-1 MCU-42")).toEqual(["AERDM-1", "MCU-42"])
+    expect(parseJiraIssueKeys("AERDM-1,AERDM-2；MCU-3")).toEqual([
+      "AERDM-1",
+      "AERDM-2",
+      "MCU-3",
+    ])
+  })
+
+  it("drops anything that is not an issue key", () => {
+    expect(parseJiraIssueKeys("收音 box AERDM- MCU-")).toEqual([])
+    expect(parseJiraIssueKeys("")).toEqual([])
+  })
+})
+
+describe("search dimensions (JQL)", () => {
+  it("all on keeps the summary/text pair and adds exact keys", () => {
+    // sanitize strips the `-` from the text terms (a JQL operator char) — the
+    // exact-match clause is what carries a key query, not the text clauses.
+    expect(
+      buildJiraSearchJql({ query: "AERDM-1", scopeJql: "", mode: "narrow", dimensions: ALL_DIMS }),
+    ).toBe(
+      '(summary ~ "AERDM 1*" OR text ~ "AERDM 1*" OR issuekey = AERDM-1) ORDER BY updated DESC',
+    )
+  })
+
+  it("title-only narrows to the summary clause", () => {
+    expect(
+      buildJiraSearchJql({
+        query: "box",
+        scopeJql: "",
+        mode: "narrow",
+        dimensions: { title: true, keyword: false, issueKey: false },
+      }),
+    ).toBe('(summary ~ "box*") ORDER BY updated DESC')
+  })
+
+  it("issue-key-only turns multiple keys into an IN clause", () => {
+    expect(
+      buildJiraSearchJql({
+        query: "aerdm-1, mcu-2",
+        scopeJql: "",
+        mode: "narrow",
+        dimensions: { title: false, keyword: false, issueKey: true },
+      }),
+    ).toBe("(issuekey in (AERDM-1, MCU-2)) ORDER BY updated DESC")
+  })
+
+  it("a non-key query with only issueKey on contributes no text clause", () => {
+    expect(
+      buildJiraSearchJql({
+        query: "收音",
+        scopeJql: "",
+        mode: "narrow",
+        dimensions: { title: false, keyword: false, issueKey: true },
+      }),
+    ).toBe("ORDER BY updated DESC")
+  })
+
+  it("every dimension off is browse mode too", () => {
+    expect(
+      buildJiraSearchJql({
+        query: "box",
+        scopeJql: "",
+        mode: "narrow",
+        dimensions: { title: false, keyword: false, issueKey: false },
+      }),
+    ).toBe("ORDER BY updated DESC")
   })
 })
 
 describe("filterJiraIssues", () => {
   it("treats an empty or whitespace query as browse mode", () => {
     const issues = [DAB, TIMING]
-    expect(filterJiraIssues(issues, "", false)).toHaveLength(2)
-    expect(filterJiraIssues(issues, "   ", false)).toHaveLength(2)
+    expect(filterJiraIssues(issues, "", false, ALL_DIMS)).toHaveLength(2)
+    expect(filterJiraIssues(issues, "   ", false, ALL_DIMS)).toHaveLength(2)
   })
 
   it("preserves the incoming order", () => {
     const issues = [DAB, TIMING]
-    expect(filterJiraIssues(issues, "dab", false).map((i) => i.key)).toEqual(["AERDM-1234"])
+    expect(filterJiraIssues(issues, "dab", false, ALL_DIMS).map((i) => i.key)).toEqual(["AERDM-1234"])
   })
 
   it("survives an issue with no fields at all", () => {
     const bare: JiraIssueSummary = { id: "1", key: "AERDM-1", fields: {} }
-    expect(buildJiraHaystack(bare)).toBe("")
-    expect(matchesJiraQuery(bare, "anything", false)).toBe(false)
+    expect(buildJiraHaystack(bare, ALL_DIMS)).toBe("\nAERDM-1")
+    expect(matchesJiraQuery(bare, "anything", false, ALL_DIMS)).toBe(false)
   })
 })
 
@@ -128,9 +426,9 @@ describe("sanitizeJqlTextTerm", () => {
 })
 
 describe("buildJiraSearchJql", () => {
-  it("builds the narrow pass against summary, labels and text", () => {
+  it("builds the narrow pass against summary and text", () => {
     expect(buildJiraSearchJql({ query: "BOX", scopeJql: "", mode: "narrow" })).toBe(
-      '(summary ~ "BOX*" OR labels ~ "BOX*" OR text ~ "BOX*") ORDER BY updated DESC',
+      '(summary ~ "BOX*" OR text ~ "BOX*") ORDER BY updated DESC',
     )
   })
 
@@ -148,7 +446,7 @@ describe("buildJiraSearchJql", () => {
 
   it("ANDs the scope with the text clause", () => {
     expect(buildJiraSearchJql({ query: "BOX", scopeJql: "project = AERDM", mode: "narrow" })).toBe(
-      '(project = AERDM) AND (summary ~ "BOX*" OR labels ~ "BOX*" OR text ~ "BOX*") ORDER BY updated DESC',
+      '(project = AERDM) AND (summary ~ "BOX*" OR text ~ "BOX*") ORDER BY updated DESC',
     )
   })
 

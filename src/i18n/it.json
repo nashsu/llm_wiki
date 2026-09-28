@@ -1380,8 +1380,15 @@
   },
   "jira": {
     "search": {
+      "submit": "Cerca",
+      "limit": "{{count}} risultati",
+      "limitHint": "Numero massimo di issue per ricerca",
+      "dimTitle": "Titolo",
+      "dimKeyword": "Parola chiave",
+      "dimIssueKey": "Chiave issue",
+      "dimsHint": "Scegli dove cercare: titolo, testo completo o chiave issue (più chiavi separate da virgole). Le modifiche rilanciano subito la ricerca.",
       "searching": "Ricerca…",
-      "empty": "Digita parte di un titolo o un’etichetta per cercare. Con il campo vuoto vengono elencate le issue aggiornate più di recente.",
+      "empty": "Digita una parola chiave e cerca, oppure premi semplicemente Cerca per sfogliare le issue aggiornate di recente.",
       "noMatch": "Nessuna issue corrisponde al filtro attuale.",
       "found": "{{count}} issue corrispondenti",
       "swept": "Sono state scansionate anche le {{count}} issue aggiornate più di recente",
@@ -1416,6 +1423,18 @@
       "openFailed": "Impossibile aprire il file esportato: {{error}}"
     },
     "searchPlaceholder": "Cerca issue per titolo o etichetta…",
+    "filter": {
+      "project": "Progetto",
+      "issuetype": "Tipo",
+      "status": "Stato",
+      "assignee": "Assegnatario",
+      "reporter": "Autore",
+      "all": "Tutti",
+      "searchPlaceholder": "Digita per filtrare, es. Wang",
+      "loading": "Caricamento opzioni filtro…",
+      "unassigned": "Non assegnato",
+      "clear": "Cancella filtri"
+    },
     "matchCase": "Maiuscole/minuscole",
     "matchCaseHint": "Corrispondenza sensibile alle maiuscole. Filtra i risultati già ottenuti, senza inviare nuove richieste.",
     "mode": {

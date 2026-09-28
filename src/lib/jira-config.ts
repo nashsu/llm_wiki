@@ -9,6 +9,7 @@
 
 import { isAbsolutePath, joinPath, normalizePath } from "@/lib/path-utils"
 import type { JiraConfig } from "@/stores/wiki-store"
+import { DEFAULT_JIRA_SEARCH_DIMENSIONS } from "@/types/jira"
 
 export const JIRA_DEFAULT_BASE_URL = "https://jira.cvte.com"
 export const JIRA_DEFAULT_EXPORT_DIR = "raw/sources/Collection/JIRA"
@@ -23,6 +24,7 @@ export const DEFAULT_JIRA_CONFIG: JiraConfig = {
   exportDir: JIRA_DEFAULT_EXPORT_DIR,
   scopeJql: "",
   matchCase: false,
+  searchDims: { ...DEFAULT_JIRA_SEARCH_DIMENSIONS },
   acceptInvalidCerts: true,
   userAgent: JIRA_DEFAULT_USER_AGENT,
   maxAttachmentMb: 50,
@@ -64,6 +66,12 @@ export function normalizeJiraConfig(input?: Partial<JiraConfig> | null): JiraCon
     exportDir: trimmed(merged.exportDir) || JIRA_DEFAULT_EXPORT_DIR,
     scopeJql: merged.scopeJql.trim(),
     matchCase: merged.matchCase === true,
+    // Each checkbox defaults to on; a missing/invalid stored value re-enables it.
+    searchDims: {
+      title: merged.searchDims?.title !== false,
+      keyword: merged.searchDims?.keyword !== false,
+      issueKey: merged.searchDims?.issueKey !== false,
+    },
     acceptInvalidCerts: merged.acceptInvalidCerts !== false,
     userAgent: trimmed(merged.userAgent) || JIRA_DEFAULT_USER_AGENT,
     maxAttachmentMb: clampInt(merged.maxAttachmentMb, DEFAULT_JIRA_CONFIG.maxAttachmentMb, 1, 2048),

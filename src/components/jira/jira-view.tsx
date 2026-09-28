@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { openUrl } from "@tauri-apps/plugin-opener"
-import { AlertTriangle, ExternalLink, FileText, FolderOpen, RefreshCw, Search as SearchIcon } from "lucide-react"
+import { AlertTriangle, ExternalLink, FileText, FolderOpen, RefreshCw, Search as SearchIcon, X } from "lucide-react"
 import { readFile, revealInFileManager } from "@/commands/fs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,13 +14,24 @@ import {
   type JiraExportProgress,
 } from "@/lib/jira-export"
 import {
+  applyJiraFilters,
   buildJiraSearchJql,
+  dedupeJiraIssuesByKey,
+  effectiveJiraFilters,
+  EMPTY_JIRA_FILTERS,
+  extractJiraFilterOptions,
   filterJiraIssues,
+  filterJqlClauses,
+  hasActiveJiraFilters,
+  JIRA_FILTER_KEYS,
   jiraHighlightTokens,
   mergeJiraResults,
   sanitizeJqlTextTerm,
   shouldRunSweep,
+  type JiraFilterKey,
+  type JiraIssueFilters,
 } from "@/lib/jira-search"
+import { JiraFilterCombobox } from "@/components/jira/jira-filter-combobox"
 import { saveJiraConfig } from "@/lib/project-store"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -28,6 +39,14 @@ import type { JiraIssueSummary } from "@/types/jira"
 
 const SEARCH_DEBOUNCE_MS = 300
 const NARROW_RESULT_LIMIT = 50
+/**
+ * Fields the option-pool inventory asks for — just the five filter dimensions,
+ * a fraction of the full search payload, so paging through ~1000 issues stays
+ * cheap on an intranet link.
+ */
+const INVENTORY_FIELDS = ["project", "issuetype", "status", "assignee", "reporter"] as const
+/** Hard cap on inventory pages so a misbehaving instance can't loop forever. */
+const INVENTORY_MAX_PAGES = 20
 
 type SearchStatus = "idle" | "unconfigured" | "loading" | "ready" | "error"
 type ViewMode = "search" | "exported"
@@ -140,6 +159,10 @@ export function JiraView() {
   const [mode, setMode] = useState<ViewMode>("search")
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
+  const [filters, setFilters] = useState<JiraIssueFilters>(EMPTY_JIRA_FILTERS)
+  /** 0 until the user presses Search — an empty query alone never browses. */
+  const [searchNonce, setSearchNonce] = useState(0)
+  const [resultLimit, setResultLimit] = useState(NARROW_RESULT_LIMIT)
   const [status, setStatus] = useState<SearchStatus>("idle")
   const [errorText, setErrorText] = useState("")
   const [narrowIssues, setNarrowIssues] = useState<JiraIssueSummary[]>([])
@@ -147,6 +170,8 @@ export function JiraView() {
   const [sweepCursor, setSweepCursor] = useState<SweepCursor | null>(null)
   const [sweepRan, setSweepRan] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [inventoryIssues, setInventoryIssues] = useState<JiraIssueSummary[]>([])
+  const [inventoryLoading, setInventoryLoading] = useState(false)
   const [exportStates, setExportStates] = useState<Record<string, ExportCardState>>({})
   const [exported, setExported] = useState<ExportedJiraIssue[]>([])
   const [exportedLoading, setExportedLoading] = useState(false)
@@ -165,13 +190,106 @@ export function JiraView() {
     return () => clearTimeout(timer)
   }, [query])
 
+  /**
+   * Option-pool inventory: page through the scoped recent window (up to
+   * maxSweepIssues, dimension fields only) once per config/refresh so the
+   * dropdowns offer every person/project/type/status that actually occurs —
+   * not just what the current 50-result page happens to contain. Failure is
+   * silent: the pool falls back to the loaded results.
+   */
+  useEffect(() => {
+    if (!configured) {
+      setInventoryIssues([])
+      return
+    }
+    const controller = new AbortController()
+    const client = new JiraClient(config)
+    const jql = buildJiraSearchJql({ query: "", scopeJql: config.scopeJql, mode: "sweep" })
+    const pageSize = Math.min(Math.max(config.sweepPageSize, 50), 200)
+    const ceiling = Math.max(config.maxSweepIssues, pageSize)
+    setInventoryLoading(true)
+    void (async () => {
+      const collected: JiraIssueSummary[] = []
+      let startAt = 0
+      try {
+        for (let page = 0; page < INVENTORY_MAX_PAGES; page += 1) {
+          const response = await client.search({
+            jql,
+            startAt,
+            maxResults: pageSize,
+            fields: INVENTORY_FIELDS,
+            signal: controller.signal,
+          })
+          collected.push(...response.issues)
+          const next = startAt + response.issues.length
+          if (response.issues.length === 0 || next >= Math.min(response.total, ceiling)) break
+          startAt = next
+        }
+        if (!controller.signal.aborted) setInventoryIssues(collected)
+      } catch {
+        if (!controller.signal.aborted) setInventoryIssues([])
+      } finally {
+        if (!controller.signal.aborted) setInventoryLoading(false)
+      }
+    })()
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    configured,
+    config.baseUrl,
+    config.username,
+    config.password,
+    config.scopeJql,
+    config.sweepPageSize,
+    config.maxSweepIssues,
+    exportsVersion,
+  ])
+
+  const candidates = useMemo(
+    () => mergeJiraResults(narrowIssues, sweepIssues),
+    [narrowIssues, sweepIssues],
+  )
+  const filterOptions = useMemo(
+    () => extractJiraFilterOptions(dedupeJiraIssuesByKey(inventoryIssues, candidates), t("jira.filter.unassigned")),
+    [inventoryIssues, candidates, t],
+  )
+  // A selection from the previous result set that the new results can't
+  // represent would show as a blank select AND filter everything out; drop it
+  // instead. The comboboxes render from this value so UI and filtering agree.
+  const effectiveFilters = useMemo(
+    () => effectiveJiraFilters(filters, filterOptions),
+    [filters, filterOptions],
+  )
+  const filterClauses = useMemo(
+    () => filterJqlClauses(effectiveFilters, filterOptions),
+    [effectiveFilters, filterOptions],
+  )
+  // Arrays are new references every render — the effect below depends on this
+  // stable string instead. JQL clauses cannot contain NUL.
+  const filterClausesKey = filterClauses.join("\u0000")
+
   // `matchCase` is deliberately not a dependency: it only filters the cached
   // candidates, so toggling it must not re-query the company's Jira.
+  // `filterClausesKey` IS one: a dropdown selection narrows the JQL itself, so
+  // the server returns the right rows instead of the client trimming 50.
+  //
+  // Search is explicit: a non-empty query still auto-searches after the
+  // debounce, but an empty query never loads anything by itself — the "recent
+  // issues" browse happens only when the user presses Search (searchNonce > 0).
   useEffect(() => {
     const term = debouncedQuery.trim()
-    sweepSignatureRef.current = `${config.scopeJql}\u0000${term}`
+    const clauses = filterClausesKey ? filterClausesKey.split("\u0000") : []
+    sweepSignatureRef.current = `${config.scopeJql}\u0000${term}\u0000${filterClausesKey}`
     if (!configured) {
       setStatus("unconfigured")
+      setNarrowIssues([])
+      setSweepIssues([])
+      setSweepCursor(null)
+      setSweepRan(false)
+      return
+    }
+    if (!term && searchNonce === 0) {
+      setStatus("idle")
       setNarrowIssues([])
       setSweepIssues([])
       setSweepCursor(null)
@@ -185,8 +303,14 @@ export function JiraView() {
     void (async () => {
       try {
         const narrowResponse = await client.search({
-          jql: buildJiraSearchJql({ query: term, scopeJql: config.scopeJql, mode: "narrow" }),
-          maxResults: NARROW_RESULT_LIMIT,
+          jql: buildJiraSearchJql({
+            query: term,
+            scopeJql: config.scopeJql,
+            mode: "narrow",
+            filterClauses: clauses,
+            dimensions: config.searchDims,
+          }),
+          maxResults: resultLimit,
           signal: controller.signal,
         })
         let sweep: JiraIssueSummary[] = []
@@ -194,7 +318,12 @@ export function JiraView() {
         const runSweep = shouldRunSweep(narrowResponse.issues.length, term, config.sweepThreshold)
         if (runSweep) {
           const sweepResponse = await client.search({
-            jql: buildJiraSearchJql({ query: term, scopeJql: config.scopeJql, mode: "sweep" }),
+            jql: buildJiraSearchJql({
+              query: term,
+              scopeJql: config.scopeJql,
+              mode: "sweep",
+              filterClauses: clauses,
+            }),
             maxResults: config.sweepPageSize,
             signal: controller.signal,
           })
@@ -220,6 +349,9 @@ export function JiraView() {
   }, [
     configured,
     debouncedQuery,
+    filterClausesKey,
+    searchNonce,
+    resultLimit,
     config.baseUrl,
     config.username,
     config.password,
@@ -227,6 +359,9 @@ export function JiraView() {
     config.sweepPageSize,
     config.sweepThreshold,
     config.maxSweepIssues,
+    config.searchDims.title,
+    config.searchDims.keyword,
+    config.searchDims.issueKey,
   ])
 
   useEffect(() => {
@@ -248,13 +383,13 @@ export function JiraView() {
     }
   }, [project, config.exportDir, exportsVersion])
 
-  const candidates = useMemo(
-    () => mergeJiraResults(narrowIssues, sweepIssues),
-    [narrowIssues, sweepIssues],
-  )
   const visible = useMemo(
-    () => filterJiraIssues(candidates, debouncedQuery, config.matchCase),
-    [candidates, debouncedQuery, config.matchCase],
+    () =>
+      applyJiraFilters(
+        filterJiraIssues(candidates, debouncedQuery, config.matchCase, config.searchDims),
+        effectiveFilters,
+      ),
+    [candidates, debouncedQuery, config.matchCase, config.searchDims, effectiveFilters],
   )
   const tokens = useMemo(
     () => jiraHighlightTokens(debouncedQuery, config.matchCase),
@@ -271,13 +406,32 @@ export function JiraView() {
     }
   }
 
+  /** Toggling a search dimension re-queries immediately, like the dropdowns do. */
+  async function handleToggleSearchDim(dim: "title" | "keyword" | "issueKey") {
+    const next = {
+      ...config,
+      searchDims: { ...config.searchDims, [dim]: !config.searchDims[dim] },
+    }
+    setJiraConfig(next)
+    try {
+      await saveJiraConfig(next)
+    } catch (error) {
+      console.warn("Failed to persist the Jira search-dimension setting:", error)
+    }
+  }
+
   async function loadMoreSweep() {
     if (!sweepCursor || loadingMore || !configured) return
     const signature = sweepSignatureRef.current
     setLoadingMore(true)
     try {
       const response = await new JiraClient(config).search({
-        jql: buildJiraSearchJql({ query: debouncedQuery, scopeJql: config.scopeJql, mode: "sweep" }),
+        jql: buildJiraSearchJql({
+          query: debouncedQuery,
+          scopeJql: config.scopeJql,
+          mode: "sweep",
+          filterClauses,
+        }),
         startAt: sweepCursor.nextStartAt,
         maxResults: config.sweepPageSize,
       })
@@ -372,6 +526,21 @@ export function JiraView() {
     void revealInFileManager(path).catch((error: unknown) => {
       console.warn("Failed to reveal the exported file:", error)
     })
+  }
+
+  function renderFilterCombobox(key: JiraFilterKey) {
+    const options = filterOptions[key]
+    if (options.length === 0) return null
+    return (
+      <JiraFilterCombobox
+        dimension={t(`jira.filter.${key}`)}
+        value={effectiveFilters[key]}
+        options={options}
+        allLabel={t("jira.filter.all")}
+        searchPlaceholder={t("jira.filter.searchPlaceholder")}
+        onChange={(value) => setFilters((previous) => ({ ...previous, [key]: value }))}
+      />
+    )
   }
 
   function renderSearch() {
@@ -566,6 +735,12 @@ export function JiraView() {
     )
   }
 
+  function handleSubmitSearch() {
+    // Flush the debounce immediately so the effect sees the typed text.
+    setDebouncedQuery(query.trim())
+    setSearchNonce((nonce) => nonce + 1)
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
@@ -574,9 +749,53 @@ export function JiraView() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") handleSubmitSearch()
+            }}
             placeholder={t("jira.searchPlaceholder")}
             className="h-8 pl-8 text-sm"
           />
+        </div>
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8 gap-1 text-xs"
+          disabled={!configured || status === "loading"}
+          onClick={handleSubmitSearch}
+        >
+          <SearchIcon className="h-3.5 w-3.5" />
+          {t("jira.search.submit")}
+        </Button>
+        <select
+          value={resultLimit}
+          onChange={(event) => setResultLimit(Number(event.target.value))}
+          title={t("jira.search.limitHint")}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+        >
+          {[50, 100, 200, 500].map((size) => (
+            <option key={size} value={size}>
+              {t("jira.search.limit", { count: size })}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1" title={t("jira.search.dimsHint")}>
+          {(
+            [
+              ["title", "jira.search.dimTitle"],
+              ["keyword", "jira.search.dimKeyword"],
+              ["issueKey", "jira.search.dimIssueKey"],
+            ] as const
+          ).map(([dim, labelKey]) => (
+            <Button
+              key={dim}
+              variant={config.searchDims[dim] ? "default" : "outline"}
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => void handleToggleSearchDim(dim)}
+            >
+              {t(labelKey)}
+            </Button>
+          ))}
         </div>
         <Button
           variant={config.matchCase ? "default" : "outline"}
@@ -615,6 +834,25 @@ export function JiraView() {
           {t("jira.refresh")}
         </Button>
       </div>
+      {mode === "search" && (
+        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+          {JIRA_FILTER_KEYS.map(renderFilterCombobox)}
+          {inventoryLoading && (
+            <span className="text-xs text-muted-foreground">{t("jira.filter.loading")}</span>
+          )}
+          {hasActiveJiraFilters(effectiveFilters) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setFilters(EMPTY_JIRA_FILTERS)}
+            >
+              <X className="h-3 w-3" />
+              {t("jira.filter.clear")}
+            </Button>
+          )}
+        </div>
+      )}
       {notice && (
         <p className="border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">{notice}</p>
       )}

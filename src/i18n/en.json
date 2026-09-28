@@ -1384,8 +1384,15 @@
   },
   "jira": {
     "search": {
+      "submit": "Search",
+      "limit": "{{count}} results",
+      "limitHint": "Maximum issues fetched per search",
+      "dimTitle": "Title",
+      "dimKeyword": "Keyword",
+      "dimIssueKey": "Issue key",
+      "dimsHint": "Choose what the query searches: title, full-text keyword, or issue key (separate multiple keys with commas). Changes re-query immediately.",
       "searching": "Searching…",
-      "empty": "Type part of a title or a label to search. With the box empty, the most recently updated issues are listed.",
+      "empty": "Type a keyword and search, or just press Search to browse the recently updated issues.",
       "noMatch": "No issue matches the current filter.",
       "found": "{{count}} matching issue(s)",
       "swept": "Also scanned the {{count}} most recently updated issues",
@@ -1420,6 +1427,18 @@
       "openFailed": "Cannot open the exported file: {{error}}"
     },
     "searchPlaceholder": "Search issues by title or label…",
+    "filter": {
+      "project": "Project",
+      "issuetype": "Issue type",
+      "status": "Status",
+      "assignee": "Assignee",
+      "reporter": "Reporter",
+      "all": "All",
+      "searchPlaceholder": "Type to filter, e.g. Wang",
+      "loading": "Loading filter options…",
+      "unassigned": "Unassigned",
+      "clear": "Clear filters"
+    },
     "matchCase": "Match case",
     "matchCaseHint": "Case-sensitive matching. Filters the results already retrieved — it does not send a new request.",
     "mode": {

@@ -57,6 +57,10 @@ export function withTlsOverride(
     danger: {
       ...pluginInit?.danger,
       acceptInvalidCerts: true,
+      // plugin-http 的 Rust 端把 danger 两个字段都视为必填，
+      // 只传 acceptInvalidCerts 会报 invalid args: missing field
+      // `acceptInvalidHostnames`（Jira 连接测试实测踩坑）。
+      acceptInvalidHostnames: pluginInit?.danger?.acceptInvalidHostnames ?? false,
     },
   }
 }

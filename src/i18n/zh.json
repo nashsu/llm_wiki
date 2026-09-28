@@ -1384,8 +1384,15 @@
   },
   "jira": {
     "search": {
+      "submit": "搜索",
+      "limit": "{{count}} 条",
+      "limitHint": "每次搜索返回的最大条数",
+      "dimTitle": "标题",
+      "dimKeyword": "关键词",
+      "dimIssueKey": "工单号",
+      "dimsHint": "勾选搜索范围：标题、全文关键词或工单号（多个工单号用逗号分隔）。改动后立即重新搜索。",
       "searching": "搜索中…",
-      "empty": "输入标题的一部分或标签进行搜索；不输入内容时列出最近更新的工单。",
+      "empty": "输入关键词后搜索，或直接点击「搜索」浏览最近更新的工单。",
       "noMatch": "没有符合当前条件的工单。",
       "found": "{{count}} 个匹配工单",
       "swept": "另已扫描最近更新的 {{count}} 个工单",
@@ -1420,6 +1427,18 @@
       "openFailed": "无法打开导出的文件：{{error}}"
     },
     "searchPlaceholder": "按标题或标签搜索工单…",
+    "filter": {
+      "project": "项目",
+      "issuetype": "问题类型",
+      "status": "状态",
+      "assignee": "经办人",
+      "reporter": "责任人",
+      "all": "全部",
+      "searchPlaceholder": "输入以筛选，如：王",
+      "loading": "筛选选项加载中…",
+      "unassigned": "未分配",
+      "clear": "清除筛选"
+    },
     "matchCase": "区分大小写",
     "matchCaseHint": "区分大小写的匹配。只过滤已取得的结果，不会重新发起请求。",
     "mode": {

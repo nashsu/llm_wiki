@@ -156,3 +156,23 @@ export interface JiraServerInfo {
 
 /** Why a Jira request failed, in terms the view can act on. */
 export type JiraErrorKind = "config" | "auth" | "not-found" | "network" | "http"
+
+/**
+ * Which dimensions a text query is searched against — each one is a checkbox
+ * in the Jira view. All on by default; unchecking everything means the query
+ * contributes no text clause (browse mode).
+ */
+export interface JiraSearchDimensions {
+  /** `summary ~ "term*"` + client-side substring match on the title. */
+  title: boolean
+  /** `text ~ "term*"` (full text) + client-side fallback over title and labels. */
+  keyword: boolean
+  /** `issuekey = X` / `issuekey in (X, Y)` when the query parses as issue keys. */
+  issueKey: boolean
+}
+
+export const DEFAULT_JIRA_SEARCH_DIMENSIONS: JiraSearchDimensions = {
+  title: true,
+  keyword: true,
+  issueKey: true,
+}

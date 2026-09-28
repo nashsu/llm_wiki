@@ -98,7 +98,7 @@ describe("JiraClient request shape", () => {
   it("relaxes TLS only when asked, and per request", async () => {
     const on = fakeFetch(() => json({}))
     await new JiraClient(config({ acceptInvalidCerts: true }), on.fetch).testConnection()
-    expect(on.calls[0].init.danger).toEqual({ acceptInvalidCerts: true })
+    expect(on.calls[0].init.danger).toEqual({ acceptInvalidCerts: true, acceptInvalidHostnames: false })
 
     const off = fakeFetch(() => json({}))
     await new JiraClient(config({ acceptInvalidCerts: false }), off.fetch).testConnection()

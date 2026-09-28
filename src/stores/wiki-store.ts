@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
+import type { JiraSearchDimensions } from "@/types/jira"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
 import { DEFAULT_FEISHU_CONFIG, type FeishuNotifyConfig } from "@/lib/feishu"
 import { DEFAULT_JIRA_CONFIG } from "@/lib/jira-config"
@@ -300,6 +301,8 @@ interface JiraConfig {
   scopeJql: string
   /** Client-side only: case-sensitive substring matching. Never changes the request. */
   matchCase: boolean
+  /** Which dimensions (title/keyword/issue key) a text query searches. */
+  searchDims: JiraSearchDimensions
   /** Skip TLS verification for Jira requests (intranet certs outside the system trust store). */
   acceptInvalidCerts: boolean
   userAgent: string
