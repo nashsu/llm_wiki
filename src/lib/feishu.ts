@@ -28,12 +28,15 @@ export interface FeishuNotifyConfig {
   recipientId: string
   /** 摘要长度：前 N 个字符 */
   summaryLength: number
+  /** 飞书遥控对话：常驻监听飞书消息并自动回复。 */
+  bridgeEnabled: boolean
 }
 
 export const DEFAULT_FEISHU_CONFIG: FeishuNotifyConfig = {
   enabled: false,
   recipientId: "",
   summaryLength: 200,
+  bridgeEnabled: false,
 }
 
 /** 从任意文本里提取第一个合法的收件人 ID（open_id 或 chat_id）。 */
@@ -54,6 +57,7 @@ export function normalizeFeishuConfig(config?: Partial<FeishuNotifyConfig> | nul
     enabled: config?.enabled === true,
     recipientId,
     summaryLength: Number.isFinite(length) && length >= 20 ? Math.min(4000, Math.floor(length)) : DEFAULT_FEISHU_CONFIG.summaryLength,
+    bridgeEnabled: config?.bridgeEnabled === true,
   }
 }
 
@@ -68,6 +72,35 @@ export function sendFeishuMessage(recipientId: string, text: string): Promise<Fe
 /** 查询当前登录用户自己的 open_id，设置页一键填入收件人用。 */
 export function getFeishuMyId(): Promise<FeishuMyIdResult> {
   return invoke<FeishuMyIdResult>("feishu_get_my_id")
+}
+
+/** 桥接（飞书遥控对话）运行状态。 */
+export interface FeishuBridgeStatus {
+  /** 用户是否已启用。 */
+  running: boolean
+  /** consume 子进程是否已就绪（连上飞书长连接）。 */
+  ready: boolean
+  /** 已成功处理并回发的消息条数。 */
+  handled: number
+  /** 最近一次错误，空表示无。 */
+  lastError: string
+  /** 最近一条入站消息摘要。 */
+  lastMessage: string
+  /** 回复时使用的项目 ID。 */
+  projectId: string
+}
+
+/** 启动飞书遥控对话桥接；projectId 省略时用当前项目。 */
+export function startFeishuBridge(projectId?: string): Promise<FeishuBridgeStatus> {
+  return invoke<FeishuBridgeStatus>("feishu_bridge_start", { projectId: projectId ?? null })
+}
+
+export function stopFeishuBridge(): Promise<FeishuBridgeStatus> {
+  return invoke<FeishuBridgeStatus>("feishu_bridge_stop")
+}
+
+export function getFeishuBridgeStatus(): Promise<FeishuBridgeStatus> {
+  return invoke<FeishuBridgeStatus>("feishu_bridge_status")
 }
 
 /** 去掉 <think> 推理块、markdown 标记，压缩空白后截断到 maxChars。 */

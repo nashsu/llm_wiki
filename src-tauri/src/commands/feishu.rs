@@ -40,7 +40,7 @@ pub struct FeishuMyIdResult {
 }
 
 /// 在 PATH 和 Trae 插件目录里找 lark-cli.exe，取版本最高的。
-fn find_lark_cli() -> Option<PathBuf> {
+pub(crate) fn find_lark_cli() -> Option<PathBuf> {
     let mut candidates: Vec<(Vec<u64>, PathBuf)> = Vec::new();
 
     // 1) PATH 上的 lark-cli（版本未知，排最低优先级）
@@ -83,7 +83,7 @@ fn parse_version(s: &str) -> Vec<u64> {
 }
 
 /// 剔除 LARKSUITE_CLI_* 注入变量的 Command（其余继承父进程，USERPROFILE 随之保留）。
-fn strip_lark_env(mut cmd: Command) -> Command {
+pub(crate) fn strip_lark_env(mut cmd: Command) -> Command {
     for (key, _) in std::env::vars() {
         if key.starts_with("LARKSUITE_CLI_") {
             cmd.env_remove(&key);
@@ -214,56 +214,72 @@ pub async fn feishu_detect() -> Result<FeishuDetectResult, String> {
     })
 }
 
-#[tauri::command]
-pub async fn feishu_send_message(recipient_id: String, text: String) -> Result<FeishuSendResult, String> {
+/// 以 bot 身份发送文本消息，返回统一结果结构。
+/// 桥接模块与 `feishu_send_message` 命令共用，保证发送行为完全一致。
+pub(crate) async fn send_feishu_text(recipient_id: &str, text: &str) -> FeishuSendResult {
     let recipient = recipient_id.trim().to_string();
     if recipient.is_empty() {
-        return Ok(FeishuSendResult {
+        return FeishuSendResult {
             ok: false,
             message_id: String::new(),
             error: "recipient is empty".to_string(),
-        });
+        };
     }
     let Some(cli) = find_lark_cli() else {
-        return Ok(FeishuSendResult {
+        return FeishuSendResult {
             ok: false,
             message_id: String::new(),
             error: "lark-cli.exe not found".to_string(),
-        });
+        };
     };
 
     if !recipient.starts_with("ou_") && !recipient.starts_with("oc_") {
-        return Ok(FeishuSendResult {
+        return FeishuSendResult {
             ok: false,
             message_id: String::new(),
             error: "recipient must be an open_id (ou_...) or chat_id (oc_...)".to_string(),
-        });
+        };
     }
 
     let recipient_arg = recipient.clone();
-    let run = run_lark_as_bot(&cli, |cmd| {
+    let run = match run_lark_as_bot(&cli, |cmd| {
         cmd.arg("im").arg("+messages-send").arg("--json").arg("--as").arg("bot");
         if recipient_arg.starts_with("ou_") {
             cmd.arg("--user-id").arg(&recipient_arg);
         } else {
             cmd.arg("--chat-id").arg(&recipient_arg);
         }
-        cmd.arg("--text").arg(&text);
+        cmd.arg("--text").arg(text);
     })
-    .await?;
+    .await
+    {
+        Ok(run) => run,
+        Err(err) => {
+            return FeishuSendResult {
+                ok: false,
+                message_id: String::new(),
+                error: err,
+            }
+        }
+    };
 
     let message_id = extract_json_string_field(&run.stdout, "message_id")
         .or_else(|| extract_json_string_field(&run.combined, "message_id"))
         .unwrap_or_default();
     if run.ok {
-        Ok(FeishuSendResult { ok: true, message_id, error: String::new() })
+        FeishuSendResult { ok: true, message_id, error: String::new() }
     } else {
-        Ok(FeishuSendResult {
+        FeishuSendResult {
             ok: false,
             message_id: String::new(),
             error: run.error_message(),
-        })
+        }
     }
+}
+
+#[tauri::command]
+pub async fn feishu_send_message(recipient_id: String, text: String) -> Result<FeishuSendResult, String> {
+    Ok(send_feishu_text(&recipient_id, &text).await)
 }
 
 /// 查询「我的」飞书身份，用于设置页一键填入收件人。

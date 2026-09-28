@@ -698,7 +698,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     diff == 0
 }
 
-fn load_app_state(app: &AppHandle) -> Option<Value> {
+pub(crate) fn load_app_state(app: &AppHandle) -> Option<Value> {
     let now = Instant::now();
     let lock = APP_STATE_CACHE.get_or_init(|| Mutex::new(None));
     let mut previous = None;

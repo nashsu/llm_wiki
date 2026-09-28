@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Bell, RefreshCw, Send, UserRound } from "lucide-react"
+import { Bell, MessageCircle, RefreshCw, Send, UserRound } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
-import { detectFeishu, extractRecipientId, getFeishuMyId, sendFeishuMessage, type FeishuDetectResult } from "@/lib/feishu"
+import {
+  detectFeishu,
+  extractRecipientId,
+  getFeishuBridgeStatus,
+  getFeishuMyId,
+  sendFeishuMessage,
+  type FeishuBridgeStatus,
+  type FeishuDetectResult,
+} from "@/lib/feishu"
 
 interface Props {
   draft: SettingsDraft
@@ -19,6 +27,30 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
   const [testError, setTestError] = useState("")
   const [myIdState, setMyIdState] = useState<"idle" | "loading" | "ok" | "fail">("idle")
   const [myIdError, setMyIdError] = useState("")
+  const [bridgeStatus, setBridgeStatus] = useState<FeishuBridgeStatus | null>(null)
+
+  // 桥接状态轮询：开关打开时每 5s 刷新一次，实时反映 ready/handled。
+  useEffect(() => {
+    if (!draft.feishuConfig.bridgeEnabled) {
+      setBridgeStatus(null)
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const status = await getFeishuBridgeStatus()
+        if (!cancelled) setBridgeStatus(status)
+      } catch {
+        // 桥接未启动时忽略
+      }
+    }
+    void poll()
+    const timer = setInterval(() => void poll(), 5000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [draft.feishuConfig.bridgeEnabled])
 
   const runDetect = useCallback(async () => {
     setDetecting(true)
@@ -162,6 +194,65 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
           </p>
         </div>
       </label>
+
+      {/* 飞书遥控对话（双向） */}
+      <div className="space-y-3 rounded-md border border-border p-3">
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            checked={draft.feishuConfig.bridgeEnabled}
+            onChange={(e) =>
+              setDraft("feishuConfig", { ...draft.feishuConfig, bridgeEnabled: e.target.checked })
+            }
+            className="mt-0.5 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <span className="flex items-center gap-1.5 text-sm">
+              <MessageCircle className="h-3.5 w-3.5" />
+              {t("settings.sections.feishu.bridgeEnable", { defaultValue: "启用飞书遥控对话" })}
+            </span>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.feishu.bridgeEnableHint", {
+                defaultValue:
+                  "常驻监听你发来的飞书消息，用当前项目直接回复你（走与聊天界面完全相同的 AI 链路）。保存设置后生效，占用极低。",
+              })}
+            </p>
+          </div>
+        </label>
+        {draft.feishuConfig.bridgeEnabled && (
+          <div className="space-y-1 rounded border border-border bg-muted/30 p-2 text-xs">
+            {bridgeStatus === null ? (
+              <p className="text-muted-foreground">
+                {t("settings.sections.feishu.bridgeChecking", { defaultValue: "读取状态中…" })}
+              </p>
+            ) : (
+              <>
+                <p className={bridgeStatus.ready ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                  {bridgeStatus.ready
+                    ? t("settings.sections.feishu.bridgeReady", { defaultValue: "✓ 已连接，正在监听飞书消息" })
+                    : t("settings.sections.feishu.bridgeWaiting", { defaultValue: "… 正在连接飞书长连接" })}
+                </p>
+                <p className="text-muted-foreground">
+                  {t("settings.sections.feishu.bridgeHandled", {
+                    defaultValue: "已回复 {{count}} 条 · 项目 {{project}}",
+                    count: bridgeStatus.handled,
+                    project: bridgeStatus.projectId,
+                  })}
+                </p>
+                {bridgeStatus.lastMessage && (
+                  <p className="break-all text-muted-foreground">
+                    {t("settings.sections.feishu.bridgeLast", { defaultValue: "最近收到：" })}
+                    {bridgeStatus.lastMessage}
+                  </p>
+                )}
+                {bridgeStatus.lastError && (
+                  <p className="break-all text-destructive">✗ {bridgeStatus.lastError}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 收件人 */}
       <div className="space-y-2">

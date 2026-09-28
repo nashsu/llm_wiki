@@ -546,6 +546,20 @@ export function SettingsView() {
 
       await saveGeneralConfig(newGeneralConfig)
       await saveFeishuConfig(newFeishuConfig)
+      // 飞书遥控对话桥接：跟随开关启停（幂等，重复保存不会起两个实例）。
+      try {
+        const { startFeishuBridge, stopFeishuBridge } = await import("@/lib/feishu")
+        if (newFeishuConfig.bridgeEnabled) {
+          const bridgeStatus = await startFeishuBridge(project?.id)
+          if (!bridgeStatus.ready && bridgeStatus.lastError) {
+            console.warn("[feishu-bridge] start:", bridgeStatus.lastError)
+          }
+        } else {
+          await stopFeishuBridge()
+        }
+      } catch (err) {
+        console.warn("[feishu-bridge] failed to toggle bridge:", err)
+      }
       try {
         if (newGeneralConfig.autostart) {
           await enableAutostart()
