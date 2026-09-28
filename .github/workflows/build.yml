@@ -18,6 +18,13 @@ jobs:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
             rust_target: aarch64-apple-darwin
+          # macos-13 is the last GitHub-hosted Intel (x86_64) macOS
+          # runner, so this row is a NATIVE x86_64 build rather than a
+          # cross-compile from Apple Silicon — the same way we validate
+          # the bundle locally. Produces the *_x64.dmg for Intel Macs.
+          - platform: macos-13
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
@@ -88,6 +95,18 @@ jobs:
         run: |
           cp src-tauri/pdfium/libpdfium-arm64.so src-tauri/pdfium/libpdfium.so
           file src-tauri/pdfium/libpdfium.so
+
+      # The committed libpdfium.dylib is arm64, which macos-latest
+      # bundles as-is. The Intel runner instead swaps in the x86_64
+      # dylib so the framework baked into the *_x64.dmg matches the
+      # x86_64 app — mirror of the Ubuntu ARM swap above. Runs AFTER
+      # the checksum step so SHA256SUMS still verifies the committed
+      # (arm64) libpdfium.dylib before it is replaced.
+      - name: Use x86_64 pdfium binary (macOS Intel only)
+        if: matrix.platform == 'macos-13'
+        run: |
+          cp src-tauri/pdfium/libpdfium-x86_64.dylib src-tauri/pdfium/libpdfium.dylib
+          file src-tauri/pdfium/libpdfium.dylib
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows-latest'
