@@ -256,37 +256,53 @@ pub async fn codex_cli_spawn(
         };
 
         let mut stderr_text = stderr_task.await.unwrap_or_default();
-        if timed_out.load(Ordering::SeqCst) {
-            if !stderr_text.is_empty() {
-                stderr_text.push('\n');
-            }
-            stderr_text.push_str(&format!(
-                "Codex CLI timed out after {timeout_minutes} minutes."
-            ));
-        } else if stderr_text.len() >= STDERR_LIMIT_BYTES {
+        if stderr_text.len() >= STDERR_LIMIT_BYTES {
             stderr_text.push_str("\n[stderr truncated]");
         }
         if stdout_text.len() >= STDOUT_LIMIT_BYTES {
             stdout_text.push_str("\n[stdout truncated]");
         }
 
-        let code = if timed_out.load(Ordering::SeqCst) {
-            Some(-1)
-        } else {
-            exit_code
-        };
-
+        // A timeout is a separate fact from an exit code, and travels in its
+        // own field: reporting it as exit code -1 made a deliberate stop look
+        // like a CLI crash, and buried the real cause under whatever Codex
+        // happened to write to stderr. Note that `exit_code` is None on the
+        // timeout path because the timeout task took the child handle away in
+        // order to kill it, not because a final status was observed, so
+        // `timedOut` is the only dependable signal that the run was stopped.
         let _ = app.emit(
             &done_topic,
-            serde_json::json!({
-                "code": code,
-                "stderr": stderr_text,
-                "stdout": stdout_text,
-            }),
+            done_payload(
+                exit_code,
+                timed_out.load(Ordering::SeqCst),
+                timeout_minutes,
+                &stderr_text,
+                &stdout_text,
+            ),
         );
     });
 
     Ok(())
+}
+
+/// Shape of the `codex-cli:{id}:done` event. Split out from the emit site so
+/// that the key names, which `codex-cli-transport.ts` reads by hand, are
+/// covered by a test instead of only by reading the two files side by side.
+/// This pins the Rust half only; the frontend can still drift independently.
+fn done_payload(
+    exit_code: Option<i32>,
+    timed_out: bool,
+    timeout_minutes: u64,
+    stderr: &str,
+    stdout: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "code": exit_code,
+        "timedOut": timed_out,
+        "timeoutMinutes": timeout_minutes,
+        "stderr": stderr,
+        "stdout": stdout,
+    })
 }
 
 fn codex_spawn_timeout_minutes(value: Option<u64>) -> u64 {
@@ -393,6 +409,31 @@ mod tests {
         assert_eq!(out, "é水");
         assert_eq!(out.len(), 5);
         assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn done_payload_uses_the_camel_case_keys_the_frontend_reads() {
+        let payload = done_payload(None, true, 10, "boom", "");
+
+        // These key names are one part of the contract with
+        // codex-cli-transport.ts, alongside the event topic and the value
+        // types. If `timedOut` drifts, the frontend stops recognising the
+        // timeout: a run that had already emitted an agent message is then
+        // reported as completed, and one that had not gets the generic
+        // no-agent-message error instead of the real cause.
+        assert_eq!(payload["code"], serde_json::Value::Null);
+        assert_eq!(payload["timedOut"], true);
+        assert_eq!(payload["timeoutMinutes"], 10);
+        assert_eq!(payload["stderr"], "boom");
+        assert_eq!(payload["stdout"], "");
+    }
+
+    #[test]
+    fn done_payload_passes_through_a_real_exit_code_when_not_timed_out() {
+        let payload = done_payload(Some(2), false, 10, "", "out");
+
+        assert_eq!(payload["code"], 2);
+        assert_eq!(payload["timedOut"], false);
     }
 
     #[test]

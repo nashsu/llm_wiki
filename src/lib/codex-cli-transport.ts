@@ -157,12 +157,42 @@ export async function streamCodexCli(
       return
     }
 
-    unlistenDone = await listen<{ code: number | null; stderr: string; stdout?: string }>(
+    unlistenDone = await listen<{
+      code: number | null
+      stderr: string
+      stdout?: string
+      timedOut?: boolean
+      timeoutMinutes?: number
+    }>(
       `codex-cli:${streamId}:done`,
       (event) => {
         const code = event.payload?.code
         const stderr = event.payload?.stderr?.trim() ?? ""
         const stdout = event.payload?.stdout ?? ""
+        // Checked before `code`, and before the agent_message branch below.
+        // The timeout task takes the child handle away in order to kill it, so
+        // `code` is null here regardless of how the process ended. The
+        // exit-code branch skips null outright, and the branch after it calls
+        // onDone once any agent message has arrived, so a timeout that had
+        // already produced partial output would be reported as a success.
+        if (event.payload?.timedOut) {
+          const minutes = event.payload.timeoutMinutes
+          const limit = typeof minutes === "number" ? `${minutes} minute` : "configured"
+          const details = stderr || stdout.trim()
+          // Only stderr was consulted first; say which stream this actually is.
+          const label = stderr ? "stderr" : "stdout"
+          finishWith(() =>
+            onError(new Error(
+              [
+                `Codex CLI did not report completion within the ${limit} timeout, so LLM Wiki stopped waiting.`,
+                "Raise the Codex CLI timeout for this preset in Settings",
+                "(1-240 minutes), or shorten the prompt.",
+                details ? `\n\n— ${label} —\n${details}` : "",
+              ].join(" ").trim(),
+            )),
+          )
+          return
+        }
         if (code !== null && code !== undefined && code !== 0) {
           const details = stderr || stdout.trim() || unparsedLines.join("\n")
           finishWith(() =>

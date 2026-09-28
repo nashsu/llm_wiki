@@ -474,6 +474,152 @@ describe("streamCodexCli", () => {
     )
   })
 
+  it("reports the timeout cause when Codex CLI is stopped by the spawn timeout", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamCodexCli(
+      {
+        provider: "codex-cli",
+        apiKey: "",
+        model: "gpt-5.1-codex-mini",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    // `code` is null because the timeout task removes the child handle before
+    // killing it, so the run's status is never observed on any platform, and
+    // the timeout is visible only through `timedOut`. The stderr here is
+    // startup noise Codex prints on every run - it must not become the
+    // headline.
+    tauriMocks.emit(`codex-cli:${payload.streamId}:done`, {
+      code: null,
+      timedOut: true,
+      timeoutMinutes: 10,
+      stderr: "ERROR codex_core::session: failed to load skill /x/SKILL.md: missing YAML frontmatter",
+      stdout: "",
+    })
+
+    await stream
+
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toContain("10 minute timeout")
+    expect(message).not.toContain("did not emit an agent_message")
+    // The diagnostic is kept, but below the cause that explains it. Both
+    // anchors are asserted present first: a substring that has drifted out of
+    // the message yields -1, which would satisfy any ordering check silently.
+    const causeAt = message.indexOf("10 minute timeout")
+    const diagnosticAt = message.indexOf("missing YAML frontmatter")
+    expect(causeAt).toBeGreaterThanOrEqual(0)
+    expect(diagnosticAt).toBeGreaterThanOrEqual(0)
+    expect(causeAt).toBeLessThan(diagnosticAt)
+  })
+
+  it("errors on timeout even when a partial agent message already arrived", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamCodexCli(
+      {
+        provider: "codex-cli",
+        apiKey: "",
+        model: "gpt-5.1-codex-mini",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(
+      `codex-cli:${payload.streamId}`,
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "partial answer" },
+      }),
+    )
+    tauriMocks.emit(`codex-cli:${payload.streamId}:done`, {
+      code: null,
+      timedOut: true,
+      timeoutMinutes: 10,
+      stderr: "",
+      stdout: "",
+    })
+
+    await stream
+
+    expect(callbacks.onToken).toHaveBeenCalledWith("partial answer")
+    expect(callbacks.onDone).not.toHaveBeenCalled()
+    expect(callbacks.onError).toHaveBeenCalledTimes(1)
+    expect((callbacks.onError.mock.calls[0]?.[0] as Error).message).toContain(
+      "10 minute timeout",
+    )
+  })
+
+  it("labels timeout fallback output as stdout when stderr is empty", async () => {
+    const callbacks = {
+      onToken: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    }
+
+    const stream = streamCodexCli(
+      {
+        provider: "codex-cli",
+        apiKey: "",
+        model: "gpt-5.1-codex-mini",
+        ollamaUrl: "",
+        customEndpoint: "",
+        maxContextSize: 128000,
+      },
+      [{ role: "user", content: "Analyze this source." }],
+      callbacks,
+    )
+
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledTimes(1)
+    })
+
+    const payload = tauriMocks.invoke.mock.calls[0]?.[1] as { streamId: string }
+    tauriMocks.emit(`codex-cli:${payload.streamId}:done`, {
+      code: null,
+      timedOut: true,
+      timeoutMinutes: 10,
+      stderr: "",
+      stdout: '{"type":"turn.started"}',
+    })
+
+    await stream
+
+    const message = (callbacks.onError.mock.calls[0]?.[0] as Error).message
+    expect(message).toContain("turn.started")
+    expect(message).toContain("— stdout —")
+    expect(message).not.toContain("— stderr —")
+  })
+
   it("does not spawn when the signal is already aborted", async () => {
     const controller = new AbortController()
     controller.abort()
