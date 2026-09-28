@@ -59,7 +59,7 @@ LLM Wiki는 문서를 자동으로 정리되고 서로 연결된 지식 베이�
 이 프로젝트는 [Karpathy의 LLM Wiki 패턴](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)을 기반으로 합니다. 이는 LLM으로 개인 지식 베이스를 구축하는 방법론입니다. llm_wiki는 [nash_su](https://x.com/nash_su)가 만들고 유지 관리하며, 핵심 아이디어를 완전한 데스크톱 애플리케이션으로 구현하고 큰 폭으로 확장했습니다.
 
 <p align="center">
-  <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki 아키텍처">
+  <img src="assets/llm_wiki_arch_ko.jpg" width="100%" alt="LLM Wiki 아키텍처">
 </p>
 
 ## 크레딧

@@ -59,7 +59,7 @@ LLM Wiki is a cross-platform desktop application that turns your documents into 
 This project is based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — a methodology for building personal knowledge bases using LLMs. llm_wiki is created and maintained by [nash_su](https://x.com/nash_su), who implemented the core ideas as a full desktop application with significant enhancements.
 
 <p align="center">
-  <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki Architecture">
+  <img src="assets/llm_wiki_arch_en.jpg" width="100%" alt="LLM Wiki Architecture">
 </p>
 
 ## Credits

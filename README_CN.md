@@ -59,7 +59,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 本项目基于 [Karpathy 的 LLM Wiki 方法论](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) —— 一套使用 LLM 构建个人知识库的方法论。llm_wiki 由 [nash_su](https://x.com/nash_su) 创建和维护，并在保留核心理念的基础上，将其实现为完整桌面应用，加入了大量增强。
 
 <p align="center">
-  <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki 架构图">
+  <img src="assets/llm_wiki_arch_cn.jpg" width="100%" alt="LLM Wiki 架构图">
 </p>
 
 ## 致谢
