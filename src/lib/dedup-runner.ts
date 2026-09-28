@@ -184,15 +184,31 @@ export async function loadAllWikiPages(
  * duplicate-candidate groups. Reads notDuplicates whitelist from
  * disk so previously-confirmed false-positives don't reappear.
  */
+export interface DuplicateDetectionProgress {
+  stage: "loading" | "embedding" | "scanning"
+  completed: number
+  total: number
+}
+
+export interface DuplicateDetectionOptions {
+  signal?: AbortSignal
+  onProgress?: (progress: DuplicateDetectionProgress) => void
+}
+
 export async function runDuplicateDetection(
   projectPath: string,
   llmConfig: LlmConfig,
-  options: { signal?: AbortSignal } = {},
+  options: DuplicateDetectionOptions = {},
 ): Promise<DuplicateGroup[]> {
+  options.onProgress?.({ stage: "loading", completed: 0, total: 1 })
   const summaries = await loadAllEntitySummaries(projectPath)
+  options.onProgress?.({ stage: "loading", completed: 1, total: 1 })
   if (summaries.length < 2) return []
   const notDup = await loadNotDuplicates(projectPath)
-  const llm = buildDedupLlmCall(llmConfig, DEDUP_DETECTION_MAX_TOKENS)
+  const llm = buildDedupLlmCall(
+    { ...llmConfig, streamingEnabled: false },
+    DEDUP_DETECTION_MAX_TOKENS,
+  )
   const embeddingConfig = await loadEmbeddingConfig()
 
   const embeddingEndpoint =
@@ -206,6 +222,7 @@ export async function runDuplicateDetection(
         {
           signal: options.signal,
           notDuplicates: notDup,
+          onProgress: options.onProgress,
         },
       )
     } catch (err) {
@@ -221,16 +238,31 @@ export async function runDuplicateDetection(
   return detectDuplicateGroupsInBoundedBatches(summaries, llm, {
     signal: options.signal,
     notDuplicates: notDup,
+    onProgress: options.onProgress,
   })
 }
 
 async function detectDuplicateGroupsInBoundedBatches(
   summaries: EntitySummary[],
   llm: DedupLlmCall,
-  options: { signal?: AbortSignal; notDuplicates?: string[][] },
+  options: {
+    signal?: AbortSignal
+    notDuplicates?: string[][]
+    onProgress?: (progress: DuplicateDetectionProgress) => void
+  },
 ): Promise<DuplicateGroup[]> {
+  const stride = DEDUP_DETECTOR_BATCH_SUMMARIES - DEDUP_FALLBACK_BATCH_OVERLAP
+  const total = Math.max(
+    1,
+    summaries.length <= DEDUP_DETECTOR_BATCH_SUMMARIES
+      ? 1
+      : Math.ceil((summaries.length - DEDUP_DETECTOR_BATCH_SUMMARIES) / stride) + 1,
+  )
+  options.onProgress?.({ stage: "scanning", completed: 0, total })
   if (summaries.length <= DEDUP_DETECTOR_BATCH_SUMMARIES) {
-    return detectDuplicateGroups(summaries, llm, options)
+    const result = await detectDuplicateGroups(summaries, llm, options)
+    options.onProgress?.({ stage: "scanning", completed: 1, total })
+    return result
   }
 
   // Keep likely aliases adjacent while bounding every LLM request. A small
@@ -238,13 +270,19 @@ async function detectDuplicateGroupsInBoundedBatches(
   const ordered = [...summaries].sort((left, right) =>
     `${left.title}\u0000${left.slug}`.localeCompare(`${right.title}\u0000${right.slug}`),
   )
-  const stride = DEDUP_DETECTOR_BATCH_SUMMARIES - DEDUP_FALLBACK_BATCH_OVERLAP
   const groups: DuplicateGroup[] = []
+  let completed = 0
   for (let start = 0; start < ordered.length; start += stride) {
     if (options.signal?.aborted) throw new Error("Duplicate scan cancelled")
     const batch = ordered.slice(start, start + DEDUP_DETECTOR_BATCH_SUMMARIES)
     if (batch.length < 2) break
-    groups.push(...await detectDuplicateGroups(batch, llm, options))
+    try {
+      groups.push(...await detectDuplicateGroups(batch, llm, options))
+    } catch (error) {
+      throw new Error(`Duplicate scan failed in batch ${completed + 1}/${total}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    completed++
+    options.onProgress?.({ stage: "scanning", completed, total })
   }
   return uniqueDuplicateGroups(groups)
 }
@@ -253,14 +291,27 @@ async function detectDuplicateGroupsWithEmbeddingPrefilter(
   summaries: EntitySummary[],
   embeddingConfig: EmbeddingConfig,
   llm: DedupLlmCall,
-  options: { signal?: AbortSignal; notDuplicates?: string[][] },
+  options: {
+    signal?: AbortSignal
+    notDuplicates?: string[][]
+    onProgress?: (progress: DuplicateDetectionProgress) => void
+  },
 ): Promise<DuplicateGroup[]> {
   const pages = summaries.map(summaryToEmbeddingPage)
+  options.onProgress?.({ stage: "embedding", completed: 0, total: pages.length })
   const pairs = await candidatePairs(pages, embeddingConfig, {
     topK: DEDUP_PREFILTER_TOP_K,
     threshold: DEDUP_PREFILTER_THRESHOLD,
     maxPages: DEDUP_PREFILTER_MAX_PAGES,
     signal: options.signal,
+    onProgress: (completed, total) => {
+      options.onProgress?.({ stage: "embedding", completed, total })
+    },
+  })
+  options.onProgress?.({
+    stage: "embedding",
+    completed: pages.length,
+    total: pages.length,
   })
   if (pairs.length === 0) {
     // Preserve recall for small/medium wikis: a weak or non-multilingual
@@ -283,10 +334,19 @@ async function detectDuplicateGroupsWithEmbeddingPrefilter(
   const batches = batchCandidateClusters(clusters, summaryByPath)
   const out: DuplicateGroup[] = []
 
+  let completed = 0
+  const total = Math.max(1, batches.length)
+  options.onProgress?.({ stage: "scanning", completed: 0, total })
   for (const batch of batches) {
     if (options.signal?.aborted) throw new Error("Duplicate scan cancelled")
-    const detected = await detectDuplicateGroups(batch, llm, options)
-    out.push(...detected)
+    try {
+      const detected = await detectDuplicateGroups(batch, llm, options)
+      out.push(...detected)
+    } catch (error) {
+      throw new Error(`Duplicate scan failed in batch ${completed + 1}/${total}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    completed++
+    options.onProgress?.({ stage: "scanning", completed, total })
   }
 
   return uniqueDuplicateGroups(out)
