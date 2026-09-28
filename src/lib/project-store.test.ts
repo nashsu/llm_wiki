@@ -1,6 +1,40 @@
 import { describe, expect, it } from "vitest"
 import { __projectStoreTest } from "./project-store"
 
+describe("project-store general config normalization", () => {
+  it("preserves valid startup and close behavior values", () => {
+    expect(__projectStoreTest.normalizeGeneralConfig({
+      autostart: true,
+      startMinimized: true,
+      closeBehavior: "exit",
+    })).toEqual({
+      autostart: true,
+      startMinimized: true,
+      closeBehavior: "exit",
+    })
+  })
+
+  it("defaults missing and malformed startup values safely", () => {
+    expect(__projectStoreTest.normalizeGeneralConfig({
+      autostart: "yes" as unknown as boolean,
+      startMinimized: "yes" as unknown as boolean,
+      closeBehavior: "invalid" as "exit",
+    })).toEqual({
+      autostart: false,
+      startMinimized: false,
+      closeBehavior: "minimize",
+    })
+    expect(__projectStoreTest.normalizeGeneralConfig({
+      autostart: false,
+      closeBehavior: "ask",
+    })).toEqual({
+      autostart: false,
+      startMinimized: false,
+      closeBehavior: "ask",
+    })
+  })
+})
+
 describe("project-store MinerU config normalization", () => {
   it("preserves valid MinerU config values", () => {
     expect(__projectStoreTest.normalizeMineruConfig({

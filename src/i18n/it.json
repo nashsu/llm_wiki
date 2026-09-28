@@ -500,6 +500,8 @@
         "description": "Comportamento all'avvio e gestione della finestra dell'app desktop.",
         "autostart": "Avvia all'accensione del sistema",
         "autostartHint": "Avvia LLM Wiki automaticamente dopo l'accesso a questo computer.",
+        "startMinimized": "Avvia ridotto a icona",
+        "startMinimizedHint": "All'avvio usa l'area di notifica quando disponibile. La variabile d'ambiente LLM_WIKI_START_MINIMIZED=1 abilita sempre questo comportamento.",
         "closeBehavior": "Alla chiusura della finestra",
         "closeBehaviorHint": "Questa impostazione vale quando clicchi il pulsante di chiusura nella barra del titolo. Dal menu nell'area di notifica puoi comunque uscire dall'app.",
         "closeAsk": "Chiedi ogni volta",

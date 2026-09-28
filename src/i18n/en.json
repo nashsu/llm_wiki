@@ -500,6 +500,8 @@
         "description": "Startup and window behavior for the desktop app.",
         "autostart": "Launch at system startup",
         "autostartHint": "Starts LLM Wiki automatically after you sign in to this computer.",
+        "startMinimized": "Start minimized",
+        "startMinimizedHint": "Starts in the system tray when available. The LLM_WIKI_START_MINIMIZED=1 environment variable always enables this behavior.",
         "closeBehavior": "When closing the window",
         "closeBehaviorHint": "This setting applies when you click the title-bar close button. The tray menu can still quit the app directly.",
         "closeAsk": "Ask every time",

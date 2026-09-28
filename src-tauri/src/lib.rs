@@ -19,6 +19,35 @@ use uuid::Uuid;
 struct CloseBehaviorState(Mutex<String>);
 struct TrayAvailabilityState(Mutex<bool>);
 
+const START_MINIMIZED_ENV: &str = "LLM_WIKI_START_MINIMIZED";
+
+fn start_minimized_from_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
+fn start_minimized_from_store_json(json: &Value) -> bool {
+    json.get("generalConfig")
+        .and_then(|config| config.get("startMinimized"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn read_start_minimized_from_store(store_path: &std::path::Path) -> bool {
+    std::fs::read_to_string(store_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .as_ref()
+        .is_some_and(start_minimized_from_store_json)
+}
+
+fn start_minimized_from_sources(env_value: Option<&std::ffi::OsStr>, persisted: bool) -> bool {
+    start_minimized_from_value(env_value) || persisted
+}
+
+fn should_start_minimized(persisted: bool) -> bool {
+    start_minimized_from_sources(std::env::var_os(START_MINIMIZED_ENV).as_deref(), persisted)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentProjectEntry {
@@ -552,6 +581,19 @@ fn tray_available<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
 pub fn run() {
     apply_linux_webkit_compat_env();
 
+    let mut context = tauri::generate_context!();
+    if let Some(main_window) = context
+        .config_mut()
+        .app
+        .windows
+        .iter_mut()
+        .find(|window| window.label == "main")
+    {
+        // The persisted setting cannot be read until Tauri resolves its app
+        // data directory. Create hidden, then reveal during setup when needed.
+        main_window.visible = false;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -578,7 +620,7 @@ pub fn run() {
             // to the resource-dir hint so the proxy applies to
             // everything: LLM, embedding, update check, deep
             // research, captioning. See src-tauri/src/proxy.rs.
-            if let Ok(dir) = app.path().app_data_dir() {
+            let persisted_start_minimized = if let Ok(dir) = app.path().app_data_dir() {
                 let store_path = dir.join("app-state.json");
                 eprintln!("[proxy] reading from {}", store_path.display());
                 if let Some(cfg) = proxy::read_proxy_config_from_store(&store_path) {
@@ -587,9 +629,11 @@ pub fn run() {
                 } else {
                     eprintln!("[proxy] no proxyConfig in store, requests go direct");
                 }
+                read_start_minimized_from_store(&store_path)
             } else {
                 eprintln!("[proxy] could not resolve app_data_dir");
-            }
+                false
+            };
             // Registry of running `claude` subprocesses, keyed by the
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.
@@ -618,6 +662,26 @@ pub fn run() {
                 Err(err) => {
                     eprintln!("[tray] failed to update tray availability state: {err}");
                 }
+            }
+            let start_minimized = should_start_minimized(persisted_start_minimized);
+            if let Some(window) = app.get_webview_window("main") {
+                if start_minimized && !tray_available {
+                    // A hidden window has no recovery path without a tray.
+                    // Show it before minimizing; setup completes before the
+                    // event loop paints it, avoiding a visible startup flash.
+                    if let Err(err) = window.show() {
+                        eprintln!("[startup] failed to show main window: {err}");
+                    }
+                    if let Err(err) = window.minimize() {
+                        eprintln!("[startup] failed to minimize main window: {err}");
+                    }
+                } else if !start_minimized {
+                    if let Err(err) = window.show() {
+                        eprintln!("[startup] failed to show main window: {err}");
+                    }
+                }
+            } else {
+                eprintln!("[startup] main window unavailable during setup");
             }
             Ok(())
         })
@@ -748,7 +812,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
@@ -790,3 +854,41 @@ fn apply_linux_webkit_compat_env() {
 
 #[cfg(not(target_os = "linux"))]
 fn apply_linux_webkit_compat_env() {}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::{start_minimized_from_sources, start_minimized_from_store_json};
+    use serde_json::json;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn start_minimized_requires_exact_one() {
+        assert!(start_minimized_from_sources(Some(OsStr::new("1")), false));
+
+        for value in [None, Some(""), Some("0"), Some("true"), Some(" 1 ")] {
+            assert!(!start_minimized_from_sources(value.map(OsStr::new), false));
+        }
+    }
+
+    #[test]
+    fn persisted_setting_enables_minimized_startup() {
+        assert!(start_minimized_from_sources(None, true));
+        assert!(start_minimized_from_sources(Some(OsStr::new("0")), true));
+    }
+
+    #[test]
+    fn persisted_setting_requires_a_boolean_true() {
+        assert!(start_minimized_from_store_json(&json!({
+            "generalConfig": { "startMinimized": true }
+        })));
+
+        for value in [
+            json!({}),
+            json!({ "generalConfig": {} }),
+            json!({ "generalConfig": { "startMinimized": false } }),
+            json!({ "generalConfig": { "startMinimized": "true" } }),
+        ] {
+            assert!(!start_minimized_from_store_json(&value));
+        }
+    }
+}

@@ -77,6 +77,7 @@ export interface SettingsDraft {
 
   // General app behavior
   autostart: boolean
+  startMinimized: boolean
   closeBehavior: CloseBehavior
 
   // Source folder auto watch
