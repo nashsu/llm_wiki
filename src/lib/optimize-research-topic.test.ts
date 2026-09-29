@@ -121,3 +121,41 @@ describe("optimizeResearchTopic — response parsing", () => {
     expect(result.searchQueries).toHaveLength(3)
   })
 })
+
+describe("optimizeResearchTopic — project-local vocabulary", () => {
+  it("requires ambiguous internal terms to remain grounded in wiki context", async () => {
+    await optimizeResearchTopic(
+      fakeLlmConfig(),
+      "AF",
+      "An attention-filter signal used by the project pipeline",
+      "missing-page",
+      "The wiki documents a private cognitive-analysis system.",
+      "Explain the project's signal-processing architecture.",
+    )
+
+    const prompt = mockStreamChat.mock.calls[0][1][0].content
+    expect(prompt).toContain("project-local vocabulary")
+    expect(prompt).toContain("Never emit a bare ambiguous term as a web query")
+    expect(prompt).toContain("Do not substitute a popular public meaning")
+    expect(prompt).toContain("no likely public documentation")
+    expect(prompt).toContain("An attention-filter signal used by the project pipeline")
+  })
+
+  it("expands a bare model query with local context", async () => {
+    mockStreamChatReturns("TOPIC: AF\nQUERY: AF")
+
+    const result = await optimizeResearchTopic(
+      fakeLlmConfig(),
+      "AF",
+      "attention filter signal in a cognitive-analysis pipeline",
+      "missing-page",
+      "",
+      "",
+    )
+
+    expect(result.searchQueries).toHaveLength(1)
+    expect(result.searchQueries[0]).toContain("AF")
+    expect(result.searchQueries[0]).toContain("attention filter signal")
+    expect(result.searchQueries[0]).not.toBe("AF")
+  })
+})

@@ -188,9 +188,8 @@ interface EmbeddingConfig {
  * `concurrency` bounds parallel caption requests during ingest.
  * 30-image PDFs with sequential captioning at ~10s/image (a Qwen3
  * thinking model on consumer GPU) take 5 minutes. At concurrency=4
- * that drops to ~75s. Going wider than 8 typically just queues
- * behind a single-GPU server's batch slot, so we cap the slider
- * UI at a tasteful max in the settings view.
+ * that drops to ~75s. Higher values are available for hosted or
+ * multi-GPU endpoints that can sustain broader parallelism.
  */
 /**
  * Global outbound HTTP proxy. When `enabled` and `url` is a valid
@@ -489,6 +488,7 @@ interface WikiState {
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
   jiraConfig: JiraConfig
+  sourceWatchAllProjects: boolean
   mineruConfig: MineruConfig
   apiConfig: ApiConfig
   generalConfig: GeneralConfig
@@ -525,6 +525,7 @@ interface WikiState {
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
   setJiraConfig: (config: JiraConfig) => void
+  setSourceWatchAllProjects: (enabled: boolean) => void
   setMineruConfig: (config: MineruConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setGeneralConfig: (config: GeneralConfig) => void
@@ -695,6 +696,7 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
   jiraConfig: DEFAULT_JIRA_CONFIG,
+  sourceWatchAllProjects: false,
   mineruConfig: {
     enabled: false,
     backend: "cloud",
@@ -748,6 +750,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
   setJiraConfig: (jiraConfig) => set({ jiraConfig }),
+  setSourceWatchAllProjects: (sourceWatchAllProjects) => set({ sourceWatchAllProjects }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setGeneralConfig: (generalConfig) => set({ generalConfig }),

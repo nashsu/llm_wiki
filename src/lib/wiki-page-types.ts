@@ -18,6 +18,8 @@ const WIKI_TYPE_DIRS: Array<{ dir: string; type: string }> = [
   { dir: "comparisons", type: "comparison" },
   { dir: "synthesis", type: "synthesis" },
   { dir: "findings", type: "finding" },
+  { dir: "standards", type: "standard" },
+  { dir: "playbooks", type: "playbook" },
   { dir: "thesis", type: "thesis" },
   { dir: "methodology", type: "methodology" },
 ]

@@ -3,13 +3,38 @@ use std::path::PathBuf;
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-#[cfg(not(windows))]
 use std::time::Duration;
 
 #[cfg(not(windows))]
 const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(not(windows))]
 const PATH_MARKER: char = '\x1e';
+pub(crate) const CLI_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub(crate) fn cli_version_timeout_error(command: &str) -> String {
+    format!(
+        "`{command} --version` timed out after {}s",
+        CLI_VERSION_PROBE_TIMEOUT.as_secs()
+    )
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::{cli_version_timeout_error, CLI_VERSION_PROBE_TIMEOUT};
+
+    #[test]
+    fn cli_version_probe_allows_slow_windows_cold_starts() {
+        assert_eq!(CLI_VERSION_PROBE_TIMEOUT.as_secs(), 10);
+        assert_eq!(
+            cli_version_timeout_error("codex"),
+            "`codex --version` timed out after 10s"
+        );
+        assert_eq!(
+            cli_version_timeout_error("claude"),
+            "`claude --version` timed out after 10s"
+        );
+    }
+}
 
 static RESOLVED_COMMANDS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 

@@ -1242,6 +1242,7 @@ export function ChatPanel() {
             sessionId: convId,
             runId: backendRunId,
             persistSession: false,
+            allowEmptyRetrieval: true,
             mode: sendOptions.agentMode,
             retrievalMode: sendOptions.retrievalMode,
             tools: {
@@ -1293,13 +1294,24 @@ export function ChatPanel() {
           return
         }
 
-        const contextText = [
-          "You have access to the current LLM Wiki project context below. Use it as retrieved evidence when it is relevant.",
-          "",
-          backendResponseText(backendResponse),
-          "",
-          `User request: ${text}`,
-        ].join("\n")
+        const responseContext = backendResponseText(backendResponse).trim()
+        const retrievedContext = responseContext || backendReferences
+          .map((reference) => `${reference.title} (${reference.path})`)
+          .join("\n")
+        const contextText = retrievedContext
+          ? [
+              "You have access to the current LLM Wiki project context below. Use it as retrieved evidence when it is relevant.",
+              "",
+              retrievedContext,
+              "",
+              `User request: ${text}`,
+            ].join("\n")
+          : [
+              "No relevant LLM Wiki evidence was retrieved for this request.",
+              "Answer the request directly with the selected CLI provider. Clearly distinguish general knowledge from project evidence.",
+              "",
+              `User request: ${text}`,
+            ].join("\n")
         const userContent: string | ContentBlock[] = images.length > 0
           ? [
               { type: "text", text: contextText },
@@ -1313,7 +1325,7 @@ export function ChatPanel() {
         const finalMessages: LlmChatMessage[] = [
           {
             role: "system",
-            content: "Answer using the provided LLM Wiki context and references. The retrieved pages are numbered in the context as 1., 2., ... . After every factual claim, cite its source inline as [n] with the matching number (e.g. [1]). When listing a source (a source/来源 line), write each one as a clickable wiki link using the path from the reference list, e.g. [[wiki/entities/usb.md]] or [[entities/usb]]. Never invent a citation: if a claim is not supported by the provided context, say it is not covered instead. If the context is insufficient, say what is missing rather than inventing details.",
+            content: "Answer using the provided LLM Wiki context and references. If the context is insufficient, say what is missing instead of inventing details.",
           },
           ...(sendOptions.historyOverride ?? chatMessagesToLLM(priorMessages)),
           { role: "user", content: userContent },

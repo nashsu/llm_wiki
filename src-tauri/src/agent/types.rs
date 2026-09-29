@@ -135,6 +135,11 @@ pub struct AgentChatRequest {
     pub images: Vec<AgentImage>,
     #[serde(default)]
     pub stream: Option<bool>,
+    // Internal retrieval preflight used by CLI-backed chat. It collects tool
+    // references without requiring a backend HTTP generation provider and may
+    // legitimately return no references.
+    #[serde(default)]
+    pub allow_empty_retrieval: bool,
     #[serde(default = "default_true")]
     pub persist_session: bool,
 }
@@ -159,6 +164,7 @@ impl Default for AgentChatRequest {
             shell_command: None,
             images: Vec::new(),
             stream: None,
+            allow_empty_retrieval: false,
             persist_session: true,
         }
     }
@@ -309,6 +315,7 @@ mod tests {
         assert!(req.tools.wiki);
         assert!(!req.tools.web);
         assert!(!req.tools.anytxt);
+        assert!(!req.allow_empty_retrieval);
         assert!(req.persist_session);
     }
 
@@ -332,6 +339,18 @@ mod tests {
         assert!(req.tools.web);
         assert!(req.tools.anytxt);
         assert!(req.images.is_empty());
+    }
+
+    #[test]
+    fn chat_request_accepts_retrieval_only_preflight() {
+        let req: AgentChatRequest = serde_json::from_value(serde_json::json!({
+            "message": "hello",
+            "allowEmptyRetrieval": true,
+            "persistSession": false
+        }))
+        .unwrap();
+        assert!(req.allow_empty_retrieval);
+        assert!(!req.persist_session);
     }
 
     #[test]

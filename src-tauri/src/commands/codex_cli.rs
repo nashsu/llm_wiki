@@ -19,7 +19,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use super::cli_resolver::{child_path_env, find_cli_command};
+use super::cli_resolver::{
+    child_path_env, cli_version_timeout_error, find_cli_command, CLI_VERSION_PROBE_TIMEOUT,
+};
 
 #[derive(Default)]
 pub struct CodexCliState {
@@ -90,7 +92,8 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
     if let Some(path_env) = child_path_env().await {
         cmd.env("PATH", path_env);
     }
-    let output = tokio::time::timeout(Duration::from_secs(3), cmd.arg("--version").output()).await;
+    let output =
+        tokio::time::timeout(CLI_VERSION_PROBE_TIMEOUT, cmd.arg("--version").output()).await;
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
@@ -125,7 +128,7 @@ pub async fn codex_cli_detect() -> Result<DetectResult, String> {
             installed: false,
             version: None,
             path: Some(path_str),
-            error: Some("`codex --version` timed out after 3s".to_string()),
+            error: Some(cli_version_timeout_error("codex")),
         }),
     }
 }

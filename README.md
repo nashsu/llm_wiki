@@ -361,7 +361,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **macOS close-to-hide** — close button hides window (app stays running in background), click dock icon to restore, Cmd+Q to quit
 - **Windows/Linux close confirmation** — confirmation dialog before quitting to prevent accidental data loss
 - **Tauri v2** — native desktop on macOS, Windows, Linux
-- **GitHub Actions CI/CD** — automated builds for macOS (ARM + Intel), Windows (.msi), Linux (.deb / .AppImage)
+- **GitHub Actions CI/CD** — automated builds for macOS (Apple Silicon), Windows (.msi), Linux (.deb / .AppImage)
 
 ### 19. Other Additions
 
@@ -398,7 +398,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 ### Pre-built Binaries
 
 Download from [Releases](https://github.com/nashsu/llm_wiki/releases):
-- **macOS**: `.dmg` (Apple Silicon + Intel)
+- **macOS**: `.dmg` (Apple Silicon)
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
 
@@ -449,7 +449,7 @@ LLM Wiki ships a built-in local HTTP API at `http://127.0.0.1:19828` (token-prot
 - `POST /api/v1/projects/{id}/reviews/resolve` — bulk-resolve Review items (JSON body `{ "ids": [...], "action": "label" }`), returns `{ resolved, notFound, count }`; the Review tab's Refresh button re-reads the result from disk
 - `POST /api/v1/projects/{id}/search` — **hybrid** retrieval (keyword + vector) returning `mode`, `tokenHits`, `vectorHits`, per-result `vectorScore`
 - `POST /api/v1/projects/{id}/chat` — backend Agent chat endpoint for wiki/source/web/AnyTXT retrieval. JSON requests remain non-streaming by default; send `"stream": true` or `Accept: text/event-stream` for SSE events (`meta`, incremental `agent`, then `done`, `cancelled`, or `error`). The terminal `done` frame contains the complete aggregate response, so clients should not render both message deltas and the final message as separate answers. `mode: "deep"` broadens evidence collection, while the full Deep Research workspace remains available in the desktop UI
-- `GET /api/v1/projects/{id}/graph` — wikilinks graph
+- `GET /api/v1/projects/{id}/graph` — wikilinks graph; supports `q`, `nodeType`, `limit` (max 1000), `offset`, and `edgeScope=page|filtered`, and returns `totalCount` / `hasMore` for large projects
 - `POST /api/v1/projects/{id}/sources/rescan` — trigger a backend rescan
 - `POST /api/v1/projects/{id}/pages/embed` — index one externally created or updated `wiki/*.md` page without rebuilding the whole vector database
 

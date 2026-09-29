@@ -99,6 +99,74 @@ export function createClaudeCodeStreamParser() {
   }
 }
 
+export function extractClaudeCodeStructuredError(rawLine: string): string | null {
+  const line = rawLine.trim()
+  if (!line) return null
+  try {
+    const value = JSON.parse(line) as unknown
+    if (!value || typeof value !== "object") return null
+    const event = value as Record<string, unknown>
+    if (event.type === "result" && event.is_error === true) {
+      for (const key of ["result", "error", "message"] as const) {
+        if (typeof event[key] === "string" && event[key].trim()) return event[key].trim()
+      }
+      return "Claude Code CLI returned an unspecified error result."
+    }
+    if (event.type === "error") {
+      for (const key of ["error", "message", "result"] as const) {
+        const field = event[key]
+        if (typeof field === "string" && field.trim()) return field.trim()
+        if (field && typeof field === "object") {
+          const nested = field as Record<string, unknown>
+          if (typeof nested.message === "string" && nested.message.trim()) {
+            return nested.message.trim()
+          }
+        }
+      }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+export function shouldCaptureClaudeDiagnostic(rawLine: string): boolean {
+  const line = rawLine.trim()
+  if (!line) return false
+  try {
+    const value = JSON.parse(line) as unknown
+    if (!value || typeof value !== "object") return true
+    const event = value as Record<string, unknown>
+    return event.is_error === true
+      || (typeof event.type === "string" && event.type.toLowerCase().includes("error"))
+      || extractClaudeCodeStructuredError(line) !== null
+  } catch {
+    return true
+  }
+}
+
+export function createBoundedDiagnosticBuffer(capacity = 4096) {
+  let buffer = ""
+  return {
+    append(line: string) {
+      const trimmed = line.trim()
+      if (!trimmed || capacity <= 0) return
+      const incomingCharacters = Array.from(trimmed)
+      const incoming = incomingCharacters.length > capacity
+        ? incomingCharacters.slice(incomingCharacters.length - capacity).join("")
+        : trimmed
+      const combined = buffer ? `${buffer}\n${incoming}` : incoming
+      const characters = Array.from(combined)
+      buffer = characters.length > capacity
+        ? characters.slice(characters.length - capacity).join("")
+        : combined
+    },
+    value() {
+      return buffer
+    },
+  }
+}
+
 // Tauri's `invoke` typing requires the payload object to satisfy
 // `Record<string, unknown>` (an index signature). Plain interfaces
 // don't provide one, so we use a `type` alias with the explicit
@@ -150,6 +218,7 @@ export async function streamClaudeCodeCli(
   // Track whether any assistant text was received — used to detect the
   // silent-exit case where the CLI exits 0 but emits no content.
   let emittedToken = false
+  let structuredError = ""
   // Completion promise: resolves when finishWith() fires so the caller
   // awaits the full round-trip rather than returning after spawn.
   let resolveCompletion: () => void = () => {}
@@ -157,24 +226,10 @@ export async function streamClaudeCodeCli(
     resolveCompletion = resolve
   })
 
-  // Diagnostic capture for failure paths. The Rust side emits every
-  // stdout line; lines the parser doesn't recognize (non-JSON,
-  // unknown event types, the stream-json `{"type":"error",...}`
-  // shape claude can emit on auth failure) used to be silently
-  // dropped — leaving users staring at a bare "exit code 1" with
-  // nothing to act on. We collect them up to a hard cap so that if
-  // the child exits non-zero AND stderr is empty, we have something
-  // concrete to show in the error message.
-  const UNPARSED_BUFFER_CAP = 4096
-  const unparsedLines: string[] = []
-  let unparsedSize = 0
-  function captureUnparsed(line: string) {
-    if (unparsedSize >= UNPARSED_BUFFER_CAP) return
-    const trimmed = line.trim()
-    if (trimmed.length === 0) return
-    unparsedLines.push(line)
-    unparsedSize += line.length + 1
-  }
+  // Keep only protocol-level errors and non-JSON diagnostics. Normal lifecycle
+  // and hook events are intentionally excluded so they cannot crowd the real
+  // exit error out of this bounded tail buffer.
+  const diagnosticBuffer = createBoundedDiagnosticBuffer()
 
   const cleanup = () => {
     unlistenData?.()
@@ -213,16 +268,15 @@ export async function streamClaudeCodeCli(
     // The active-project guard above is intentionally earlier: without
     // a valid project CWD we will not spawn, so no CLI events can race.
     unlistenData = await listen<string>(`claude-cli:${streamId}`, (event) => {
+      const eventError = extractClaudeCodeStructuredError(event.payload)
+      if (eventError) structuredError = eventError
       const token = parse(event.payload)
       if (token !== null) {
         emittedToken = true
         onToken(token)
-      } else {
-        // Parser didn't recognize this line. Stash it in case the
-        // child later exits non-zero with empty stderr — at that
-        // point this captured stdout is the only diagnostic the
-        // user has.
-        captureUnparsed(event.payload)
+      } else if (!eventError && shouldCaptureClaudeDiagnostic(event.payload)) {
+        // Preserve the newest diagnostic in case stderr is empty.
+        diagnosticBuffer.append(event.payload)
       }
     })
     if (aborted || finished) {
@@ -238,14 +292,16 @@ export async function streamClaudeCodeCli(
         if (code !== null && code !== undefined && code !== 0) {
           finishWith(() =>
             onError(
-              new Error(buildExitError(code, stderr, unparsedLines.join("\n"))),
+              new Error(buildExitError(code, stderr, structuredError || diagnosticBuffer.value())),
             ),
           )
+        } else if (structuredError) {
+          finishWith(() => onError(new Error(buildExitError(code ?? 1, stderr, structuredError))))
         } else if (!emittedToken) {
           // CLI exited successfully but produced no assistant text.
           // Surface this as an explicit error so the ingest pipeline
           // retries rather than silently writing an empty stub page.
-          const details = stderr || unparsedLines.join("\n").trim()
+          const details = stderr || diagnosticBuffer.value()
           finishWith(() =>
             onError(new Error(
               details
@@ -330,13 +386,14 @@ export function buildExitError(
   stderr: string,
   unparsedStdout: string = "",
 ): string {
-  if (/unauthenticated|please.*log\s*in|authentication.*failed/i.test(stderr)) {
+  const diagnostic = [stderr, unparsedStdout].filter(Boolean).join("\n")
+  if (/unauthenticated|failed\s+to\s+authenticate|please.*log\s*in|authentication.*failed|oauth.*(?:expired|revoked)/i.test(diagnostic)) {
     return [
       "Claude Code CLI is not authenticated.",
       "Please open a terminal and run `claude` to complete the OAuth login,",
       "then retry. (LLM Wiki only spawns the binary — it can't run the",
       "login flow on your behalf.)",
-      stderr ? `\n\n— stderr —\n${stderr}` : "",
+      diagnostic ? `\n\n— diagnostic —\n${diagnostic}` : "",
     ].join(" ").trim()
   }
   if (stderr) {

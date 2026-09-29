@@ -708,6 +708,7 @@ pub fn run() {
             commands::file_sync::start_project_file_watcher,
             commands::file_sync::stop_project_file_watcher,
             commands::file_sync::rescan_project_files,
+            commands::file_sync::invalidate_project_file_snapshot_paths,
             commands::file_sync::get_file_change_queue,
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,

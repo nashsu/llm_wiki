@@ -26,7 +26,7 @@ import {
   writeSources,
 } from "@/lib/sources-merge"
 import { moveIngestCacheEntry, removeFromIngestCache } from "@/lib/ingest-cache"
-import { removePageEmbedding } from "@/lib/embedding"
+import { removePageEmbedding, wikiPageIdFromPath } from "@/lib/embedding"
 import {
   buildDeletedKeys,
   cleanIndexListing,
@@ -75,6 +75,9 @@ export const INGESTABLE_SOURCE_EXTENSIONS = new Set([
   "epub",
   "mobi",
   "org",
+  "png",
+  "jpg",
+  "jpeg",
 ])
 
 function flattenFiles(nodes: FileNode[]): FileNode[] {
@@ -642,17 +645,20 @@ export async function cleanupDeletedWikiPages(
 ): Promise<void> {
   const pp = normalizePath(projectPath)
   const deletedInfos = relativePaths
-    .map((path) => ({ slug: getFileStem(path), title: "" }))
+    .map((path) => ({ path, slug: getFileStem(path), title: "" }))
     .filter((info) => info.slug.length > 0 && !info.slug.startsWith("."))
 
   if (deletedInfos.length === 0) return
 
   for (const info of deletedInfos) {
-    await removePageEmbedding(pp, info.slug)
-    try {
-      await deleteFile(`${pp}/wiki/media/${info.slug}`)
-    } catch {
-      // only source-summary pages usually own media; absence is normal
+    await removePageEmbedding(pp, wikiPageIdFromPath(pp, info.path))
+    const normalizedPath = normalizePath(info.path)
+    if (normalizedPath.includes("/wiki/sources/") || normalizedPath.startsWith("wiki/sources/")) {
+      try {
+        await deleteFile(`${pp}/wiki/media/${info.slug}`)
+      } catch {
+        // Source pages may have no extracted media directory.
+      }
     }
   }
 

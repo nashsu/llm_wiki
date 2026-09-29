@@ -28,6 +28,7 @@ import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { chunkMarkdown, type Chunk } from "@/lib/text-chunker"
 import { parseFrontmatter } from "@/lib/frontmatter"
+import { clampUserConcurrency } from "@/lib/concurrency-limits"
 
 // ── Error surfacing ──────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export function getLastEmbeddingError(): string | null {
 
 export function resetEmbeddingOptimizeAccountingForTests(): void {
   incrementalOptimizeCounts.clear()
+  attemptedLegacyVectorCleanup.clear()
+  legacyStemOwnerCounts.clear()
   embeddingFailureVersion = 0
   lastEmbeddingError = null
 }
@@ -143,7 +146,7 @@ function supportsOpenAiCompatibleBatch(cfg: EmbeddingConfig): boolean {
 type AsyncLimiter = <T>(task: () => Promise<T>) => Promise<T>
 
 function createAsyncLimiter(rawLimit: number | undefined): AsyncLimiter {
-  const limit = Math.max(1, Math.min(32, Math.floor(rawLimit ?? 1)))
+  const limit = clampUserConcurrency(rawLimit ?? 1)
   let active = 0
   const waiters: Array<() => void> = []
   return async <T>(task: () => Promise<T>): Promise<T> => {
@@ -216,6 +219,57 @@ async function vectorDeletePage(projectPath: string, pageId: string): Promise<vo
     projectPath: normalizePath(projectPath),
     pageId,
   })
+}
+
+const attemptedLegacyVectorCleanup = new Set<string>()
+const legacyStemOwnerCounts = new Map<string, Promise<Map<string, number>>>()
+
+function projectStemOwnerCounts(projectPath: string): Promise<Map<string, number>> {
+  const pp = normalizePath(projectPath)
+  const cached = legacyStemOwnerCounts.get(pp)
+  if (cached) return cached
+  const pending = Promise.resolve(listDirectory(`${pp}/wiki`)).then((tree) => {
+    const counts = new Map<string, number>()
+    const walk = (nodes: FileNode[]) => {
+      for (const node of nodes) {
+        if (node.is_dir && node.children) walk(node.children)
+        else if (!node.is_dir && /\.md$/i.test(node.name)) {
+          const stem = node.name.replace(/\.md$/i, "").toLowerCase()
+          counts.set(stem, (counts.get(stem) ?? 0) + 1)
+        }
+      }
+    }
+    walk(tree)
+    return counts
+  }).catch(() => new Map<string, number>())
+  legacyStemOwnerCounts.set(pp, pending)
+  return pending
+}
+
+async function removeLegacyVectorIdIfSafe(projectPath: string, pageId: string): Promise<void> {
+  if (!pageId.includes("/")) return
+  const legacyId = pageId.split("/").pop() ?? ""
+  if (!legacyId) return
+  const cleanupKey = `${normalizePath(projectPath)}\0${legacyId}`
+  if (attemptedLegacyVectorCleanup.has(cleanupKey)) return
+  // A legacy basename can only be removed when exactly one wiki page owns the
+  // stem. With siblings, the row may be the only vectors for another page.
+  const ownerCounts = await projectStemOwnerCounts(projectPath)
+  if ((ownerCounts.get(legacyId.toLowerCase()) ?? 0) !== 1) return
+  attemptedLegacyVectorCleanup.add(cleanupKey)
+  await vectorDeletePage(projectPath, legacyId).catch((error) => {
+    attemptedLegacyVectorCleanup.delete(cleanupKey)
+    console.warn(`[Embedding] Failed to remove legacy vector id "${legacyId}":`, error)
+  })
+}
+
+async function vectorUpsertPageChunks(
+  projectPath: string,
+  pageId: string,
+  rows: ChunkUpsertInput[],
+): Promise<void> {
+  await vectorUpsertChunks(projectPath, pageId, rows)
+  await removeLegacyVectorIdIfSafe(projectPath, pageId)
 }
 
 async function vectorCountChunks(projectPath: string): Promise<number> {
@@ -388,6 +442,26 @@ async function preparePageEmbeddingRows(
 // ── Public API: embedPage / embedAllPages / searchByEmbedding ────────────
 
 /**
+ * Stable vector identity for a wiki page. Directory-qualified ids prevent
+ * pages such as `sources/topic.md` and `entities/topic.md` from replacing
+ * each other's chunks. Plain slugs remain valid for compatibility with
+ * callers that do not have a page path.
+ */
+export function wikiPageIdFromPath(projectPath: string, pagePath: string): string {
+  const pp = normalizePath(projectPath).replace(/\/$/, "")
+  let normalized = normalizePath(pagePath)
+  const absoluteWikiPrefix = `${pp}/wiki/`
+  if (normalized.startsWith(absoluteWikiPrefix)) {
+    normalized = normalized.slice(absoluteWikiPrefix.length)
+  } else if (normalized.startsWith("wiki/")) {
+    normalized = normalized.slice("wiki/".length)
+  } else if (normalized.includes("/")) {
+    return ""
+  }
+  return normalized.replace(/^\/+/, "").replace(/\.md$/i, "")
+}
+
+/**
  * Embed a wiki page: chunk → per-chunk embed → replace the page's
  * vectors in LanceDB in one batch. Every transient failure leaves the
  * existing v2 rows intact (empty upsert is a no-op Rust-side).
@@ -414,7 +488,7 @@ export async function embedPage(
     return false
   }
 
-  await vectorUpsertChunks(projectPath, pageId, prepared.page.rows)
+  await vectorUpsertPageChunks(projectPath, pageId, prepared.page.rows)
   if (!options?.deferOptimization) {
     await noteIncrementalVectorWrite(projectPath)
   }
@@ -460,7 +534,7 @@ async function parallelForEach<T>(
 ): Promise<void> {
   const workerCount = Math.min(
     items.length,
-    Math.max(1, Math.min(32, Math.floor(rawLimit ?? 1))),
+    clampUserConcurrency(rawLimit ?? 1),
   )
   let next = 0
   await Promise.all(Array.from({ length: workerCount }, async () => {
@@ -531,10 +605,10 @@ export async function embedAllPages(
     for (const node of nodes) {
       if (node.is_dir && node.children) {
         walk(node.children)
-      } else if (!node.is_dir && node.name.endsWith(".md")) {
-        const id = node.name.replace(/\.md$/, "")
-        if (!["index", "log", "overview", "purpose", "schema"].includes(id)) {
-          mdFiles.push({ id, path: node.path })
+      } else if (!node.is_dir && /\.md$/i.test(node.name)) {
+        const stem = node.name.replace(/\.md$/i, "")
+        if (!["index", "log", "overview", "purpose", "schema"].includes(stem)) {
+          mdFiles.push({ id: wikiPageIdFromPath(pp, node.path), path: node.path })
         }
       }
     }
@@ -604,7 +678,7 @@ export async function embedAllPages(
       let updated = 0
       for (const page of preparedPages) {
         try {
-          await vectorUpsertChunks(pp, page.pageId, page.rows)
+          await vectorUpsertPageChunks(pp, page.pageId, page.rows)
           updated++
         } catch (err) {
           failures.push(
@@ -633,6 +707,7 @@ export async function embedAllPages(
     let written = 0
     for (const page of preparedPages) {
       try {
+        // The table was just cleared, so no legacy basename rows remain.
         await vectorUpsertChunks(pp, page.pageId, page.rows)
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
@@ -667,7 +742,7 @@ export async function embedAllPages(
       const title = extractEmbeddingTitle(content, file.id)
       const prepared = await preparePageEmbeddingRows(file.id, title, content, cfg, scheduleEmbedding)
       if (prepared.status === "ready") {
-        await scheduleVectorWrite(() => vectorUpsertChunks(pp, file.id, prepared.page.rows))
+        await scheduleVectorWrite(() => vectorUpsertPageChunks(pp, file.id, prepared.page.rows))
         indexed++
       }
     } catch {
@@ -776,6 +851,7 @@ export async function removePageEmbedding(
 ): Promise<void> {
   try {
     await vectorDeletePage(projectPath, pageId)
+    await removeLegacyVectorIdIfSafe(projectPath, pageId)
   } catch {
     // non-critical
   }

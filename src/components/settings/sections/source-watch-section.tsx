@@ -6,6 +6,7 @@ import {
   normalizeSourceWatchConfig,
   SOURCE_WATCH_FILE_TYPE_GROUPS,
 } from "@/lib/source-watch-config"
+import { MAX_USER_CONCURRENCY } from "@/lib/concurrency-limits"
 
 interface Props {
   draft: SettingsDraft
@@ -106,6 +107,28 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
           </div>
         </label>
 
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={draft.sourceWatchAllProjects}
+            onChange={(event) => setDraft("sourceWatchAllProjects", event.target.checked)}
+            className="mt-1 h-4 w-4"
+          />
+          <div className="space-y-1">
+            <div className="text-sm font-semibold">
+              {t("settings.sections.sourceWatch.allProjects", {
+                defaultValue: "Monitor all recent projects",
+              })}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t("settings.sections.sourceWatch.allProjectsDescription", {
+                defaultValue:
+                  "Keep watching source folders for every recent project that has monitoring enabled. Background changes are queued for that project and run when it is opened.",
+              })}
+            </p>
+          </div>
+        </label>
+
         <label className="block space-y-1.5">
           <span className="text-sm font-semibold">
             {t("settings.sections.sourceWatch.parsingConcurrency", {
@@ -115,7 +138,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
           <input
             type="number"
             min={1}
-            max={8}
+            max={MAX_USER_CONCURRENCY}
             value={config.parsingConcurrency}
             onChange={(event) => updateConfig({ parsingConcurrency: Number(event.target.value) || 1 })}
             disabled={!projectReady}
@@ -138,7 +161,7 @@ export function SourceWatchSection({ draft, setDraft, projectReady }: Props) {
           <input
             type="number"
             min={1}
-            max={5}
+            max={MAX_USER_CONCURRENCY}
             value={config.ingestConcurrency}
             onChange={(event) => updateConfig({ ingestConcurrency: Number(event.target.value) || 1 })}
             disabled={!projectReady}

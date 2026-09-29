@@ -69,10 +69,10 @@ static VECTORSTORE_V2_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::RwL
     OnceLock::new();
 
 /// Validate page_id to prevent filter/path injection without rejecting
-/// legitimate Unicode wiki filenames. Page ids are wiki file stems; CJK
-/// letters, spaces, and punctuation such as `·` / `：` / `（` are valid page
-/// names, but quotes and separators are unsafe because we interpolate page_id
-/// into LanceDB filters (`page_id = '...'`) and derive debug chunk ids from it.
+/// legitimate Unicode wiki filenames. Page ids are wiki-relative paths without
+/// `.md`; CJK letters, spaces, forward slashes, and punctuation such as `·` /
+/// `：` / `（` are valid. Quotes and backslashes remain unsafe because we
+/// interpolate page_id into LanceDB filters (`page_id = '...'`).
 /// Format/invisible characters are rejected so visually identical ids cannot
 /// differ only by soft hyphen, zero-width, bidi, tag, or separator characters.
 fn validate_page_id_common(page_id: &str) -> Result<(), String> {
@@ -100,8 +100,7 @@ fn is_disallowed_page_id_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '/' | '\\'
-                | '\''
+            '\\' | '\''
                 | '"'
                 | '\u{00AD}'
                 | '\u{061C}'
@@ -985,7 +984,7 @@ mod tests_v2 {
 
     #[test]
     fn page_id_validation_allows_unicode_wiki_stems() {
-        let page_id = "反硝化除磷·A2O：DPAO + 50% & x（测试），v1.2";
+        let page_id = "concepts/反硝化除磷·A2O：DPAO + 50% & x（测试），v1.2";
         assert!(validate_page_id(page_id).is_ok());
         assert!(validate_page_id_for_v2(page_id).is_ok());
     }
@@ -995,7 +994,6 @@ mod tests_v2 {
         for page_id in [
             "bad'quote",
             "bad\"quote",
-            "bad/slash",
             "bad\\slash",
             "bad\nnewline",
             "bad\ttab",

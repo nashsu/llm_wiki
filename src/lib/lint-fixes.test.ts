@@ -84,7 +84,29 @@ describe("ensureBrokenLinkStub", () => {
     expect(fsMocks.createDirectory).toHaveBeenCalledWith("/project/wiki/queries")
     expect(fsMocks.writeFile).toHaveBeenCalledWith(
       "/project/wiki/queries/foo-bar.md",
-      expect.stringContaining("title: \"Foo Bar\""),
+      expect.stringContaining("type: query\ntitle: \"Foo Bar\""),
+    )
+  })
+
+  it("uses the destination folder type for explicit knowledge paths", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "concepts/Clash Detection")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/concepts/clash-detection.md",
+      expect.stringContaining("type: concept\ntitle: \"Clash Detection\""),
+    )
+  })
+
+  it("singularizes known schema folders when creating stubs", async () => {
+    fsMocks.fileExists.mockResolvedValue(false)
+
+    await ensureBrokenLinkStub("/project", "standards/Release Gate")
+
+    expect(fsMocks.writeFile).toHaveBeenCalledWith(
+      "/project/wiki/standards/release-gate.md",
+      expect.stringContaining("type: standard\ntitle: \"Release Gate\""),
     )
   })
 

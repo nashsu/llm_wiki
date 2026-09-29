@@ -18,18 +18,18 @@ import {
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
 import { useWikiStore } from "@/stores/wiki-store"
-import { writeFile, readFile, deleteFile } from "@/commands/fs"
+import { writeFile, readFile, deleteFile, fileExists } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
 import { makeQueryFileName } from "@/lib/wiki-filename"
-import { createReviewPageDrafts } from "@/lib/review-create-page"
+import { availableReviewPageFileName, createReviewPageDrafts } from "@/lib/review-create-page"
 import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from "@/lib/chat-save-to-wiki"
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useActivityStore } from "@/stores/activity-store"
-import { reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
+import { reviewResearchQueries, reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
 import { extractFilePathFromResolvedAction } from "@/lib/review-path-parser"
 import { ReviewEditPanel } from "@/components/review/review-edit-panel"
 
@@ -147,7 +147,14 @@ export function ReviewView() {
         const llmConfig = useWikiStore.getState().llmConfig
         // Use pre-generated search queries if available, otherwise fall back to title
         const topic = item.title.replace(/^(Save to Wiki|Create|Research)[:\s]*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig, item.searchQueries, id)
+        queueResearch(
+          pp,
+          topic,
+          llmConfig,
+          searchConfig,
+          reviewResearchQueries(item, topic),
+          id,
+        )
       } else {
         resolveItem(id, action)
       }
@@ -256,7 +263,14 @@ export function ReviewView() {
       if (item) {
         const llmConfig = useWikiStore.getState().llmConfig
         const topic = action.replace(/^research\s*/i, "").trim() || item.description.split("\n")[0]
-        queueResearch(pp, topic, llmConfig, searchConfig, undefined, id)
+        queueResearch(
+          pp,
+          topic,
+          llmConfig,
+          searchConfig,
+          reviewResearchQueries({ ...item, searchQueries: undefined }, topic),
+          id,
+        )
       } else {
         resolveItem(id, action)
       }
@@ -287,7 +301,10 @@ export function ReviewView() {
           }> = []
 
           for (const draft of drafts) {
-            const { date, fileName } = makeQueryFileName(draft.title)
+            const { date, fileName } = await availableReviewPageFileName(
+              draft.title,
+              (candidate) => fileExists(`${pp}/wiki/${draft.dir}/${candidate}`),
+            )
             const filePath = `${pp}/wiki/${draft.dir}/${fileName}`
             const frontmatter = `---\ntype: ${draft.pageType}\ntitle: "${draft.title.replace(/"/g, '\\"')}"\ncreated: ${date}\ntags: []\nrelated: []\n---\n\n`
             const body = `# ${draft.title}\n\n${item.description}\n`
@@ -409,7 +426,7 @@ export function ReviewView() {
       normalizePath(project.path),
       eligibleItems.map((item) => ({
         topic: reviewResearchTopic(item),
-        searchQueries: item.searchQueries,
+        searchQueries: reviewResearchQueries(item),
         sourceReviewId: item.id,
       })),
       state.llmConfig,

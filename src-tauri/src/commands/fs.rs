@@ -4,7 +4,7 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use calamine::{open_workbook_auto, Data, Reader};
+use calamine::{open_workbook_auto, Data, ExcelDateTime, Reader};
 use office_oxide::Document;
 
 use crate::commands::file_sync;
@@ -1127,7 +1127,7 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
                         }
                         Data::Int(i) => i.to_string(),
                         Data::Bool(b) => b.to_string(),
-                        Data::DateTime(dt) => format!("{}", dt),
+                        Data::DateTime(dt) => format_excel_datetime(dt),
                         Data::DateTimeIso(s) => s.clone(),
                         Data::DurationIso(s) => s.clone(),
                         Data::Error(e) => format!("ERR:{:?}", e),
@@ -1169,6 +1169,39 @@ fn extract_spreadsheet(path: &str) -> Result<String, String> {
         Ok("[Could not extract data from spreadsheet]".to_string())
     } else {
         Ok(result)
+    }
+}
+
+fn format_excel_datetime(value: &ExcelDateTime) -> String {
+    if value.is_duration() {
+        let total_millis = (value.as_f64() * 86_400_000.0).round() as i64;
+        let sign = if total_millis < 0 { "-" } else { "" };
+        let total_millis = total_millis.abs();
+        let hours = total_millis / 3_600_000;
+        let minutes = (total_millis % 3_600_000) / 60_000;
+        let seconds = (total_millis % 60_000) / 1_000;
+        let millis = total_millis % 1_000;
+        return if millis == 0 {
+            format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+        } else {
+            format!("{sign}{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+        };
+    }
+
+    let (year, month, day, hour, minute, second, millis) = value.to_ymd_hms_milli();
+    if value.as_f64().abs() < 1.0 {
+        return if millis == 0 {
+            format!("{hour:02}:{minute:02}:{second:02}")
+        } else {
+            format!("{hour:02}:{minute:02}:{second:02}.{millis:03}")
+        };
+    }
+    if hour == 0 && minute == 0 && second == 0 && millis == 0 {
+        format!("{year:04}-{month:02}-{day:02}")
+    } else if millis == 0 {
+        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+    } else {
+        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{millis:03}")
     }
 }
 
@@ -2152,6 +2185,38 @@ mod tests {
         )
     }
 
+    fn xlsx_with_custom_chinese_date_format() -> std::path::PathBuf {
+        tmp_zip_with_entries(
+            "xlsx",
+            &[
+                (
+                    "[Content_Types].xml",
+                    r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>"#,
+                ),
+                (
+                    "_rels/.rels",
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+                ),
+                (
+                    "xl/workbook.xml",
+                    r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Dates" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+                ),
+                (
+                    "xl/_rels/workbook.xml.rels",
+                    r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#,
+                ),
+                (
+                    "xl/styles.xml",
+                    r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="m&quot;月&quot;d&quot;日&quot;"/></numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>"#,
+                ),
+                (
+                    "xl/worksheets/sheet1.xml",
+                    r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c></row><row r="2"><c r="A2" s="1"><v>45761</v></c></row></sheetData></worksheet>"#,
+                ),
+            ],
+        )
+    }
+
     fn minimal_odt() -> std::path::PathBuf {
         tmp_zip_with_entries(
             "odt",
@@ -2205,6 +2270,27 @@ mod tests {
             }
             fs::remove_file(path).unwrap();
         }
+    }
+
+    #[test]
+    fn spreadsheet_formats_custom_chinese_dates_instead_of_excel_serials() {
+        let path = xlsx_with_custom_chinese_date_format();
+        let output = extract_spreadsheet(path.to_str().unwrap()).unwrap();
+        fs::remove_file(path).unwrap();
+
+        assert!(output.contains("2025-04-14"), "{output}");
+        assert!(!output.contains("45761"), "{output}");
+    }
+
+    #[test]
+    fn excel_datetime_formatter_preserves_times_and_durations() {
+        use calamine::ExcelDateTimeType;
+
+        let time = ExcelDateTime::new(0.5, ExcelDateTimeType::DateTime, false);
+        let duration = ExcelDateTime::new(1.5, ExcelDateTimeType::TimeDelta, false);
+
+        assert_eq!(format_excel_datetime(&time), "12:00:00");
+        assert_eq!(format_excel_datetime(&duration), "36:00:00");
     }
 
     #[test]

@@ -57,12 +57,21 @@ export function rescanProjectFiles(
   projectId: string,
   projectPath: string,
   sourceWatchConfig?: SourceWatchConfig,
+  watchRootsOnly = false,
 ): Promise<FileChangeRescanResult> {
   return invoke<FileChangeRescanResult>("rescan_project_files", {
     projectId,
     projectPath,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatchConfig),
+    watchRootsOnly,
   })
+}
+
+export function invalidateProjectFileSnapshotPaths(
+  projectPath: string,
+  paths: string[],
+): Promise<void> {
+  return invoke<void>("invalidate_project_file_snapshot_paths", { projectPath, paths })
 }
 
 export function getFileChangeQueue(projectPath: string): Promise<FileChangeQueue> {

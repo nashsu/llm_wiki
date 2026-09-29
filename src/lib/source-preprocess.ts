@@ -1,7 +1,8 @@
 import { preprocessFile } from "@/commands/fs"
+import { MAX_USER_CONCURRENCY, MIN_USER_CONCURRENCY } from "@/lib/concurrency-limits"
 
-export const MIN_PARSING_CONCURRENCY = 1
-export const MAX_PARSING_CONCURRENCY = 8
+export const MIN_PARSING_CONCURRENCY = MIN_USER_CONCURRENCY
+export const MAX_PARSING_CONCURRENCY = MAX_USER_CONCURRENCY
 
 export function normalizeParsingConcurrency(value: number): number {
   if (!Number.isFinite(value)) return MIN_PARSING_CONCURRENCY

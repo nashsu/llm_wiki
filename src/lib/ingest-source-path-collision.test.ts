@@ -19,6 +19,9 @@ let truncatedRepairResponse = ""
 let abortDuringReview: AbortController | null = null
 let interactiveGenerationOverride = ""
 let mergeRequestCount = 0
+let truncateGenerationOnce = false
+let emptyGenerationOnce = false
+let confirmResumeCompleteOnce = false
 
 vi.mock("./llm-client", () => ({
   streamChat: vi.fn(async (_cfg, messages, cb) => {
@@ -103,6 +106,18 @@ vi.mock("./llm-client", () => ({
       return
     }
 
+    if (emptyGenerationOnce) {
+      emptyGenerationOnce = false
+      cb.onDone({ finishReason: "stop", truncated: false })
+      return
+    }
+    if (confirmResumeCompleteOnce) {
+      confirmResumeCompleteOnce = false
+      cb.onToken("---RESUME COMPLETE---")
+      cb.onDone({ finishReason: "stop", truncated: false })
+      return
+    }
+
     const marker = sourceMarkers.shift() ?? "unknown project"
     const targetPath = targetMatch[1]
     const sourceIdentity =
@@ -120,7 +135,12 @@ vi.mock("./llm-client", () => ({
       "---END FILE---",
       generationSuffix,
     ].join("\n"))
-    cb.onDone()
+    if (truncateGenerationOnce) {
+      truncateGenerationOnce = false
+      cb.onDone({ finishReason: "length", truncated: true })
+    } else {
+      cb.onDone({ finishReason: "stop", truncated: false })
+    }
   }),
 }))
 
@@ -153,6 +173,9 @@ describe("autoIngest source summary paths", () => {
     abortDuringReview = null
     interactiveGenerationOverride = ""
     mergeRequestCount = 0
+    truncateGenerationOnce = false
+    emptyGenerationOnce = false
+    confirmResumeCompleteOnce = false
     mockStreamChat.mockClear()
     mockParseWithMineru.mockReset()
     tmp = await createTempProject("same-basename-sources")
@@ -690,6 +713,78 @@ describe("autoIngest source summary paths", () => {
     ).toBe(true)
   })
 
+  it("auto-routes a generated typed page into its schema directory", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "",
+      "---FILE: wiki/concepts/outcome.md---",
+      "---",
+      "type: goal",
+      'title: "Outcome"',
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "# Outcome",
+      "---END FILE---",
+    ].join("\n")
+
+    const written = await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+    )
+
+    expect(written).toContain("wiki/goals/outcome.md")
+    expect(written).not.toContain("wiki/concepts/outcome.md")
+    await expect(fs.readFile(`${tmp.path}/wiki/goals/outcome.md`, "utf8"))
+      .resolves.toContain("# Outcome")
+  })
+
+  it("persists completed files and resumes after a truncated generation", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["first attempt", "resumed attempt"]
+    generationSuffix = [
+      "",
+      "---FILE: wiki/goals/preserved.md---",
+      "---",
+      "type: goal",
+      'title: "Preserved"',
+      'sources: ["project-a/config.yaml"]',
+      "---",
+      "# Preserved",
+      "---END FILE---",
+    ].join("\n")
+    truncateGenerationOnce = true
+
+    await expect(autoIngest(
+      tmp.path,
+      sourcePath,
+      useWikiStore.getState().llmConfig,
+    )).rejects.toThrow("generation reached its output limit")
+    await expect(fs.readFile(`${tmp.path}/wiki/goals/preserved.md`, "utf8"))
+      .resolves.toContain("# Preserved")
+
+    emptyGenerationOnce = true
+    await expect(autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig))
+      .rejects.toThrow("resume returned no complete wiki file")
+    await expect(fs.readdir(`${tmp.path}/.llm-wiki/ingest-generation`))
+      .resolves.toHaveLength(1)
+
+    confirmResumeCompleteOnce = true
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+
+    const generationCalls = mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages[0]?.content ?? "").includes("## What to generate"),
+    )
+    const resumedPrompt = String(generationCalls[generationCalls.length - 1]?.[1]?.[1]?.content ?? "")
+    expect(resumedPrompt)
+      .toContain("## Resume checkpoint")
+    expect(resumedPrompt).toContain("wiki/goals/preserved.md")
+    const checkpointFiles = await fs.readdir(`${tmp.path}/.llm-wiki/ingest-generation`)
+    expect(checkpointFiles).toHaveLength(0)
+  })
+
   it("rejects an ingest when a truncated FILE block cannot be repaired", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["project-a config"]
@@ -891,5 +986,25 @@ describe("autoIngest source summary paths", () => {
 
     expect(written).toEqual([])
     await expect(fs.access(path.join(tmp.path, "escape.md"))).rejects.toThrow()
+  })
+
+  it("sanitizes malformed citation links in interactive writes", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    interactiveGenerationOverride = [
+      "---FILE: wiki/entities/citations.md---",
+      "---",
+      "type: entity",
+      "title: Citations",
+      "---",
+      "Evidence [[1]] and [[target|label].",
+      "---END FILE---",
+    ].join("\n")
+    useChatStore.setState({ ingestSource: null })
+
+    const written = await executeIngestWrites(tmp.path, useWikiStore.getState().llmConfig)
+
+    expect(written).toHaveLength(1)
+    const content = await fs.readFile(written[0], "utf8")
+    expect(content).toContain("Evidence [1] and [[target|label]].")
   })
 })

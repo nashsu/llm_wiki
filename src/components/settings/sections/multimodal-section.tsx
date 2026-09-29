@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
+import { MAX_USER_CONCURRENCY, clampUserConcurrency } from "@/lib/concurrency-limits"
 
 interface Props {
   draft: SettingsDraft
@@ -269,22 +270,19 @@ export function MultimodalSection({ draft, setDraft }: Props) {
             </div>
           )}
 
-          {/* Concurrency knob — practical impact: a 30-image PDF at
-              concurrency=1 with a 10s/image VLM is 5 minutes of
-              ingest wall time; concurrency=4 makes it ~75s. Going
-              wider than ~8 is rarely a win on a single-GPU server
-              that batches under the hood anyway. */}
+          {/* Concurrency knob — higher values are intended for endpoints
+              that can sustain many simultaneous vision requests. */}
           <div className="space-y-2 rounded-md border p-3">
             <Label>{t("settings.sections.multimodal.concurrency", "Concurrent caption requests")}</Label>
             <Input
               type="number"
               min={1}
-              max={16}
+              max={MAX_USER_CONCURRENCY}
               step={1}
               value={draft.multimodalConcurrency}
               onChange={(e) => {
                 const n = Number(e.target.value)
-                setDraft("multimodalConcurrency", Number.isFinite(n) ? n : 4)
+                setDraft("multimodalConcurrency", clampUserConcurrency(n, 4))
               }}
             />
             <p className="text-xs text-muted-foreground">

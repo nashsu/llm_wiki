@@ -60,6 +60,12 @@ describe("source-lifecycle path helpers", () => {
     expect(isIngestableSourcePath("C:\\project\\raw\\sources\\book.MOBI")).toBe(true)
   })
 
+  it("accepts standalone PNG and JPEG image sources", () => {
+    expect(isIngestableSourcePath("raw/sources/diagram.png")).toBe(true)
+    expect(isIngestableSourcePath("C:\\project\\raw\\sources\\photo.JPG")).toBe(true)
+    expect(isIngestableSourcePath("raw/sources/photo.jpeg")).toBe(true)
+  })
+
   it("accepts AnyDoc Office and RTF source variants", () => {
     for (const path of [
       "report.docm",
@@ -446,7 +452,7 @@ describe("source import skip reporting", () => {
     expect(mocks.copyFile).not.toHaveBeenCalled()
   })
 
-  it("reports file types the picker offers but ingest cannot read", async () => {
+  it("imports supported images and reports file types ingest cannot read", async () => {
     const result = await importSourceFiles(
       project,
       ["/external/script.py", "/external/photo.png", "/external/notes.md"],
@@ -454,10 +460,12 @@ describe("source import skip reporting", () => {
       watchConfig(),
     )
 
-    expect(result.imported).toEqual(["/project/raw/sources/notes.md"])
+    expect(result.imported).toEqual([
+      "/project/raw/sources/photo.png",
+      "/project/raw/sources/notes.md",
+    ])
     expect(result.skipped).toEqual([
       { name: "script.py", reason: "unsupported-type" },
-      { name: "photo.png", reason: "unsupported-type" },
     ])
   })
 

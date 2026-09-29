@@ -24,6 +24,7 @@ export interface CommunityInfo {
   id: number
   nodeCount: number
   cohesion: number // intra-community edge density
+  meanIntraDegree: number // average internal links per page; scale-independent
   topNodes: string[] // top nodes by linkCount (labels)
 }
 
@@ -34,8 +35,7 @@ export interface WikiGraphResult {
 }
 
 const GRAPH_FILE_READ_CONCURRENCY = 16
-const MAX_WEIGHTED_GRAPH_NODES = 3_000
-const COMMUNITY_WORKER_THRESHOLD = 3_000
+const COMMUNITY_WORKER_THRESHOLD = 500
 const MAX_CACHED_PROJECT_GRAPHS = 2
 const graphCache = new Map<string, { dataVersion: number; result: WikiGraphResult }>()
 const graphBuilds = new Map<string, Promise<WikiGraphResult>>()
@@ -109,6 +109,17 @@ function extractWikilinks(content: string): string[] {
     links.push(match[1].trim())
   }
   return links
+}
+
+function extractRelated(content: string): string[] {
+  const related = parseFrontmatter(content).frontmatter?.related
+  if (!Array.isArray(related)) return []
+  return related
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim().replace(/^\[\[|\]\]$/g, ""))
+    .map((value) => value.split("|")[0].split("#")[0].replace(/\\/g, "/"))
+    .map((value) => value.split("/").pop()?.replace(/\.md$/i, "") ?? "")
+    .filter(Boolean)
 }
 
 function fileNameToId(fileName: string): string {
@@ -225,7 +236,7 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
           label: extractTitle(content, file.name),
           type: extractType(content),
           path: file.path,
-          links: extractWikilinks(content),
+          links: Array.from(new Set([...extractWikilinks(content), ...extractRelated(content)])),
         }
       } catch {
         return null
@@ -283,14 +294,12 @@ async function buildWikiGraphUncached(projectPath: string): Promise<WikiGraphRes
 
   // Calculate relevance weights using the retrieval graph
   let retrievalGraph: Awaited<ReturnType<typeof buildRetrievalGraph>> | null = null
-  if (nodeMap.size <= MAX_WEIGHTED_GRAPH_NODES) {
-    try {
-      const { useWikiStore } = await import("@/stores/wiki-store")
-      const dv = useWikiStore.getState().dataVersion
-      retrievalGraph = await buildRetrievalGraph(normalizePath(projectPath), dv)
-    } catch {
-      // ignore — weights will default to 1
-    }
+  try {
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    const dv = useWikiStore.getState().dataVersion
+    retrievalGraph = await buildRetrievalGraph(normalizePath(projectPath), dv)
+  } catch {
+    // Keep the graph available with neutral weights if relevance enrichment fails.
   }
 
   const edges: GraphEdge[] = dedupedEdges.map((e) => {

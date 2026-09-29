@@ -25,6 +25,7 @@ const mockHttpFetch = vi.fn<(url: string, opts?: RequestInit) => Promise<Respons
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
   listDirectory: vi.fn(),
+  fileExists: vi.fn().mockResolvedValue(false),
 }))
 
 import {
@@ -39,6 +40,7 @@ import {
   removePageEmbedding,
   resetEmbeddingOptimizeAccountingForTests,
   extractEmbeddingTitle,
+  wikiPageIdFromPath,
   type PageSearchResult,
 } from "./embedding"
 
@@ -48,6 +50,22 @@ const cfg = {
   apiKey: "",
   model: "test-embed",
 }
+
+describe("wikiPageIdFromPath", () => {
+  it("uses the wiki-relative path and normalizes Windows separators", () => {
+    expect(wikiPageIdFromPath("/project", "/project/wiki/entities/topic.md"))
+      .toBe("entities/topic")
+    expect(wikiPageIdFromPath("C:\\project", "C:\\project\\wiki\\sources\\topic.MD"))
+      .toBe("sources/topic")
+    expect(wikiPageIdFromPath("/project/", "wiki/entities/topic.md"))
+      .toBe("entities/topic")
+  })
+
+  it("keeps plain legacy slugs usable", () => {
+    expect(wikiPageIdFromPath("/project", "topic")).toBe("topic")
+    expect(wikiPageIdFromPath("/project", "/other/wiki/topic.md")).toBe("")
+  })
+})
 
 /** Build an embedding-shaped JSON Response. */
 function okResponse(embedding: number[]): Response {
@@ -1596,7 +1614,7 @@ describe("embedAllPages", () => {
     const upsertCalls = mockInvoke.mock.calls.filter((c) => c[0] === "vector_upsert_chunks")
     expect(upsertCalls).toHaveLength(2)
     const pageIds = upsertCalls.map((c) => (c[1] as { pageId: string }).pageId).sort()
-    expect(pageIds).toEqual(["attention", "rope"])
+    expect(pageIds).toEqual(["rope", "sub/attention"])
   })
 
   it("clears the chunk table before a forced rebuild", async () => {

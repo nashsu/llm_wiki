@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import {
+  buildReviewSuggestionPrompt,
   buildAnalysisPrompt,
+  buildChunkAnalysisSystemPrompt,
   buildGenerationPrompt,
   buildPageMergeSystemPrompt,
   computeIngestGenerationMaxTokens,
+  computeIngestAnalysisMaxTokens,
   computeIngestReviewMaxTokens,
   computeIngestSourceBudget,
   formatIngestWarningLogEntry,
@@ -53,6 +56,19 @@ describe("buildAnalysisPrompt language directive", () => {
     const prompt = buildAnalysisPrompt("", "", "")
     expect(prompt).toContain("Which named subject is each claim about")
     expect(prompt).toContain("Do not transfer claims, limits, or evaluations")
+  })
+
+  it("applies a significance and canonical-name threshold to entities", () => {
+    const prompt = buildAnalysisPrompt("", "", "")
+
+    expect(prompt).toContain("standalone-page significance threshold")
+    expect(prompt).toContain("passing mentions")
+    expect(prompt).toContain("ordinary story props")
+    expect(prompt).toContain("unnamed or generic-role people")
+    expect(prompt).toContain("Page-worthy: yes")
+    expect(prompt).toContain("reuse the exact title of an existing wiki page first")
+    expect(prompt).toContain("never invent or phonetically guess a name")
+    expect(prompt).not.toContain("central vs. peripheral")
   })
 
   it("injects the project schema so analysis can recommend custom-typed pages", () => {
@@ -142,6 +158,34 @@ describe("buildGenerationPrompt language directive", () => {
     expect(prompt).toContain("cite which source/frontmatter `sources` entry supports that statement")
   })
 
+  it("requires standalone entity pages to establish identity without promoting incidental mentions", () => {
+    const prompt = buildGenerationPrompt("", "", "", "source.pdf")
+
+    expect(prompt).toContain("only for a candidate explicitly marked `Page-worthy: yes`")
+    expect(prompt).toContain("wikilinks only when the target already exists")
+    expect(prompt).toContain("opening paragraph of every entity page must answer what the subject is")
+    expect(prompt).toContain("stable, high-confidence public knowledge")
+    expect(prompt).toContain("independently verifiable background in the mandatory output language")
+    expect(prompt).toContain("do not create the standalone page")
+    expect(prompt).toContain("reuse the exact title of an existing wiki page first")
+    expect(prompt).toContain("Final Global Digest is authoritative")
+  })
+
+  it("defers long-source entity significance decisions to the global digest", () => {
+    const prompt = buildChunkAnalysisSystemPrompt("", "", "", "long source")
+    const chunkStart = prompt.indexOf("## Chunk Analysis")
+    const digestStart = prompt.indexOf("## Updated Global Digest")
+    const entityRules = prompt.indexOf("Entity handling rules:")
+
+    expect(chunkStart).toBeGreaterThanOrEqual(0)
+    expect(digestStart).toBeGreaterThan(chunkStart)
+    expect(entityRules).toBeGreaterThan(digestStart)
+    expect(prompt).toContain("without making a final standalone-page decision from one chunk alone")
+    expect(prompt).toContain("accumulate recurrence across chunks")
+    expect(prompt).toContain("supporting chunks")
+    expect(prompt).toContain("Page-worthy: yes")
+  })
+
   it("makes project schema routing authoritative over default entity and concept folders", () => {
     const prompt = buildGenerationPrompt(
       "Use wiki/people/ for people. Use wiki/technologies/ for technical methods.",
@@ -188,12 +232,50 @@ describe("analysis + generation prompt consistency", () => {
 describe("page merge prompt", () => {
   it("keeps comparisons attribution-exact instead of folding them into the main subject", () => {
     const prompt = buildPageMergeSystemPrompt()
-    expect(prompt).toContain("Both versions target the same wiki page")
+    expect(prompt).toContain("inputs are internal containers, not revisions or competing versions")
     expect(prompt).toContain("may mention additional subjects for comparison or context")
     expect(prompt).toContain("keep those comparisons attribution-exact")
     expect(prompt).toContain("do not fold them into claims about the main page subject")
     expect(prompt).toContain("prefer keeping them separate")
+    expect(prompt).toContain("attribute a claim to a real source filename only when the supporting file is unambiguous")
+    expect(prompt).toContain("otherwise do not guess")
+    expect(prompt).toContain("Never create comparison sections/tables about the merge inputs")
+    expect(prompt).toContain("Never invent URLs")
     expect(prompt).not.toContain("describe the same entity")
+  })
+})
+
+describe("review research query prompt", () => {
+  it("grounds ambiguous internal terms before generating web queries", () => {
+    const prompt = buildReviewSuggestionPrompt(
+      "A private cognitive-analysis project",
+      "- [[attention-filter]]",
+      "internal-notes.md",
+      "AF is the project's attention-filter signal.",
+      "The pipeline dispatches AF events between internal modules.",
+      "---FILE: wiki/concepts/attention-filter.md---",
+      128_000,
+    )
+
+    expect(prompt).toContain("project-local vocabulary")
+    expect(prompt).toContain("Never emit a bare ambiguous term as a web query")
+    expect(prompt).toContain("Do not substitute a popular public meaning")
+    expect(prompt).toContain("underlying real-world concepts or comparisons")
+    expect(prompt).toContain("AF is the project's attention-filter signal")
+  })
+
+  it("applies the same grounding rules to the main generation path", () => {
+    const prompt = buildGenerationPrompt(
+      "A private cognitive-analysis project",
+      "- [[attention-filter]]",
+      "Project overview",
+      "internal-notes.md",
+      "AF is the project's attention-filter signal.",
+    )
+
+    expect(prompt).toContain("project-local vocabulary")
+    expect(prompt).toContain("Never emit a bare ambiguous term as a web query")
+    expect(prompt).toContain("Do not substitute a popular public meaning")
   })
 })
 
@@ -203,6 +285,10 @@ describe("long-source ingest planning", () => {
     expect(computeIngestGenerationMaxTokens(128_000)).toBe(16_384)
     expect(computeIngestGenerationMaxTokens(256_000)).toBe(24_576)
     expect(computeIngestGenerationMaxTokens(1_000_000)).toBe(32_768)
+    expect(computeIngestAnalysisMaxTokens(64_000)).toBe(4_096)
+    expect(computeIngestAnalysisMaxTokens(128_000)).toBe(4_800)
+    expect(computeIngestAnalysisMaxTokens(256_000)).toBe(8_192)
+    expect(computeIngestAnalysisMaxTokens(1_000_000)).toBe(8_192)
     expect(computeIngestReviewMaxTokens(1_000_000)).toBe(8_192)
   })
 

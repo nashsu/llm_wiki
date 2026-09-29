@@ -20,16 +20,13 @@ vi.mock("./sweep-reviews", () => ({
   sweepResolvedReviews: vi.fn().mockResolvedValue(0),
 }))
 
-// Mock embedding so cleanupWrittenFiles' cascade-delete to LanceDB is
-// observable. The real module is over in `./embedding` but
-// cleanupWrittenFiles dynamically imports it via `@/lib/embedding`,
-// hence the absolute mock target.
-const removePageEmbeddingMock = vi.fn<(projectPath: string, slug: string) => Promise<void>>(
+// Mock the centralized page cascade used by cleanupWrittenFiles.
+const cascadeDeleteWikiPageMock = vi.fn<(projectPath: string, filePath: string) => Promise<void>>(
   async () => {},
 )
-vi.mock("@/lib/embedding", () => ({
-  removePageEmbedding: (projectPath: string, slug: string) =>
-    removePageEmbeddingMock(projectPath, slug),
+vi.mock("@/lib/wiki-page-delete", () => ({
+  cascadeDeleteWikiPage: (projectPath: string, filePath: string) =>
+    cascadeDeleteWikiPageMock(projectPath, filePath),
 }))
 
 // Mock project-identity — tests don't hit Tauri plugin-store. Maps the
@@ -54,6 +51,7 @@ import {
   enqueueIngest,
   enqueueBatch,
   enqueueInactiveProjectBatch,
+  discardInactiveProjectTasksForSources,
   retryTask,
   retryTasks,
   retryAllFailedTasks,
@@ -102,7 +100,11 @@ beforeEach(async () => {
   mockDeleteFile.mockResolvedValue(undefined as unknown as void)
   mockSweep.mockReset()
   mockSweep.mockResolvedValue(0)
-  removePageEmbeddingMock.mockReset()
+  cascadeDeleteWikiPageMock.mockReset()
+  cascadeDeleteWikiPageMock.mockImplementation(async (_projectPath, filePath) => {
+    const { deleteFile } = await import("@/commands/fs")
+    await deleteFile(filePath)
+  })
 
   // Default: persisted queue file doesn't exist
   mockReadFile.mockRejectedValue(new Error("ENOENT"))
@@ -126,7 +128,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     setIngestWorkerLimit(0)
     expect(getIngestWorkerLimit()).toBe(1)
     setIngestWorkerLimit(99)
-    expect(getIngestWorkerLimit()).toBe(5)
+    expect(getIngestWorkerLimit()).toBe(64)
     setIngestWorkerLimit(2.9)
     expect(getIngestWorkerLimit()).toBe(2)
   })
@@ -147,13 +149,11 @@ describe("ingest-queue — enqueue & basic processing", () => {
     const persisted = JSON.parse(String(inactiveWrite?.[1])) as Array<{
       sourcePath: string
       status: string
-      autoStart?: boolean
     }>
     expect(persisted).toMatchObject([
       {
         sourcePath: "raw/sources/scheduled-import/report.pdf",
         status: "pending",
-        autoStart: true,
       },
     ])
 
@@ -196,6 +196,48 @@ describe("ingest-queue — enqueue & basic processing", () => {
       `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`,
       expect.stringContaining("raw/sources/second.pdf"),
     )
+  })
+
+  it("discards persisted tasks for deleted inactive-project sources", async () => {
+    mockReadFile.mockImplementation(async (path: string) => {
+      if (path === `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`) {
+        return JSON.stringify([
+          {
+            id: "remove-me",
+            projectId: TEST_ID_B,
+            sourcePath: "raw/sources/old.pdf",
+            folderContext: "",
+            status: "pending",
+            addedAt: 1,
+            error: null,
+            retryCount: 0,
+          },
+          {
+            id: "keep-me",
+            projectId: TEST_ID_B,
+            sourcePath: "raw/sources/current.pdf",
+            folderContext: "",
+            status: "pending",
+            addedAt: 2,
+            error: null,
+            retryCount: 0,
+          },
+        ])
+      }
+      throw new Error("ENOENT")
+    })
+
+    await expect(discardInactiveProjectTasksForSources(
+      TEST_ID_B,
+      TEST_PATH_B,
+      ["raw/sources/old.pdf"],
+    )).resolves.toBe(1)
+
+    const lastWrite = mockWriteFile.mock.calls[mockWriteFile.mock.calls.length - 1]
+    const persisted = JSON.parse(String(lastWrite?.[1])) as Array<{
+      id: string
+    }>
+    expect(persisted.map((task) => task.id)).toEqual(["keep-me"])
   })
 
   it("enqueueIngest adds a pending task and triggers processing", async () => {
@@ -776,7 +818,7 @@ describe("ingest-queue — restoreQueue", () => {
     expect(getQueue()).toHaveLength(0)
   })
 
-  it("converts 'processing' tasks back to 'pending' on restore (interrupted by app close)", async () => {
+  it("restarts an interrupted processing task on restore", async () => {
     const saved = [
       {
         id: "ingest-abc",
@@ -789,14 +831,15 @@ describe("ingest-queue — restoreQueue", () => {
       },
     ]
     mockReadFile.mockResolvedValue(JSON.stringify(saved))
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
     await restoreQueue(TEST_ID, TEST_PATH)
     await flushMicrotasks(2)
 
     const queue = getQueue()
     expect(queue).toHaveLength(1)
-    expect(queue[0].status).toBe("pending")
-    expect(getQueueSummary().paused).toBe(true)
-    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(queue[0].status).toBe("processing")
+    expect(getQueueSummary().paused).toBe(false)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
   })
 
   it("leaves 'failed' tasks as failed on restore", async () => {
@@ -837,14 +880,15 @@ describe("ingest-queue — restoreQueue", () => {
     mockAutoIngest.mockImplementation(() => new Promise(() => {}))
 
     await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(2)
     const queue = getQueue()
     expect(queue).toHaveLength(1)
     expect(queue[0].projectId).toBe(TEST_ID)
-    expect(queue[0].status).toBe("pending")
-    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(queue[0].status).toBe("processing")
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
   })
 
-  it("resumeProcessing starts restored pending tasks", async () => {
+  it("automatically resumes restored pending tasks", async () => {
     const saved = [
       {
         id: "ingest-restored",
@@ -860,11 +904,6 @@ describe("ingest-queue — restoreQueue", () => {
     mockAutoIngest.mockResolvedValue(["wiki/sources/restored.md"])
 
     await restoreQueue(TEST_ID, TEST_PATH)
-    await flushMicrotasks(2)
-    expect(mockAutoIngest).not.toHaveBeenCalled()
-    expect(getQueueSummary().paused).toBe(true)
-
-    resumeProcessing()
     await flushMicrotasks(10)
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(1)
@@ -872,7 +911,62 @@ describe("ingest-queue — restoreQueue", () => {
     expect(getQueueSummary().paused).toBe(false)
   })
 
-  it("runs new live tasks while restored backlog waits for manual resume", async () => {
+  it("keeps restored tasks pending when the ingest model is not configured", async () => {
+    const { useWikiStore } = await import("@/stores/wiki-store")
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "",
+      model: "",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+    mockReadFile.mockResolvedValue(JSON.stringify([
+      {
+        id: "pending-a",
+        sourcePath: "a.md",
+        folderContext: "",
+        status: "pending",
+        addedAt: 0,
+        error: null,
+        retryCount: 0,
+      },
+      {
+        id: "pending-b",
+        sourcePath: "b.md",
+        folderContext: "",
+        status: "pending",
+        addedAt: 0,
+        error: null,
+        retryCount: 0,
+      },
+    ]))
+
+    await restoreQueue(TEST_ID, TEST_PATH)
+    await flushMicrotasks(4)
+
+    expect(getQueue().map((task) => task.status)).toEqual(["pending", "pending"])
+    expect(getQueueSummary().blockedOnLlmConfig).toBe(true)
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+
+    useWikiStore.getState().setLlmConfig({
+      provider: "openai",
+      apiKey: "configured",
+      model: "model",
+      ollamaUrl: "",
+      customEndpoint: "",
+      maxContextSize: 128000,
+    })
+    mockAutoIngest.mockResolvedValue(["wiki/sources/restored.md"])
+    resumeProcessing()
+    await flushMicrotasks(20)
+
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
+    expect(getQueue()).toHaveLength(0)
+    expect(getQueueSummary().blockedOnLlmConfig).toBe(false)
+  })
+
+  it("finishes restored backlog before accepting a new live task", async () => {
     const saved = [
       {
         id: "ingest-restored",
@@ -885,20 +979,23 @@ describe("ingest-queue — restoreQueue", () => {
       },
     ]
     mockReadFile.mockResolvedValue(JSON.stringify(saved))
-    mockAutoIngest.mockResolvedValue(["wiki/sources/live.md"])
+    mockAutoIngest.mockImplementation(async (_projectPath, sourcePath) => [
+      `wiki/sources/${String(sourcePath).replace(/\.md$/, "")}.md`,
+    ])
 
     await restoreQueue(TEST_ID, TEST_PATH)
     await flushMicrotasks(2)
     await enqueueIngest(TEST_ID, "live.md")
     await flushMicrotasks(10)
 
-    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
-    expect(mockAutoIngest.mock.calls[0][1]).toBe(`${TEST_PATH}/live.md`)
-    expect(getQueue().map((task) => task.sourcePath)).toEqual(["restored.md"])
-    expect(getQueueSummary().paused).toBe(true)
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
+    expect(mockAutoIngest.mock.calls[0][1]).toBe(`${TEST_PATH}/restored.md`)
+    expect(mockAutoIngest.mock.calls[1][1]).toBe(`${TEST_PATH}/live.md`)
+    expect(getQueue()).toHaveLength(0)
+    expect(getQueueSummary().paused).toBe(false)
   })
 
-  it("distinguishes active live processing from user pause while restored backlog waits", async () => {
+  it("reports an automatically restored task as active processing", async () => {
     const saved = [
       {
         id: "ingest-restored",
@@ -915,18 +1012,14 @@ describe("ingest-queue — restoreQueue", () => {
 
     await restoreQueue(TEST_ID, TEST_PATH)
     await flushMicrotasks(2)
-    await enqueueIngest(TEST_ID, "live.md")
-    await flushMicrotasks(2)
-
     expect(getQueueSummary()).toMatchObject({
       processing: 1,
       paused: false,
       userPaused: false,
-      restoredBacklogWaiting: true,
     })
   })
 
-  it("promotes a restored task when a live event touches the same source", async () => {
+  it("queues a rerun when a live event touches a restored task already processing", async () => {
     const saved = [
       {
         id: "ingest-restored",
@@ -939,14 +1032,23 @@ describe("ingest-queue — restoreQueue", () => {
       },
     ]
     mockReadFile.mockResolvedValue(JSON.stringify(saved))
-    mockAutoIngest.mockResolvedValue(["wiki/sources/same.md"])
+    const firstRun = createDeferred<string[]>()
+    mockAutoIngest
+      .mockImplementationOnce(() => firstRun.promise)
+      .mockResolvedValueOnce(["wiki/sources/same.md"])
 
     await restoreQueue(TEST_ID, TEST_PATH)
     await flushMicrotasks(2)
     await enqueueIngest(TEST_ID, "same.md")
-    await flushMicrotasks(10)
+    await flushMicrotasks(2)
 
     expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    expect(getQueue().filter((task) => task.status === "pending")).toHaveLength(1)
+
+    firstRun.resolve(["wiki/sources/same.md"])
+    await flushMicrotasks(10)
+
+    expect(mockAutoIngest).toHaveBeenCalledTimes(2)
     expect(mockAutoIngest.mock.calls[0][1]).toBe(`${TEST_PATH}/same.md`)
     expect(getQueue()).toHaveLength(0)
     expect(getQueueSummary().paused).toBe(false)
@@ -1243,8 +1345,8 @@ describe("ingest-queue — pause/resume processing", () => {
   })
 })
 
-// ── cleanupWrittenFiles — file delete + LanceDB chunk cascade ──────
-describe("cleanupWrittenFiles — embedding cascade", () => {
+// ── cleanupWrittenFiles — centralized page cascade ─────────────────
+describe("cleanupWrittenFiles — page cascade", () => {
   it("deletes each file AND drops its embedding chunks (relative paths)", async () => {
     const { deleteFile } = await import("@/commands/fs")
     const mockDeleteFile = vi.mocked(deleteFile)
@@ -1261,10 +1363,9 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
     expect(mockDeleteFile).toHaveBeenNthCalledWith(1, "/proj/wiki/concepts/rope.md")
     expect(mockDeleteFile).toHaveBeenNthCalledWith(2, "/proj/wiki/entities/transformer.md")
 
-    // Embedding cascade uses page slugs (basename minus .md).
-    expect(removePageEmbeddingMock).toHaveBeenCalledTimes(2)
-    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(1, "/proj", "rope")
-    expect(removePageEmbeddingMock).toHaveBeenNthCalledWith(2, "/proj", "transformer")
+    expect(cascadeDeleteWikiPageMock).toHaveBeenCalledTimes(2)
+    expect(cascadeDeleteWikiPageMock).toHaveBeenNthCalledWith(1, "/proj", "/proj/wiki/concepts/rope.md")
+    expect(cascadeDeleteWikiPageMock).toHaveBeenNthCalledWith(2, "/proj", "/proj/wiki/entities/transformer.md")
   })
 
   it("uses absolute paths verbatim (doesn't double-prefix the project path)", async () => {
@@ -1276,8 +1377,10 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
     await cleanupWrittenFiles("/proj", ["/abs/elsewhere/wiki/concepts/foo.md"])
 
     expect(mockDeleteFile).toHaveBeenCalledWith("/abs/elsewhere/wiki/concepts/foo.md")
-    // Slug derivation still works on absolute paths.
-    expect(removePageEmbeddingMock).toHaveBeenCalledWith("/proj", "foo")
+    expect(cascadeDeleteWikiPageMock).toHaveBeenCalledWith(
+      "/proj",
+      "/abs/elsewhere/wiki/concepts/foo.md",
+    )
   })
 
   it("continues to subsequent files when one delete throws", async () => {
@@ -1296,45 +1399,52 @@ describe("cleanupWrittenFiles — embedding cascade", () => {
 
     // Both deleteFile attempts happened — the helper kept going.
     expect(mockDeleteFile).toHaveBeenCalledTimes(2)
-    // First file's embedding cascade was skipped (deleteFile threw),
-    // second file's cascade still ran.
-    expect(removePageEmbeddingMock).toHaveBeenCalledTimes(1)
-    expect(removePageEmbeddingMock).toHaveBeenCalledWith("/proj", "present")
+    // Both cascades were attempted even though the first delete failed.
+    expect(cascadeDeleteWikiPageMock).toHaveBeenCalledTimes(2)
+    expect(cascadeDeleteWikiPageMock).toHaveBeenNthCalledWith(
+      2,
+      "/proj",
+      "/proj/wiki/concepts/present.md",
+    )
   })
 
-  it("swallows removePageEmbedding errors so a LanceDB issue doesn't abort cleanup", async () => {
+  it("swallows page cascade errors so a LanceDB issue doesn't abort cleanup", async () => {
     const { deleteFile } = await import("@/commands/fs")
     const mockDeleteFile = vi.mocked(deleteFile)
     mockDeleteFile.mockReset()
     mockDeleteFile.mockResolvedValue(undefined)
 
-    // First page's embedding cascade throws; second succeeds.
-    removePageEmbeddingMock
-      .mockRejectedValueOnce(new Error("lancedb unavailable"))
-      .mockResolvedValueOnce(undefined)
+    // First page cascade throws; second succeeds.
+    cascadeDeleteWikiPageMock
+      .mockImplementationOnce(async (_projectPath, filePath) => {
+        await mockDeleteFile(filePath)
+        throw new Error("lancedb unavailable")
+      })
+      .mockImplementationOnce(async (_projectPath, filePath) => {
+        await mockDeleteFile(filePath)
+      })
 
     await cleanupWrittenFiles("/proj", [
       "wiki/concepts/a.md",
       "wiki/concepts/b.md",
     ])
 
-    // Both file deletes still happened.
-    expect(mockDeleteFile).toHaveBeenCalledTimes(2)
     // Second cascade still attempted despite first throwing.
-    expect(removePageEmbeddingMock).toHaveBeenCalledTimes(2)
+    expect(cascadeDeleteWikiPageMock).toHaveBeenCalledTimes(2)
   })
 
-  it("handles Windows backslash paths via getFileStem", async () => {
+  it("passes Windows backslash paths to the centralized cascade", async () => {
     const { deleteFile } = await import("@/commands/fs")
     const mockDeleteFile = vi.mocked(deleteFile)
     mockDeleteFile.mockReset()
     mockDeleteFile.mockResolvedValue(undefined)
 
-    // A path that's been rewritten with backslashes (Windows ingest
-    // pipeline output before normalize). getFileStem must still
-    // pull "rope" out cleanly so the cascade hits the right page.
+    // The centralized cascade owns path normalization and page-id derivation.
     await cleanupWrittenFiles("C:/proj", ["wiki\\concepts\\rope.md"])
 
-    expect(removePageEmbeddingMock).toHaveBeenCalledWith("C:/proj", "rope")
+    expect(cascadeDeleteWikiPageMock).toHaveBeenCalledWith(
+      "C:/proj",
+      "C:/proj/wiki\\concepts\\rope.md",
+    )
   })
 })

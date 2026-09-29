@@ -859,10 +859,10 @@ export function ChatInput({
                 onChange={(event) => onRetrievalModeChange(event.target.value as ChatRetrievalMode)}
                 disabled={isStreaming}
                 aria-label={t("chat.retrievalMode")}
-                className="h-full max-w-36 appearance-none bg-transparent py-0 pl-1.5 pr-7 text-xs font-medium outline-none disabled:pointer-events-none disabled:opacity-50"
+                className="h-full max-w-36 appearance-none bg-transparent py-0 pl-1.5 pr-7 text-xs font-medium text-foreground outline-none [color-scheme:light] disabled:pointer-events-none disabled:opacity-50 dark:[color-scheme:dark]"
               >
                 {RETRIEVAL_MODE_OPTIONS.map((retrieval) => (
-                  <option key={retrieval} value={retrieval}>
+                  <option key={retrieval} value={retrieval} className="bg-popover text-popover-foreground">
                     {t(`chat.retrievalModes.${retrieval}`)}
                   </option>
                 ))}
@@ -878,10 +878,10 @@ export function ChatInput({
                 onChange={(event) => onAgentModeChange(event.target.value as ChatAgentMode)}
                 disabled={isStreaming}
                 aria-label={t("chat.agentMode")}
-                className="h-full max-w-28 appearance-none bg-transparent py-0 pl-2 pr-7 text-xs font-medium outline-none disabled:pointer-events-none disabled:opacity-50"
+                className="h-full max-w-28 appearance-none bg-transparent py-0 pl-2 pr-7 text-xs font-medium text-foreground outline-none [color-scheme:light] disabled:pointer-events-none disabled:opacity-50 dark:[color-scheme:dark]"
               >
                 {AGENT_MODE_OPTIONS.map((mode) => (
-                  <option key={mode} value={mode}>
+                  <option key={mode} value={mode} className="bg-popover text-popover-foreground">
                     {agentModeLabel(mode)}
                   </option>
                 ))}

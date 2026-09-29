@@ -1,6 +1,11 @@
 import { streamChat } from "./llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
 import { buildLanguageDirective } from "./output-language"
+import {
+  groundBareResearchQueries,
+  groundedFallbackResearchQuery,
+  PROJECT_LOCAL_TERM_QUERY_RULES,
+} from "./research-query-grounding"
 
 export interface OptimizedTopic {
   topic: string
@@ -35,8 +40,10 @@ export async function optimizeResearchTopic(
     "",
     "## Task",
     "Generate a research topic and search queries that are specific to this wiki's domain and purpose.",
+    ...PROJECT_LOCAL_TERM_QUERY_RULES,
+    "Use the local description as the authoritative meaning of the term.",
     "The topic should precisely describe what information would fill this knowledge gap.",
-    "The search queries should be optimized for web search engines — keyword-rich, specific, not generic.",
+    "The search queries should be concise and specific while retaining the exact original-language project term.",
     "",
     "## Output Format (STRICT — follow exactly, no other text)",
     "Respond with EXACTLY 4 lines, no more:",
@@ -62,14 +69,26 @@ export async function optimizeResearchTopic(
   const topicMatch = result.match(/^TOPIC:\s*(.+)$/m)
   const queryMatches = [...result.matchAll(/^QUERY:\s*(.+)$/gm)]
 
-  const topic = topicMatch?.[1]?.trim() ?? gapTitle
-  const searchQueries = queryMatches
+  const topic = topicMatch?.[1]?.trim() || gapTitle
+  // Deterministic fallbacks go directly to a third-party search provider.
+  // Keep them to the explicit gap description; purpose/overview remain prompt
+  // context for the configured LLM but are not copied verbatim into web queries.
+  const queryContext = gapDescription
+  const parsedQueries = queryMatches
     .slice(0, 3)
     .map((m) => m[1].trim())
     .filter((q) => q.length > 0)
+  const searchQueries = groundBareResearchQueries(
+    parsedQueries.length > 0 ? parsedQueries : [topic],
+    gapTitle,
+    queryContext,
+    [topic],
+  )
 
   return {
     topic,
-    searchQueries: searchQueries.length > 0 ? searchQueries : [topic],
+    searchQueries: searchQueries.length > 0
+      ? searchQueries
+      : [groundedFallbackResearchQuery(gapTitle, queryContext)],
   }
 }

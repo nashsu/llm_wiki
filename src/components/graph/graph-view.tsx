@@ -14,9 +14,10 @@ import { readFile, writeFile } from "@/commands/fs"
 import { WikiEditor } from "@/components/editor/wiki-editor"
 import { FilePreview } from "@/components/editor/file-preview"
 import { buildWikiGraph, type GraphNode, type GraphEdge, type CommunityInfo } from "@/lib/wiki-graph"
-import { findSurprisingConnections, detectKnowledgeGaps, type SurprisingConnection, type KnowledgeGap } from "@/lib/graph-insights"
+import { findSurprisingConnections, detectKnowledgeGaps, researchSeedForKnowledgeGap, type SurprisingConnection, type KnowledgeGap } from "@/lib/graph-insights"
 import { queueResearch } from "@/lib/deep-research"
 import { optimizeResearchTopic } from "@/lib/optimize-research-topic"
+import { groundedFallbackResearchQuery } from "@/lib/research-query-grounding"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { getFileCategory } from "@/lib/file-types"
 import { applyGraphFilters, hasActiveGraphFilters, type GraphFilterState } from "@/lib/graph-filters"
@@ -811,12 +812,13 @@ export function GraphView() {
     }
   }, [highlightedNodes])
 
-  const handleResearchClick = useCallback(async (gapTitle: string, gapDescription: string, gapType: string, dismissKey?: string) => {
+  const handleResearchClick = useCallback(async (gap: KnowledgeGap, dismissKey?: string) => {
     const store = useWikiStore.getState()
     if (!store.project) return
     const pp = normalizePath(store.project.path)
     const token = researchDialogTokenRef.current + 1
     researchDialogTokenRef.current = token
+    const { term: gapTerm, context: gapContext } = researchSeedForKnowledgeGap(gap, nodes)
 
     // Show loading state
     setResearchDialog({ loading: true, topic: "", queries: [], dismissKey })
@@ -830,9 +832,9 @@ export function GraphView() {
 
       const result = await optimizeResearchTopic(
         store.llmConfig,
-        gapTitle,
-        gapDescription,
-        gapType,
+        gapTerm,
+        gapContext,
+        gap.type,
         overview,
         purpose,
       )
@@ -840,10 +842,14 @@ export function GraphView() {
       setResearchDialog({ loading: false, topic: result.topic, queries: result.searchQueries, dismissKey })
     } catch {
       if (researchDialogTokenRef.current !== token) return
-      // Fallback: use raw title
-      setResearchDialog({ loading: false, topic: gapTitle, queries: [gapTitle], dismissKey })
+      setResearchDialog({
+        loading: false,
+        topic: gapTerm,
+        queries: [groundedFallbackResearchQuery(gapTerm, gapContext)],
+        dismissKey,
+      })
     }
-  }, [])
+  }, [nodes])
 
   const handleResearchConfirm = useCallback(() => {
     if (!researchDialog) return
@@ -1468,8 +1474,15 @@ export function GraphView() {
                         {c.topNodes[0] ?? `${t("graph.cluster", { id: c.id })}`}
                       </span>
                       <span className="text-muted-foreground/60 ml-auto shrink-0">{c.nodeCount}</span>
-                      {c.cohesion < 0.15 && c.nodeCount >= 3 && (
-                        <span className="text-amber-500 shrink-0" title={`Low cohesion: ${c.cohesion.toFixed(2)}`}>!</span>
+                      {c.meanIntraDegree < 2 && c.nodeCount >= 3 && (
+                        <span
+                          className="text-amber-500 shrink-0"
+                          title={t("graph.lowInternalConnectivity", {
+                            count: c.meanIntraDegree.toFixed(1),
+                          })}
+                        >
+                          !
+                        </span>
                       )}
                     </div>
                   ))}
@@ -1587,7 +1600,7 @@ export function GraphView() {
                             className="h-7 text-xs gap-1"
                             onClick={(e) => {
                               e.stopPropagation()
-                              handleResearchClick(gap.title, gap.description, gap.type, gapKey)
+                              handleResearchClick(gap, gapKey)
                             }}
                           >
                             <Search className="h-3.5 w-3.5" />

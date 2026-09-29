@@ -9,7 +9,7 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackgroundImage, loadBackgroundOpacity, loadBackgroundBrightness, loadFeishuConfig, loadJiraConfig } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackgroundImage, loadBackgroundOpacity, loadBackgroundBrightness, loadFeishuConfig, loadJiraConfig } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
 import { useBackgroundStore } from "@/stores/background-store"
 import { BackgroundLayer } from "@/components/layout/background-layer"
@@ -543,16 +543,42 @@ function App() {
         )
       })
       // Start project source watch if enabled
-      import("@/lib/project-file-sync").then(async ({ startProjectFileSync, stopProjectFileSync }) => {
-        const config = await loadSourceWatchConfig(proj.id)
+      import("@/lib/project-file-sync").then(async ({
+        startAllProjectFileSync,
+        startProjectFileSync,
+        stopAllProjectFileSync,
+        stopProjectFileSync,
+      }) => {
+        const [configResult, allProjectsResult] = await Promise.allSettled([
+          loadSourceWatchConfig(proj.id),
+          loadSourceWatchAllProjects(),
+        ])
+        const config = configResult.status === "fulfilled"
+          ? configResult.value
+          : DEFAULT_SOURCE_WATCH_CONFIG
+        const allProjects = allProjectsResult.status === "fulfilled"
+          ? allProjectsResult.value
+          : false
+        if (configResult.status === "rejected") {
+          console.error("Failed to load project source watch config:", configResult.reason)
+        }
+        if (allProjectsResult.status === "rejected") {
+          console.error("Failed to load all-project source watch setting:", allProjectsResult.reason)
+        }
         if (!isCurrentProject(proj)) return
         useWikiStore.getState().setSourceWatchConfig(config)
+        useWikiStore.getState().setSourceWatchAllProjects(allProjects)
         if (config.enabled) {
           startProjectFileSync(proj, config).catch((err) =>
             console.error("Failed to start project file sync:", err)
           )
         } else {
           stopProjectFileSync().catch(() => {})
+        }
+        if (allProjects) {
+          startAllProjectFileSync(proj)
+        } else {
+          stopAllProjectFileSync()
         }
       }).catch((err) => console.error("Failed to configure project file sync:", err))
       // Notify local clip server of the current project + all recent projects
@@ -632,6 +658,9 @@ function App() {
   }
 
   async function handleSwitchProject() {
+    import("@/lib/project-file-sync").then(({ stopAllProjectFileSync }) => {
+      stopAllProjectFileSync()
+    }).catch(() => {})
     // Stop scheduled import before switching projects
     import("@/lib/scheduled-import").then(({ stopScheduledImport }) => {
       stopScheduledImport()

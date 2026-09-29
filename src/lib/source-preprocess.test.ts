@@ -12,7 +12,7 @@ describe("source preprocessing", () => {
     expect(normalizeParsingConcurrency(Number.NaN)).toBe(1)
     expect(normalizeParsingConcurrency(0)).toBe(1)
     expect(normalizeParsingConcurrency(3.9)).toBe(3)
-    expect(normalizeParsingConcurrency(99)).toBe(8)
+    expect(normalizeParsingConcurrency(99)).toBe(64)
   })
 
   it("never exceeds the configured concurrency and de-duplicates paths", async () => {
