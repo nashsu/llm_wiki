@@ -624,7 +624,20 @@ function buildAnthropicBodyWithReasoning(
 ): Record<string, unknown> {
   const body = buildAnthropicBody(messages, overrides, streaming)
   const reasoning = effectiveReasoning(config, overrides)
-  if (reasoning.mode === "auto" || reasoning.mode === "off") return body
+  if (reasoning.mode === "auto") return body
+  if (reasoning.mode === "off") {
+    // DeepSeek V4 (and other thinking-by-default models served through an
+    // Anthropic-wire proxy) spend the entire max_tokens budget on
+    // `reasoning_content` unless thinking is explicitly disabled, leaving
+    // the final `content` empty and surfacing as a "truncated" ingest.
+    // The OpenAI-compatible path already handles this; mirror it here so
+    // structured ingest (which always passes reasoning off) works on
+    // Anthropic-wire DeepSeek gateways too.
+    if (supportsDeepSeekThinkingParam(config)) {
+      body.thinking = { type: "disabled" }
+    }
+    return body
+  }
 
   if (isAdaptiveAnthropicModel(config)) {
     body.thinking = { type: "adaptive" }
