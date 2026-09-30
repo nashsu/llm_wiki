@@ -1101,11 +1101,45 @@ async function autoIngestImpl(
       { temperature: 0.1, reasoning: analysisRequest.reasoning, max_tokens: analysisRequest.maxTokens },
     )
     if (analysisTruncated) {
-      const message =
-        `Analysis was truncated after reaching the ${analysisRequest.maxTokens.toLocaleString()} token output limit. ` +
-        "Wiki pages were not generated from the incomplete analysis. Split the source or use a model with a larger output limit."
-      activity.updateItem(activityId, { status: "error", detail: message })
-      throw new NonRetryableIngestError(message)
+      // The single-pass analysis hit the output token limit. This is driven by
+      // the source's information density, not its raw length — a short but
+      // dense document can overflow the output budget while a much longer one
+      // succeeds. The chunk trigger above is length-based, so such sources fall
+      // through the gap and fail permanently. Recover by falling back to
+      // semantic chunking with the smallest chunk size, which keeps each
+      // per-chunk analysis well under the output limit and gains checkpointed
+      // resume. Only fail if the source genuinely cannot be chunked.
+      activity.updateItem(activityId, {
+        detail: "Analysis output truncated; falling back to chunked analysis...",
+      })
+      analysis = ""
+      const fallbackPlan = await analyzeLongSourceInChunks(
+        pp,
+        llmConfig,
+        purpose,
+        schema,
+        index,
+        sourceIdentity,
+        sourceSummarySlug,
+        folderContext,
+        sourceContext,
+        sourceBudget,
+        activityId,
+        signal,
+        LONG_SOURCE_CHUNK_MIN,
+      )
+      if (fallbackPlan.chunked) {
+        analysis = fallbackPlan.analysis
+        sourceContext = fallbackPlan.sourceContext
+        longSourceCheckpointPath = fallbackPlan.checkpointPath
+      } else {
+        const message =
+          `Analysis was truncated after reaching the ${analysisRequest.maxTokens.toLocaleString()} token output limit ` +
+          "and the source could not be split into smaller chunks. " +
+          "Split the source manually or use a model with a larger output limit."
+        activity.updateItem(activityId, { status: "error", detail: message })
+        throw new NonRetryableIngestError(message)
+      }
     }
   }
 
@@ -3124,8 +3158,11 @@ async function analyzeLongSourceInChunks(
   sourceBudget: number,
   activityId: string,
   signal?: AbortSignal,
+  overrideTargetChars?: number,
 ): Promise<LongSourcePlan> {
-  const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+  const targetChars = overrideTargetChars
+    ? clampNumber(overrideTargetChars, LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+    : clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
   const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
   const chunks = splitSourceIntoSemanticChunks(sourceContent, targetChars, overlapChars)
   if (chunks.length <= 1) {
