@@ -287,19 +287,89 @@ async fn worker(
             format!("{}: {}", msg.sender_id, truncate_reply(&msg.content));
         state.status.lock().await.last_error = String::new();
 
-        let reply = match run_agent(&app, &project_id, &msg).await {
+        // 每条消息实时读取文档回复配置（保存设置即生效，无需重启桥接）。
+        let feishu_cfg = crate::api_server::load_app_state(&app)
+            .and_then(|v| v.get("feishuConfig").cloned())
+            .unwrap_or(serde_json::Value::Null);
+        let cfg_str = |key: &str| {
+            feishu_cfg
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let reply_as_doc = feishu_cfg
+            .get("bridgeReplyAsDoc")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(true);
+        let doc_mode = feishu_cfg
+            .get("bridgeDocMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("new")
+            .to_string();
+        let doc_target = super::feishu::FeishuDocTarget {
+            folder_token: cfg_str("bridgeDocFolder"),
+            fixed_doc: cfg_str("bridgeDocTarget"),
+            fixed_command: if doc_mode == "append" { "append".into() } else { "overwrite".into() },
+        };
+        // fixed=整体覆盖固定文档；append=追加到固定文档文末
+        let fixed_mode =
+            (doc_mode == "fixed" || doc_mode == "append") && !doc_target.fixed_doc.is_empty();
+
+        let reply = match run_agent(&app, &project_id, &msg, reply_as_doc).await {
             Ok(text) => text,
             Err(err) => {
                 state.status.lock().await.last_error = err.clone();
                 format!("[LLM Wiki] 处理失败: {err}")
             }
         };
-        let text = if reply.trim().is_empty() {
-            "[LLM Wiki] 本轮没有产生文本回复".to_string()
+
+        // 文档模式：非错误回复导入为飞书文档，回发标题 + 链接；失败降级纯文本。
+        let sent = if reply_as_doc && !reply.trim().is_empty() && !reply.starts_with("[LLM Wiki]") {
+            let title = doc_title(&msg.content);
+            let target = if fixed_mode {
+                doc_target
+            } else {
+                // 新建模式忽略 fixed_doc，只用目录
+                super::feishu::FeishuDocTarget { fixed_doc: String::new(), ..doc_target }
+            };
+            match super::feishu::publish_feishu_doc(&title, &reply, &target).await {
+                Ok(url) => {
+                    let mode_note = if doc_mode == "append" {
+                        "已追加到固定文档"
+                    } else if fixed_mode {
+                        "已更新固定文档"
+                    } else {
+                        ""
+                    };
+                    eprintln!("[feishu-doc] publish ok ({mode_note}): {title} -> {url}");
+                    let text = if fixed_mode {
+                        format!("📄 {mode_note}（{title}）\n{url}")
+                    } else {
+                        format!("📄 {title}\n{url}")
+                    };
+                    send_feishu_text(&msg.chat_id, &text).await
+                }
+                Err(err) => {
+                    eprintln!("[feishu-doc] publish FAILED: {err}");
+                    state.status.lock().await.last_error =
+                        format!("doc publish failed: {err}（已降级为文本回复）");
+                    let text = if reply.trim().is_empty() {
+                        "[LLM Wiki] 本轮没有产生文本回复".to_string()
+                    } else {
+                        truncate_reply(&reply)
+                    };
+                    send_feishu_text(&msg.chat_id, &text).await
+                }
+            }
         } else {
-            truncate_reply(&reply)
+            let text = if reply.trim().is_empty() {
+                "[LLM Wiki] 本轮没有产生文本回复".to_string()
+            } else {
+                truncate_reply(&reply)
+            };
+            send_feishu_text(&msg.chat_id, &text).await
         };
-        let sent = send_feishu_text(&msg.chat_id, &text).await;
         if sent.ok {
             state.status.lock().await.handled += 1;
         } else {
@@ -308,15 +378,32 @@ async fn worker(
     }
 }
 
+/// 从用户消息提炼文档标题：首行去空白，截 24 字符。
+fn doc_title(question: &str) -> String {
+    let first_line = question.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("回复");
+    let title: String = first_line.chars().take(24).collect();
+    format!("{title}｜LLM Wiki")
+}
+
 /// 进程内复用前端聊天的同一个入口。AI 链路零改动。
 async fn run_agent(
     app: &tauri::AppHandle,
     project_id: &str,
     msg: &FeishuInbound,
+    reply_as_doc: bool,
 ) -> Result<String, String> {
     // 借 serde 默认值构造请求，字段取值与前端一致（wiki 工具开、标准模式）。
+    // 文档模式下追加输出格式要求：内容会导入飞书文档，表格/mermaid 才有承载。
+    let message = if reply_as_doc {
+        format!(
+            "{}\n\n[输出格式要求：用 Markdown 回答；信息优先用表格与 mermaid 代码块呈现，正文文字尽量精简，不要输出与问题无关的寒暄。]",
+            msg.content
+        )
+    } else {
+        msg.content.clone()
+    };
     let request: crate::agent::AgentChatRequest = serde_json::from_value(serde_json::json!({
-        "message": msg.content,
+        "message": message,
         "sessionId": format!("feishu_{}", msg.chat_id),
         "persistSession": true,
     }))

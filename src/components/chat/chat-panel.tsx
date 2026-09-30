@@ -15,7 +15,7 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
-import { buildReplySummary, sendFeishuMessage } from "@/lib/feishu"
+import { publishFeishuChatReply, sendFeishuMessage, stripThinkBlocks } from "@/lib/feishu"
 import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
 import type { ChatMessage as LlmChatMessage, ContentBlock } from "@/lib/llm-client"
 import { FilePreview } from "@/components/editor/file-preview"
@@ -660,24 +660,42 @@ export function ChatPanel() {
   const [agentEvents, setAgentEvents] = useState<ChatAgentEvent[]>([])
   const [feishuError, setFeishuError] = useState<string | null>(null)
 
-  // 铃铛开着时，每条 AI 回复完成后推送截断摘要到飞书。
+  // 铃铛开着时，每条 AI 回复完成后推送飞书：
+  // - 「回复为飞书文档」开启 → 与机器人一致：发布全文文档 + 回发链接，失败降级完整原文
+  // - 关闭 → 发送完整原文（仅剔除推理块，不再截断摘要）
   // 失败只提示，绝不影响回复本身（不抛错、不重试）。
   const pushFeishuSummary = useCallback(async (conversationId: string, content: string) => {
     const { notifyFeishu: enabled, conversations } = useChatStore.getState()
     const config = useWikiStore.getState().feishuConfig
     if (!enabled || !config.enabled) return
     if (!config.recipientId.startsWith("ou_") && !config.recipientId.startsWith("oc_")) return
-    const summary = buildReplySummary(content, config.summaryLength)
-    if (!summary) return
     const title = conversations.find((c) => c.id === conversationId)?.title ?? ""
     const header = title ? `[LLM Wiki · ${title}]` : "[LLM Wiki]"
+    // 飞书文本消息安全上限（中文 3 字节/字，150KB 上限取整）
+    const fullText = (() => {
+      const text = stripThinkBlocks(content)
+      return text.length > 45000 ? `${text.slice(0, 45000)}…（超长截断）` : text
+    })()
+    const showError = (msg: string) => {
+      setFeishuError(msg)
+      setTimeout(() => setFeishuError(null), 6000)
+    }
     try {
-      const result = await sendFeishuMessage(config.recipientId, `${header}\n${summary}`)
-      if (result.ok) {
-        setFeishuError(null)
+      if (config.bridgeReplyAsDoc) {
+        const docTitle = `${(title || "AI 回复").slice(0, 24)}｜LLM Wiki`
+        const pub = await publishFeishuChatReply(docTitle, content)
+        if (pub.ok) {
+          const result = await sendFeishuMessage(config.recipientId, `📄 ${docTitle}\n${pub.url}`)
+          if (!result.ok) showError(result.error || "send failed")
+        } else {
+          // 文档发布失败：降级发送完整原文
+          if (fullText) await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+          showError(`文档发布失败已降级原文：${pub.error}`)
+        }
       } else {
-        setFeishuError(result.error || "send failed")
-        setTimeout(() => setFeishuError(null), 6000)
+        if (!fullText) return
+        const result = await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+        if (!result.ok) showError(result.error || "send failed")
       }
     } catch (err) {
       console.warn("[feishu] notify failed:", err)
