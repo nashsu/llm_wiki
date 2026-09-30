@@ -20,6 +20,7 @@ export interface Conversation {
   title: string
   createdAt: number
   updatedAt: number
+  favorited?: boolean
   selectedSkills?: string[]
   contextFiles?: string[]
 }
@@ -59,6 +60,7 @@ interface ChatState {
   maxHistoryMessages: number
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  notifyFeishu: boolean
   agentMode: ChatAgentMode
   retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
@@ -70,6 +72,7 @@ interface ChatState {
   deleteConversation: (id: string) => void
   setActiveConversation: (id: string | null) => void
   renameConversation: (id: string, title: string) => void
+  toggleFavorite: (id: string) => void
 
   // Message management
   addMessage: (role: DisplayMessage["role"], content: string, images?: MessageImage[]) => void
@@ -86,6 +89,7 @@ interface ChatState {
   setMaxHistoryMessages: (n: number) => void
   setUseWebSearch: (enabled: boolean) => void
   setUseAnyTxtSearch: (enabled: boolean) => void
+  setNotifyFeishu: (enabled: boolean) => void
   setAgentMode: (mode: ChatAgentMode) => void
   setRetrievalMode: (mode: ChatRetrievalMode) => void
   setSelectedSkills: (skills: string[]) => void
@@ -119,6 +123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maxHistoryMessages: 10,
   useWebSearch: false,
   useAnyTxtSearch: false,
+  notifyFeishu: false,
   agentMode: "standard",
   retrievalMode: "standard",
   selectedSkills: [],
@@ -175,6 +180,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === id ? { ...c, title, updatedAt: Date.now() } : c
+      ),
+    })),
+
+  toggleFavorite: (id) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, favorited: !c.favorited } : c
       ),
     })),
 
@@ -320,6 +332,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setUseWebSearch: (useWebSearch) => set({ useWebSearch }),
 
   setUseAnyTxtSearch: (useAnyTxtSearch) => set({ useAnyTxtSearch }),
+
+  setNotifyFeishu: (notifyFeishu) => set({ notifyFeishu }),
 
   setAgentMode: (agentMode) => set({ agentMode }),
 

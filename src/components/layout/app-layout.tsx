@@ -90,6 +90,18 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   // activity strip, and optional right research panel there so those
   // screens use the whole work area.
   const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
+
+  // Keep the left panel mounted once shown: switching to a standalone view
+  // (chat/settings/skills) and back must not remount KnowledgeTree, whose
+  // mount effect re-reads every wiki page over IPC and discards expanded
+  // groups, source filter, and scroll position. Hide it instead.
+  const [hasMountedLeft, setHasMountedLeft] = useState(showLeftPanel)
+
+  useEffect(() => {
+    if (showLeftPanel) setHasMountedLeft(true)
+  }, [showLeftPanel])
+
+  const showExpandedLeft = showLeftPanel && !leftCollapsed
   const toggleLeftPanel = () => {
     setLeftCollapsed((value) => {
       const next = !value
@@ -104,16 +116,27 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     // existing IconSidebar + content row below. Banner is shrink-0
     // so it doesn't compress the work area; main row is flex-1 so
     // it fills the rest of the viewport.
-    <div className="flex h-full flex-col bg-background text-foreground">
+    //
+    // No `bg-background` here: the app background (theme color or a
+    // user wallpaper via BackgroundLayer) is provided by the body in
+    // index.css, and panels below use their own semi-transparent
+    // backgrounds so a wallpaper shows through the gaps. Keeping this
+    // transparent is visually identical to the old opaque bg (both are
+    // var(--background)) and only reveals a wallpaper when one is set.
+    <div className="flex h-full flex-col text-foreground">
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
         <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
-          {showLeftPanel && !leftCollapsed && (
+          {hasMountedLeft && (
             <>
               {/* Left: File tree + Activity */}
               <div
-                className="flex shrink-0 flex-col overflow-hidden border-r"
+                className={
+                  showExpandedLeft
+                    ? "flex shrink-0 flex-col overflow-hidden border-r"
+                    : "hidden"
+                }
                 style={{ width: leftWidth }}
               >
                 <div className="flex-1 overflow-hidden">
@@ -121,10 +144,12 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
                 </div>
                 <ActivityPanel />
               </div>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("left")}
-              />
+              {showExpandedLeft && (
+                <div
+                  className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
+                  onMouseDown={startDrag("left")}
+                />
+              )}
             </>
           )}
 

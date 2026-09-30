@@ -41,6 +41,7 @@ export async function flushAndSuspendAutoSave(): Promise<void> {
     saveChatPreferences(projectPath, {
       useWebSearch: chat.useWebSearch,
       useAnyTxtSearch: chat.useAnyTxtSearch,
+      notifyFeishu: chat.notifyFeishu,
       agentMode: chat.agentMode,
       retrievalMode: chat.retrievalMode,
       selectedSkills: chat.selectedSkills,
@@ -117,6 +118,7 @@ export function setupAutoSave(): void {
           saveChatPreferences(projectPath, {
             useWebSearch: state.useWebSearch,
             useAnyTxtSearch: state.useAnyTxtSearch,
+            notifyFeishu: state.notifyFeishu,
             agentMode: state.agentMode,
             retrievalMode: state.retrievalMode,
             selectedSkills: state.selectedSkills,

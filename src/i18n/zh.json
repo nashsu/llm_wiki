@@ -1,14 +1,36 @@
 {
+  "floating": {
+    "chatTitle": "对话",
+    "empty": "暂无进行中的对话",
+    "openChat": "打开对话",
+    "replyDone": "回复完成",
+    "openApp": "打开应用",
+    "collapse": "收起",
+    "collapseToFloat": "收起为浮窗"
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "用 LLM 构建和维护你的个人知识库"
   },
   "common": {
-    "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭", "ok": "确定", "confirm": "确认", "notice": "提示",
-    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+    "retry": "重试",
+    "cancel": "取消",
+    "ignore": "忽略",
+    "close": "关闭",
+    "ok": "确定",
+    "confirm": "确认",
+    "notice": "提示",
+    "dismiss": "关闭",
+    "loading": "加载中……",
+    "optional": "可选"
   },
-  "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
-  "errors": { "generic": "出现错误" },
+  "layout": {
+    "showSidebar": "展开侧栏",
+    "hideSidebar": "收起侧栏"
+  },
+  "errors": {
+    "generic": "出现错误"
+  },
   "mermaid": {
     "renderFailed": "无法渲染 Mermaid 图表",
     "showDetails": "查看解析器详情",
@@ -24,17 +46,33 @@
     "graph": "关系图",
     "lint": "检查",
     "review": "待审阅",
+    "history": "历史操作",
     "skills": "Skills",
     "settings": "设置",
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "切换项目",
     "updateAvailable": "有可用更新",
-    "updateAvailableSuffix": " · 有更新"
+    "updateAvailableSuffix": " · 有更新",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "新版本 {{version}} 已发布",
     "openDownload": "打开下载页",
     "dismiss": "关闭"
+  },
+  "history": {
+    "title": "历史操作",
+    "empty": "暂无历史操作。",
+    "refresh": "刷新",
+    "openLog": "打开 log.md",
+    "actions": {
+      "ingest": "摄入",
+      "delete": "删除",
+      "exclude": "禁止摄取",
+      "review": "审阅",
+      "save": "保存到 Wiki",
+      "other": "操作"
+    }
   },
   "welcome": {
     "newProject": "新建项目",
@@ -49,17 +87,28 @@
     "allSources": "全部资料",
     "noWikiPages": "暂无 Wiki 页面，请先导入原始资料。",
     "typeLabels": {
-      "overview": "概览", "entity": "实体", "concept": "概念",
-      "source": "来源", "synthesis": "综合", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论",
-      "comparison": "比较", "query": "查询"
-    }
+      "overview": "概览",
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "synthesis": "综合",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "comparison": "比较",
+      "query": "查询"
+    },
+    "loadingWiki": "正在加载 Wiki 页面…",
+    "wikiLoadFailed": "加载 Wiki 页面失败：{{error}}"
   },
   "editor": {
     "edit": "编辑",
     "done": "完成",
     "editRaw": "编辑原始 Markdown",
     "doneEditing": "完成编辑",
+    "reader": {
+      "linkNotFound": "未找到「{{target}}」对应的文件"
+    },
     "selection": {
       "askAgent": "让 Agent 处理选中内容",
       "placeholder": "解释、改写、缩短……",
@@ -73,6 +122,14 @@
       "wordDiff": "词级修改",
       "regenerate": "重新生成",
       "closeReference": "关闭",
+      "openInPreview": "在预览中打开",
+      "cancelSelection": "取消选中",
+      "generalChatMode": "普通对话模式 - 从整个知识库搜索答案",
+      "viewFullChat": "查看完整对话",
+      "saveToConversation": "保存到对话",
+      "viewInConversation": "查看对话",
+      "exitConversation": "退出当前对话",
+      "conversationNamePlaceholder": "输入新对话命名",
       "requestFailed": "选区助手未能完成本次请求。",
       "applyFailed": "无法更新选中的文本。",
       "sourceChanged": "选中文本后文件已经发生变化。请重新选择文本，再应用修改。",
@@ -94,7 +151,15 @@
       "createFailed": "无法创建缺失页面。",
       "emptyDraftError": "模型返回了空白草稿。"
     },
-    "frontmatter": { "origin": "来源", "more": "更多" },
+    "frontmatter": {
+      "origin": "来源",
+      "more": "更多",
+      "sourceLocal": "打开源文件：{{name}}",
+      "sourceExternal": "打开外部链接：{{url}}",
+      "sourceMissing": "未找到源文件：raw/sources/ 下没有 \"{{name}}\"，也不是有效链接",
+      "relatedOpen": "打开关联页面：{{slug}}",
+      "relatedMissing": "关联页面不存在：wiki/ 下没有 \"{{slug}}\""
+    },
     "rawMarkdownEditor": "Markdown 源码编辑器"
   },
   "research": {
@@ -205,7 +270,16 @@
     },
     "openExternal": "用默认应用打开",
     "openExternalFailed": "无法打开「{{name}}」：{{error}}",
+    "revealInExplorer": "在资源管理器中打开",
+    "revealInExplorerFailed": "无法在资源管理器中打开：{{error}}",
     "ingest": "提取到 Wiki",
+    "ingestBlocked": {
+      "unsupported-type": "该文件类型暂不支持摄取。",
+      "sensitive-config": "配置文件不可摄取。",
+      "no-llm": "尚未配置可用的 LLM，请在设置中配置模型或 API Key。",
+      "all-excluded": "该文件夹下的资料均已禁止摄取。",
+      "unknown": "该文件无法摄取。"
+    },
     "ingestStatus": {
       "not-ingested": "未摄取",
       "ingested": "已摄取",
@@ -215,6 +289,10 @@
       "failed": "失败",
       "cancelled": "已取消"
     },
+    "excludeFromIngest": "禁止摄取",
+    "allowIngest": "允许摄取",
+    "excluded": "已禁止",
+    "excludeConfirm": "禁止摄取「{{name}}」？\n\n源文件会保留，但它生成的 wiki 页面将被移除。之后可重新摄取。",
     "delete": "删除资料及相关 Wiki 页面",
     "deleteConfirm": "删除「{{name}}」及其相关 Wiki 页面？\n\n此操作将：\n- 删除原始资料文件\n- 删除由该资料生成的 Wiki 页面\n- 更新 index.md",
     "deleteFolder": "删除文件夹 {{name}}（递归）",
@@ -227,10 +305,16 @@
     "searchPlaceholder": "按名称或路径筛选原始资料",
     "clearSearch": "清除资料筛选",
     "noSearchResults": "没有匹配“{{query}}”的原始资料",
+    "filterByIngestStatus": "按摄入状态筛选",
+    "filterAll": "所有文件",
+    "filterIngested": "已摄入",
+    "filterNotIngested": "未摄入",
+    "noIngestFilterResults": "没有符合筛选条件的资料",
     "filteredSourceCount": "显示 {{count}} / {{total}} 个资料",
     "sourceCount_plural": "{{count}} 个资料"
   },
   "chat": {
+    "title": "对话",
     "selectionEdit": {
       "title": "选中内容修改建议",
       "reviewHint": "写入前请确认",
@@ -277,14 +361,24 @@
     "emptyHint": "提问或开始提取资料。",
     "sources": "来源",
     "newChat": "新建对话",
+    "exitConversation": "退出当前对话",
     "newConversation": "新对话",
     "noConversationsYet": "暂无对话",
     "msgCount": "条消息",
+    "favorite": "收藏",
+    "unfavorite": "取消收藏",
+    "renameConversation": "重命名对话",
+    "deleteConversation": "删除对话",
+    "favoriteSection": "收藏",
+    "otherSection": "其他",
     "startNewConversation": "开始新对话",
     "clickNewChatToBegin": "点击「新建对话」开始",
     "typeAMessage": "输入消息...",
     "useWebSearch": "网页搜索",
     "useAnyTxtSearch": "AnyTXT 搜索",
+    "notifyFeishu": "飞书通知",
+    "feishuNotConfigured": "飞书通知未配置或环境不可用，请到 设置 → 飞书通知 配置",
+    "feishuSendFailed": "飞书通知发送失败",
     "skills": "Skills",
     "enabledSkills": "已启用 Skills",
     "skillsAutoMode": "自动",
@@ -326,6 +420,7 @@
     "referencePreview": "引用预览",
     "references": "引用",
     "details": "详情",
+    "noWikiMatch": "没有匹配的知识库页面。此回答可能未基于知识库内容。",
     "contextDetails": "上下文详情",
     "contextDetailsScope": "本回答实际记录的引用证据",
     "contextItems": "条目",
@@ -372,8 +467,17 @@
   },
   "search": {
     "title": "搜索",
+    "modeWiki": "Wiki",
+    "modeSource": "资料",
+    "modePath": "路径",
     "placeholder": "搜索 Wiki 页面...",
     "placeholderWithShortcut": "搜索 Wiki 页面……（按 Enter 搜索）",
+    "sourcePlaceholder": "按名称或路径筛选资料文件...",
+    "pathPlaceholder": "在整个仓库中按名称或路径搜索文件...",
+    "typeToFilterSource": "输入以按名称或路径筛选资料文件",
+    "typeToFilterPath": "输入以按名称或路径搜索整个仓库",
+    "sourceFileCount": "{{count}} 个文件",
+    "sourceFileCount_other": "{{count}} 个文件",
     "searching": "正在搜索……",
     "pressEnter": "按 Enter 开始搜索",
     "pageCount": "{{count}} 个页面",
@@ -407,6 +511,20 @@
     "runLint": "开始检查",
     "runLintHint": "运行检查以诊断 Wiki 健康状况",
     "runLintDescription": "检查孤立页面、失效链接等问题",
+    "scheduleSetting": "定期检查",
+    "scheduleEnabled": "在选定日期的设定时间自动运行检查",
+    "weekday": {
+      "sun": "周日",
+      "mon": "周一",
+      "tue": "周二",
+      "wed": "周三",
+      "thu": "周四",
+      "fri": "周五",
+      "sat": "周六"
+    },
+    "scheduleTime": "时间",
+    "scheduleHint": "在选定的星期几与时间自动运行结构检查。遵循“语义”开关与当前规则。",
+    "lastScheduledRun": "上次检查",
     "allClear": "一切正常！",
     "noIssues": "未发现问题。",
     "warnings": "警告",
@@ -446,6 +564,13 @@
     "clearResolved": "清除已解决",
     "refresh": "刷新",
     "refreshHint": "从磁盘重新加载审阅项",
+    "reanalyze": "重新分析",
+    "reanalyzeHint": "重新扫描待审阅项，自动解决已过期的问题",
+    "analyzing": "分析中...",
+    "cancelAnalyzeHint": "点击停止分析",
+    "reanalyzeDone": "自动解决了 {{count}} 个过期审阅项",
+    "reanalyzeEmpty": "没有需要清理的过期审阅项",
+    "reanalyzeFailed": "重新分析失败",
     "selectPending": "选择待处理项",
     "selectItem": "选择 {{title}}",
     "selectedCount": "已选择 {{count}} 项",
@@ -455,7 +580,27 @@
     "affectedPages": "相关页面",
     "allClear": "一切正常，无需审阅",
     "resolvedDivider": "— 已解决 —",
-    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}"
+    "actionFailed": "操作失败，该条目仍保持待处理，可以重试：{{error}}",
+    "openCreatedPage": "打开创建的页面",
+    "openCreatedPageHint": "打开该审阅项创建的页面",
+    "edit": {
+      "title": "知识库修改",
+      "close": "关闭",
+      "noTarget": "该项目没有可修改的源文件",
+      "fileUnreadable": "无法读取该项目关联的文件",
+      "instructionPlaceholder": "输入修改指令，例如：根据知识库补充这部分内容…",
+      "generate": "生成修改",
+      "generating": "生成中…",
+      "searchingContext": "正在检索知识库上下文…",
+      "generatingWithDiff": "正在生成修改…",
+      "stop": "停止",
+      "reject": "拒绝",
+      "apply": "应用修改",
+      "applying": "应用中…",
+      "diffTitle": "修改对比",
+      "generateFailed": "生成修改失败，请重试",
+      "applyFailed": "应用修改失败"
+    }
   },
   "settings": {
     "title": "设置",
@@ -488,11 +633,13 @@
       "scheduledImport": "定时导入",
       "mineru": "MinerU PDF",
       "apiServer": "API + MCP",
+      "feishu": "飞书通知",
       "output": "输出偏好",
       "interface": "界面",
       "maintenance": "维护",
       "changelog": "更新日志",
-      "about": "关于"
+      "about": "关于",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -533,7 +680,7 @@
           "activeDefault": "使用当前活跃模型",
           "hint": "可为交互聊天和文档摄取分别选择模型；未指定时继续使用当前活跃模型。"
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "为当前项目使用独立模型",
           "provider": "项目 Provider",
           "selectProvider": "选择 Provider",
@@ -619,7 +766,6 @@
           "max": "最大",
           "custom": "自定义",
           "budgetTokens": "thinking token 预算",
-
           "hint": "控制聊天时的推理强度；文档摄取使用下方的独立设置。",
           "ingestTitle": "导入时的推理",
           "ingestHint": "通常应关闭：导入需要结构化输出，推理只会增加耗时而无助于质量。仅当模型拒绝在关闭推理的情况下运行时才调高。"
@@ -903,7 +1049,16 @@
         "zoom": "界面缩放",
         "zoomHint": "缩放应用内文字和基于 rem 的间距。少数固定像素面板会保留实际尺寸限制。",
         "zoomIn": "放大",
-        "zoomOut": "缩小"
+        "zoomOut": "缩小",
+        "background": "背景",
+        "backgroundHint": "选择一张图片并调节透明度以柔和应用背景。图片会透过半透明面板显示。保存后生效。",
+        "backgroundEmpty": "未设置背景图片",
+        "backgroundImport": "导入图片",
+        "backgroundRemove": "移除",
+        "backgroundOpacity": "透明度",
+        "backgroundBrightness": "亮度",
+        "backgroundSizeError": "图片过大，请选择 5MB 以下的图片。",
+        "backgroundImportError": "图片导入失败。"
       },
       "maintenance": {
         "title": "维护",
@@ -919,6 +1074,16 @@
           "rebuilt": "已使用 {{pages}} 个页面、{{groups}} 个分组重建索引。",
           "exported": "项目已导出到 {{path}}",
           "imported": "已导入 {{name}}，请切换项目后打开。"
+        },
+        "indexSchedule": {
+          "title": "定期重建索引",
+          "enabled": "定期自动重建索引",
+          "interval": "间隔",
+          "minutes": "分钟",
+          "lastRun": "上次重建",
+          "hint": "用与上方按钮相同的确定性方式自动重建 wiki/index.md。设 60 为每小时，1440 为每天。",
+          "save": "保存计划",
+          "saving": "保存中..."
         },
         "history": {
           "title": "文件版本历史",
@@ -1025,10 +1190,42 @@
         "testing": "测试中...",
         "testSuccess": "连接成功",
         "testFailed": "测试失败"
+      },
+      "jira": {
+        "title": "Jira 集成",
+        "description": "连接 Jira Server / Data Center 实例，搜索工单并导出为项目内的 Markdown 文档。",
+        "baseUrl": "服务器地址",
+        "baseUrlHint": "实例根地址，例如 https://jira.example.com。使用 HTTP Basic 认证，仅支持 SSO 的登录方式不可用。",
+        "username": "用户名",
+        "password": "密码",
+        "showPassword": "显示密码",
+        "hidePassword": "隐藏密码",
+        "testConnection": "测试连接",
+        "testRunning": "测试中…",
+        "testOk": "已连接 {{title}}（Jira {{version}}）",
+        "passwordWarningTitle": "密码以明文保存",
+        "passwordWarning": "与应用内其他 API Key 一样，密码会被明文写入应用状态文件；能读取该文件的人即可看到密码。",
+        "acceptInvalidCerts": "跳过 TLS 证书校验",
+        "acceptInvalidCertsHint": "内网实例的证书不在系统信任库中时需要开启。开启后连接可被中间人拦截，请仅在确实因证书导致失败时使用。",
+        "userAgent": "User-Agent",
+        "userAgentHint": "部分企业网关只放行已知客户端；除非被代理拦截，否则保持默认值。",
+        "exportTitle": "导出",
+        "exportDir": "导出目录",
+        "exportDirHint": "相对路径以项目根目录为基准。当前解析为：",
+        "maxAttachmentMb": "附件下载大小上限（MB）",
+        "maxAttachmentMbHint": "超过该大小的附件仍会在文档中列出文件名，但不下载。",
+        "processFieldId": "「任务过程描述」字段 ID",
+        "processFieldIdHint": "对应文档中「任务过程描述」一节的自定义字段，可在工单的 XML/JSON 视图中找到；实例没有该字段时留空。",
+        "searchTitle": "搜索",
+        "scopeJql": "JQL 范围",
+        "scopeJqlHint": "会作为附加条件加入每次搜索。留空表示全站；填 project = AERDM 或 updated >= -365d 之类的范围，才能让「扫描最近工单」更有意义。"
       }
     }
   },
   "preview": {
+    "closeTab": "关闭标签",
+    "closeOtherTabs": "关闭其他标签",
+    "closeAllTabs": "关闭所有标签",
     "selectFile": "选择文件以预览",
     "notAvailable": "该文件类型暂不支持预览",
     "viewAsText": "作为文本查看",
@@ -1072,6 +1269,9 @@
     "selectedCount": "已选择 {{count}} 项",
     "restartSelected": "重新启动",
     "cancelSelected": "取消",
+    "removeSelected": "移除",
+    "removeSelectedTitle": "将选中的已取消任务从队列移除",
+    "removeOnlyCancelled": "仅已取消的任务可移除（已跳过 {{count}} 个）。",
     "selectTask": "选择 {{name}}",
     "moveUp": "提前",
     "moveDown": "延后",
@@ -1079,18 +1279,33 @@
     "fileSync": "文件同步",
     "rescan": "重新扫描",
     "rescanTitle": "扫描项目文件的外部变更",
-    "changeKinds": { "created": "已创建", "modified": "已修改", "deleted": "已删除" },
+    "changeKinds": {
+      "created": "已创建",
+      "modified": "已修改",
+      "deleted": "已删除"
+    },
     "fileTypes": {
-      "entity": "实体", "concept": "概念", "source": "来源", "query": "查询",
-      "synthesis": "综合", "comparison": "比较", "finding": "发现",
-      "thesis": "论点", "methodology": "方法论", "overview": "概览",
-      "index": "索引", "log": "日志", "file": "文件"
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "query": "查询",
+      "synthesis": "综合",
+      "comparison": "比较",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "overview": "概览",
+      "index": "索引",
+      "log": "日志",
+      "file": "文件"
     }
   },
   "fileTree": {
     "noProject": "未打开项目",
     "openProjectFolder": "打开项目目录",
-    "openProjectFolderFailed": "无法打开项目目录。"
+    "openProjectFolderFailed": "无法打开项目目录。",
+    "revealInExplorer": "在资源管理器中打开",
+    "revealInExplorerFailed": "无法在资源管理器中打开：{{error}}"
   },
   "graph": {
     "openProject": "打开项目以查看关系图",
@@ -1169,5 +1384,71 @@
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
     "daysAgo": "{{count}} 天前"
+  },
+  "jira": {
+    "search": {
+      "submit": "搜索",
+      "limit": "{{count}} 条",
+      "limitHint": "每次搜索返回的最大条数",
+      "dimTitle": "标题",
+      "dimKeyword": "关键词",
+      "dimIssueKey": "工单号",
+      "dimsHint": "勾选搜索范围：标题、全文关键词或工单号（多个工单号用逗号分隔）。改动后立即重新搜索。",
+      "searching": "搜索中…",
+      "empty": "输入关键词后搜索，或直接点击「搜索」浏览最近更新的工单。",
+      "noMatch": "没有符合当前条件的工单。",
+      "found": "{{count}} 个匹配工单",
+      "swept": "另已扫描最近更新的 {{count}} 个工单",
+      "limitReached": "已达扫描上限（{{count}}）",
+      "loadMore": "继续扫描更早的工单",
+      "unconfigured": "尚未配置 Jira。请在「设置 → Jira」中填写服务器地址、用户名和密码。"
+    },
+    "error": {
+      "title": "Jira 请求失败",
+      "config": "尚未配置 Jira",
+      "auth": "认证失败，请检查用户名和密码。",
+      "notFound": "未找到该工单。",
+      "network": "无法连接 Jira。"
+    },
+    "export": {
+      "export": "导出",
+      "exporting": "导出中…",
+      "exportingAttachments": "附件 {{completed}}/{{total}}",
+      "reExport": "重新导出",
+      "retry": "重试",
+      "done": "已导出到 {{path}}",
+      "overwriteMessage": "{{path}} 已存在，是否覆盖？",
+      "overwriteConfirm": "覆盖"
+    },
+    "exported": {
+      "loading": "加载中…",
+      "empty": "还没有导出过工单。",
+      "open": "打开",
+      "reveal": "在文件夹中显示",
+      "reExport": "重新导出",
+      "history": "该工单另有 {{count}} 份历史导出仍保留在磁盘上",
+      "openFailed": "无法打开导出的文件：{{error}}"
+    },
+    "searchPlaceholder": "按标题或标签搜索工单…",
+    "filter": {
+      "project": "项目",
+      "issuetype": "问题类型",
+      "status": "状态",
+      "assignee": "经办人",
+      "reporter": "责任人",
+      "all": "全部",
+      "searchPlaceholder": "输入以筛选，如：王",
+      "loading": "筛选选项加载中…",
+      "unassigned": "未分配",
+      "clear": "清除筛选"
+    },
+    "matchCase": "区分大小写",
+    "matchCaseHint": "区分大小写的匹配。只过滤已取得的结果，不会重新发起请求。",
+    "mode": {
+      "search": "搜索",
+      "exported": "已导出"
+    },
+    "refresh": "刷新",
+    "openJira": "打开 Jira"
   }
 }

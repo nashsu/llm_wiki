@@ -1,5 +1,6 @@
-import { useEffect, useCallback, useRef } from "react"
-import { X } from "lucide-react"
+import { useEffect, useCallback, useRef, useState } from "react"
+import { MoreHorizontal, X } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile } from "@/commands/fs"
 import { getFileCategory, isBinary, isExtractedTextPreviewFile } from "@/lib/file-types"
@@ -8,12 +9,19 @@ import { FilePreview } from "@/components/editor/file-preview"
 import { getFileName } from "@/lib/path-utils"
 
 export function PreviewPanel() {
+  const { t } = useTranslation()
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const fileContent = useWikiStore((s) => s.fileContent)
   const previewContentPath = useWikiStore((s) => s.previewContentPath)
   const externalPreview = useWikiStore((s) => s.externalPreview)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const closePreview = useWikiStore((s) => s.closePreview)
+  const recentPreviewPaths = useWikiStore((s) => s.recentPreviewPaths)
+  const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
+  const closePreviewTab = useWikiStore((s) => s.closePreviewTab)
+  const closeOtherPreviewTabs = useWikiStore((s) => s.closeOtherPreviewTabs)
+  const closeAllPreviewTabs = useWikiStore((s) => s.closeAllPreviewTabs)
+  const [tabMenuOpen, setTabMenuOpen] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Snapshot of what was most recently loaded from disk. Milkdown re-emits
   // `markdownUpdated` on initial parse (before the user types anything),
@@ -91,6 +99,30 @@ export function PreviewPanel() {
     }
   }, [])
 
+  // 关闭单个标签：关的是当前文件则切到相邻标签（原位置右侧优先，否则左侧）；
+  // 没有相邻标签则关闭整个预览。
+  const handleCloseTab = useCallback((path: string) => {
+    const before = useWikiStore.getState().recentPreviewPaths
+    const index = before.indexOf(path)
+    const remaining = before.filter((p) => p !== path)
+    closePreviewTab(path)
+    if (path === useWikiStore.getState().selectedFile) {
+      const next = remaining[index] ?? remaining[index - 1] ?? null
+      if (next) openPathInPreview(next)
+      else closePreview()
+    }
+  }, [closePreviewTab, openPathInPreview, closePreview])
+
+  const handleCloseOtherTabs = useCallback((path: string) => {
+    closeOtherPreviewTabs(path)
+    if (useWikiStore.getState().selectedFile !== path) openPathInPreview(path)
+  }, [closeOtherPreviewTabs, openPathInPreview])
+
+  const handleCloseAllTabs = useCallback(() => {
+    closeAllPreviewTabs()
+    closePreview()
+  }, [closeAllPreviewTabs, closePreview])
+
   if (!selectedFile) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -106,6 +138,75 @@ export function PreviewPanel() {
 
   return (
     <div className="flex h-full flex-col">
+      {recentPreviewPaths.length > 0 && (
+        <div className="flex items-center border-b bg-muted/20 px-1 py-1">
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+          {recentPreviewPaths.map((path) => {
+            const isActive = path === selectedFile
+            return (
+              <div
+                key={path}
+                className={`group flex max-w-[160px] shrink-0 cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs ${
+                  isActive
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+                onClick={() => {
+                  if (!isActive) openPathInPreview(path)
+                }}
+                title={path}
+              >
+                <span className="truncate">{getFileName(path)}</span>
+                <button
+                  className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleCloseTab(path)
+                  }}
+                  title={t("preview.closeTab")}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )
+          })}
+          </div>
+          <div className="relative ml-auto shrink-0">
+            <button
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setTabMenuOpen((open) => !open)}
+              onBlur={() => setTabMenuOpen(false)}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+            {tabMenuOpen && (
+              <div
+                className="absolute right-0 top-full z-10 mt-1 w-36 rounded-md border border-border bg-background py-1 text-xs shadow-md"
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <button
+                  className="w-full px-3 py-1.5 text-start hover:bg-accent"
+                  onClick={() => {
+                    setTabMenuOpen(false)
+                    if (selectedFile) handleCloseOtherTabs(selectedFile)
+                  }}
+                >
+                  {t("preview.closeOtherTabs")}
+                </button>
+                <button
+                  className="w-full px-3 py-1.5 text-start hover:bg-accent"
+                  onClick={() => {
+                    setTabMenuOpen(false)
+                    handleCloseAllTabs()
+                  }}
+                >
+                  {t("preview.closeAllTabs")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between border-b px-3 py-1.5">
         <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
           {fileName}
@@ -127,7 +228,6 @@ export function PreviewPanel() {
           />
         ) : category === "markdown" ? (
           <WikiEditor
-            key={selectedFile}
             content={fileContent}
             onSave={handleSave}
             filePath={selectedFile}

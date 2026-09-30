@@ -1,9 +1,12 @@
 import { load } from "@tauri-apps/plugin-store"
 import type { WikiProject } from "@/types/wiki"
-import type { ApiConfig, CustomLlmPreset, GeneralConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import type { ApiConfig, CustomLlmPreset, GeneralConfig, JiraConfig, LlmConfig, SearchApiConfig, EmbeddingConfig, MineruConfig, MultimodalConfig, OutputLanguage, ProjectLlmOverride, ProviderConfigs, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, TaskModelRoutingConfig } from "@/stores/wiki-store"
+import { normalizeFeishuConfig, type FeishuNotifyConfig } from "@/lib/feishu"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { normalizeJiraConfig } from "@/lib/jira-config"
 import { normalizePath } from "@/lib/path-utils"
 import { DEFAULT_ZOOM_LEVEL, clampZoomLevel } from "@/stores/zoom-store"
+import { DEFAULT_BACKGROUND_OPACITY, DEFAULT_BACKGROUND_BRIGHTNESS } from "@/stores/background-store"
 
 const STORE_NAME = "app-state.json"
 const RECENT_PROJECTS_KEY = "recentProjects"
@@ -165,6 +168,18 @@ export async function saveSearchApiConfig(config: SearchApiConfig): Promise<void
 export async function loadSearchApiConfig(): Promise<SearchApiConfig | null> {
   const store = await getStore()
   return (await store.get<SearchApiConfig>(SEARCH_API_KEY)) ?? null
+}
+
+const JIRA_CONFIG_KEY = "jiraConfig"
+
+export async function saveJiraConfig(config: JiraConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(JIRA_CONFIG_KEY, config)
+}
+
+export async function loadJiraConfig(): Promise<JiraConfig> {
+  const store = await getStore()
+  return normalizeJiraConfig(await store.get<Partial<JiraConfig>>(JIRA_CONFIG_KEY))
 }
 
 const EMBEDDING_KEY = "embeddingConfig"
@@ -332,6 +347,20 @@ export async function loadGeneralConfig(): Promise<GeneralConfig> {
   return normalizeGeneralConfig(config)
 }
 
+const FEISHU_CONFIG_KEY = "feishuConfig"
+
+export async function saveFeishuConfig(config: FeishuNotifyConfig): Promise<void> {
+  const store = await getStore()
+  await store.set(FEISHU_CONFIG_KEY, normalizeFeishuConfig(config))
+  await store.save()
+}
+
+export async function loadFeishuConfig(): Promise<FeishuNotifyConfig> {
+  const store = await getStore()
+  const config = await store.get<Partial<FeishuNotifyConfig>>(FEISHU_CONFIG_KEY)
+  return normalizeFeishuConfig(config)
+}
+
 const SCHEDULED_IMPORT_KEY_PREFIX = "scheduledImportConfig:"
 
 function scheduledImportKey(projectPath: string): string {
@@ -402,6 +431,45 @@ export async function saveTheme(theme: "light" | "dark" | "system"): Promise<voi
 export async function loadTheme(): Promise<"light" | "dark" | "system" | null> {
   const store = await getStore()
   return (await store.get<"light" | "dark" | "system">(THEME_KEY)) ?? null
+}
+
+const BACKGROUND_IMAGE_KEY = "backgroundImage"
+const BACKGROUND_OPACITY_KEY = "backgroundOpacity"
+const BACKGROUND_BRIGHTNESS_KEY = "backgroundBrightness"
+
+export async function saveBackgroundImage(dataUrl: string | null): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKGROUND_IMAGE_KEY, dataUrl)
+  await store.save()
+}
+
+export async function loadBackgroundImage(): Promise<string | null> {
+  const store = await getStore()
+  return (await store.get<string | null>(BACKGROUND_IMAGE_KEY)) ?? null
+}
+
+export async function saveBackgroundOpacity(opacity: number): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKGROUND_OPACITY_KEY, opacity)
+  await store.save()
+}
+
+export async function loadBackgroundOpacity(): Promise<number> {
+  const store = await getStore()
+  const opacity = await store.get<number>(BACKGROUND_OPACITY_KEY)
+  return typeof opacity === "number" ? opacity : DEFAULT_BACKGROUND_OPACITY
+}
+
+export async function saveBackgroundBrightness(brightness: number): Promise<void> {
+  const store = await getStore()
+  await store.set(BACKGROUND_BRIGHTNESS_KEY, brightness)
+  await store.save()
+}
+
+export async function loadBackgroundBrightness(): Promise<number> {
+  const store = await getStore()
+  const brightness = await store.get<number>(BACKGROUND_BRIGHTNESS_KEY)
+  return typeof brightness === "number" ? brightness : DEFAULT_BACKGROUND_BRIGHTNESS
 }
 
 const OUTPUT_LANGUAGE_KEY = "outputLanguage"

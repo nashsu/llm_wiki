@@ -1,6 +1,9 @@
 import { create } from "zustand"
 import type { WikiProject, FileNode } from "@/types/wiki"
+import type { JiraSearchDimensions } from "@/types/jira"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
+import { DEFAULT_FEISHU_CONFIG, type FeishuNotifyConfig } from "@/lib/feishu"
+import { DEFAULT_JIRA_CONFIG } from "@/lib/jira-config"
 import {
   buildProjectPathIndexFromTree,
   createEmptyProjectPathIndex,
@@ -278,7 +281,35 @@ interface SourceWatchConfig {
   excludeExtensions: string[]
   excludeDirs: string[]
   excludeGlobs: string[]
+  /** Exact file/folder paths (source-relative, e.g. "foo.md" / "docs/foo.pdf")
+   *  excluded from ingest via the Sources view. */
+  excludedPaths: string[]
   maxFileSizeMb: number
+}
+
+interface JiraConfig {
+  baseUrl: string
+  username: string
+  /** Stored in plain text, like every other credential this app keeps. */
+  password: string
+  /** Custom field id holding 「任务过程描述」(e.g. "customfield_10447"). Empty = not captured. */
+  processFieldId: string
+  /** Where exported md files land. Relative paths resolve against the project root. */
+  exportDir: string
+  /** Extra JQL AND-ed into every search. Empty = whole instance. */
+  scopeJql: string
+  /** Client-side only: case-sensitive substring matching. Never changes the request. */
+  matchCase: boolean
+  /** Which dimensions (title/keyword/issue key) a text query searches. */
+  searchDims: JiraSearchDimensions
+  /** Skip TLS verification for Jira requests (intranet certs outside the system trust store). */
+  acceptInvalidCerts: boolean
+  userAgent: string
+  maxAttachmentMb: number
+  sweepPageSize: number
+  maxSweepIssues: number
+  /** Run the recent-window sweep when the JQL pass returns fewer than this many issues. */
+  sweepThreshold: number
 }
 
 export type MineruModelVersion = "pipeline" | "vlm"
@@ -387,6 +418,16 @@ export interface ExternalPreview {
   snippet: string
 }
 
+const RECENT_PREVIEW_PATHS_LIMIT = 10
+
+/** 记录最近打开的预览路径（新→旧，去重，上限 10）。内存伪路径（anytxt://
+ *  等）不落盘、重读不到，跳过不记。 */
+function pushRecentPreviewPath(paths: string[], path: string): string[] {
+  if (path.includes("://")) return paths
+  const next = [path, ...paths.filter((p) => p !== path)]
+  return next.length > RECENT_PREVIEW_PATHS_LIMIT ? next.slice(0, RECENT_PREVIEW_PATHS_LIMIT) : next
+}
+
 interface WikiState {
   project: WikiProject | null
   fileTree: FileNode[]
@@ -401,6 +442,12 @@ interface WikiState {
   fileContent: string
   previewContentPath: string | null
   externalPreview: ExternalPreview | null
+  /**
+   * 最近打开过的预览文件路径（预览区标签条数据源，新→旧）。仅记录真实
+   * 磁盘路径；anytxt://、external-preview:// 等内存伪路径不落盘、无法重读，
+   * 不进列表。会话内有效，不持久化。
+   */
+  recentPreviewPaths: string[]
   /**
    * View that handed control to the full-width wiki preview. Closing the
    * preview must return there instead of leaving an empty wiki surface.
@@ -422,7 +469,7 @@ interface WikiState {
    * one wiki-relative) still works.
    */
   pendingScrollImageSrc: string | null
-  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "skills" | "settings"
+  activeView: "chat" | "wiki" | "sources" | "search" | "graph" | "lint" | "review" | "jira" | "skills" | "settings" | "history"
   llmConfig: LlmConfig
   /** Persisted global/default config, kept separate while a project override is effective. */
   globalLlmConfig: LlmConfig
@@ -440,10 +487,12 @@ interface WikiState {
   proxyConfig: ProxyConfig
   scheduledImportConfig: ScheduledImportConfig
   sourceWatchConfig: SourceWatchConfig
+  jiraConfig: JiraConfig
   sourceWatchAllProjects: boolean
   mineruConfig: MineruConfig
   apiConfig: ApiConfig
   generalConfig: GeneralConfig
+  feishuConfig: FeishuNotifyConfig
   graphUiState: GraphUiState
   dataVersion: number
 
@@ -455,6 +504,9 @@ interface WikiState {
   openPathInPreview: (path: string) => void
   openFileInPreview: (path: string, content: string) => void
   closePreview: () => void
+  closePreviewTab: (path: string) => void
+  closeOtherPreviewTabs: (path: string) => void
+  closeAllPreviewTabs: () => void
   setExternalPreview: (preview: ExternalPreview | null) => void
   setPendingScrollImageSrc: (src: string | null) => void
   setActiveView: (view: WikiState["activeView"]) => void
@@ -472,10 +524,12 @@ interface WikiState {
   setProxyConfig: (config: ProxyConfig) => void
   setScheduledImportConfig: (config: ScheduledImportConfig) => void
   setSourceWatchConfig: (config: SourceWatchConfig) => void
+  setJiraConfig: (config: JiraConfig) => void
   setSourceWatchAllProjects: (enabled: boolean) => void
   setMineruConfig: (config: MineruConfig) => void
   setApiConfig: (config: ApiConfig) => void
   setGeneralConfig: (config: GeneralConfig) => void
+  setFeishuConfig: (config: FeishuNotifyConfig) => void
   setGraphUiState: (state: GraphUiState | ((current: GraphUiState) => GraphUiState)) => void
   resetGraphUiState: () => void
   bumpDataVersion: () => void
@@ -489,6 +543,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   fileContent: "",
   previewContentPath: null,
   externalPreview: null,
+  recentPreviewPaths: [],
   previewReturnView: null,
   pendingScrollImageSrc: null,
   activeView: "wiki",
@@ -551,6 +606,7 @@ export const useWikiStore = create<WikiState>((set) => ({
       activeView: "wiki",
       previewReturnView:
         state.activeView === "wiki" ? state.previewReturnView : state.activeView,
+      recentPreviewPaths: pushRecentPreviewPath(state.recentPreviewPaths, selectedFile),
     })),
   openFileInPreview: (selectedFile, fileContent) =>
     set((state) => ({
@@ -561,6 +617,7 @@ export const useWikiStore = create<WikiState>((set) => ({
       activeView: "wiki",
       previewReturnView:
         state.activeView === "wiki" ? state.previewReturnView : state.activeView,
+      recentPreviewPaths: pushRecentPreviewPath(state.recentPreviewPaths, selectedFile),
     })),
   closePreview: () =>
     set((state) => ({
@@ -571,6 +628,11 @@ export const useWikiStore = create<WikiState>((set) => ({
       activeView: state.previewReturnView ?? "wiki",
       previewReturnView: null,
     })),
+  closePreviewTab: (path) =>
+    set((state) => ({ recentPreviewPaths: state.recentPreviewPaths.filter((p) => p !== path) })),
+  closeOtherPreviewTabs: (path) =>
+    set((state) => ({ recentPreviewPaths: state.recentPreviewPaths.filter((p) => p === path) })),
+  closeAllPreviewTabs: () => set({ recentPreviewPaths: [] }),
   setExternalPreview: (externalPreview) => set({ externalPreview }),
   setPendingScrollImageSrc: (pendingScrollImageSrc) => set({ pendingScrollImageSrc }),
   setActiveView: (activeView) => set({ activeView, previewReturnView: null }),
@@ -633,6 +695,7 @@ export const useWikiStore = create<WikiState>((set) => ({
   },
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
+  jiraConfig: DEFAULT_JIRA_CONFIG,
   sourceWatchAllProjects: false,
   mineruConfig: {
     enabled: false,
@@ -668,6 +731,8 @@ export const useWikiStore = create<WikiState>((set) => ({
     closeBehavior: "minimize",
   },
 
+  feishuConfig: DEFAULT_FEISHU_CONFIG,
+
   graphUiState: createDefaultGraphUiState(),
 
   setLlmConfig: (llmConfig) => set({ llmConfig }),
@@ -684,10 +749,12 @@ export const useWikiStore = create<WikiState>((set) => ({
   setProxyConfig: (proxyConfig) => set({ proxyConfig }),
   setScheduledImportConfig: (scheduledImportConfig) => set({ scheduledImportConfig }),
   setSourceWatchConfig: (sourceWatchConfig) => set({ sourceWatchConfig }),
+  setJiraConfig: (jiraConfig) => set({ jiraConfig }),
   setSourceWatchAllProjects: (sourceWatchAllProjects) => set({ sourceWatchAllProjects }),
   setMineruConfig: (mineruConfig) => set({ mineruConfig }),
   setApiConfig: (apiConfig) => set({ apiConfig }),
   setGeneralConfig: (generalConfig) => set({ generalConfig }),
+  setFeishuConfig: (feishuConfig) => set({ feishuConfig }),
   setGraphUiState: (graphUiState) =>
     set((state) => ({
       graphUiState: typeof graphUiState === "function"
@@ -698,4 +765,4 @@ export const useWikiStore = create<WikiState>((set) => ({
   bumpDataVersion: () => set((state) => ({ dataVersion: state.dataVersion + 1 })),
 }))
 
-export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, ApiConfig }
+export type { WikiState, LlmConfig, SearchApiConfig, EmbeddingConfig, MultimodalConfig, OutputLanguage, ProxyConfig, ScheduledImportConfig, SourceWatchConfig, JiraConfig, ApiConfig }

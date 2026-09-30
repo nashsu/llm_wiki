@@ -1,14 +1,36 @@
 {
+  "floating": {
+    "chatTitle": "Chat",
+    "empty": "No active conversation",
+    "openChat": "Open chat",
+    "replyDone": "The reply is ready.",
+    "openApp": "Open app",
+    "collapse": "Collapse",
+    "collapseToFloat": "Collapse to floating window"
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "Build and maintain your personal knowledge base with LLMs"
   },
   "common": {
-    "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close", "ok": "OK", "confirm": "Confirm", "notice": "Notice",
-    "dismiss": "Dismiss", "loading": "Loading...", "optional": "optional"
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "ignore": "Ignore",
+    "close": "Close",
+    "ok": "OK",
+    "confirm": "Confirm",
+    "notice": "Notice",
+    "dismiss": "Dismiss",
+    "loading": "Loading...",
+    "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
-  "errors": { "generic": "Something went wrong" },
+  "layout": {
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar"
+  },
+  "errors": {
+    "generic": "Something went wrong"
+  },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",
     "showDetails": "Show parser details",
@@ -24,17 +46,33 @@
     "graph": "Graph",
     "lint": "Lint",
     "review": "Review",
+    "history": "History",
     "skills": "Skills",
     "settings": "Settings",
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Switch Project",
     "updateAvailable": "Update available",
-    "updateAvailableSuffix": " · update"
+    "updateAvailableSuffix": " · update",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "Version {{version}} is available",
     "openDownload": "Open download page",
     "dismiss": "Dismiss"
+  },
+  "history": {
+    "title": "Operation history",
+    "empty": "No operation history yet.",
+    "refresh": "Refresh",
+    "openLog": "Open log.md",
+    "actions": {
+      "ingest": "Ingest",
+      "delete": "Delete",
+      "exclude": "Excluded from ingest",
+      "review": "Review",
+      "save": "Save to wiki",
+      "other": "Operation"
+    }
   },
   "welcome": {
     "newProject": "New Project",
@@ -49,17 +87,28 @@
     "allSources": "All sources",
     "noWikiPages": "No wiki pages yet. Import sources to get started.",
     "typeLabels": {
-      "overview": "Overview", "entity": "Entities", "concept": "Concepts",
-      "source": "Sources", "synthesis": "Synthesis", "finding": "Findings",
-      "thesis": "Theses", "methodology": "Methodologies",
-      "comparison": "Comparisons", "query": "Queries"
-    }
+      "overview": "Overview",
+      "entity": "Entities",
+      "concept": "Concepts",
+      "source": "Sources",
+      "synthesis": "Synthesis",
+      "finding": "Findings",
+      "thesis": "Theses",
+      "methodology": "Methodologies",
+      "comparison": "Comparisons",
+      "query": "Queries"
+    },
+    "loadingWiki": "Loading wiki pages...",
+    "wikiLoadFailed": "Failed to load wiki pages: {{error}}"
   },
   "editor": {
     "edit": "Edit",
     "done": "Done",
     "editRaw": "Edit raw Markdown",
     "doneEditing": "Done editing",
+    "reader": {
+      "linkNotFound": "No file found for \"{{target}}\""
+    },
     "selection": {
       "askAgent": "Ask Agent about selection",
       "placeholder": "Explain, rewrite, shorten...",
@@ -73,6 +122,14 @@
       "wordDiff": "Word-level changes",
       "regenerate": "Regenerate",
       "closeReference": "Close",
+      "openInPreview": "Open in preview",
+      "cancelSelection": "Cancel selection",
+      "generalChatMode": "General chat mode - search entire knowledge base",
+      "viewFullChat": "View full chat",
+      "saveToConversation": "Save to conversation",
+      "viewInConversation": "View conversation",
+      "exitConversation": "Exit conversation",
+      "conversationNamePlaceholder": "Name this conversation",
       "requestFailed": "The selection assistant could not complete this request.",
       "applyFailed": "The selected text could not be updated.",
       "sourceChanged": "The file changed after this text was selected. Select the text again before applying the edit.",
@@ -94,7 +151,15 @@
       "createFailed": "The missing page could not be created.",
       "emptyDraftError": "The model returned an empty draft."
     },
-    "frontmatter": { "origin": "Origin", "more": "More" },
+    "frontmatter": {
+      "origin": "Origin",
+      "more": "More",
+      "sourceLocal": "Open source file: {{name}}",
+      "sourceExternal": "Open external link: {{url}}",
+      "sourceMissing": "Source not found: no \"{{name}}\" in raw/sources/ and not a valid URL",
+      "relatedOpen": "Open related page: {{slug}}",
+      "relatedMissing": "Related page not found: no \"{{slug}}\" in wiki/"
+    },
     "rawMarkdownEditor": "Raw Markdown editor"
   },
   "research": {
@@ -205,7 +270,16 @@
     },
     "openExternal": "Open in default app",
     "openExternalFailed": "Failed to open {{name}}: {{error}}",
+    "revealInExplorer": "Open in file manager",
+    "revealInExplorerFailed": "Failed to open in file manager: {{error}}",
     "ingest": "Ingest",
+    "ingestBlocked": {
+      "unsupported-type": "This file type isn't supported for ingest.",
+      "sensitive-config": "Config files can't be ingested.",
+      "no-llm": "No usable LLM configured. Set a model or API key in Settings.",
+      "all-excluded": "Every source in this folder is excluded from ingest.",
+      "unknown": "This file can't be ingested."
+    },
     "ingestStatus": {
       "not-ingested": "Not ingested",
       "ingested": "Ingested",
@@ -215,6 +289,10 @@
       "failed": "Failed",
       "cancelled": "Cancelled"
     },
+    "excludeFromIngest": "Exclude from ingest",
+    "allowIngest": "Allow ingest",
+    "excluded": "Excluded",
+    "excludeConfirm": "Exclude \"{{name}}\" from ingest?\n\nThe source file will be kept, but any wiki pages it generated will be removed. You can re-ingest it later.",
     "delete": "Delete source and related wiki pages",
     "deleteConfirm": "Delete \"{{name}}\" and its related wiki pages?\n\nThis will:\n- Delete the source file\n- Delete wiki pages generated from this source\n- Update index.md",
     "deleteFolder": "Delete folder {{name}} (recursive)",
@@ -227,10 +305,16 @@
     "searchPlaceholder": "Filter sources by name or path",
     "clearSearch": "Clear source filter",
     "noSearchResults": "No sources match “{{query}}”",
+    "filterByIngestStatus": "Filter by ingest status",
+    "filterAll": "All files",
+    "filterIngested": "Ingested",
+    "filterNotIngested": "Not ingested",
+    "noIngestFilterResults": "No sources match the current filter",
     "filteredSourceCount": "{{count}} of {{total}} sources",
     "sourceCount_plural": "{{count}} sources"
   },
   "chat": {
+    "title": "Chat",
     "selectionEdit": {
       "title": "Proposed selection edit",
       "reviewHint": "Review before writing",
@@ -277,14 +361,24 @@
     "emptyHint": "Ask a question or start an ingest to begin.",
     "sources": "Sources",
     "newChat": "New Chat",
+    "exitConversation": "Exit conversation",
     "newConversation": "New Conversation",
     "noConversationsYet": "No conversations yet",
     "msgCount": "msgs",
+    "favorite": "Favorite",
+    "unfavorite": "Unfavorite",
+    "renameConversation": "Rename conversation",
+    "deleteConversation": "Delete conversation",
+    "favoriteSection": "Favorites",
+    "otherSection": "Others",
     "startNewConversation": "Start a new conversation",
     "clickNewChatToBegin": "Click \"New Chat\" to begin",
     "typeAMessage": "Type a message...",
     "useWebSearch": "Web search",
     "useAnyTxtSearch": "AnyTXT search",
+    "notifyFeishu": "Feishu notify",
+    "feishuNotConfigured": "Feishu notify is not configured or unavailable. Configure it in Settings → Feishu Notify",
+    "feishuSendFailed": "Feishu notification failed",
     "skills": "Skills",
     "enabledSkills": "Enabled skills",
     "skillsAutoMode": "Auto",
@@ -326,6 +420,7 @@
     "referencePreview": "Reference preview",
     "references": "References",
     "details": "Details",
+    "noWikiMatch": "No matching wiki pages were found. This answer may not be grounded in the knowledge base.",
     "contextDetails": "Context details",
     "contextDetailsScope": "Recorded evidence supplied for this answer",
     "contextItems": "Items",
@@ -372,8 +467,17 @@
   },
   "search": {
     "title": "Search",
+    "modeWiki": "Wiki",
+    "modeSource": "Sources",
+    "modePath": "Path",
     "placeholder": "Search wiki pages...",
     "placeholderWithShortcut": "Search wiki pages... (Enter to search)",
+    "sourcePlaceholder": "Filter source files by name or path...",
+    "pathPlaceholder": "Search repository files by name or path...",
+    "typeToFilterSource": "Type to filter source files by name or path",
+    "typeToFilterPath": "Type to search the whole repository by name or path",
+    "sourceFileCount": "{{count}} file",
+    "sourceFileCount_other": "{{count}} files",
     "searching": "Searching...",
     "pressEnter": "Press Enter to search",
     "pageCount": "{{count}} page",
@@ -407,6 +511,20 @@
     "runLint": "Run Lint",
     "runLintHint": "Run lint to check wiki health",
     "runLintDescription": "Checks for orphan pages, broken links, and more",
+    "scheduleSetting": "Scheduled check",
+    "scheduleEnabled": "Run the check automatically on the selected days at a set time",
+    "weekday": {
+      "sun": "Sun",
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat"
+    },
+    "scheduleTime": "Time",
+    "scheduleHint": "Runs structural checks automatically on the selected days at the set time. Follows the Semantic toggle and the current rules.",
+    "lastScheduledRun": "Last run",
     "allClear": "All clear!",
     "noIssues": "No issues found.",
     "warnings": "Warnings",
@@ -446,6 +564,13 @@
     "clearResolved": "Clear resolved",
     "refresh": "Refresh",
     "refreshHint": "Reload review items from disk",
+    "reanalyze": "Re-analyze",
+    "reanalyzeHint": "Re-scan pending reviews and auto-resolve stale ones",
+    "analyzing": "Analyzing...",
+    "cancelAnalyzeHint": "Click to stop the analysis",
+    "reanalyzeDone": "Auto-resolved {{count}} stale review item(s)",
+    "reanalyzeEmpty": "No stale review items to clean up",
+    "reanalyzeFailed": "Re-analysis failed",
     "selectPending": "Select pending",
     "selectItem": "Select {{title}}",
     "selectedCount": "{{count}} selected",
@@ -455,7 +580,27 @@
     "affectedPages": "Pages",
     "allClear": "All clear — nothing to review",
     "resolvedDivider": "— Resolved —",
-    "actionFailed": "The action failed and remains pending. You can retry: {{error}}"
+    "actionFailed": "The action failed and remains pending. You can retry: {{error}}",
+    "openCreatedPage": "Open created page",
+    "openCreatedPageHint": "Open the page created from this review item",
+    "edit": {
+      "title": "Edit with knowledge base",
+      "close": "Close",
+      "noTarget": "This item has no editable source file",
+      "fileUnreadable": "Could not read the file this item refers to",
+      "instructionPlaceholder": "Enter an edit instruction, e.g. expand this section based on the knowledge base…",
+      "generate": "Generate edit",
+      "generating": "Generating…",
+      "searchingContext": "Searching knowledge base…",
+      "generatingWithDiff": "Generating edit…",
+      "stop": "Stop",
+      "reject": "Reject",
+      "apply": "Apply edit",
+      "applying": "Applying…",
+      "diffTitle": "Diff",
+      "generateFailed": "Failed to generate edit, please retry",
+      "applyFailed": "Failed to apply edit"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -488,11 +633,13 @@
       "scheduledImport": "Scheduled Import",
       "mineru": "MinerU PDF",
       "apiServer": "API + MCP",
+      "feishu": "Feishu Notify",
       "output": "Output",
       "interface": "Interface",
       "maintenance": "Maintenance",
       "changelog": "Changelog",
-      "about": "About"
+      "about": "About",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -533,7 +680,7 @@
           "activeDefault": "Use active model",
           "hint": "Choose separate models for interactive chat and document ingest. The active model remains the fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Use a project-specific model",
           "provider": "Project provider",
           "selectProvider": "Select a provider",
@@ -619,7 +766,6 @@
           "max": "Max",
           "custom": "Custom",
           "budgetTokens": "thinking budget tokens",
-
           "hint": "Controls reasoning for chat. Document ingest uses the separate setting below.",
           "ingestTitle": "Reasoning during ingest",
           "ingestHint": "Off is usually right: ingest asks for structured output and thinking costs time without helping. Raise it only if the model refuses to run with reasoning disabled."
@@ -903,7 +1049,16 @@
         "zoom": "Interface zoom",
         "zoomHint": "Scales text and rem-based spacing across the app. Some fixed pixel panels keep their practical size limits.",
         "zoomIn": "Zoom in",
-        "zoomOut": "Zoom out"
+        "zoomOut": "Zoom out",
+        "background": "Background",
+        "backgroundHint": "Choose an image and adjust its opacity to soften the app background. The image shows through semi-transparent panels. Save to apply.",
+        "backgroundEmpty": "No background image",
+        "backgroundImport": "Import image",
+        "backgroundRemove": "Remove",
+        "backgroundOpacity": "Opacity",
+        "backgroundBrightness": "Brightness",
+        "backgroundSizeError": "Image is too large. Choose an image under 5 MB.",
+        "backgroundImportError": "Failed to import image."
       },
       "maintenance": {
         "title": "Maintenance",
@@ -919,6 +1074,16 @@
           "rebuilt": "Rebuilt index with {{pages}} pages in {{groups}} groups.",
           "exported": "Project exported to {{path}}",
           "imported": "Imported {{name}}. Switch projects to open it."
+        },
+        "indexSchedule": {
+          "title": "Scheduled index rebuild",
+          "enabled": "Rebuild the index automatically on an interval",
+          "interval": "Interval",
+          "minutes": "minutes",
+          "lastRun": "Last run",
+          "hint": "Rebuilds wiki/index.md with the same deterministic rebuild as the button above. Set 60 for hourly, 1440 for daily.",
+          "save": "Save schedule",
+          "saving": "Saving..."
         },
         "history": {
           "title": "File version history",
@@ -1025,10 +1190,42 @@
         "testing": "Testing...",
         "testSuccess": "Connection successful",
         "testFailed": "Test failed"
+      },
+      "jira": {
+        "title": "Jira integration",
+        "description": "Connect to a Jira Server / Data Center instance to search issues and export them into the project as Markdown documents.",
+        "baseUrl": "Server address",
+        "baseUrlHint": "The instance root, e.g. https://jira.example.com. Credentials are sent over HTTP Basic, so an SSO-only login will not work.",
+        "username": "Username",
+        "password": "Password",
+        "showPassword": "Show password",
+        "hidePassword": "Hide password",
+        "testConnection": "Test connection",
+        "testRunning": "Testing…",
+        "testOk": "Connected to {{title}} (Jira {{version}})",
+        "passwordWarningTitle": "The password is stored in plain text",
+        "passwordWarning": "Like the other API keys this app keeps, it is written unencrypted into the application state file. Anyone who can read that file can read the password.",
+        "acceptInvalidCerts": "Skip TLS certificate verification",
+        "acceptInvalidCertsHint": "Needed for an intranet instance whose certificate is not in the system trust store. It also makes the connection interceptable by a man in the middle, so enable it only when the certificate really is what fails.",
+        "userAgent": "User-Agent",
+        "userAgentHint": "Some corporate gateways only let known clients through. Keep the default unless a proxy rejects it.",
+        "exportTitle": "Export",
+        "exportDir": "Export directory",
+        "exportDirHint": "Relative paths resolve against the project root. Currently resolved to:",
+        "maxAttachmentMb": "Largest attachment to download (MB)",
+        "maxAttachmentMbHint": "Larger attachments are still listed in the document by name, but not downloaded.",
+        "processFieldId": "「Task process description」 field id",
+        "processFieldIdHint": "The custom field rendered as 任务过程描述. Find it in the issue’s XML/JSON view; leave it empty if the instance has no such field.",
+        "searchTitle": "Search",
+        "scopeJql": "JQL scope",
+        "scopeJqlHint": "AND-ed into every search. Empty means the whole instance; a scope such as project = AERDM or updated >= -365d is what keeps the recent-issue scan meaningful."
       }
     }
   },
   "preview": {
+    "closeTab": "Close tab",
+    "closeOtherTabs": "Close other tabs",
+    "closeAllTabs": "Close all tabs",
     "selectFile": "Select a file to preview",
     "notAvailable": "Preview not available for this file type",
     "viewAsText": "View as text",
@@ -1072,6 +1269,9 @@
     "selectedCount": "{{count}} selected",
     "restartSelected": "Restart",
     "cancelSelected": "Cancel",
+    "removeSelected": "Remove",
+    "removeSelectedTitle": "Remove selected cancelled tasks from the queue",
+    "removeOnlyCancelled": "Only cancelled tasks can be removed (skipped {{count}}).",
     "selectTask": "Select {{name}}",
     "moveUp": "Move earlier",
     "moveDown": "Move later",
@@ -1079,18 +1279,33 @@
     "fileSync": "File Sync",
     "rescan": "Rescan",
     "rescanTitle": "Scan project files for external changes",
-    "changeKinds": { "created": "Created", "modified": "Modified", "deleted": "Deleted" },
+    "changeKinds": {
+      "created": "Created",
+      "modified": "Modified",
+      "deleted": "Deleted"
+    },
     "fileTypes": {
-      "entity": "Entity", "concept": "Concept", "source": "Source", "query": "Query",
-      "synthesis": "Synthesis", "comparison": "Comparison", "finding": "Finding",
-      "thesis": "Thesis", "methodology": "Methodology", "overview": "Overview",
-      "index": "Index", "log": "Log", "file": "File"
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "comparison": "Comparison",
+      "finding": "Finding",
+      "thesis": "Thesis",
+      "methodology": "Methodology",
+      "overview": "Overview",
+      "index": "Index",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {
     "noProject": "No project open",
     "openProjectFolder": "Open project folder",
-    "openProjectFolderFailed": "Failed to open the project folder."
+    "openProjectFolderFailed": "Failed to open the project folder.",
+    "revealInExplorer": "Open in file manager",
+    "revealInExplorerFailed": "Failed to open in the file manager: {{error}}"
   },
   "graph": {
     "openProject": "Open a project to view the graph",
@@ -1169,5 +1384,71 @@
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
     "daysAgo": "{{count}} d ago"
+  },
+  "jira": {
+    "search": {
+      "submit": "Search",
+      "limit": "{{count}} results",
+      "limitHint": "Maximum issues fetched per search",
+      "dimTitle": "Title",
+      "dimKeyword": "Keyword",
+      "dimIssueKey": "Issue key",
+      "dimsHint": "Choose what the query searches: title, full-text keyword, or issue key (separate multiple keys with commas). Changes re-query immediately.",
+      "searching": "Searching…",
+      "empty": "Type a keyword and search, or just press Search to browse the recently updated issues.",
+      "noMatch": "No issue matches the current filter.",
+      "found": "{{count}} matching issue(s)",
+      "swept": "Also scanned the {{count}} most recently updated issues",
+      "limitReached": "scan limit reached ({{count}})",
+      "loadMore": "Scan older issues",
+      "unconfigured": "Jira is not configured yet. Fill in the server address, username and password under Settings → Jira."
+    },
+    "error": {
+      "title": "The Jira request failed",
+      "config": "Jira is not configured",
+      "auth": "Authentication failed — check the username and password.",
+      "notFound": "That issue was not found.",
+      "network": "Could not reach Jira."
+    },
+    "export": {
+      "export": "Export",
+      "exporting": "Exporting…",
+      "exportingAttachments": "attachments {{completed}}/{{total}}",
+      "reExport": "Export again",
+      "retry": "Retry",
+      "done": "Exported to {{path}}",
+      "overwriteMessage": "{{path}} already exists. Replace it?",
+      "overwriteConfirm": "Replace"
+    },
+    "exported": {
+      "loading": "Loading…",
+      "empty": "No issue has been exported yet.",
+      "open": "Open",
+      "reveal": "Show in folder",
+      "reExport": "Export again",
+      "history": "{{count}} older export(s) of this issue are still on disk",
+      "openFailed": "Cannot open the exported file: {{error}}"
+    },
+    "searchPlaceholder": "Search issues by title or label…",
+    "filter": {
+      "project": "Project",
+      "issuetype": "Issue type",
+      "status": "Status",
+      "assignee": "Assignee",
+      "reporter": "Reporter",
+      "all": "All",
+      "searchPlaceholder": "Type to filter, e.g. Wang",
+      "loading": "Loading filter options…",
+      "unassigned": "Unassigned",
+      "clear": "Clear filters"
+    },
+    "matchCase": "Match case",
+    "matchCaseHint": "Case-sensitive matching. Filters the results already retrieved — it does not send a new request.",
+    "mode": {
+      "search": "Search",
+      "exported": "Exported"
+    },
+    "refresh": "Refresh",
+    "openJira": "Open in Jira"
   }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react"
 import {
   ChevronUp, ChevronDown, Loader2, CheckCircle2, AlertCircle,
   FileText, Users, Lightbulb, BookOpen, GitMerge, BarChart3, HelpCircle, Layout,
@@ -20,6 +20,7 @@ import {
   cancelTask,
   cancelTasks,
   cancelAllTasks,
+  removeTasks,
   movePendingTask,
   pauseProcessing,
   resumeProcessing,
@@ -110,6 +111,36 @@ export function ActivityPanel() {
     })
   }, [queueTasks])
 
+  // For processing queue tasks, surface the live ingest stage (e.g.
+  // "Step 1/2: Analyzing source...", "Writing files...") that autoIngest
+  // reports through the activity store as `detail`. Without this a queue
+  // row shows only a spinner with no indication of what the task is doing.
+  const taskStageById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const task of queueTasks) {
+      if (task.status !== "processing") continue
+      const fileName = getFileName(task.sourcePath)
+      const running = items.find(
+        (item) =>
+          item.status === "running" &&
+          item.type === "ingest" &&
+          item.title === fileName,
+      )
+      if (running?.detail) map.set(task.id, running.detail)
+    }
+    return map
+  }, [queueTasks, items])
+
+  // fileName → processing taskId. Lets ActivityRow's cancel-handler lookup be
+  // O(1) per render instead of scanning the whole queue for every item.
+  const processingByFileName = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const task of queueTasks) {
+      if (task.status === "processing") map.set(getFileName(task.sourcePath), task.id)
+    }
+    return map
+  }, [queueTasks])
+
   const queueSummary = getQueueSummary()
   const hasQueue = queueSummary.total > 0
   const shouldResumeQueue = queueSummary.userPaused || queueSummary.blockedOnLlmConfig
@@ -153,6 +184,23 @@ export function ActivityPanel() {
       setQueueTasks([...getQueue()])
     })
   }, [project, selectedTaskIds])
+
+  const handleRemoveSelected = useCallback(() => {
+    if (!project) return
+    const selected = queueTasks.filter((task) => selectedTaskIds.has(task.id))
+    const cancelled = selected.filter((task) => task.status === "cancelled")
+    const nonCancelled = selected.length - cancelled.length
+    if (nonCancelled > 0) {
+      void appDialog.alert({
+        message: t("activity.removeOnlyCancelled", { count: nonCancelled }),
+      })
+    }
+    if (cancelled.length === 0) return
+    void removeTasks(cancelled.map((task) => task.id)).then(() => {
+      setSelectedTaskIds(new Set())
+      setQueueTasks([...getQueue()])
+    })
+  }, [appDialog, project, queueTasks, selectedTaskIds, t])
 
   const handleMoveTask = useCallback((taskId: string, direction: "up" | "down") => {
     void movePendingTask(taskId, direction).then(() => setQueueTasks([...getQueue()]))
@@ -346,6 +394,13 @@ export function ActivityPanel() {
                   >
                     {t("activity.cancelSelected")}
                   </button>
+                  <button
+                    onClick={handleRemoveSelected}
+                    className="rounded px-1.5 py-0.5 text-destructive hover:bg-destructive/10"
+                    title={t("activity.removeSelectedTitle")}
+                  >
+                    {t("activity.removeSelected")}
+                  </button>
                 </>
               )}
             </div>
@@ -435,7 +490,20 @@ export function ActivityPanel() {
 
           {/* Queue tasks */}
           {visibleQueueTasks.map((task) => (
-            <QueueRow key={task.id} task={task} selected={selectedTaskIds.has(task.id)} onSelect={toggleTaskSelection} onRetry={handleIngestRetry} onCancel={handleIngestCancel} onMove={handleMoveTask} />
+            <QueueRow
+              key={task.id}
+              taskId={task.id}
+              status={task.status}
+              fileName={getFileName(task.sourcePath)}
+              folderContext={task.folderContext ?? ""}
+              errorText={task.error ?? ""}
+              stageDetail={taskStageById.get(task.id)}
+              selected={selectedTaskIds.has(task.id)}
+              onSelect={toggleTaskSelection}
+              onRetry={handleIngestRetry}
+              onCancel={handleIngestCancel}
+              onMove={handleMoveTask}
+            />
           ))}
           {orderedQueueTasks.length > visibleQueueTasks.length && (
             <div className="border-b border-border/50 px-3 py-2 text-center text-[10px] text-muted-foreground">
@@ -446,14 +514,14 @@ export function ActivityPanel() {
           {/* Activity items */}
           {items.map((item) => {
             // Find matching queue task for cancel button
-            const matchingTask = item.status === "running"
-              ? queueTasks.find((t) => t.status === "processing" && getFileName(t.sourcePath) === item.title)
+            const matchingTaskId = item.status === "running"
+              ? processingByFileName.get(item.title)
               : undefined
             return (
               <ActivityRow
                 key={item.id}
                 item={item}
-                onCancel={matchingTask ? () => handleIngestCancel(matchingTask.id) : undefined}
+                onCancel={matchingTaskId ? () => handleIngestCancel(matchingTaskId) : undefined}
               />
             )
           })}
@@ -471,8 +539,13 @@ export function ActivityPanel() {
   )
 }
 
-function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
-  task: IngestTask
+const QueueRow = memo(function QueueRow({ taskId, status, fileName, folderContext, errorText, stageDetail, selected, onSelect, onRetry, onCancel, onMove }: {
+  taskId: string
+  status: IngestTask["status"]
+  fileName: string
+  folderContext: string
+  errorText: string
+  stageDetail?: string
   selected: boolean
   onSelect: (id: string) => void
   onRetry: (id: string) => void
@@ -480,7 +553,6 @@ function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
   onMove: (id: string, direction: "up" | "down") => void
 }) {
   const { t } = useTranslation()
-  const fileName = getFileName(task.sourcePath)
 
   return (
     <div className="px-3 py-2 text-xs border-b border-border/50">
@@ -488,48 +560,51 @@ function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
         <input
           type="checkbox"
           checked={selected}
-          onChange={() => onSelect(task.id)}
+          onChange={() => onSelect(taskId)}
           aria-label={t("activity.selectTask", { name: fileName })}
           className="h-3.5 w-3.5 shrink-0"
         />
         <div className="shrink-0">
-          {task.status === "processing" && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-          {task.status === "pending" && <Clock className="h-3 w-3 text-muted-foreground" />}
-          {task.status === "failed" && <AlertCircle className="h-3 w-3 text-destructive" />}
-          {task.status === "cancelled" && <X className="h-3 w-3 text-muted-foreground" />}
+          {status === "processing" && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+          {status === "pending" && <Clock className="h-3 w-3 text-muted-foreground" />}
+          {status === "failed" && <AlertCircle className="h-3 w-3 text-destructive" />}
+          {status === "cancelled" && <X className="h-3 w-3 text-muted-foreground" />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-medium truncate">{fileName}</div>
-          {task.folderContext && (
-            <div className="text-[10px] text-muted-foreground/70 truncate">{task.folderContext}</div>
+          {folderContext && (
+            <div className="text-[10px] text-muted-foreground/70 truncate">{folderContext}</div>
           )}
-          {task.status === "failed" && task.error && (
-            <div className="text-[10px] text-destructive mt-0.5 truncate">{task.error}</div>
+          {status === "processing" && stageDetail && (
+            <div className="text-[10px] text-primary mt-0.5 truncate">{stageDetail}</div>
+          )}
+          {status === "failed" && errorText && (
+            <div className="text-[10px] text-destructive mt-0.5 truncate">{errorText}</div>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {(task.status === "failed" || task.status === "cancelled") && (
+          {(status === "failed" || status === "cancelled") && (
             <button
-              onClick={() => onRetry(task.id)}
+              onClick={() => onRetry(taskId)}
               className="p-0.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
               title={t("common.retry")}
             >
               <RotateCcw className="h-3 w-3" />
             </button>
           )}
-          {task.status === "pending" && (
+          {status === "pending" && (
             <>
-              <button onClick={() => onMove(task.id, "up")} className="rounded p-0.5 text-muted-foreground hover:bg-accent" title={t("activity.moveUp")}>
+              <button onClick={() => onMove(taskId, "up")} className="rounded p-0.5 text-muted-foreground hover:bg-accent" title={t("activity.moveUp")}>
                 <ArrowUp className="h-3 w-3" />
               </button>
-              <button onClick={() => onMove(task.id, "down")} className="rounded p-0.5 text-muted-foreground hover:bg-accent" title={t("activity.moveDown")}>
+              <button onClick={() => onMove(taskId, "down")} className="rounded p-0.5 text-muted-foreground hover:bg-accent" title={t("activity.moveDown")}>
                 <ArrowDown className="h-3 w-3" />
               </button>
             </>
           )}
-          {(task.status === "pending" || task.status === "processing") && (
+          {(status === "pending" || status === "processing") && (
             <button
-              onClick={() => onCancel(task.id)}
+              onClick={() => onCancel(taskId)}
               className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
               title={t("common.cancel")}
             >
@@ -540,7 +615,7 @@ function QueueRow({ task, selected, onSelect, onRetry, onCancel, onMove }: {
       </div>
     </div>
   )
-}
+})
 
 function FileSyncRow({ task, onRetry, onIgnore }: { task: FileChangeTask; onRetry: (id: string) => void; onIgnore: (id: string) => void }) {
   const { t } = useTranslation()

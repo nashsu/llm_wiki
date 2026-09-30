@@ -1778,7 +1778,6 @@ function GraphPreviewPanel({
       <div className="min-w-0 flex-1 overflow-auto">
         {category === "markdown" ? (
           <WikiEditor
-            key={preview.path}
             content={preview.content}
             onSave={handleSave}
             filePath={preview.path}

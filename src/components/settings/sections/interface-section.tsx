@@ -1,6 +1,10 @@
 import { useTranslation } from "react-i18next"
 import { Label } from "@/components/ui/label"
-import { Plus, Minus } from "lucide-react"
+import { Plus, Minus, ImagePlus, Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { open } from "@tauri-apps/plugin-dialog"
+import { readFileAsBase64 } from "@/commands/fs"
+import { MAX_BACKGROUND_IMAGE_BYTES, MAX_BACKGROUND_OPACITY, MIN_BACKGROUND_OPACITY, MAX_BACKGROUND_BRIGHTNESS, MIN_BACKGROUND_BRIGHTNESS } from "@/stores/background-store"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
 import type { AppTheme } from "@/lib/theme"
 import { useState, useEffect } from "react"
@@ -29,6 +33,7 @@ export function InterfaceSection({ draft, setDraft, onThemeChange }: Props) {
   const { t } = useTranslation()
   const level = draft.zoomLevel
   const [inputText, setInputText] = useState(String(Math.round(level * 100)))
+  const [backgroundError, setBackgroundError] = useState<string | null>(null)
 
   // Sync local input text when draft changes externally (e.g. +/− buttons)
   useEffect(() => {
@@ -48,6 +53,41 @@ export function InterfaceSection({ draft, setDraft, onThemeChange }: Props) {
       // Reset to current draft value
       setInputText(String(Math.round(level * 100)))
     }
+  }
+
+  const handleImportBackground = async () => {
+    setBackgroundError(null)
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
+    })
+    if (!selected || typeof selected !== "string") return
+    try {
+      const file = await readFileAsBase64(selected)
+      // base64 is ~4/3 the raw byte size.
+      const approxBytes = Math.ceil((file.base64.length * 3) / 4)
+      if (approxBytes > MAX_BACKGROUND_IMAGE_BYTES) {
+        setBackgroundError(
+          t("settings.sections.interface.backgroundSizeError", {
+            defaultValue: "Image is too large. Choose an image under 5 MB.",
+          }),
+        )
+        return
+      }
+      setDraft("backgroundImage", `data:${file.mimeType};base64,${file.base64}`)
+    } catch (err) {
+      console.error("[background] failed to import image:", err)
+      setBackgroundError(
+        t("settings.sections.interface.backgroundImportError", {
+          defaultValue: "Failed to import image.",
+        }),
+      )
+    }
+  }
+
+  const handleRemoveBackground = () => {
+    setDraft("backgroundImage", null)
+    setBackgroundError(null)
   }
   return (
     <div className="space-y-6">
@@ -152,6 +192,91 @@ export function InterfaceSection({ draft, setDraft, onThemeChange }: Props) {
         <p className="text-xs text-muted-foreground">
           {t("settings.sections.interface.zoomHint")}
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>{t("settings.sections.interface.background")}</Label>
+        <p className="text-xs text-muted-foreground">
+          {t("settings.sections.interface.backgroundHint")}
+        </p>
+
+        <div className="flex items-start gap-3">
+          {draft.backgroundImage ? (
+            <div
+              className="h-24 w-40 shrink-0 overflow-hidden rounded-md border bg-muted"
+              style={{
+                backgroundImage: `url(${draft.backgroundImage})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                opacity: draft.backgroundOpacity,
+              }}
+            />
+          ) : (
+            <div className="flex h-24 w-40 shrink-0 items-center justify-center rounded-md border bg-muted text-xs text-muted-foreground">
+              {t("settings.sections.interface.backgroundEmpty")}
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={handleImportBackground}>
+              <ImagePlus className="mr-2 h-4 w-4" />
+              {t("settings.sections.interface.backgroundImport")}
+            </Button>
+            {draft.backgroundImage && (
+              <Button type="button" variant="outline" size="sm" onClick={handleRemoveBackground}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                {t("settings.sections.interface.backgroundRemove")}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {backgroundError && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+            {backgroundError}
+          </p>
+        )}
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="background-opacity">
+              {t("settings.sections.interface.backgroundOpacity")}
+            </Label>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {Math.round(draft.backgroundOpacity * 100)}%
+            </span>
+          </div>
+          <input
+            id="background-opacity"
+            type="range"
+            min={Math.round(MIN_BACKGROUND_OPACITY * 100)}
+            max={Math.round(MAX_BACKGROUND_OPACITY * 100)}
+            value={Math.round(draft.backgroundOpacity * 100)}
+            disabled={!draft.backgroundImage}
+            onChange={(e) => setDraft("backgroundOpacity", Number(e.target.value) / 100)}
+            className="w-full disabled:opacity-40"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="background-brightness">
+              {t("settings.sections.interface.backgroundBrightness")}
+            </Label>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {Math.round(draft.backgroundBrightness * 100)}%
+            </span>
+          </div>
+          <input
+            id="background-brightness"
+            type="range"
+            min={Math.round(MIN_BACKGROUND_BRIGHTNESS * 100)}
+            max={Math.round(MAX_BACKGROUND_BRIGHTNESS * 100)}
+            value={Math.round(draft.backgroundBrightness * 100)}
+            disabled={!draft.backgroundImage}
+            onChange={(e) => setDraft("backgroundBrightness", Number(e.target.value) / 100)}
+            className="w-full disabled:opacity-40"
+          />
+        </div>
       </div>
     </div>
   )

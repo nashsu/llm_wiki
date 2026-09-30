@@ -625,6 +625,36 @@ export async function discardTasksForSources(
   return targets.length
 }
 
+/** Permanently remove selected CANCELLED tasks from the queue (no restart). */
+export async function removeTasks(taskIds: readonly string[]): Promise<number> {
+  if (!currentProjectId) return 0
+  const selected = new Set(taskIds)
+  const targets = queue.filter(
+    (task) => task.projectId === currentProjectId && selected.has(task.id) && task.status === "cancelled",
+  )
+  if (targets.length === 0) return 0
+
+  const targetIds = new Set(targets.map((task) => task.id))
+  const hadProcessingTask = targets.some((task) => task.status === "processing")
+  for (const task of targets) {
+    restoredPausedTaskIds.delete(task.id)
+    if (task.status === "processing") cancelledInFlightTaskIds.add(task.id)
+  }
+  for (const task of targets) {
+    const run = activeRuns.get(task.id)
+    run?.controller.abort()
+  }
+
+  queue = queue.filter((task) => !targetIds.has(task.id))
+  if (!queue.some((task) => task.status === "pending" || task.status === "processing")) {
+    paused = false
+    clearUsageLimitAutoResume()
+  }
+  await saveQueue(currentProjectPath)
+  if (!hadProcessingTask) processNext(currentProjectId)
+  return targets.length
+}
+
 /**
  * Clear all done/failed tasks from the active project's queue.
  */

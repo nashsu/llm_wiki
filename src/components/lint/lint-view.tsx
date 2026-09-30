@@ -17,8 +17,8 @@ import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useLintStore, type LintItem } from "@/stores/lint-store"
-import { runStructuralLint, runSemanticLint } from "@/lib/lint"
-import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { runProjectLint } from "@/lib/lint"
+import { startScheduledLint } from "@/lib/scheduled-lint"
 import { readFile, writeFile } from "@/commands/fs"
 import { normalizePath } from "@/lib/path-utils"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
@@ -59,10 +59,9 @@ export function shouldShowLintResults(hasRun: boolean, itemCount: number): boole
 }
 
 export function LintView() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const appDialog = useAppDialog()
   const project = useWikiStore((s) => s.project)
-  const llmConfig = useWikiStore((s) => s.llmConfig)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
 
   // Dynamic type config based on i18n
@@ -74,14 +73,11 @@ export function LintView() {
   }), [t])
 
   const items = useLintStore((s) => s.items)
-  const addLintItems = useLintStore((s) => s.addItems)
   const removeLintItems = useLintStore((s) => s.removeItems)
-  const clearLintItems = useLintStore((s) => s.clearItems)
 
   const [running, setRunning] = useState(false)
   const [lintProgress, setLintProgress] = useState<{ completed: number; total: number } | null>(null)
   const [hasRun, setHasRun] = useState(false)
-  const [runSemantic, setRunSemantic] = useState(false)
   const [showRuleSettings, setShowRuleSettings] = useState(false)
   const [lintConfig, setLintConfig] = useState<LintConfig>(DEFAULT_LINT_CONFIG)
   const [ignoredPagesDraft, setIgnoredPagesDraft] = useState("")
@@ -92,6 +88,22 @@ export function LintView() {
   const [fixError, setFixError] = useState<string | null>(null)
   const [selectedLintIds, setSelectedLintIds] = useState<Set<string>>(() => new Set())
   const lintAbortRef = useRef<AbortController | null>(null)
+
+  const lastRunText = useMemo(() => {
+    if (!lintConfig.lastScheduledRun) return null
+    const rtf = new Intl.RelativeTimeFormat(i18n.language ?? "en", { numeric: "auto" })
+    const diff = lintConfig.lastScheduledRun - Date.now()
+    const abs = Math.abs(diff)
+    const units = [
+      ["day", 86_400_000],
+      ["hour", 3_600_000],
+      ["minute", 60_000],
+    ] as const
+    for (const [unit, ms] of units) {
+      if (abs >= ms) return rtf.format(Math.round(diff / ms), unit)
+    }
+    return rtf.format(Math.round(diff / 1000), "second")
+  }, [lintConfig.lastScheduledRun, i18n.language])
 
   useEffect(() => () => lintAbortRef.current?.abort(), [])
 
@@ -131,6 +143,9 @@ export function LintView() {
       setLintConfig(saved)
       setIgnoredPagesDraft(saved.ignorePages.join("\n"))
       setShowRuleSettings(false)
+      // Re-arm the schedule so a changed time/weekday (or enable/disable)
+      // takes effect immediately rather than at the next caught-up occurrence.
+      void startScheduledLint(project)
     } catch (error) {
       if (useWikiStore.getState().project?.path === projectPath) {
         setConfigError(String(error))
@@ -142,31 +157,21 @@ export function LintView() {
 
   const handleRunLint = useCallback(async () => {
     if (!project || running) return
-    const pp = normalizePath(project.path)
     setRunning(true)
     setFixError(null)
     setLintProgress(null)
     setSelectedLintIds(new Set())
-    clearLintItems()
     const controller = new AbortController()
     lintAbortRef.current = controller
     try {
-      const structural = await runStructuralLint(pp, {
-        signal: controller.signal,
-        config: {
-          ...lintConfig,
-          ignorePages: ignoredPagesDraft.split(/[,，\n]/),
+      await runProjectLint(
+        project,
+        { ...lintConfig, ignorePages: ignoredPagesDraft.split(/[,，\n]/) },
+        {
+          signal: controller.signal,
+          onProgress: (completed, total) => setLintProgress({ completed, total }),
         },
-        onProgress: (completed, total) => setLintProgress({ completed, total }),
-      })
-      let all = structural
-
-      if (runSemantic && hasUsableLlm(llmConfig)) {
-        const semantic = await runSemanticLint(pp, llmConfig, controller.signal)
-        all = [...structural, ...semantic]
-      }
-
-      addLintItems(all)
+      )
       setHasRun(true)
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -177,16 +182,7 @@ export function LintView() {
       setRunning(false)
       setLintProgress(null)
     }
-  }, [
-    project,
-    llmConfig,
-    lintConfig,
-    ignoredPagesDraft,
-    running,
-    runSemantic,
-    addLintItems,
-    clearLintItems,
-  ])
+  }, [project, lintConfig, ignoredPagesDraft, running])
 
   async function handleOpenPage(page: string) {
     if (!project) return
@@ -486,8 +482,8 @@ export function LintView() {
             <input
               type="checkbox"
               className="h-3 w-3"
-              checked={runSemantic}
-              onChange={(e) => setRunSemantic(e.target.checked)}
+              checked={lintConfig.includeSemantic}
+              onChange={(e) => setLintConfig((config) => ({ ...config, includeSemantic: e.target.checked }))}
             />
             {t("lint.semantic")}
           </label>
@@ -542,6 +538,67 @@ export function LintView() {
             />
           </label>
           {configError && <p className="text-destructive">{configError}</p>}
+          <div className="space-y-2 border-t pt-2">
+            <div className="font-medium">{t("lint.scheduleSetting")}</div>
+            <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={lintConfig.scheduleEnabled}
+                onChange={(event) => setLintConfig((config) => ({
+                  ...config,
+                  scheduleEnabled: event.target.checked,
+                }))}
+              />
+              {t("lint.scheduleEnabled")}
+            </label>
+            {lintConfig.scheduleEnabled && (
+              <>
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {(["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const).map((day, index) => (
+                    <label key={day} className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={lintConfig.scheduleWeekdays.includes(index)}
+                        onChange={(event) => {
+                          const selected = new Set(lintConfig.scheduleWeekdays)
+                          if (event.target.checked) selected.add(index)
+                          else selected.delete(index)
+                          setLintConfig((config) => ({
+                            ...config,
+                            scheduleWeekdays: [...selected].sort((a, b) => a - b),
+                          }))
+                        }}
+                        className="h-3 w-3"
+                      />
+                      {t(`lint.weekday.${day}`)}
+                    </label>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2 text-muted-foreground">
+                  <span>{t("lint.scheduleTime")}</span>
+                  <input
+                    type="time"
+                    value={`${String(lintConfig.scheduleHour).padStart(2, "0")}:${String(lintConfig.scheduleMinute).padStart(2, "0")}`}
+                    onChange={(event) => {
+                      const [hour, minute] = event.target.value.split(":").map(Number)
+                      setLintConfig((config) => ({
+                        ...config,
+                        scheduleHour: Number.isFinite(hour) ? hour : 0,
+                        scheduleMinute: Number.isFinite(minute) ? minute : 0,
+                      }))
+                    }}
+                    className="rounded border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </label>
+              </>
+            )}
+            {lastRunText && (
+              <p className="text-muted-foreground">
+                {t("lint.lastScheduledRun")}: {lastRunText}
+              </p>
+            )}
+            <p className="text-muted-foreground">{t("lint.scheduleHint")}</p>
+          </div>
           <div className="flex justify-end">
             <Button size="sm" onClick={handleSaveLintConfig} disabled={savingConfig}>
               {savingConfig ? t("lint.savingRules") : t("lint.saveRules")}

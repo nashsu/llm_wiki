@@ -38,19 +38,39 @@ type PluginRequestInit = RequestInit & {
   }
 }
 
-export function withProxyTlsSettings(
+/**
+ * Per-request TLS relaxation for a single admin-configured endpoint (today:
+ * an intranet Jira whose certificate chain isn't in the system trust store).
+ *
+ * Deliberately separate from the proxy's TLS setting: that one is process-wide
+ * and only takes effect after a restart, and forcing a user to enable a proxy
+ * they don't need just to reach one internal host is the worse trade.
+ */
+export function withTlsOverride(
   init: RequestInit | undefined,
-  proxy: ProxyConfig,
+  acceptInvalidCerts: boolean,
 ): PluginRequestInit | undefined {
-  if (!isProxyActive(proxy) || proxy.acceptInvalidCerts !== true) return init
+  if (!acceptInvalidCerts) return init
   const pluginInit = init as PluginRequestInit | undefined
   return {
     ...pluginInit,
     danger: {
       ...pluginInit?.danger,
       acceptInvalidCerts: true,
+      // plugin-http 的 Rust 端把 danger 两个字段都视为必填，
+      // 只传 acceptInvalidCerts 会报 invalid args: missing field
+      // `acceptInvalidHostnames`（Jira 连接测试实测踩坑）。
+      acceptInvalidHostnames: pluginInit?.danger?.acceptInvalidHostnames ?? false,
     },
   }
+}
+
+export function withProxyTlsSettings(
+  init: RequestInit | undefined,
+  proxy: ProxyConfig,
+): PluginRequestInit | undefined {
+  if (!isProxyActive(proxy)) return init
+  return withTlsOverride(init, proxy.acceptInvalidCerts === true)
 }
 
 /**

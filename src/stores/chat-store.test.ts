@@ -166,4 +166,41 @@ describe("chat-store conversation isolation", () => {
       "/project/wiki/overview.md",
     ])
   })
+
+  it("renames a conversation and bumps its updatedAt", () => {
+    const store = useChatStore.getState()
+    const id = store.createConversation()
+    const before = useChatStore.getState().conversations[0].updatedAt
+
+    useChatStore.getState().renameConversation(id, "My renamed chat")
+
+    const conv = useChatStore.getState().conversations.find((c) => c.id === id)
+    expect(conv?.title).toBe("My renamed chat")
+    expect(conv?.updatedAt).toBeGreaterThanOrEqual(before)
+  })
+
+  it("toggles the favorited flag without touching the title", () => {
+    const store = useChatStore.getState()
+    const id = store.createConversation()
+
+    expect(useChatStore.getState().conversations[0].favorited).toBeFalsy()
+
+    useChatStore.getState().toggleFavorite(id)
+    expect(useChatStore.getState().conversations[0].favorited).toBe(true)
+
+    useChatStore.getState().toggleFavorite(id)
+    expect(useChatStore.getState().conversations[0].favorited).toBe(false)
+  })
+
+  it("keeps favorited flag intact after renaming", () => {
+    const store = useChatStore.getState()
+    const id = store.createConversation()
+    useChatStore.getState().toggleFavorite(id)
+
+    useChatStore.getState().renameConversation(id, "Starred chat")
+
+    const conv = useChatStore.getState().conversations[0]
+    expect(conv.title).toBe("Starred chat")
+    expect(conv.favorited).toBe(true)
+  })
 })

@@ -14,6 +14,12 @@ describe("lint config", () => {
       ignoreOrphan: true,
       ignoreNoOutlinks: false,
       ignorePages: ["alpha", "beta", "folder/gamma.md"],
+      includeSemantic: false,
+      scheduleEnabled: false,
+      scheduleWeekdays: [],
+      scheduleHour: 0,
+      scheduleMinute: 0,
+      lastScheduledRun: null,
     })
   })
 })

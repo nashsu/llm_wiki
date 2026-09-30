@@ -9,8 +9,11 @@ import { useLintStore } from "@/stores/lint-store"
 import { useChatStore } from "@/stores/chat-store"
 import { BASE_FONT_SIZE_PX, useZoomStore } from "@/stores/zoom-store"
 import { openProject } from "@/commands/fs"
-import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel } from "@/lib/project-store"
+import { getLastProject, getRecentProjects, saveLastProject, loadLlmConfig, loadLanguage, loadSearchApiConfig, loadEmbeddingConfig, loadMineruConfig, loadMultimodalConfig, loadOutputLanguage, loadProviderConfigs, loadCustomLlmPresets, loadActivePresetId, loadTaskModelRouting, loadProjectLlmOverride, loadProxyConfig, loadScheduledImportConfig, saveScheduledImportConfig, loadSourceWatchAllProjects, loadSourceWatchConfig, loadApiConfig, loadGeneralConfig, loadZoomLevel, loadBackgroundImage, loadBackgroundOpacity, loadBackgroundBrightness, loadFeishuConfig, loadJiraConfig } from "@/lib/project-store"
 import { loadReviewItems, loadLintItems, loadChatHistory, loadChatPreferences } from "@/lib/persist"
+import { useBackgroundStore } from "@/stores/background-store"
+import { BackgroundLayer } from "@/components/layout/background-layer"
+import { FloatingOverlay } from "@/components/floating/floating-overlay"
 import { setupAutoSave } from "@/lib/auto-save"
 import { startClipWatcher } from "@/lib/clip-watcher"
 import { DEFAULT_SOURCE_WATCH_CONFIG } from "@/lib/source-watch-config"
@@ -75,7 +78,7 @@ function App() {
     }
   }
 
-  async function hydrateProjectSideStores(proj: WikiProject): Promise<void> {
+  async function hydrateProjectReviewStore(proj: WikiProject): Promise<void> {
     try {
       const savedReview = await loadReviewItems(proj.path)
       if (savedReview.length > 0 && isCurrentProject(proj)) {
@@ -84,7 +87,9 @@ function App() {
     } catch (err) {
       console.warn("[startup] failed to load review items:", err)
     }
+  }
 
+  async function hydrateProjectLintStore(proj: WikiProject): Promise<void> {
     try {
       const savedLint = await loadLintItems(proj.path)
       if (savedLint.length > 0 && isCurrentProject(proj)) {
@@ -134,6 +139,26 @@ function App() {
       startScheduledImport(proj, scheduledImportConfig)
     } catch (err) {
       console.warn("[startup] failed to hydrate scheduled import:", err)
+    }
+  }
+
+  async function hydrateScheduledLintAfterOpen(proj: WikiProject): Promise<void> {
+    try {
+      const { startScheduledLint } = await import("@/lib/scheduled-lint")
+      if (!isCurrentProject(proj)) return
+      startScheduledLint(proj)
+    } catch (err) {
+      console.warn("[startup] failed to hydrate scheduled lint:", err)
+    }
+  }
+
+  async function hydrateScheduledIndexAfterOpen(proj: WikiProject): Promise<void> {
+    try {
+      const { startScheduledIndex } = await import("@/lib/scheduled-index")
+      if (!isCurrentProject(proj)) return
+      startScheduledIndex(proj)
+    } catch (err) {
+      console.warn("[startup] failed to hydrate scheduled index:", err)
     }
   }
 
@@ -310,6 +335,15 @@ function App() {
         applyDocumentZoom(savedZoom)
         useZoomStore.getState().setLevel(savedZoom)
 
+        const [backgroundImage, backgroundOpacity, backgroundBrightness] = await Promise.all([
+          loadBackgroundImage(),
+          loadBackgroundOpacity(),
+          loadBackgroundBrightness(),
+        ])
+        useBackgroundStore.getState().setImage(backgroundImage)
+        useBackgroundStore.getState().setOpacity(backgroundOpacity)
+        useBackgroundStore.getState().setBrightness(backgroundBrightness)
+
         const savedConfig = await loadLlmConfig()
         if (savedConfig) {
           useWikiStore.getState().setLlmConfig(savedConfig)
@@ -352,6 +386,8 @@ function App() {
         if (savedSearchConfig) {
           useWikiStore.getState().setSearchApiConfig(savedSearchConfig)
         }
+        const savedJiraConfig = await loadJiraConfig()
+        useWikiStore.getState().setJiraConfig(savedJiraConfig)
         const savedEmbeddingConfig = await loadEmbeddingConfig()
         if (savedEmbeddingConfig) {
           useWikiStore.getState().setEmbeddingConfig(savedEmbeddingConfig)
@@ -393,6 +429,10 @@ function App() {
         }
         const savedGeneral = await loadGeneralConfig()
         useWikiStore.getState().setGeneralConfig(savedGeneral)
+        // Feishu notify config — global; hydrates the store so the chat
+        // bell toggle knows whether notifications are configured.
+        const savedFeishu = await loadFeishuConfig()
+        useWikiStore.getState().setFeishuConfig(savedFeishu)
         try {
           await invoke<string>("set_close_behavior", { value: savedGeneral.closeBehavior })
         } catch (err) {
@@ -564,6 +604,7 @@ function App() {
         const savedChatPreferences = await loadChatPreferences(proj.path)
         useChatStore.getState().setUseWebSearch(savedChatPreferences.useWebSearch)
         useChatStore.getState().setUseAnyTxtSearch(savedChatPreferences.useAnyTxtSearch)
+        useChatStore.getState().setNotifyFeishu(savedChatPreferences.notifyFeishu)
         useChatStore.getState().setAgentMode(savedChatPreferences.agentMode)
         useChatStore.getState().setRetrievalMode(savedChatPreferences.retrievalMode)
         useChatStore.getState().setDisabledSkills(savedChatPreferences.disabledSkills)
@@ -574,6 +615,11 @@ function App() {
       // empty store created by resetProjectState() can be persisted over
       // conversations.json before the deferred loader restores old chats.
       await hydrateProjectChatStore(proj)
+      // Review/lint must also be hydrated before auto-save resumes. Otherwise a
+      // fast project switch can flush the still-empty store over the outgoing
+      // project's .llm-wiki/review.json — wiping its pending review items.
+      await hydrateProjectReviewStore(proj)
+      await hydrateProjectLintStore(proj)
     }, () => {
       // If project loading fails after resetProjectState() and before persisted
       // review/lint/chat state has been restored, do not leave auto-save armed
@@ -583,10 +629,8 @@ function App() {
       setSelectedFile(null)
     })
     void hydrateScheduledImportAfterOpen(proj)
-    // Heavy side-store hydration happens after the project shell is allowed
-    // to render. Each write has a stale-project guard so a fast project switch
-    // cannot apply old review/lint/chat state to the new project.
-    void hydrateProjectSideStores(proj)
+    void hydrateScheduledLintAfterOpen(proj)
+    void hydrateScheduledIndexAfterOpen(proj)
   }
 
   async function handleSelectRecent(proj: WikiProject) {
@@ -621,6 +665,12 @@ function App() {
     import("@/lib/scheduled-import").then(({ stopScheduledImport }) => {
       stopScheduledImport()
     }).catch(() => {})
+    import("@/lib/scheduled-lint").then(({ stopScheduledLint }) => {
+      stopScheduledLint()
+    }).catch(() => {})
+    import("@/lib/scheduled-index").then(({ stopScheduledIndex }) => {
+      stopScheduledIndex()
+    }).catch(() => {})
 
     // Save current project's scheduled import config before clearing
     const currentProject = useWikiStore.getState().project
@@ -646,7 +696,8 @@ function App() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        <BackgroundLayer />
         Loading...
       </div>
     )
@@ -655,6 +706,7 @@ function App() {
   if (!project) {
     return (
       <>
+        <BackgroundLayer />
         <WelcomeScreen
           onCreateProject={() => setShowCreateDialog(true)}
           onOpenProject={handleOpenProject}
@@ -671,6 +723,8 @@ function App() {
 
   return (
     <>
+      <BackgroundLayer />
+      <FloatingOverlay />
       <AppLayout onSwitchProject={handleSwitchProject} />
       <CreateProjectDialog
         open={showCreateDialog}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Bot,
   Binary,
+  Bell,
   Globe,
   Languages,
   Palette,
@@ -15,6 +16,7 @@ import {
   Server,
   Settings,
   FileText,
+  Ticket,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -26,6 +28,7 @@ import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useZoomStore } from "@/stores/zoom-store"
 import { clampUserConcurrency } from "@/lib/concurrency-limits"
+import { useBackgroundStore } from "@/stores/background-store"
 import {
   loadSourceWatchAllProjects,
   loadSourceWatchConfig,
@@ -36,6 +39,7 @@ import {
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { normalizeFeishuConfig } from "@/lib/feishu"
 import { setIngestWorkerLimit } from "@/lib/ingest-queue"
 import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
@@ -45,7 +49,9 @@ import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
 import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
+import { FeishuNotifySection } from "./sections/feishu-notify-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
+import { JiraSection } from "./sections/jira-section"
 import { MineruSection } from "./sections/mineru-section"
 import { ApiServerSection } from "./sections/api-server-section"
 import { GeneralSection } from "./sections/general-section"
@@ -61,9 +67,11 @@ type CategoryId =
   | "web-search"
   | "network"
   | "source-watch"
+  | "jira"
   | "scheduled-import"
   | "mineru"
   | "api-server"
+  | "feishu"
   | "output"
   | "interface"
   | "maintenance"
@@ -87,9 +95,11 @@ const CATEGORIES: Category[] = [
   { id: "web-search", labelKey: "settings.categories.webSearch", icon: Globe },
   { id: "network", labelKey: "settings.categories.network", icon: Network },
   { id: "source-watch", labelKey: "settings.categories.sourceWatch", icon: FolderSync },
+  { id: "jira", labelKey: "settings.categories.jira", icon: Ticket },
   { id: "scheduled-import", labelKey: "settings.categories.scheduledImport", icon: Clock },
   { id: "mineru", labelKey: "settings.categories.mineru", icon: FileText },
   { id: "api-server", labelKey: "settings.categories.apiServer", icon: Server },
+  { id: "feishu", labelKey: "settings.categories.feishu", icon: Bell },
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
@@ -109,11 +119,15 @@ function initialDraft(
   mineru: ReturnType<typeof useWikiStore.getState>["mineruConfig"],
   apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
   generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
+  feishuConfig: ReturnType<typeof useWikiStore.getState>["feishuConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
   theme?: AppTheme,
   zoomLevel?: number,
+  backgroundImage?: string | null,
+  backgroundOpacity?: number,
+  backgroundBrightness?: number,
 ): SettingsDraft {
   // Show absolute path: if stored path is empty, show default using project path
   // If stored path is relative (legacy), prepend project path
@@ -125,6 +139,8 @@ function initialDraft(
     // Legacy relative path - prepend project path for display
     displayPath = `${projectPath}/${displayPath}`
   }
+
+  const bg = useBackgroundStore.getState()
 
   return {
     provider: llm.provider,
@@ -193,9 +209,13 @@ function initialDraft(
     apiToken: apiConfig.token,
     autostart: generalConfig.autostart,
     closeBehavior: generalConfig.closeBehavior,
+    feishuConfig: { ...feishuConfig },
     uiLanguage,
     theme: theme ?? "system",
     zoomLevel: zoomLevel ?? useZoomStore.getState().level,
+    backgroundImage: backgroundImage ?? bg.imageUrl ?? null,
+    backgroundOpacity: backgroundOpacity ?? bg.opacity,
+    backgroundBrightness: backgroundBrightness ?? bg.brightness,
   }
 }
 
@@ -224,6 +244,8 @@ export function SettingsView() {
   const setApiConfig = useWikiStore((s) => s.setApiConfig)
   const generalConfig = useWikiStore((s) => s.generalConfig)
   const setGeneralConfig = useWikiStore((s) => s.setGeneralConfig)
+  const feishuConfig = useWikiStore((s) => s.feishuConfig)
+  const setFeishuConfig = useWikiStore((s) => s.setFeishuConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -253,6 +275,7 @@ export function SettingsView() {
       mineruConfig,
       apiConfig,
       generalConfig,
+      feishuConfig,
       maxHistoryMessages,
       i18n.language,
       project?.path,
@@ -321,11 +344,15 @@ export function SettingsView() {
         mineruConfig,
         apiConfig,
         generalConfig,
+        feishuConfig,
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
         prev.theme,
         prev.zoomLevel,
+        prev.backgroundImage,
+        prev.backgroundOpacity,
+        prev.backgroundBrightness,
       ),
     )
   }, [
@@ -340,6 +367,7 @@ export function SettingsView() {
     mineruConfig,
     apiConfig,
     generalConfig,
+    feishuConfig,
     maxHistoryMessages,
     project,
   ])
@@ -376,8 +404,13 @@ export function SettingsView() {
       loadApiConfig,
       saveGeneralConfig,
       loadGeneralConfig,
+      saveFeishuConfig,
+      loadFeishuConfig,
       saveZoomLevel,
       loadZoomLevel,
+      saveBackgroundImage,
+      saveBackgroundOpacity,
+      saveBackgroundBrightness,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -461,6 +494,7 @@ export function SettingsView() {
       autostart: draft.autostart,
       closeBehavior: draft.closeBehavior,
     }
+    const newFeishuConfig = normalizeFeishuConfig(draft.feishuConfig)
 
     // Push all config values to zustand before any awaited save below. The
     // settings draft resync effect runs after store updates; if any config stays
@@ -479,6 +513,7 @@ export function SettingsView() {
     setMineruConfig(newMineruConfig)
     setApiConfig(newApiConfig)
     setGeneralConfig(newGeneralConfig)
+    setFeishuConfig(newFeishuConfig)
 
     try {
       await saveLlmConfig(newLlm)
@@ -540,6 +575,21 @@ export function SettingsView() {
       }
 
       await saveGeneralConfig(newGeneralConfig)
+      await saveFeishuConfig(newFeishuConfig)
+      // 飞书遥控对话桥接：跟随开关启停（幂等，重复保存不会起两个实例）。
+      try {
+        const { startFeishuBridge, stopFeishuBridge } = await import("@/lib/feishu")
+        if (newFeishuConfig.bridgeEnabled) {
+          const bridgeStatus = await startFeishuBridge(project?.id)
+          if (!bridgeStatus.ready && bridgeStatus.lastError) {
+            console.warn("[feishu-bridge] start:", bridgeStatus.lastError)
+          }
+        } else {
+          await stopFeishuBridge()
+        }
+      } catch (err) {
+        console.warn("[feishu-bridge] failed to toggle bridge:", err)
+      }
       try {
         if (newGeneralConfig.autostart) {
           await enableAutostart()
@@ -571,6 +621,14 @@ export function SettingsView() {
       // Apply zoom level
       useZoomStore.getState().setLevel(draft.zoomLevel)
       await saveZoomLevel(draft.zoomLevel)
+
+      // Apply background (image + opacity + brightness)
+      useBackgroundStore.getState().setImage(draft.backgroundImage)
+      useBackgroundStore.getState().setOpacity(draft.backgroundOpacity)
+      useBackgroundStore.getState().setBrightness(draft.backgroundBrightness)
+      await saveBackgroundImage(draft.backgroundImage)
+      await saveBackgroundOpacity(draft.backgroundOpacity)
+      await saveBackgroundBrightness(draft.backgroundBrightness)
 
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -676,12 +734,17 @@ export function SettingsView() {
         return <NetworkSection draft={draft} setDraft={setDraft} />
       case "source-watch":
         return <SourceWatchSection draft={draft} setDraft={setDraft} projectReady={!!project} />
+      case "jira":
+        // Persists inline, like the LLM section — no draft / Save button.
+        return <JiraSection />
       case "scheduled-import":
         return <ScheduledImportSection draft={draft} setDraft={setDraft} />
       case "mineru":
         return <MineruSection draft={draft} setDraft={setDraft} />
       case "api-server":
         return <ApiServerSection draft={draft} setDraft={setDraft} />
+      case "feishu":
+        return <FeishuNotifySection draft={draft} setDraft={setDraft} />
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
@@ -754,8 +817,9 @@ export function SettingsView() {
 
         {/* Global Save bar hidden for sections that persist inline:
             - "llm" saves per-row on every edit (independent per-preset state)
+            - "jira" saves its own config on commit, outside the draft
             - "about" has no draft-bound fields */}
-        {active !== "about" && active !== "llm" && (
+        {active !== "about" && active !== "llm" && active !== "jira" && (
           <div className="shrink-0 border-t bg-background/80 backdrop-blur px-8 py-3">
             <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
               <p className={`text-xs ${saveError ? "text-destructive" : "text-muted-foreground"}`}>

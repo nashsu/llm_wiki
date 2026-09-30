@@ -83,5 +83,22 @@ describe("source watch config", () => {
     expect(config.excludeExtensions).toEqual(["json", "yaml", "xml", "dll"])
     expect(config.excludeDirs).toEqual([".git", "node_modules", "drafts", "wip"])
     expect(config.excludeGlobs).toEqual(["*.private.*", "~$*"])
+    expect(config.excludedPaths).toEqual([])
+  })
+
+  it("normalizes excludedPaths to source-relative keys", () => {
+    const config = normalizeSourceWatchConfig({
+      excludedPaths: ["raw/sources/foo.md", "/proj/raw/sources/docs/paper.pdf", "docs/", "", "foo.md"],
+    })
+    expect(config.excludedPaths).toEqual(["foo.md", "docs/paper.pdf", "docs"])
+  })
+
+  it("respects excludedPaths for exact files and folder prefixes", () => {
+    const config = normalizeSourceWatchConfig({ excludedPaths: ["foo.md", "docs"] })
+    expect(isPathAllowedBySourceWatch("raw/sources/foo.md", config)).toBe(false)
+    expect(isPathAllowedBySourceWatch("raw/sources/docs/paper.pdf", config)).toBe(false)
+    expect(isPathAllowedBySourceWatch("raw/sources/docs/sub/a.md", config)).toBe(false)
+    expect(isPathAllowedBySourceWatch("/proj/raw/sources/foo.md", config)).toBe(false)
+    expect(isPathAllowedBySourceWatch("raw/sources/bar.md", config)).toBe(true)
   })
 })

@@ -51,6 +51,7 @@ interface PersistedChatData {
 export interface ChatPreferences {
   useWebSearch: boolean
   useAnyTxtSearch: boolean
+  notifyFeishu: boolean
   agentMode: ChatAgentMode
   retrievalMode: ChatRetrievalMode
   selectedSkills: string[]
@@ -258,6 +259,7 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
     return {
       useWebSearch: parsed.useWebSearch === true,
       useAnyTxtSearch: parsed.useAnyTxtSearch === true,
+      notifyFeishu: parsed.notifyFeishu === true,
       agentMode: normalizePersistedAgentMode(parsed.agentMode),
       retrievalMode: normalizePersistedRetrievalMode(parsed.retrievalMode),
       selectedSkills: normalizePersistedSkillList(parsed.selectedSkills),
@@ -267,6 +269,7 @@ export async function loadChatPreferences(projectPath: string): Promise<ChatPref
     return {
       useWebSearch: false,
       useAnyTxtSearch: false,
+      notifyFeishu: false,
       agentMode: "standard",
       retrievalMode: "standard",
       selectedSkills: [],

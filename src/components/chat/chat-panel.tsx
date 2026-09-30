@@ -2,11 +2,11 @@ import { useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { convertFileSrc, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText, ListTree, ChevronDown, ChevronRight } from "lucide-react"
+import { BookOpen, Plus, Trash2, MessageSquare, X, Maximize2, FolderOpen, FileText, ListTree, ChevronDown, ChevronRight, Pencil, Star, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ChatMessage, StreamingMessage, useSourceFiles, type ChatReferencePreview } from "./chat-message"
 import { ChatInput, type ChatSendOptions } from "./chat-input"
-import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReference } from "@/stores/chat-store"
+import { useChatStore, chatMessagesToLLM, type MessageImage, type MessageReference, type Conversation } from "@/stores/chat-store"
 import { useWikiStore } from "@/stores/wiki-store"
 import { resolveTaskLlmConfig } from "@/lib/llm-task-routing"
 import { isReasoningOnlyResponseError, streamChat } from "@/lib/llm-client"
@@ -15,6 +15,7 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
+import { publishFeishuChatReply, sendFeishuMessage, stripThinkBlocks } from "@/lib/feishu"
 import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
 import type { ChatMessage as LlmChatMessage, ContentBlock } from "@/lib/llm-client"
 import { FilePreview } from "@/components/editor/file-preview"
@@ -166,9 +167,11 @@ function formatDate(timestamp: number): string {
 function ConversationSidebar({
   onNewConversation,
   onSelectConversation,
+  onExitConversation,
 }: {
   onNewConversation?: () => void
   onSelectConversation?: (id: string) => void
+  onExitConversation?: () => void
 }) {
   const { t } = useTranslation()
   const conversations = useChatStore((s) => s.conversations)
@@ -176,14 +179,159 @@ function ConversationSidebar({
   const messages = useChatStore((s) => s.messages)
   const createConversation = useChatStore((s) => s.createConversation)
   const deleteConversation = useChatStore((s) => s.deleteConversation)
+  const renameConversation = useChatStore((s) => s.renameConversation)
+  const toggleFavorite = useChatStore((s) => s.toggleFavorite)
   const setActiveConversation = useChatStore((s) => s.setActiveConversation)
 
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState("")
 
-  const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+  // Favorites first, then recency within each group.
+  const sorted = [...conversations].sort((a, b) => {
+    const aFav = a.favorited ? 1 : 0
+    const bFav = b.favorited ? 1 : 0
+    if (aFav !== bFav) return bFav - aFav
+    return b.updatedAt - a.updatedAt
+  })
+  const favoriteConversations = sorted.filter((c) => c.favorited)
+  const otherConversations = sorted.filter((c) => !c.favorited)
 
   function getMessageCount(convId: string): number {
     return messages.filter((m) => m.conversationId === convId).length
+  }
+
+  function selectConversation(id: string) {
+    if (onSelectConversation) {
+      onSelectConversation(id)
+    } else {
+      setActiveConversation(id)
+    }
+  }
+
+  function startRename(conv: Conversation) {
+    setEditingId(conv.id)
+    setEditingTitle(conv.title)
+  }
+
+  function commitRename(id: string) {
+    const title = editingTitle.trim()
+    if (title && editingId === id) {
+      renameConversation(id, title)
+    }
+    setEditingId(null)
+    setEditingTitle("")
+  }
+
+  function cancelRename() {
+    setEditingId(null)
+    setEditingTitle("")
+  }
+
+  function deleteConversationItem(conv: Conversation) {
+    deleteConversation(conv.id)
+    // Delete persisted chat file
+    const proj = useWikiStore.getState().project
+    if (proj) {
+      deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
+    }
+  }
+
+  function renderConversationItem(conv: Conversation) {
+    const isActive = conv.id === activeConversationId
+    const isEditing = editingId === conv.id
+    const msgCount = getMessageCount(conv.id)
+    const isFavorited = conv.favorited === true
+    return (
+      <div
+        key={conv.id}
+        className={`group relative mx-1 my-0.5 flex cursor-pointer flex-col rounded-md px-2 py-1.5 text-sm transition-colors ${
+          isActive
+            ? "bg-primary/10 text-primary"
+            : "hover:bg-accent text-foreground"
+        }`}
+        onClick={() => {
+          if (isEditing) return
+          selectConversation(conv.id)
+        }}
+        onMouseEnter={() => setHoveredId(conv.id)}
+        onMouseLeave={() => setHoveredId(null)}
+      >
+        {isEditing ? (
+          <input
+            autoFocus
+            value={editingTitle}
+            onChange={(e) => setEditingTitle(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === "Enter") commitRename(conv.id)
+              else if (e.key === "Escape") cancelRename()
+            }}
+            onBlur={() => commitRename(conv.id)}
+            className="w-full rounded border border-primary/50 bg-background px-1.5 py-0.5 text-xs outline-none"
+          />
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-1">
+              <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
+                {conv.title}
+              </span>
+              <span className="flex flex-shrink-0 items-center gap-0.5">
+                <button
+                  className="rounded p-0.5 text-muted-foreground"
+                  title={isFavorited ? t("chat.unfavorite") : t("chat.favorite")}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleFavorite(conv.id)
+                  }}
+                >
+                  <Star
+                    className={`h-3 w-3 ${
+                      isFavorited
+                        ? "fill-amber-400 text-amber-400"
+                        : "text-muted-foreground/60 hover:text-amber-400"
+                    }`}
+                  />
+                </button>
+                {hoveredId === conv.id && (
+                  <>
+                    <button
+                      className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      title={t("chat.renameConversation")}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        startRename(conv)
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                      title={t("chat.deleteConversation")}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteConversationItem(conv)
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span>{formatDate(conv.updatedAt)}</span>
+              {msgCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span>{msgCount} {t("chat.msgCount")}</span>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -199,11 +347,35 @@ function ConversationSidebar({
             } else {
               createConversation()
             }
+            // 新建后直接进入行内命名输入；留空回车则保留默认标题
+            const newId = useChatStore.getState().activeConversationId
+            if (newId) {
+              setEditingId(newId)
+              setEditingTitle("")
+            }
           }}
         >
           <Plus className="h-3.5 w-3.5" />
           {t("chat.newChat")}
         </Button>
+        {activeConversationId && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-1 w-full gap-2 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              if (onExitConversation) {
+                onExitConversation()
+              } else {
+                setActiveConversation(null)
+              }
+            }}
+            title={t("chat.exitConversation")}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            {t("chat.exitConversation")}
+          </Button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
@@ -212,60 +384,26 @@ function ConversationSidebar({
             {t("chat.noConversationsYet")}
           </p>
         ) : (
-          sorted.map((conv) => {
-            const isActive = conv.id === activeConversationId
-            const msgCount = getMessageCount(conv.id)
-            return (
-              <div
-                key={conv.id}
-                className={`group relative mx-1 my-0.5 flex cursor-pointer flex-col rounded-md px-2 py-1.5 text-sm transition-colors ${
-                  isActive
-                    ? "bg-primary/10 text-primary"
-                    : "hover:bg-accent text-foreground"
-                }`}
-                onClick={() => {
-                  if (onSelectConversation) {
-                    onSelectConversation(conv.id)
-                  } else {
-                    setActiveConversation(conv.id)
-                  }
-                }}
-                onMouseEnter={() => setHoveredId(conv.id)}
-                onMouseLeave={() => setHoveredId(null)}
-              >
-                <div className="flex items-start justify-between gap-1">
-                  <span className="line-clamp-2 flex-1 text-xs font-medium leading-snug">
-                    {conv.title}
-                  </span>
-                  {hoveredId === conv.id && (
-                    <button
-                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteConversation(conv.id)
-                        // Delete persisted chat file
-                        const proj = useWikiStore.getState().project
-                        if (proj) {
-                          deleteFile(`${proj.path}/.llm-wiki/chats/${conv.id}.json`).catch(() => {})
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  )}
+          <>
+            {favoriteConversations.length > 0 && (
+              <>
+                <div className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {t("chat.favoriteSection")}
                 </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{formatDate(conv.updatedAt)}</span>
-                  {msgCount > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>{msgCount} {t("chat.msgCount")}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-            )
-          })
+                {favoriteConversations.map(renderConversationItem)}
+              </>
+            )}
+            {otherConversations.length > 0 && (
+              <>
+                {favoriteConversations.length > 0 && (
+                  <div className="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {t("chat.otherSection")}
+                  </div>
+                )}
+                {otherConversations.map(renderConversationItem)}
+              </>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -462,6 +600,7 @@ export function ChatPanel() {
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const useWebSearch = useChatStore((s) => s.useWebSearch)
   const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
+  const notifyFeishu = useChatStore((s) => s.notifyFeishu)
   const agentMode = useChatStore((s) => s.agentMode)
   const retrievalMode = useChatStore((s) => s.retrievalMode)
   const selectedSkills = useChatStore((s) => s.selectedSkills)
@@ -469,6 +608,7 @@ export function ChatPanel() {
   const disabledSkills = useChatStore((s) => s.disabledSkills)
   const setUseWebSearch = useChatStore((s) => s.setUseWebSearch)
   const setUseAnyTxtSearch = useChatStore((s) => s.setUseAnyTxtSearch)
+  const setNotifyFeishu = useChatStore((s) => s.setNotifyFeishu)
   const setAgentMode = useChatStore((s) => s.setAgentMode)
   const setRetrievalMode = useChatStore((s) => s.setRetrievalMode)
   const setSelectedSkills = useChatStore((s) => s.setSelectedSkills)
@@ -493,6 +633,10 @@ export function ChatPanel() {
   )
   const searchApiConfig = useWikiStore((s) => s.searchApiConfig)
   const anyTxtAvailable = hasConfiguredAnyTxt(searchApiConfig.anyTxt)
+  const feishuConfig = useWikiStore((s) => s.feishuConfig)
+  const feishuAvailable =
+    feishuConfig.enabled &&
+    (feishuConfig.recipientId.startsWith("ou_") || feishuConfig.recipientId.startsWith("oc_"))
   const imageInputAvailable = supportsImageInput(llmConfig)
   const availableContextFiles = useMemo(() => {
     if (!project) return []
@@ -514,6 +658,51 @@ export function ChatPanel() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const [agentEvents, setAgentEvents] = useState<ChatAgentEvent[]>([])
+  const [feishuError, setFeishuError] = useState<string | null>(null)
+
+  // 铃铛开着时，每条 AI 回复完成后推送飞书：
+  // - 「回复为飞书文档」开启 → 与机器人一致：发布全文文档 + 回发链接，失败降级完整原文
+  // - 关闭 → 发送完整原文（仅剔除推理块，不再截断摘要）
+  // 失败只提示，绝不影响回复本身（不抛错、不重试）。
+  const pushFeishuSummary = useCallback(async (conversationId: string, content: string) => {
+    const { notifyFeishu: enabled, conversations } = useChatStore.getState()
+    const config = useWikiStore.getState().feishuConfig
+    if (!enabled || !config.enabled) return
+    if (!config.recipientId.startsWith("ou_") && !config.recipientId.startsWith("oc_")) return
+    const title = conversations.find((c) => c.id === conversationId)?.title ?? ""
+    const header = title ? `[LLM Wiki · ${title}]` : "[LLM Wiki]"
+    // 飞书文本消息安全上限（中文 3 字节/字，150KB 上限取整）
+    const fullText = (() => {
+      const text = stripThinkBlocks(content)
+      return text.length > 45000 ? `${text.slice(0, 45000)}…（超长截断）` : text
+    })()
+    const showError = (msg: string) => {
+      setFeishuError(msg)
+      setTimeout(() => setFeishuError(null), 6000)
+    }
+    try {
+      if (config.bridgeReplyAsDoc) {
+        const docTitle = `${(title || "AI 回复").slice(0, 24)}｜LLM Wiki`
+        const pub = await publishFeishuChatReply(docTitle, content)
+        if (pub.ok) {
+          const result = await sendFeishuMessage(config.recipientId, `📄 ${docTitle}\n${pub.url}`)
+          if (!result.ok) showError(result.error || "send failed")
+        } else {
+          // 文档发布失败：降级发送完整原文
+          if (fullText) await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+          showError(`文档发布失败已降级原文：${pub.error}`)
+        }
+      } else {
+        if (!fullText) return
+        const result = await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+        if (!result.ok) showError(result.error || "send failed")
+      }
+    } catch (err) {
+      console.warn("[feishu] notify failed:", err)
+      setFeishuError(err instanceof Error ? err.message : String(err))
+      setTimeout(() => setFeishuError(null), 6000)
+    }
+  }, [])
   const [referencePreview, setReferencePreview] = useState<ChatReferencePreview | null>(null)
   const [contextDetailReferences, setContextDetailReferences] = useState<MessageReference[] | null>(null)
   const [generatedOutputPreviews, setGeneratedOutputPreviews] = useState<ChatReferencePreview[]>([])
@@ -593,7 +782,7 @@ export function ChatPanel() {
     activeConversationId ?? "",
     activeMessages.length,
     lastMessage?.id ?? "",
-    lastMessage?.content.length ?? 0,
+    lastMessage?.content?.length ?? 0,
     activeStreaming ? streamingContent.length : 0,
   ].join(":")
 
@@ -1039,6 +1228,7 @@ export function ChatPanel() {
           )
           if (!pendingUserInputRequest) {
             autoOpenSingleGeneratedOutput(convId, references)
+            void pushFeishuSummary(convId, accumulated)
           }
           setAgentEvents([])
           setStreamingConversationId(null)
@@ -1153,7 +1343,7 @@ export function ChatPanel() {
         const finalMessages: LlmChatMessage[] = [
           {
             role: "system",
-            content: "Use retrieved LLM Wiki context when available. If none was retrieved, answer directly and do not imply that general knowledge came from the project.",
+            content: "Answer using the provided LLM Wiki context and references. If the context is insufficient, say what is missing instead of inventing details.",
           },
           ...(sendOptions.historyOverride ?? chatMessagesToLLM(priorMessages)),
           { role: "user", content: userContent },
@@ -1227,6 +1417,7 @@ export function ChatPanel() {
         finalized = true
         finalizeStreamForConversation(convId, accumulated, backendReferences, backendSteps)
         autoOpenSingleGeneratedOutput(convId, backendReferences)
+        void pushFeishuSummary(convId, accumulated)
         setAgentEvents([])
         setStreamingConversationId(null)
         abortRef.current = null
@@ -1254,7 +1445,7 @@ export function ChatPanel() {
         activeRunIdRef.current = null
       }
     },
-    [project, llmConfig, searchApiConfig, addMessageToConversation, setStreaming, appendStreamToken, finalizeStreamForConversation, createConversation, maxHistoryMessages, t, availableSkills, autoOpenSingleGeneratedOutput],
+    [project, llmConfig, searchApiConfig, addMessageToConversation, setStreaming, appendStreamToken, finalizeStreamForConversation, createConversation, maxHistoryMessages, t, availableSkills, autoOpenSingleGeneratedOutput, pushFeishuSummary],
   )
 
   const handleStop = useCallback(() => {
@@ -1291,6 +1482,16 @@ export function ChatPanel() {
     useChatStore.getState().setActiveConversation(conversationId)
     setApprovingShellMessageId(null)
   }, [])
+
+  const handleExitConversation = useCallback(() => {
+    handleStop()
+    setReferencePreview(null)
+    setGeneratedOutputPreviews([])
+    setGeneratedOutputPreview(null)
+    setApprovingShellMessageId(null)
+    dismissedGeneratedOutputsKeyRef.current = null
+    useChatStore.getState().setActiveConversation(null)
+  }, [handleStop])
 
   const handleRegenerate = useCallback(async () => {
     if (activeStreaming) return
@@ -1425,6 +1626,7 @@ export function ChatPanel() {
       <ConversationSidebar
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}
+        onExitConversation={handleExitConversation}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -1485,12 +1687,18 @@ export function ChatPanel() {
           </>
         )}
 
+        {feishuError && (
+          <p className="px-4 pb-1 text-xs text-amber-600 dark:text-amber-400">
+            {t("chat.feishuSendFailed", { defaultValue: "飞书通知发送失败" })}: {feishuError}
+          </p>
+        )}
         <ChatInput
           onSend={handleSend}
           onStop={handleStop}
           isStreaming={activeStreaming}
           useWebSearch={useWebSearch}
           useAnyTxtSearch={useAnyTxtSearch}
+          notifyFeishu={notifyFeishu}
           agentMode={agentMode}
           retrievalMode={retrievalMode}
           availableSkills={availableSkills}
@@ -1499,12 +1707,14 @@ export function ChatPanel() {
           selectedContextFiles={selectedContextFiles}
           onUseWebSearchChange={setUseWebSearch}
           onUseAnyTxtSearchChange={setUseAnyTxtSearch}
+          onNotifyFeishuChange={setNotifyFeishu}
           onAgentModeChange={setAgentMode}
           onRetrievalModeChange={setRetrievalMode}
           onSelectedSkillsChange={setSelectedSkills}
           onSelectedContextFilesChange={setSelectedContextFiles}
           anyTxtAvailable={anyTxtAvailable}
           imageInputAvailable={imageInputAvailable}
+          feishuAvailable={feishuAvailable}
           placeholder={
             mode === "ingest"
               ? t("chat.ingestPlaceholder")

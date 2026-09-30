@@ -18,6 +18,7 @@ vi.mock("@/commands/fs", () => ({
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
+import { useActivityStore } from "@/stores/activity-store"
 import { listDirectory, readFile } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 
@@ -96,6 +97,7 @@ beforeEach(() => {
   mockListDirectory.mockReset()
   mockReadFile.mockReset()
   useReviewStore.setState({ items: [] })
+  useActivityStore.setState({ items: [] })
 
   // Default: empty wiki dir, no files
   mockListDirectory.mockResolvedValue([])
@@ -192,6 +194,55 @@ describe("sweep race — abort signal", () => {
     const result = await sweepPromise
     expect(result).toBe(0)
     expect(harness.anyAborted()).toBe(true)
+  })
+
+  it("abort during buildWikiIndex stops the sweep and marks the activity cancelled", async () => {
+    setProject("/project-A")
+    addPending([{ title: "Missing page: foo", type: "missing-page" }])
+
+    // Hold listDirectory so the sweep sits inside buildWikiIndex when abort fires
+    const listDirDeferred = createDeferred<FileNode[]>()
+    mockListDirectory.mockReturnValue(listDirDeferred.promise)
+
+    const ac = new AbortController()
+    const sweepPromise = sweepResolvedReviews("/project-A", ac.signal)
+    await flushMicrotasks(3)
+
+    ac.abort()
+
+    // Let the index build finish; buildWikiIndex must observe the abort and bail.
+    // If it did not, the rule stage would resolve the review (foo.md exists).
+    listDirDeferred.resolve([fileNode("foo.md")])
+    mockReadFile.mockResolvedValue("---\ntitle: Foo\n---\n")
+
+    const resolved = await sweepPromise
+    expect(resolved).toBe(0)
+    expect(useReviewStore.getState().items[0].resolved).toBe(false)
+
+    const activity = useActivityStore.getState().items.find((i) => i.title === "Review cleanup")
+    expect(activity?.status).toBe("error")
+    expect(activity?.detail).toBe("Review cleanup cancelled")
+  })
+
+  it("shows a running activity item with scanning progress as soon as the sweep starts", async () => {
+    setProject("/project-A")
+    addPending([{ title: "Missing page: foo", type: "missing-page" }])
+
+    // Hold buildWikiIndex so we can observe the item before the sweep completes
+    const listDirDeferred = createDeferred<FileNode[]>()
+    mockListDirectory.mockReturnValue(listDirDeferred.promise)
+
+    const ac = new AbortController()
+    const sweepPromise = sweepResolvedReviews("/project-A", ac.signal)
+    await flushMicrotasks(3)
+
+    const activity = useActivityStore.getState().items.find((i) => i.title === "Review cleanup")
+    expect(activity?.status).toBe("running")
+    expect(activity?.detail).toBe("Scanning 1 pending review…")
+
+    ac.abort()
+    listDirDeferred.resolve([])
+    await sweepPromise
   })
 })
 

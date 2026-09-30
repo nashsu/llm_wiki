@@ -1,7 +1,9 @@
 import type { WikiState } from "@/stores/wiki-store"
 
 export function isStandaloneView(view: WikiState["activeView"]): boolean {
-  return view === "chat" || view === "skills" || view === "settings"
+  // `jira` is a full-width workspace: searching issues needs the horizontal
+  // room, and neither the wiki tree nor the research panel applies to it.
+  return view === "chat" || view === "skills" || view === "settings" || view === "jira"
 }
 
 export function isResearchPanelVisible(
