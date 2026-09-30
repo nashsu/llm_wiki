@@ -54,12 +54,46 @@ export function parseFrontmatterArray(content: string, fieldName: string): strin
     return out
   }
 
-  const inlineRe = new RegExp(`^${escapedName}:\\s*\\[([^\\]]*)\\]`, "m")
+  const inlineRe = new RegExp(`^${escapedName}:\\s*\\[`, "m")
   const inline = fm.match(inlineRe)
   if (!inline) return []
-  const body = inline[1].trim()
-  if (body === "") return []
+  const body = scanInlineArrayBody(fm, inline.index! + inline[0].length)
+  if (!body || body.trim() === "") return []
   return splitInlineArray(body)
+}
+
+/**
+ * Extract an inline array body between a `[` and its matching `]`,
+ * quote-aware: a `]` inside a quoted value (e.g. a filename like
+ * `[202603251545]标题.html`) does not close the array. Scans a single
+ * line only — an unterminated array is treated as malformed and
+ * returns null. `start` points just past the opening `[`.
+ */
+function scanInlineArrayBody(text: string, start: number): string | null {
+  let quote: "\"" | "'" | null = null
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "\n" || ch === "\r") return null
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quote === "\"" && ch === "\\") {
+      escaped = true
+      continue
+    }
+    if (quote === null && (ch === "\"" || ch === "'")) {
+      quote = ch
+      continue
+    }
+    if (quote !== null && ch === quote) {
+      quote = null
+      continue
+    }
+    if (quote === null && ch === "]") return text.slice(start, i)
+  }
+  return null
 }
 
 function splitInlineArray(body: string): string[] {
@@ -125,10 +159,29 @@ export function writeFrontmatterArray(
   const serialized = values.map(quoteInlineArrayValue).join(", ")
   const newLine = `${fieldName}: [${serialized}]`
 
-  // Replace inline form in place — preserves field ordering.
-  const inlineRe = new RegExp(`^${escapedName}:\\s*\\[[^\\]]*\\]`, "m")
-  if (inlineRe.test(fmBody)) {
-    const rewritten = fmBody.replace(inlineRe, newLine)
+  // Replace inline form in place — preserves field ordering. Match
+  // through the array's *closing* `]` with the quote-aware scanner so
+  // values containing `]` (e.g. `[202603251545]标题.html` filenames)
+  // don't leave a trailing tail behind the replacement.
+  const inlineStartRe = new RegExp(`^${escapedName}:\\s*\\[`, "m")
+  const inlineStart = fmBody.match(inlineStartRe)
+  if (inlineStart) {
+    const arrayStart = inlineStart.index! + inlineStart[0].length
+    const body = scanInlineArrayBody(fmBody, arrayStart)
+    if (body !== null) {
+      const arrayEnd = arrayStart + body.length + 1 // past the closing `]`
+      const lineStart = inlineStart.index!
+      // Replace from line start so a malformed prefix (`sources:  [`) normalizes too.
+      const rewritten =
+        fmBody.slice(0, lineStart) + newLine + fmBody.slice(arrayEnd)
+      return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
+    }
+    // Unterminated inline array — fall through and replace the whole
+    // matched line prefix (treat as malformed emission).
+    const rewritten = fmBody.replace(
+      new RegExp(`^${escapedName}:\\s*\\[[^\\r\\n]*`, "m"),
+      newLine,
+    )
     return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
   }
 
