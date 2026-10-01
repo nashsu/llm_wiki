@@ -5,7 +5,7 @@
   },
   "common": {
     "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
-    "dismiss": "Nascondi", "loading": "Caricamento...", "optional": "opzionale"
+    "dismiss": "Nascondi", "remove": "Rimuovi", "loading": "Caricamento...", "optional": "opzionale"
   },
   "layout": { "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
   "errors": { "generic": "Qualcosa è andato storto" },
@@ -1065,6 +1065,7 @@
     "cancelAll": "Annulla tutto",
     "cancelAllTitle": "Annulla tutte le attività in coda e in corso",
     "cancelAllConfirm": "Annullare tutte le {{count}} attività di elaborazione in coda o in corso? I file parziali dell'attività in corso verranno rimossi. Le attività annullate restano in coda, così puoi riavviarle.",
+    "removeSelectedConfirm": "Rimuovere definitivamente dalla coda le attività di elaborazione interrotte selezionate? Selezione: {{count}}. L\u0027operazione non può essere annullata.",
     "retryFailed": "Riavvia le interrotte",
     "retryFailedTitle": "Riavvia tutte le attività di elaborazione non riuscite e annullate",
     "selectAll": "Seleziona tutto",

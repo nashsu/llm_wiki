@@ -582,6 +582,69 @@ export async function cancelTasks(taskIds: readonly string[]): Promise<number> {
 }
 
 /**
+ * Drop stopped (failed/cancelled) tasks from the queue for good. Restartable
+ * entries are retained until the user explicitly removes them here; pending
+ * and processing tasks must be cancelled first and are skipped.
+ *
+ * A `cancelled` status only records that cancellation was *requested* — the
+ * run keeps its worker slot until it observes the AbortSignal, and a commit
+ * already past the interruptible point still runs to completion. Removing the
+ * entry while that run is alive would drop the sourcePath that enqueueBatch
+ * dedupes against, so re-importing the same source would mint a fresh task ID
+ * that the `!activeRuns.has(task.id)` guard in processNext no longer covers.
+ * The two runs cannot interleave their writes — autoIngest holds a per-source
+ * project lock — but the newcomer would take a worker slot and sit in the
+ * Activity Panel as "processing" while it blocks on that lock. Skip tasks with
+ * a live run; they become removable once it exits.
+ */
+export async function removeTasks(taskIds: readonly string[]): Promise<number> {
+  const selected = new Set(taskIds)
+  const targets = queue.filter(
+    (task) =>
+      task.projectId === currentProjectId &&
+      selected.has(task.id) &&
+      (task.status === "failed" || task.status === "cancelled") &&
+      !activeRuns.has(task.id),
+  )
+  if (targets.length === 0) return 0
+  const doomed = new Set(targets.map((task) => task.id))
+  queue = queue.filter((task) => !doomed.has(task.id))
+  await saveQueue(currentProjectPath)
+  return targets.length
+}
+
+/**
+ * True while a run still owns this task's worker slot. Callers use it to hide
+ * the remove affordance instead of offering a click that {@link removeTasks}
+ * would refuse: cancellation is only *requested* synchronously, so a task can
+ * read as `cancelled` for a beat while its run is still winding down.
+ */
+export function hasActiveRun(taskId: string): boolean {
+  return activeRuns.has(taskId)
+}
+
+/**
+ * Narrow a selection to the tasks the queue still holds, preserving the
+ * original Set when nothing was dropped so React state keeps its identity.
+ * Used after a removal rather than clearing the selection outright, because
+ * {@link removeTasks} skips tasks with a live run and those rows must stay
+ * selected instead of appearing to have been removed.
+ */
+export function retainQueuedSelection(
+  selected: Set<string>,
+  tasks: readonly IngestTask[],
+): Set<string> {
+  const live = new Set(tasks.map((task) => task.id))
+  const next = new Set([...selected].filter((id) => live.has(id)))
+  return next.size === selected.size ? selected : next
+}
+
+/** Single-task convenience wrapper around {@link removeTasks}. */
+export async function removeTask(taskId: string): Promise<boolean> {
+  return (await removeTasks([taskId])) === 1
+}
+
+/**
  * Permanently discard active-project tasks for sources that no longer exist.
  * Unlike cancelTasks, this does not retain restartable queue entries because
  * scheduled-import reconciliation has already established that the mirrored

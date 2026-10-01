@@ -57,6 +57,10 @@ import {
   retryAllFailedTasks,
   cancelTask,
   cancelTasks,
+  removeTask,
+  removeTasks,
+  hasActiveRun,
+  retainQueuedSelection,
   discardTasksForSources,
   cancelAllTasks,
   movePendingTask,
@@ -576,6 +580,118 @@ describe("ingest-queue — cancel", () => {
 
     expect(getQueue().find((t) => t.sourcePath === "second.md")?.status).toBe("cancelled")
     expect(getQueue().find((t) => t.sourcePath === "first.md")).toBeDefined()
+  })
+
+  it("removeTask drops a cancelled task but leaves active ones alone", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {})) // block first task
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "first.md", folderContext: "" },
+      { sourcePath: "second.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+
+    const second = getQueue().find((t) => t.sourcePath === "second.md")!
+    await cancelTask(second.id)
+    expect(await removeTask(second.id)).toBe(true)
+    expect(getQueue().some((t) => t.sourcePath === "second.md")).toBe(false)
+
+    // Processing tasks are not removable — cancel them first.
+    const first = getQueue().find((t) => t.sourcePath === "first.md")!
+    expect(await removeTask(first.id)).toBe(false)
+    expect(getQueue().some((t) => t.sourcePath === "first.md")).toBe(true)
+  })
+
+  it("removeTask drops a failed task and persists the removal", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify([
+      { id: "ingest-failed-a", sourcePath: "a.md", folderContext: "", status: "failed", addedAt: 1, error: "boom", retryCount: 3 },
+      { id: "ingest-failed-b", sourcePath: "b.md", folderContext: "", status: "failed", addedAt: 2, error: "boom", retryCount: 3 },
+    ]))
+    await restoreQueue(TEST_ID, TEST_PATH)
+    mockWriteFile.mockClear()
+
+    expect(await removeTask("ingest-failed-a")).toBe(true)
+    expect(getQueue().map((t) => t.id)).toEqual(["ingest-failed-b"])
+    const calls = mockWriteFile.mock.calls
+    const [path, snapshot] = calls[calls.length - 1]
+    expect(path).toBe(`${TEST_PATH}/.llm-wiki/ingest-queue.json`)
+    // Not just "the removed ID is gone" — a snapshot of `[]` would satisfy that
+    // while silently losing the survivor on the next restore.
+    expect(JSON.parse(snapshot).map((t: { id: string }) => t.id))
+      .toEqual(["ingest-failed-b"])
+  })
+
+  it("removeTask refuses a cancelled task whose run has not exited yet", async () => {
+    // autoIngest never settles, so the run keeps its slot in activeRuns even
+    // after the abort. Status is "cancelled" but the worker is still alive.
+    mockAutoIngest.mockImplementation(() => new Promise(() => {}))
+
+    await enqueueBatch(TEST_ID, [{ sourcePath: "in-flight.md", folderContext: "" }])
+    await flushMicrotasks(2)
+
+    const task = getQueue().find((t) => t.sourcePath === "in-flight.md")!
+    expect(task.status).toBe("processing")
+    await cancelTask(task.id)
+    expect(getQueue().find((t) => t.id === task.id)!.status).toBe("cancelled")
+
+    // Removing now would free the sourcePath for a re-import, and the new task
+    // would get a fresh ID that processNext's activeRuns guard cannot match.
+    expect(await removeTask(task.id)).toBe(false)
+    expect(await removeTasks([task.id])).toBe(0)
+    expect(getQueue().some((t) => t.id === task.id)).toBe(true)
+  })
+
+  it("removeTasks drops only the stopped tasks in the selection", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {})) // block first task
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "processing.md", folderContext: "" },
+      { sourcePath: "cancelled.md", folderContext: "" },
+      { sourcePath: "pending.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+
+    const cancelled = getQueue().find((t) => t.sourcePath === "cancelled.md")!
+    await cancelTask(cancelled.id)
+
+    const removed = await removeTasks(getQueue().map((t) => t.id))
+    expect(removed).toBe(1)
+    expect(getQueue().map((t) => t.sourcePath)).toEqual(["processing.md", "pending.md"])
+
+    // Unknown IDs and an empty selection are no-ops, not throws.
+    expect(await removeTasks(["ingest-does-not-exist"])).toBe(0)
+    expect(await removeTasks([])).toBe(0)
+  })
+
+  it("retainQueuedSelection keeps rows the core refused to remove", async () => {
+    mockAutoIngest.mockImplementation(() => new Promise(() => {})) // block first task
+
+    await enqueueBatch(TEST_ID, [
+      { sourcePath: "stuck.md", folderContext: "" },
+      { sourcePath: "gone.md", folderContext: "" },
+      { sourcePath: "kept.md", folderContext: "" },
+    ])
+    await flushMicrotasks(2)
+
+    const stuck = getQueue().find((t) => t.sourcePath === "stuck.md")!
+    const gone = getQueue().find((t) => t.sourcePath === "gone.md")!
+    const kept = getQueue().find((t) => t.sourcePath === "kept.md")!
+
+    await cancelTask(stuck.id) // cancelled, but its run never settles
+    await cancelTask(gone.id)
+    expect(await removeTask(gone.id)).toBe(true)
+
+    const next = retainQueuedSelection(new Set([stuck.id, gone.id, kept.id]), getQueue())
+    expect(next.has(gone.id)).toBe(false) // actually removed
+    expect(next.has(stuck.id)).toBe(true) // guard refused it — must stay selected
+    expect(next.has(kept.id)).toBe(true) // untouched
+    // ...and the panel hides its remove button rather than offering a no-op.
+    expect(hasActiveRun(stuck.id)).toBe(true)
+    expect(hasActiveRun(kept.id)).toBe(false)
+
+    // Unchanged membership returns the same Set so React can skip the update.
+    const unchanged = new Set([stuck.id, kept.id])
+    expect(retainQueuedSelection(unchanged, getQueue())).toBe(unchanged)
   })
 
   it("batch-cancelled tasks can be batch-restarted", async () => {

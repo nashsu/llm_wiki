@@ -5,7 +5,7 @@
   },
   "common": {
     "retry": "重试", "cancel": "取消", "ignore": "忽略", "close": "关闭", "ok": "确定", "confirm": "确认", "notice": "提示",
-    "dismiss": "关闭", "loading": "加载中……", "optional": "可选"
+    "dismiss": "关闭", "remove": "移除", "loading": "加载中……", "optional": "可选"
   },
   "layout": { "showSidebar": "展开侧栏", "hideSidebar": "收起侧栏" },
   "errors": { "generic": "出现错误" },
@@ -1065,6 +1065,7 @@
     "cancelAll": "全部取消",
     "cancelAllTitle": "取消所有排队和正在处理的任务",
     "cancelAllConfirm": "要取消全部 {{count}} 个排队/处理中摄取任务吗？正在处理任务产生的部分文件会被移除；已取消任务会保留在队列中，之后可以重新启动。",
+    "removeSelectedConfirm": "要将选中的已停止摄取任务从队列中永久移除吗？已选择：{{count}}。移除后无法重新启动。",
     "retryFailed": "重启已停止任务",
     "retryFailedTitle": "重新启动所有失败和已取消的摄取任务",
     "selectAll": "全选",
