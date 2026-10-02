@@ -25,7 +25,14 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
 import { useZoomStore } from "@/stores/zoom-store"
-import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib/project-store"
+import { clampUserConcurrency } from "@/lib/concurrency-limits"
+import {
+  loadSourceWatchAllProjects,
+  loadSourceWatchConfig,
+  saveLanguage,
+  saveTheme,
+  loadTheme,
+} from "@/lib/project-store"
 import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
@@ -98,6 +105,7 @@ function initialDraft(
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   scheduledImport: ReturnType<typeof useWikiStore.getState>["scheduledImportConfig"],
   sourceWatch: ReturnType<typeof useWikiStore.getState>["sourceWatchConfig"],
+  sourceWatchAllProjects: boolean,
   mineru: ReturnType<typeof useWikiStore.getState>["mineruConfig"],
   apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
   generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
@@ -138,7 +146,7 @@ function initialDraft(
     embeddingOutputDimensionality: embed.outputDimensionality,
     embeddingMaxChunkChars: embed.maxChunkChars,
     embeddingOverlapChunkChars: embed.overlapChunkChars,
-    embeddingConcurrency: embed.concurrency ?? 1,
+    embeddingConcurrency: clampUserConcurrency(embed.concurrency ?? 1),
     embeddingBatchSize: embed.batchSize ?? 1,
     embeddingExtraHeaders: embed.extraHeaders ?? {},
     multimodalEnabled: multimodal.enabled,
@@ -151,7 +159,7 @@ function initialDraft(
     multimodalAzureApiVersion: multimodal.azureApiVersion ?? "2024-10-21",
     multimodalAzureModelFamily: multimodal.azureModelFamily ?? "auto",
     multimodalApiMode: multimodal.apiMode,
-    multimodalConcurrency: multimodal.concurrency,
+    multimodalConcurrency: clampUserConcurrency(multimodal.concurrency, 4),
     outputLanguage,
     maxHistoryMessages,
     proxyEnabled: proxy.enabled,
@@ -162,6 +170,7 @@ function initialDraft(
     scheduledImportPath: displayPath,
     scheduledImportInterval: scheduledImport.interval,
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatch),
+    sourceWatchAllProjects,
     mineruEnabled: mineru.enabled,
     mineruBackend: mineru.backend || "cloud",
     mineruLocalEndpoint:
@@ -207,6 +216,8 @@ export function SettingsView() {
   const setScheduledImportConfig = useWikiStore((s) => s.setScheduledImportConfig)
   const sourceWatchConfig = useWikiStore((s) => s.sourceWatchConfig)
   const setSourceWatchConfig = useWikiStore((s) => s.setSourceWatchConfig)
+  const sourceWatchAllProjects = useWikiStore((s) => s.sourceWatchAllProjects)
+  const setSourceWatchAllProjects = useWikiStore((s) => s.setSourceWatchAllProjects)
   const mineruConfig = useWikiStore((s) => s.mineruConfig)
   const setMineruConfig = useWikiStore((s) => s.setMineruConfig)
   const apiConfig = useWikiStore((s) => s.apiConfig)
@@ -238,6 +249,7 @@ export function SettingsView() {
       proxyConfig,
       scheduledImportConfig,
       sourceWatchConfig,
+      sourceWatchAllProjects,
       mineruConfig,
       apiConfig,
       generalConfig,
@@ -259,23 +271,31 @@ export function SettingsView() {
 
   useEffect(() => {
     let cancelled = false
-    loadSourceWatchConfig(project?.id).then((config) => {
+    Promise.allSettled([
+      loadSourceWatchConfig(project?.id),
+      loadSourceWatchAllProjects(),
+    ]).then(([configResult, allProjectsResult]) => {
       if (cancelled) return
+      const config = configResult.status === "fulfilled"
+        ? configResult.value
+        : normalizeSourceWatchConfig()
+      const allProjects = allProjectsResult.status === "fulfilled"
+        ? allProjectsResult.value
+        : false
       const normalized = normalizeSourceWatchConfig(config)
       setSourceWatchConfig(normalized)
+      setSourceWatchAllProjects(allProjects)
       setIngestWorkerLimit(normalized.ingestConcurrency)
-      setDraftState((prev) => ({ ...prev, sourceWatchConfig: normalized }))
-    }).catch(() => {
-      if (cancelled) return
-      const fallback = normalizeSourceWatchConfig()
-      setSourceWatchConfig(fallback)
-      setIngestWorkerLimit(fallback.ingestConcurrency)
-      setDraftState((prev) => ({ ...prev, sourceWatchConfig: fallback }))
+      setDraftState((prev) => ({
+        ...prev,
+        sourceWatchConfig: normalized,
+        sourceWatchAllProjects: allProjects,
+      }))
     })
     return () => {
       cancelled = true
     }
-  }, [project?.id, setSourceWatchConfig])
+  }, [project?.id, setSourceWatchAllProjects, setSourceWatchConfig])
 
   // Resync draft from store if it changes out-of-band (e.g. project switch).
   // IMPORTANT: keep the current draft.uiLanguage instead of re-reading
@@ -297,6 +317,7 @@ export function SettingsView() {
         proxyConfig,
         scheduledImportConfig,
         sourceWatchConfig,
+        sourceWatchAllProjects,
         mineruConfig,
         apiConfig,
         generalConfig,
@@ -315,6 +336,7 @@ export function SettingsView() {
     proxyConfig,
     scheduledImportConfig,
     sourceWatchConfig,
+    sourceWatchAllProjects,
     mineruConfig,
     apiConfig,
     generalConfig,
@@ -347,6 +369,7 @@ export function SettingsView() {
       saveScheduledImportConfig,
       loadScheduledImportConfig,
       saveSourceWatchConfig,
+      saveSourceWatchAllProjects,
       saveMineruConfig,
       loadMineruConfig,
       saveApiConfig,
@@ -379,7 +402,7 @@ export function SettingsView() {
       outputDimensionality: draft.embeddingOutputDimensionality,
       maxChunkChars: draft.embeddingMaxChunkChars,
       overlapChunkChars: draft.embeddingOverlapChunkChars,
-      concurrency: Math.max(1, Math.min(32, Math.floor(draft.embeddingConcurrency || 1))),
+      concurrency: clampUserConcurrency(draft.embeddingConcurrency || 1),
       batchSize: Math.max(1, Math.min(64, Math.floor(draft.embeddingBatchSize || 1))),
       extraHeaders: draft.embeddingExtraHeaders,
     }
@@ -394,13 +417,8 @@ export function SettingsView() {
       azureApiVersion: draft.multimodalProvider === "azure" ? draft.multimodalAzureApiVersion.trim() : undefined,
       azureModelFamily: draft.multimodalProvider === "azure" ? draft.multimodalAzureModelFamily : undefined,
       apiMode: draft.multimodalProvider === "custom" ? draft.multimodalApiMode : undefined,
-      // Clamp at save time so a hand-edited persisted store with a
-      // ridiculous concurrency value (e.g. someone setting 1000 in
-      // the JSON) doesn't blow up the captioning pipeline. Caption
-      // calls already share the LLM endpoint with everything else;
-      // going wider than ~16 just queues behind the server's batch
-      // slot.
-      concurrency: Math.max(1, Math.min(16, draft.multimodalConcurrency || 4)),
+      // Clamp hand-edited persisted values at the shared application limit.
+      concurrency: clampUserConcurrency(draft.multimodalConcurrency || 4),
     }
 
     const newProxy = {
@@ -454,6 +472,7 @@ export function SettingsView() {
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     setProxyConfig(newProxy)
     setSourceWatchConfig(newSourceWatch)
+    setSourceWatchAllProjects(draft.sourceWatchAllProjects)
     setIngestWorkerLimit(newSourceWatch.ingestConcurrency)
     setScheduledImportConfig(newScheduledImport)
     setMaxHistoryMessages(draft.maxHistoryMessages)
@@ -468,14 +487,25 @@ export function SettingsView() {
       await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
       await saveProxyConfig(newProxy)
       await saveSourceWatchConfig(newSourceWatch, project?.id)
+      await saveSourceWatchAllProjects(draft.sourceWatchAllProjects)
       if (project) {
-        const { startProjectFileSync, stopProjectFileSync } = await import("@/lib/project-file-sync")
+        const {
+          startAllProjectFileSync,
+          startProjectFileSync,
+          stopAllProjectFileSync,
+          stopProjectFileSync,
+        } = await import("@/lib/project-file-sync")
         if (newSourceWatch.enabled) {
           await startProjectFileSync(project, newSourceWatch).catch((err) =>
             console.error("Failed to start project file sync:", err)
           )
         } else {
           await stopProjectFileSync()
+        }
+        if (draft.sourceWatchAllProjects) {
+          startAllProjectFileSync(project)
+        } else {
+          stopAllProjectFileSync()
         }
       }
       // Apply the proxy env vars LIVE so the next outbound request
@@ -557,6 +587,7 @@ export function SettingsView() {
           persistedOutputLanguage,
           persistedProxy,
           persistedSourceWatch,
+          persistedSourceWatchAllProjects,
           persistedScheduledImport,
           persistedMineru,
           persistedApi,
@@ -569,6 +600,7 @@ export function SettingsView() {
           loadOutputLanguage(project?.id),
           loadProxyConfig(),
           loadSourceWatchConfig(project?.id),
+          loadSourceWatchAllProjects(),
           project ? loadScheduledImportConfig(project.path) : Promise.resolve(null),
           loadMineruConfig(),
           loadApiConfig(),
@@ -581,6 +613,9 @@ export function SettingsView() {
         setOutputLanguage((resultValue(persistedOutputLanguage, null) ?? outputLanguage) as typeof outputLanguage)
         setProxyConfig(resultValue(persistedProxy, null) ?? proxyConfig)
         setSourceWatchConfig(resultValue(persistedSourceWatch, sourceWatchConfig))
+        setSourceWatchAllProjects(
+          resultValue(persistedSourceWatchAllProjects, sourceWatchAllProjects),
+        )
         setScheduledImportConfig(resultValue(persistedScheduledImport, null) ?? scheduledImportConfig)
         setMaxHistoryMessages(maxHistoryMessages)
         setMineruConfig(resultValue(persistedMineru, null) ?? mineruConfig)
@@ -601,6 +636,7 @@ export function SettingsView() {
     outputLanguage,
     proxyConfig,
     sourceWatchConfig,
+    sourceWatchAllProjects,
     scheduledImportConfig,
     mineruConfig,
     apiConfig,
@@ -613,6 +649,7 @@ export function SettingsView() {
     setProxyConfig,
     setScheduledImportConfig,
     setSourceWatchConfig,
+    setSourceWatchAllProjects,
     setMineruConfig,
     setApiConfig,
     setGeneralConfig,

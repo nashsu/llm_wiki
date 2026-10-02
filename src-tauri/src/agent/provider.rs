@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -641,18 +641,14 @@ fn anthropic_headers(config: &LlmConfig, url: &str) -> Result<HeaderMap, String>
     );
     let key = config.api_key.trim();
     if !key.is_empty() {
-        let name = if requires_bearer_auth(url) {
-            "Authorization"
+        let (name, value) = if requires_bearer_auth(url) {
+            headers.remove("x-api-key");
+            (AUTHORIZATION, format!("Bearer {key}"))
         } else {
-            "x-api-key"
-        };
-        let value = if name == "Authorization" {
-            format!("Bearer {key}")
-        } else {
-            key.to_string()
+            (HeaderName::from_static("x-api-key"), key.to_string())
         };
         headers.insert(
-            HeaderName::from_static(name),
+            name,
             HeaderValue::from_str(&value)
                 .map_err(|err| format!("Invalid API key header: {err}"))?,
         );
@@ -895,7 +891,8 @@ fn build_azure_url(config: &LlmConfig) -> Result<String, String> {
 }
 
 fn build_anthropic_url(base: &str) -> String {
-    let base = base.trim().trim_end_matches('/');
+    let normalized = normalize_minimax_anthropic_base(base.trim());
+    let base = normalized.trim_end_matches('/');
     if base.to_ascii_lowercase().ends_with("/v1/messages") {
         base.to_string()
     } else if base.to_ascii_lowercase().ends_with("/v1") {
@@ -905,14 +902,57 @@ fn build_anthropic_url(base: &str) -> String {
     }
 }
 
+fn normalize_minimax_anthropic_base(base: &str) -> String {
+    let Ok(mut parsed) = reqwest::Url::parse(base) else {
+        return base.to_string();
+    };
+    let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+        return base.to_string();
+    };
+    if !matches!(host.as_str(), "api.minimax.io" | "api.minimaxi.com") {
+        return base.to_string();
+    }
+
+    let path = parsed.path().trim_end_matches('/');
+    let version = path
+        .strip_prefix("/v")
+        .map(|value| value.strip_suffix("/messages").unwrap_or(value));
+    let is_generic_messages = version.is_some_and(|value| {
+        !value.is_empty() && value.chars().all(|character| character.is_ascii_digit())
+    });
+    let is_bare_or_generic_messages = path.is_empty() || path == "/" || is_generic_messages;
+    if !is_bare_or_generic_messages {
+        return base.to_string();
+    }
+
+    parsed.set_path("/anthropic");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string().trim_end_matches('/').to_string()
+}
+
 fn is_azure_endpoint(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     lower.contains(".openai.azure.com") || lower.contains("/openai/deployments/")
 }
 
 fn requires_bearer_auth(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    lower.contains("minimax.io") || lower.contains("minimaxi.com")
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            let host = parsed.host_str()?.to_ascii_lowercase();
+            let path = parsed.path().trim_end_matches('/').to_ascii_lowercase();
+            Some((host, path))
+        })
+        .is_some_and(|(host, path)| {
+            matches!(host.as_str(), "api.minimax.io" | "api.minimaxi.com")
+                && path.starts_with("/anthropic")
+                || host == "coding.dashscope.aliyuncs.com" && path.starts_with("/apps/anthropic")
+                || host == "token-plan-cn.xiaomimimo.com" && path.starts_with("/anthropic")
+                || host == "api.kimi.com" && path.starts_with("/coding")
+                || matches!(host.as_str(), "api.moonshot.ai" | "api.moonshot.cn")
+                    && path.starts_with("/anthropic")
+        })
 }
 
 fn is_deepseek_endpoint(config: &LlmConfig) -> bool {
@@ -1144,6 +1184,70 @@ mod tests {
     }
 
     #[test]
+    fn minimax_anthropic_endpoint_uses_bearer_auth_without_panicking() {
+        let mut config = config("custom");
+        config
+            .custom_headers
+            .insert("authorization".into(), "Custom secret".into());
+        config
+            .custom_headers
+            .insert("x-api-key".into(), "Stale secret".into());
+
+        let headers =
+            anthropic_headers(&config, "https://api.minimaxi.com/anthropic/v1/messages").unwrap();
+
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+        assert!(headers.get("x-api-key").is_none());
+        assert_eq!(headers.get("anthropic-version").unwrap(), ANTHROPIC_VERSION);
+
+        let default_host =
+            anthropic_headers(&config, "https://api.minimax.io/anthropic/v1/messages").unwrap();
+        assert_eq!(default_host.get("authorization").unwrap(), "Bearer key");
+    }
+
+    #[test]
+    fn standard_anthropic_endpoint_uses_api_key_header() {
+        let mut config = config("anthropic");
+        config
+            .custom_headers
+            .insert("authorization".into(), "Stale secret".into());
+        let headers = anthropic_headers(&config, "https://api.anthropic.com/v1/messages").unwrap();
+
+        assert_eq!(headers.get("x-api-key").unwrap(), "key");
+        assert_eq!(headers.get("authorization").unwrap(), "Stale secret");
+        assert_eq!(headers.get("anthropic-version").unwrap(), ANTHROPIC_VERSION);
+    }
+
+    #[test]
+    fn minimax_auth_detection_only_matches_the_request_host() {
+        let config = config("custom");
+        let headers = anthropic_headers(
+            &config,
+            "https://gateway.example.com/minimax.io/anthropic/v1/messages",
+        )
+        .unwrap();
+
+        assert_eq!(headers.get("x-api-key").unwrap(), "key");
+        assert!(headers.get("authorization").is_none());
+    }
+
+    #[test]
+    fn anthropic_bearer_detection_matches_frontend_provider_endpoints() {
+        let config = config("custom");
+        for url in [
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+            "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages",
+            "https://api.kimi.com/coding/v1/messages",
+            "https://api.moonshot.ai/anthropic/v1/messages",
+            "https://api.moonshot.cn/anthropic/v1/messages",
+        ] {
+            let headers = anthropic_headers(&config, url).unwrap();
+            assert_eq!(headers.get("authorization").unwrap(), "Bearer key", "{url}");
+            assert!(headers.get("x-api-key").is_none(), "{url}");
+        }
+    }
+
+    #[test]
     fn ollama_url_normalizes_common_endpoint_shapes() {
         assert_eq!(
             build_ollama_url("http://localhost:11434"),
@@ -1172,6 +1276,18 @@ mod tests {
         assert_eq!(
             build_anthropic_url("https://api.anthropic.com/v1/messages"),
             "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn anthropic_url_normalizes_bare_minimax_hosts() {
+        assert_eq!(
+            build_anthropic_url("https://api.minimax.io"),
+            "https://api.minimax.io/anthropic/v1/messages"
+        );
+        assert_eq!(
+            build_anthropic_url("https://api.minimaxi.com/v1/messages"),
+            "https://api.minimaxi.com/anthropic/v1/messages"
         );
     }
 

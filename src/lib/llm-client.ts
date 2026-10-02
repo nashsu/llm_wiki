@@ -10,8 +10,13 @@ export { isFetchNetworkError } from "./tauri-fetch"
 export interface StreamCallbacks {
   onToken: (token: string) => void
   onReasoningToken?: (token: string) => void
-  onDone: () => void
+  onDone: (completion?: StreamCompletion) => void
   onError: (error: Error) => void
+}
+
+export interface StreamCompletion {
+  finishReason?: string
+  truncated: boolean
 }
 
 function bufferedStreamCallbacks(callbacks: StreamCallbacks): StreamCallbacks {
@@ -20,13 +25,50 @@ function bufferedStreamCallbacks(callbacks: StreamCallbacks): StreamCallbacks {
   return {
     onToken: (token) => { content += token },
     onReasoningToken: (token) => { reasoning += token },
-    onDone: () => {
+    onDone: (completion) => {
       if (reasoning) callbacks.onReasoningToken?.(reasoning)
       if (content) callbacks.onToken(content)
-      callbacks.onDone()
+      callbacks.onDone(completion)
     },
     onError: callbacks.onError,
   }
+}
+
+function streamFinishReason(record: string): string | undefined {
+  const payload = record.startsWith("data:") ? record.slice(5).trim() : record.trim()
+  if (!payload.startsWith("{")) return undefined
+  try {
+    const value = JSON.parse(payload) as {
+      choices?: Array<{ finish_reason?: string | null }>
+      delta?: { stop_reason?: string | null }
+      stop_reason?: string | null
+      candidates?: Array<{ finishReason?: string | null }>
+    }
+    return value.choices?.[0]?.finish_reason
+      ?? value.delta?.stop_reason
+      ?? value.stop_reason
+      ?? value.candidates?.[0]?.finishReason
+      ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function responseFinishReason(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined
+  const value = payload as {
+    choices?: Array<{ finish_reason?: string | null }>
+    stop_reason?: string | null
+    candidates?: Array<{ finishReason?: string | null }>
+  }
+  return value.choices?.[0]?.finish_reason
+    ?? value.stop_reason
+    ?? value.candidates?.[0]?.finishReason
+    ?? undefined
+}
+
+function isTokenLimitFinishReason(reason: string | undefined): boolean {
+  return Boolean(reason && /^(length|max_tokens|max_output_tokens)$/i.test(reason))
 }
 
 // Lazy import keeps the Tauri event/invoke bindings out of bundles that
@@ -307,12 +349,17 @@ export async function streamChat(
     try {
       const payload: unknown = await response.json()
       const content = providerConfig.parseResponse(payload)
+      const finishReason = responseFinishReason(payload)
       if (!content) {
+        if (isTokenLimitFinishReason(finishReason)) {
+          onDone({ finishReason, truncated: true })
+          return
+        }
         onError(new Error("Model returned an empty non-streaming response"))
         return
       }
       onToken(content)
-      onDone()
+      onDone({ finishReason, truncated: isTokenLimitFinishReason(finishReason) })
     } catch (err) {
       if (timeoutFired) {
         onError(new Error(`Request timed out after ${Math.round(timeoutMs / 60000)} min. Try a faster model or a smaller context.`))
@@ -359,6 +406,7 @@ export async function streamChat(
   // detector.ts.
   let contentCharsEmitted = 0
   let reasoningCharsObserved = 0
+  let finishReason: string | undefined
   const recordToken = (text: string) => {
     contentCharsEmitted += text.length
     onToken(text)
@@ -374,6 +422,7 @@ export async function streamChat(
     if (!trimmed) return null
 
     reasoningCharsObserved += countReasoningCharsInLine(trimmed)
+    finishReason = streamFinishReason(trimmed) ?? finishReason
     recordReasoning(trimmed)
     const token = providerConfig.parseStream(trimmed)
     if (token !== null) {
@@ -429,6 +478,10 @@ export async function streamChat(
     // no clue why). Threshold guards against single-stray-byte
     // false positives from spurious empty `reasoning:""` deltas.
     const REASONING_DIAGNOSTIC_THRESHOLD = 200
+    if (contentCharsEmitted === 0 && isTokenLimitFinishReason(finishReason)) {
+      onDone({ finishReason, truncated: true })
+      return
+    }
     if (
       contentCharsEmitted === 0 &&
       reasoningCharsObserved >= REASONING_DIAGNOSTIC_THRESHOLD
@@ -444,7 +497,7 @@ export async function streamChat(
       return
     }
 
-    onDone()
+    onDone({ finishReason, truncated: isTokenLimitFinishReason(finishReason) })
   } catch (err) {
     // The abort can reach us two ways: a real AbortError, or — when the
     // Tauri HTTP plugin tears down the body stream — a bare *string*

@@ -85,7 +85,104 @@ export function sanitizeIngestedFileContent(content: string): string {
   // link transform applied at read time.
   cleaned = repairWikilinkListsInFrontmatter(cleaned)
 
+  // (4) Normalize recurring malformed body links emitted by generation and
+  // synthesis models. Frontmatter and code examples remain byte-identical.
+  cleaned = normalizeMalformedWikilinks(cleaned)
+
   return cleaned
+}
+
+export function normalizeMalformedWikilinks(content: string): string {
+  const bom = content.startsWith("\uFEFF") ? "\uFEFF" : ""
+  const withoutBom = content.slice(bom.length)
+  const frontmatter = withoutBom.match(
+    /^---[ \t]*\r?\n(?:---[ \t]*(?:\r?\n|$)|[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$))/,
+  )
+  const prefix = `${bom}${frontmatter?.[0] ?? ""}`
+  const body = withoutBom.slice(frontmatter?.[0].length ?? 0)
+  if (!body.includes("[[")) return content
+
+  let fence: { marker: "`" | "~"; length: number } | null = null
+  let mathFence = false
+  let htmlCodeFence = false
+  const normalized = body.replace(/.*(?:\r?\n|$)/g, (line) => {
+    const lineContent = line.replace(/\r?\n$/, "")
+    const markerMatch = lineContent.match(/^ {0,3}(?:>\s*)*(`{3,}|~{3,})/)
+    if (markerMatch) {
+      const marker = markerMatch[1][0] as "`" | "~"
+      const length = markerMatch[1].length
+      if (!fence) fence = { marker, length }
+      else if (
+        marker === fence.marker &&
+        length >= fence.length &&
+        lineContent.slice(markerMatch[0].length).trim() === ""
+      ) fence = null
+      return line
+    }
+    if (fence) return line
+    const trimmed = lineContent.trim()
+    if (trimmed === "$$") {
+      mathFence = !mathFence
+      return line
+    }
+    if (mathFence) return line
+    if (/<(?:pre|code)\b/i.test(lineContent)) htmlCodeFence = true
+    if (htmlCodeFence) {
+      if (/<\/(?:pre|code)>/i.test(lineContent)) htmlCodeFence = false
+      return line
+    }
+    const indented = /^(?: {4}|\t)/.test(lineContent)
+    const nestedList = /^(?: {4}|\t)(?:[-+*]|\d+[.)])\s+/.test(lineContent)
+    if (indented && !nestedList) return line
+    return normalizeMalformedLinksOutsideInlineCode(line)
+  })
+  return `${prefix}${normalized}`
+}
+
+function normalizeMalformedLinksOutsideInlineCode(text: string): string {
+  let output = ""
+  let cursor = 0
+  while (cursor < text.length) {
+    const opening = text.indexOf("`", cursor)
+    if (opening < 0) return output + normalizeMalformedLinkSegment(text.slice(cursor))
+    output += normalizeMalformedLinkSegment(text.slice(cursor, opening))
+    let runEnd = opening + 1
+    while (text[runEnd] === "`") runEnd++
+    const delimiter = text.slice(opening, runEnd)
+    const closing = text.indexOf(delimiter, runEnd)
+    if (closing < 0) {
+      output += normalizeMalformedLinkSegment(text.slice(opening, runEnd))
+      cursor = runEnd
+      continue
+    }
+    output += text.slice(opening, closing + delimiter.length)
+    cursor = closing + delimiter.length
+  }
+  return output
+}
+
+function normalizeMalformedLinkSegment(segment: string): string {
+  const citationPattern = /\[\[(\d+\](?:\s*,\s*\[\d+\])*)\]/g
+  let normalized = segment.replace(
+    citationPattern,
+    (match, citations: string, offset: number) => {
+      if (offset > 0 && (segment[offset - 1] === "!" || segment[offset - 1] === "[")) {
+        return match
+      }
+      if (segment[offset + match.length] === "(") return match
+      const numbers = citations.match(/\d+/g) ?? []
+      if (numbers.some((value) => value.length > 3)) return match
+      return `[${citations}`
+    },
+  )
+  if (normalized.includes("](")) return normalized
+  return normalized.replace(
+    /\[\[([^\]|\n]+)\|([^\]\n]+)\](?!\])/g,
+    (match, target: string, alias: string, offset: number) => {
+      if (offset > 0 && normalized[offset - 1] === "!") return match
+      return `[[${target}|${alias}]]`
+    },
+  )
 }
 
 /** Top-level fence wrapper. Removes the open + matching close fence lines. */

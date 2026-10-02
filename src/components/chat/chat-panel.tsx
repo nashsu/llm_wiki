@@ -1070,6 +1070,7 @@ export function ChatPanel() {
             sessionId: convId,
             runId: backendRunId,
             persistSession: false,
+            allowEmptyRetrieval: true,
             mode: sendOptions.agentMode,
             retrievalMode: sendOptions.retrievalMode,
             tools: {
@@ -1121,13 +1122,24 @@ export function ChatPanel() {
           return
         }
 
-        const contextText = [
-          "You have access to the current LLM Wiki project context below. Use it as retrieved evidence when it is relevant.",
-          "",
-          backendResponseText(backendResponse),
-          "",
-          `User request: ${text}`,
-        ].join("\n")
+        const responseContext = backendResponseText(backendResponse).trim()
+        const retrievedContext = responseContext || backendReferences
+          .map((reference) => `${reference.title} (${reference.path})`)
+          .join("\n")
+        const contextText = retrievedContext
+          ? [
+              "You have access to the current LLM Wiki project context below. Use it as retrieved evidence when it is relevant.",
+              "",
+              retrievedContext,
+              "",
+              `User request: ${text}`,
+            ].join("\n")
+          : [
+              "No relevant LLM Wiki evidence was retrieved for this request.",
+              "Answer the request directly with the selected CLI provider. Clearly distinguish general knowledge from project evidence.",
+              "",
+              `User request: ${text}`,
+            ].join("\n")
         const userContent: string | ContentBlock[] = images.length > 0
           ? [
               { type: "text", text: contextText },
@@ -1141,7 +1153,7 @@ export function ChatPanel() {
         const finalMessages: LlmChatMessage[] = [
           {
             role: "system",
-            content: "Answer using the provided LLM Wiki context and references. If the context is insufficient, say what is missing instead of inventing details.",
+            content: "Use retrieved LLM Wiki context when available. If none was retrieved, answer directly and do not imply that general knowledge came from the project.",
           },
           ...(sendOptions.historyOverride ?? chatMessagesToLLM(priorMessages)),
           { role: "user", content: userContent },

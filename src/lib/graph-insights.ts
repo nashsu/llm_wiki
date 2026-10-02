@@ -20,6 +20,27 @@ export interface KnowledgeGap {
   suggestion: string
 }
 
+export function researchSeedForKnowledgeGap(
+  gap: KnowledgeGap,
+  nodes: readonly GraphNode[],
+): { term: string; context: string } {
+  const candidates = gap.nodeIds
+    .map((id) => nodes.find((node) => node.id === id))
+    .filter((node): node is GraphNode => Boolean(node))
+
+  if (gap.type === "isolated-node") {
+    return { term: candidates[0]?.label || gap.title, context: "" }
+  }
+
+  candidates.sort((a, b) => b.linkCount - a.linkCount)
+  const representative = candidates[0]?.label || gap.title
+  const related = candidates.slice(1, 3).map((node) => node.label)
+  return {
+    term: representative,
+    context: related.length > 0 ? related.join(" ") : "",
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Surprising Connections
 // ---------------------------------------------------------------------------
@@ -108,7 +129,7 @@ export function findSurprisingConnections(
 /**
  * Detect knowledge gaps based on graph structure:
  * - Isolated nodes (degree ≤ 1)
- * - Sparse communities (cohesion < 0.15 with ≥ 3 nodes)
+ * - Sparse communities (fewer than 2 mean internal links per page, with ≥ 3 nodes)
  * - Bridge nodes (high betweenness — connected to multiple communities)
  */
 export function detectKnowledgeGaps(
@@ -136,13 +157,14 @@ export function detectKnowledgeGaps(
     })
   }
 
-  // 2. Sparse communities (low cohesion)
+  // 2. Sparse communities. Raw density shrinks as communities grow, so use
+  // mean internal degree: a stable and directly actionable metric.
   for (const comm of communities) {
-    if (comm.cohesion < 0.15 && comm.nodeCount >= 3) {
+    if (comm.meanIntraDegree < 2 && comm.nodeCount >= 3) {
       gaps.push({
         type: "sparse-community",
         title: `Sparse cluster: ${comm.topNodes[0] ?? `Community ${comm.id}`}`,
-        description: `${comm.nodeCount} pages with cohesion ${comm.cohesion.toFixed(2)} — internal connections are weak.`,
+        description: `${comm.nodeCount} pages average ${comm.meanIntraDegree.toFixed(1)} internal links per page.`,
         nodeIds: nodes.filter((n) => n.community === comm.id).map((n) => n.id),
         suggestion: `This knowledge area lacks internal cross-references. Consider adding links between these pages or researching to fill gaps.`,
       })

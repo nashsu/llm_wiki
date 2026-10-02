@@ -27,7 +27,12 @@ vi.mock("@/commands/fs", () => ({
   readFileAsBase64: (p: string) => mockReadBase64(p),
 }))
 
-import { captionMarkdownImages, loadCaptionCache, __test } from "./image-caption-pipeline"
+import {
+  captionMarkdownImages,
+  loadCaptionCache,
+  stripMarkdownImageReferences,
+  __test,
+} from "./image-caption-pipeline"
 import type { LlmConfig } from "@/stores/wiki-store"
 
 const cfg: LlmConfig = {
@@ -57,8 +62,8 @@ describe("findImageReferences (helper)", () => {
   it("captures markdown image syntax with position info", () => {
     const refs = __test.findImageReferences("text\n![](a.png)\n![label](b.jpg) more")
     expect(refs).toEqual([
-      { full: "![](a.png)", alt: "", url: "a.png", index: 5, length: 10 },
-      { full: "![label](b.jpg)", alt: "label", url: "b.jpg", index: 16, length: 15 },
+      { full: "![](a.png)", alt: "", url: "a.png", destination: "a.png", index: 5, length: 10 },
+      { full: "![label](b.jpg)", alt: "label", url: "b.jpg", destination: "b.jpg", index: 16, length: 15 },
     ])
   })
 
@@ -66,6 +71,76 @@ describe("findImageReferences (helper)", () => {
     const refs = __test.findImageReferences("[link](url) <img src=foo.png /> ![real](z.png)")
     expect(refs).toHaveLength(1)
     expect(refs[0].url).toBe("z.png")
+  })
+
+  it("captures local image destinations containing spaces", () => {
+    const refs = __test.findImageReferences(
+      "![](assets/figure one.png) ![two](<assets/figure two.jpg>)",
+    )
+
+    expect(refs.map((ref) => ref.url)).toEqual([
+      "assets/figure one.png",
+      "assets/figure two.jpg",
+    ])
+  })
+
+  it("handles parentheses, optional titles, encoded spaces, and empty destinations", () => {
+    const refs = __test.findImageReferences([
+      "![](media/Shot (1).png)",
+      "![](<media/Shot (2).png> \"Screenshot\")",
+      "![](media/figure%20three.png 'Figure')",
+      "![]( )",
+    ].join("\n"))
+
+    expect(refs.map((ref) => ref.url)).toEqual([
+      "media/Shot (1).png",
+      "media/Shot (2).png",
+      "media/figure three.png",
+    ])
+  })
+
+  it("does not mistake a trailing parenthesized filename segment for a title", () => {
+    const refs = __test.findImageReferences("![](media/Shot (1))")
+    expect(refs[0]?.url).toBe("media/Shot (1)")
+  })
+
+  it("stops malformed image candidates at the current line", () => {
+    const markdown = "![not an image\ntext\n![](real image.png)"
+    const refs = __test.findImageReferences(markdown)
+    expect(refs).toHaveLength(1)
+    expect(refs[0].url).toBe("real image.png")
+    expect(refs[0].index).toBe(markdown.indexOf("![]("))
+  })
+
+  it("does not join embeds or reference images to a later Markdown link", () => {
+    const samples = [
+      "See ![[a.png]] and [docs](https://x.test)",
+      "![logo][1] then [link](https://x.test)",
+      "x![citation needed] see [here](https://x.test)",
+    ]
+    for (const sample of samples) {
+      expect(__test.findImageReferences(sample)).toEqual([])
+      expect(stripMarkdownImageReferences(sample)).toBe(sample)
+    }
+  })
+
+  it("normalizes encoded spaces and escaped parentheses for filesystem access", () => {
+    const refs = __test.findImageReferences(
+      "![](media/figure%20one.png) ![](media/figure\\)two.png)",
+    )
+    expect(refs.map((ref) => ref.url)).toEqual([
+      "media/figure one.png",
+      "media/figure)two.png",
+    ])
+  })
+})
+
+describe("stripMarkdownImageReferences", () => {
+  it("strips titled and adjacent image references without touching malformed input", () => {
+    expect(stripMarkdownImageReferences("a![](<x y.png> \"t\")![](z.png)b"))
+      .toBe("a  b")
+    expect(stripMarkdownImageReferences("![not](image"))
+      .toBe("![not](image")
   })
 })
 
@@ -114,6 +189,38 @@ describe("captionMarkdownImages", () => {
       mimeType: "image/png",
       model: "vl-test",
     })
+  })
+
+  it("captions and preserves an image destination containing spaces", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("a process diagram")
+
+    const out = await captionMarkdownImages(
+      "/proj",
+      "![](<assets/process flow.png>)",
+      cfg,
+    )
+
+    expect(mockReadBase64).toHaveBeenCalledWith("/proj/wiki/assets/process flow.png")
+    expect(out.enrichedMarkdown).toBe(
+      "![a process diagram](<assets/process flow.png>)",
+    )
+  })
+
+  it("deduplicates equivalent plain and angle-bracket destinations", async () => {
+    mockReadBase64.mockResolvedValue({ base64: "AAAA", mimeType: "image/png" })
+    mockCaption.mockResolvedValue("same image")
+
+    const out = await captionMarkdownImages(
+      "/proj",
+      "![](assets/figure one.png)\n![](<assets/figure one.png>)",
+      cfg,
+    )
+
+    expect(mockCaption).toHaveBeenCalledTimes(1)
+    expect(out.enrichedMarkdown).toBe(
+      "![same image](assets/figure one.png)\n![same image](<assets/figure one.png>)",
+    )
   })
 
   it("forwards outputLanguage to captionImage", async () => {

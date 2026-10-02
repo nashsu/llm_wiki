@@ -369,7 +369,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 - **macOS のクローズ＝隠す** — 閉じるボタンでウィンドウを隠す（アプリはバックグラウンドで継続）。Dock アイコンクリックで復元、Cmd+Q で終了
 - **Windows / Linux の終了確認** — 終了時に確認ダイアログを表示し、誤操作によるデータ消失を防止
 - **Tauri v2** — macOS、Windows、Linux のネイティブデスクトップ
-- **GitHub Actions による CI/CD** — macOS（ARM + Intel）、Windows（.msi）、Linux（.deb / .AppImage）の自動ビルド
+- **GitHub Actions による CI/CD** — macOS（Apple Silicon）、Windows（.msi）、Linux（.deb / .AppImage）の自動ビルド
 
 ### 19. その他の追加機能
 
@@ -407,7 +407,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 
 [Releases](https://github.com/nashsu/llm_wiki/releases) からダウンロードできます。
 
-- **macOS**: `.dmg`（Apple Silicon + Intel）
+- **macOS**: `.dmg`（Apple Silicon）
 - **Windows**: `.msi`
 - **Linux**: `.deb` / `.AppImage`
 

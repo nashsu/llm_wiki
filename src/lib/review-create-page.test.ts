@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ReviewItem } from "@/stores/review-store"
-import { createReviewPageDrafts } from "./review-create-page"
+import { availableReviewPageFileName, createReviewPageDrafts } from "./review-create-page"
 
 function review(overrides: Partial<ReviewItem>): ReviewItem {
   return {
@@ -48,3 +48,36 @@ describe("createReviewPageDrafts", () => {
   })
 })
 
+describe("availableReviewPageFileName", () => {
+  const now = new Date("2026-09-16T12:34:56.000Z")
+
+  it("uses a stable slug when the destination is free", async () => {
+    await expect(availableReviewPageFileName("Clash Detection", async () => false, now)).resolves.toEqual({
+      fileName: "clash-detection.md",
+      date: "2026-09-16",
+    })
+  })
+
+  it("adds a timestamp only when the stable slug already exists", async () => {
+    const result = await availableReviewPageFileName(
+      "Clash Detection",
+      async (fileName) => fileName === "clash-detection.md",
+      now,
+    )
+    expect(result.fileName).toBe("clash-detection-2026-09-16-123456.md")
+  })
+
+  it("adds a numeric suffix when both stable and timestamped names exist", async () => {
+    const existing = new Set([
+      "clash-detection.md",
+      "clash-detection-2026-09-16-123456.md",
+      "clash-detection-2026-09-16-123456-2.md",
+    ])
+    const result = await availableReviewPageFileName(
+      "Clash Detection",
+      async (fileName) => existing.has(fileName),
+      now,
+    )
+    expect(result.fileName).toBe("clash-detection-2026-09-16-123456-3.md")
+  })
+})

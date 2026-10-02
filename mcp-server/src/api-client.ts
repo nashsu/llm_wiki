@@ -46,6 +46,14 @@ export interface ApiPageEmbeddingResult {
   status: string
 }
 
+export interface ApiPageWriteResult {
+  path: string
+  bytes: number
+  allowOverwrite: boolean
+  verified: boolean
+  existedBefore: boolean
+}
+
 export interface ApiChatReference {
   title: string
   path: string
@@ -99,6 +107,15 @@ export interface ApiGraphEdge {
   source: string
   target: string
   weight?: number
+}
+
+export interface ApiGraphResponse {
+  nodes: ApiGraphNode[]
+  edges: ApiGraphEdge[]
+  offset: number
+  limit: number
+  totalCount: number
+  hasMore: boolean
 }
 
 export type ApiReviewStatus = "unresolved" | "resolved" | "all"
@@ -300,16 +317,24 @@ export class LlmWikiApiClient {
     }
   }
 
-  async graph(projectId = "current", options: { q?: string; nodeType?: string; limit?: number } = {}): Promise<{ nodes: ApiGraphNode[]; edges: ApiGraphEdge[] }> {
+  async graph(projectId = "current", options: { q?: string; nodeType?: string; limit?: number; offset?: number; edgeScope?: "page" | "filtered" } = {}): Promise<ApiGraphResponse> {
     const params = new URLSearchParams()
     if (options.q) params.set("q", options.q)
     if (options.nodeType) params.set("nodeType", options.nodeType)
     if (options.limit !== undefined) params.set("limit", String(options.limit))
+    if (options.offset !== undefined) params.set("offset", String(options.offset))
+    if (options.edgeScope) params.set("edgeScope", options.edgeScope)
     const suffix = params.toString() ? `?${params.toString()}` : ""
     const json = await this.request(`/projects/${encodeURIComponent(projectId)}/graph${suffix}`)
     return {
       nodes: Array.isArray(json.nodes) ? json.nodes.map(parseGraphNode) : [],
       edges: Array.isArray(json.edges) ? json.edges.map(parseGraphEdge) : [],
+      offset: typeof json.offset === "number" ? json.offset : 0,
+      limit: typeof json.limit === "number" ? json.limit : 200,
+      totalCount: typeof json.totalCount === "number"
+        ? json.totalCount
+        : (Array.isArray(json.nodes) ? json.nodes.length : 0),
+      hasMore: json.hasMore === true,
     }
   }
 
@@ -332,6 +357,29 @@ export class LlmWikiApiClient {
       chunks: requireNumber(result.chunks, "page embedding result.chunks"),
       vectorsWritten: requireNumber(result.vectorsWritten, "page embedding result.vectorsWritten"),
       status: requireString(result.status, "page embedding result.status"),
+    }
+  }
+
+  async writePage(
+    path: string,
+    content: string,
+    projectId = "current",
+    allowOverwrite = false,
+  ): Promise<ApiPageWriteResult> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/pages/write`, {
+      method: "POST",
+      body: { path, content, allowOverwrite },
+    })
+    const result = requireObject(json.result, "page write result")
+    if (result.verified !== true) {
+      throw new Error("page write result.verified: expected true")
+    }
+    return {
+      path: requireString(result.path, "page write result.path"),
+      bytes: requireNumber(result.bytes, "page write result.bytes"),
+      allowOverwrite: result.allowOverwrite === true,
+      verified: true,
+      existedBefore: result.existedBefore === true,
     }
   }
 

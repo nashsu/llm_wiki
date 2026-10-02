@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,9 @@ const PORT: u16 = 19828;
 const API_PREFIX: &str = "/api/v1";
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CHAT_BODY_BYTES: usize = 40 * 1024 * 1024;
+// JSON may encode one input byte as a six-byte `\u00XX` escape. Keep the
+// transport boundary above the authoritative 2 MiB decoded-content limit.
+const MAX_PAGE_WRITE_BODY_BYTES: usize = 6 * 2 * 1024 * 1024 + 16 * 1024;
 const MAX_FILE_CONTENT_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_MAX_FILES: usize = 2_000;
 const HARD_MAX_FILES: usize = 10_000;
@@ -39,6 +43,8 @@ const MAX_IN_FLIGHT_CHAT_STREAMS: usize = 8;
 const MAX_IN_FLIGHT_PAGE_EMBEDS: usize = 4;
 const SSE_QUEUE_CAPACITY: usize = 64;
 const SSE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const GRAPH_CACHE_TTL: Duration = Duration::from_secs(5);
+const GRAPH_CACHE_MAX_PROJECTS: usize = 8;
 
 /// API status: 0=starting, 1=running, 2=port_conflict, 3=error
 static API_STATUS: AtomicU8 = AtomicU8::new(0);
@@ -47,11 +53,20 @@ static IN_FLIGHT_CHAT_STREAMS: AtomicUsize = AtomicUsize::new(0);
 static IN_FLIGHT_PAGE_EMBEDS: AtomicUsize = AtomicUsize::new(0);
 static APP_STATE_CACHE: OnceLock<Mutex<Option<CachedAppState>>> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Mutex<VecDeque<Instant>>> = OnceLock::new();
+static GRAPH_CACHE: OnceLock<Mutex<HashMap<String, Arc<CachedGraph>>>> = OnceLock::new();
 
 #[derive(Clone)]
 struct CachedAppState {
     loaded_at: Instant,
     value: Option<Value>,
+}
+
+#[derive(Clone)]
+struct CachedGraph {
+    loaded_at: Instant,
+    fingerprint: u64,
+    nodes: Vec<ApiGraphNode>,
+    edges: Vec<ApiGraphEdge>,
 }
 
 pub fn get_api_status() -> &'static str {
@@ -362,6 +377,9 @@ fn handle_request(
         (&Method::Post, ["projects", project_id, "pages", "embed"]) => {
             handle_embed_page(app, project_id, body)
         }
+        (&Method::Post, ["projects", project_id, "pages", "write"]) => {
+            handle_write_page(app, project_id, body)
+        }
         (&Method::Post, ["projects", project_id, "chat"]) => handle_chat(app, project_id, body),
         (&Method::Post, ["projects", project_id, "chat", session_id, "cancel"]) => {
             handle_cancel_chat(app, project_id, session_id)
@@ -413,7 +431,11 @@ fn is_token_required_request(method: &Method, path: &str) -> bool {
     let Some(parts) = api_path_parts(path) else {
         return false;
     };
-    method == &Method::Post && matches!(parts.as_slice(), ["projects", _, "pages", "embed"])
+    method == &Method::Post
+        && matches!(
+            parts.as_slice(),
+            ["projects", _, "pages", "embed"] | ["projects", _, "pages", "write"]
+        )
 }
 
 fn chat_project_id<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
@@ -469,15 +491,13 @@ fn wants_streaming_chat(
 fn body_limit_for_request(method: &Method, url: &str) -> usize {
     let (path, _) = split_url(url);
     let parts = api_path_parts(&path);
-    if method == &Method::Post
-        && parts
-            .as_deref()
-            .map(|parts| matches!(parts, ["projects", _, "chat"]))
-            .unwrap_or(false)
-    {
-        MAX_CHAT_BODY_BYTES
-    } else {
-        MAX_BODY_BYTES
+    if method != &Method::Post {
+        return MAX_BODY_BYTES;
+    }
+    match parts.as_deref() {
+        Some(["projects", _, "chat"]) => MAX_CHAT_BODY_BYTES,
+        Some(["projects", _, "pages", "write"]) => MAX_PAGE_WRITE_BODY_BYTES,
+        _ => MAX_BODY_BYTES,
     }
 }
 
@@ -1766,6 +1786,55 @@ struct EmbedPageRequest {
     force: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WritePageRequest {
+    path: String,
+    content: String,
+    #[serde(default)]
+    allow_overwrite: bool,
+}
+
+fn handle_write_page(app: &AppHandle, project_id: &str, body: &str) -> ApiResponse {
+    let project = match resolve_project(app, project_id) {
+        Ok(project) => project,
+        Err(e) => return err(404, e),
+    };
+    let req: WritePageRequest = match serde_json::from_str(body) {
+        Ok(req) => req,
+        Err(e) => return err(400, format!("Invalid JSON: {e}")),
+    };
+    if req.path.trim().is_empty() {
+        return err(400, "path is required");
+    }
+    match agent::tools::write_wiki_page_verified(
+        &project.path,
+        &req.path,
+        &req.content,
+        req.allow_overwrite,
+    ) {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "projectId": project.id,
+            "result": result,
+        })),
+        Err(error) => {
+            let lower = error.to_ascii_lowercase();
+            let status = if lower.contains("without allowoverwrite") {
+                409
+            } else if lower.contains("path")
+                || lower.contains("markdown file")
+                || lower.contains("too large")
+            {
+                400
+            } else {
+                500
+            };
+            err(status, error)
+        }
+    }
+}
+
 struct PageEmbedSlot;
 
 impl Drop for PageEmbedSlot {
@@ -1819,7 +1888,6 @@ fn handle_embed_page(app: &AppHandle, project_id: &str, body: &str) -> ApiRespon
                 commands::page_embedding::PageEmbeddingErrorKind::NotFound => 404,
                 commands::page_embedding::PageEmbeddingErrorKind::Provider => 502,
                 commands::page_embedding::PageEmbeddingErrorKind::Storage => 500,
-                commands::page_embedding::PageEmbeddingErrorKind::Conflict => 409,
                 commands::page_embedding::PageEmbeddingErrorKind::Timeout => 504,
             };
             err(status, error.message)
@@ -1890,6 +1958,9 @@ fn prepare_chat(
     let project = resolve_project(app, project_id).map_err(|e| err(404, e))?;
     let mut req: agent::AgentChatRequest =
         serde_json::from_str(body).map_err(|e| err(400, format!("Invalid JSON: {e}")))?;
+    // This is an internal desktop preflight escape hatch for CLI-backed chat.
+    // The public API must retain its actionable generator-configuration error.
+    req.allow_empty_retrieval = false;
     if req.message.trim().is_empty() {
         return Err(err(400, "message is required"));
     }
@@ -2372,6 +2443,13 @@ struct ApiGraphEdge {
     weight: f64,
 }
 
+struct GraphPage {
+    nodes: Vec<ApiGraphNode>,
+    edges: Vec<ApiGraphEdge>,
+    total_count: usize,
+    has_more: bool,
+}
+
 fn handle_graph(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
     let project = match resolve_project(app, project_id) {
         Ok(project) => project,
@@ -2380,70 +2458,235 @@ fn handle_graph(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
     let params = parse_query(query);
     let q = params.get("q").map(|s| s.to_lowercase());
     let node_type = params.get("nodeType").map(|s| s.to_lowercase());
-    let limit = params
-        .get("limit")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(200)
-        .clamp(1, 1000);
+    let paged_edges = match params.get("edgeScope").map(String::as_str) {
+        Some("filtered") => true,
+        Some("page") | None => false,
+        Some(_) => return err(400, "edgeScope must be 'page' or 'filtered'"),
+    };
+    let offset = match params.get("offset") {
+        Some(value) => match value.parse::<usize>() {
+            Ok(value) => value,
+            Err(_) => return err(400, "offset must be a non-negative integer"),
+        },
+        None => 0,
+    };
+    let limit = match params.get("limit") {
+        Some(value) => match value.parse::<usize>() {
+            Ok(value) if value > 0 => value.clamp(1, 1000),
+            _ => return err(400, "limit must be a positive integer"),
+        },
+        None => 200,
+    };
 
-    match build_graph(&project.path) {
-        Ok((mut nodes, edges)) => {
-            if let Some(ref q) = q {
-                nodes.retain(|n| {
-                    n.id.to_lowercase().contains(q) || n.label.to_lowercase().contains(q)
-                });
-            }
-            if let Some(ref node_type) = node_type {
-                nodes.retain(|n| n.node_type == *node_type);
-            }
-            nodes.truncate(limit);
-            let ids: BTreeSet<String> = nodes.iter().map(|n| n.id.clone()).collect();
-            let edges: Vec<ApiGraphEdge> = edges
-                .into_iter()
-                .filter(|e| ids.contains(&e.source) && ids.contains(&e.target))
-                .collect();
-            ok(json!({ "ok": true, "projectId": project.id, "nodes": nodes, "edges": edges }))
+    match load_graph(&project.path) {
+        Ok(graph) => {
+            let page = select_graph_page(
+                &graph.nodes,
+                &graph.edges,
+                q.as_deref(),
+                node_type.as_deref(),
+                offset,
+                limit,
+                paged_edges,
+            );
+            ok(json!({
+                "ok": true,
+                "projectId": project.id,
+                "nodes": page.nodes,
+                "edges": page.edges,
+                "offset": offset,
+                "limit": limit,
+                "totalCount": page.total_count,
+                "hasMore": page.has_more,
+            }))
         }
         Err(e) => err(500, e),
     }
 }
 
-fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdge>), String> {
-    let wiki_root = Path::new(project_path).join("wiki");
-    let mut raw: BTreeMap<String, (String, String, String, Vec<String>)> = BTreeMap::new();
-    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
-        if !entry.file_type().is_file()
-            || entry.path().extension().and_then(|s| s.to_str()) != Some("md")
-        {
-            continue;
+fn select_graph_page(
+    nodes: &[ApiGraphNode],
+    edges: &[ApiGraphEdge],
+    q: Option<&str>,
+    node_type: Option<&str>,
+    offset: usize,
+    limit: usize,
+    paged_edges: bool,
+) -> GraphPage {
+    let matches = |node: &&ApiGraphNode| {
+        q.is_none_or(|q| {
+            node.id.to_lowercase().contains(q) || node.label.to_lowercase().contains(q)
+        }) && node_type.is_none_or(|node_type| node.node_type == node_type)
+    };
+    let total_count = nodes.iter().filter(matches).count();
+    let filtered_ids = paged_edges.then(|| {
+        nodes
+            .iter()
+            .filter(matches)
+            .map(|node| node.id.clone())
+            .collect::<BTreeSet<_>>()
+    });
+    let nodes: Vec<ApiGraphNode> = nodes
+        .iter()
+        .filter(matches)
+        .skip(offset)
+        .take(limit)
+        .cloned()
+        .collect();
+    let page_ids: BTreeSet<String> = nodes.iter().map(|node| node.id.clone()).collect();
+    let edges = edges
+        .iter()
+        .filter(|edge| {
+            if paged_edges {
+                page_ids.contains(&edge.source)
+                    && filtered_ids
+                        .as_ref()
+                        .is_some_and(|ids| ids.contains(&edge.target))
+            } else {
+                page_ids.contains(&edge.source) && page_ids.contains(&edge.target)
+            }
+        })
+        .cloned()
+        .collect();
+    let has_more = offset.saturating_add(nodes.len()) < total_count;
+    GraphPage {
+        nodes,
+        edges,
+        total_count,
+        has_more,
+    }
+}
+
+fn load_graph(project_path: &str) -> Result<Arc<CachedGraph>, String> {
+    let cache = GRAPH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = cache.lock().ok().and_then(|cache| {
+        cache
+            .get(project_path)
+            .filter(|entry| entry.loaded_at.elapsed() < GRAPH_CACHE_TTL)
+            .cloned()
+    });
+    if let Some(entry) = cached {
+        return Ok(entry);
+    }
+
+    let (fingerprint, files) = graph_files(project_path)?;
+    let cached = cache.lock().ok().and_then(|cache| {
+        cache
+            .get(project_path)
+            .filter(|entry| entry.fingerprint == fingerprint)
+            .cloned()
+    });
+    if let Some(entry) = cached {
+        return Ok(entry);
+    }
+
+    let (nodes, edges) = build_graph_from_files(project_path, &files)?;
+    let graph = Arc::new(CachedGraph {
+        loaded_at: Instant::now(),
+        fingerprint,
+        nodes,
+        edges,
+    });
+    if let Ok(mut cache) = cache.lock() {
+        cache.retain(|_, entry| entry.loaded_at.elapsed() < GRAPH_CACHE_TTL);
+        if cache.len() >= GRAPH_CACHE_MAX_PROJECTS && !cache.contains_key(project_path) {
+            if let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.loaded_at)
+                .map(|(path, _)| path.clone())
+            {
+                cache.remove(&oldest);
+            }
         }
-        let content = match fs::read_to_string(entry.path()) {
+        cache.insert(project_path.to_string(), Arc::clone(&graph));
+    }
+    Ok(graph)
+}
+
+fn graph_files(project_path: &str) -> Result<(u64, Vec<PathBuf>), String> {
+    let wiki_root = Path::new(project_path).join("wiki");
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&wiki_root).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("md"))
+        {
+            files.push(entry.into_path());
+        }
+    }
+    files.sort();
+
+    let mut hasher = DefaultHasher::new();
+    for path in &files {
+        path.hash(&mut hasher);
+        if let Ok(metadata) = fs::metadata(path) {
+            metadata.len().hash(&mut hasher);
+            metadata.modified().ok().hash(&mut hasher);
+        }
+    }
+    Ok((hasher.finish(), files))
+}
+
+#[cfg(test)]
+fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdge>), String> {
+    let (_, files) = graph_files(project_path)?;
+    build_graph_from_files(project_path, &files)
+}
+
+fn build_graph_from_files(
+    project_path: &str,
+    files: &[PathBuf],
+) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdge>), String> {
+    let wiki_root = Path::new(project_path).join("wiki");
+    let mut stem_counts = HashMap::new();
+    for path in files {
+        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+            *stem_counts.entry(stem.to_string()).or_insert(0usize) += 1;
+        }
+    }
+    let mut raw: BTreeMap<String, (String, String, String, Vec<String>)> = BTreeMap::new();
+    for path in files {
+        let content = match fs::read_to_string(path) {
             Ok(content) => content,
             Err(_) => continue,
         };
-        let id = entry
-            .path()
+        let relative_id = wiki_page_id(&wiki_root, path);
+        let stem = path
             .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let id = if stem_counts.get(stem) == Some(&1) {
+            stem.to_string()
+        } else {
+            relative_id
+        };
         if id.is_empty() {
             continue;
         }
-        let title =
-            commands::search::extract_title(&content, entry.file_name().to_string_lossy().as_ref());
+        let fallback_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let title = commands::search::extract_title(&content, fallback_name);
         let node_type = extract_type(&content);
-        let path = relative_to_project(project_path, entry.path());
-        let links = extract_wikilinks(&content);
-        raw.insert(id, (title, node_type, path, links));
+        let relative_path = relative_to_project(project_path, path);
+        let links = commands::search::extract_graph_links(&content);
+        raw.insert(id, (title, node_type, relative_path, links));
     }
-    let ids: BTreeSet<String> = raw.keys().cloned().collect();
+    // Query pages are intermediate artifacts rather than graph nodes. Remove
+    // them before link resolution so the API cannot emit edges whose source
+    // or target is absent from the returned node set.
+    raw.retain(|_, (_, node_type, _, _)| node_type != "query");
+    let aliases = graph_aliases(&raw);
     let mut link_count: BTreeMap<String, usize> = raw.keys().map(|id| (id.clone(), 0)).collect();
     let mut seen = BTreeSet::new();
     let mut edges = Vec::new();
     for (source, (_, _, _, links)) in &raw {
         for link in links {
-            let Some(target) = resolve_link(link, &ids) else {
+            let Some(target) = resolve_link(link, &aliases) else {
                 continue;
             };
             if &target == source {
@@ -2467,7 +2710,6 @@ fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdg
     }
     let nodes = raw
         .into_iter()
-        .filter(|(_, (_, node_type, _, _))| node_type != "query")
         .map(|(id, (label, node_type, path, _))| ApiGraphNode {
             link_count: *link_count.get(&id).unwrap_or(&0),
             id,
@@ -2477,6 +2719,91 @@ fn build_graph(project_path: &str) -> Result<(Vec<ApiGraphNode>, Vec<ApiGraphEdg
         })
         .collect();
     Ok((nodes, edges))
+}
+
+fn wiki_page_id(wiki_root: &Path, path: &Path) -> String {
+    path.strip_prefix(wiki_root)
+        .unwrap_or(path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+struct GraphAliases {
+    exact_ids: HashMap<String, String>,
+    ids: HashMap<String, Option<String>>,
+    stems: HashMap<String, Option<String>>,
+    titles: HashMap<String, Option<String>>,
+}
+
+fn graph_aliases(raw: &BTreeMap<String, (String, String, String, Vec<String>)>) -> GraphAliases {
+    let mut aliases = GraphAliases {
+        exact_ids: HashMap::new(),
+        ids: HashMap::new(),
+        stems: HashMap::new(),
+        titles: HashMap::new(),
+    };
+    for (id, (title, _, path, _)) in raw {
+        aliases.exact_ids.insert(id.clone(), id.clone());
+        insert_graph_alias(&mut aliases.ids, name_alias_keys(id), id);
+        let canonical_path = path
+            .strip_prefix("wiki/")
+            .unwrap_or(path)
+            .trim_end_matches(".md");
+        insert_graph_alias(&mut aliases.ids, name_alias_keys(canonical_path), id);
+        if let Some(stem) = id.rsplit('/').next() {
+            insert_graph_alias(&mut aliases.stems, name_alias_keys(stem), id);
+        }
+        insert_graph_alias(&mut aliases.titles, name_alias_keys(title), id);
+    }
+    aliases
+}
+
+fn insert_graph_alias(aliases: &mut HashMap<String, Option<String>>, keys: Vec<String>, id: &str) {
+    for key in keys {
+        match aliases.get(&key) {
+            None => {
+                aliases.insert(key, Some(id.to_string()));
+            }
+            Some(Some(existing)) if existing != id => {
+                aliases.insert(key, None);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn link_alias_keys(raw: &str) -> Vec<String> {
+    let target = raw
+        .split('|')
+        .next()
+        .unwrap_or("")
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .trim();
+    name_alias_keys(target)
+}
+
+fn name_alias_keys(raw: &str) -> Vec<String> {
+    let normalized = raw.trim().replace('\\', "/").to_lowercase();
+    let normalized = normalized.trim_matches('/');
+    let normalized = normalized.strip_prefix("./").unwrap_or(normalized);
+    let normalized = normalized.strip_prefix("wiki/").unwrap_or(normalized);
+    let normalized = if normalized.ends_with(".md") {
+        &normalized[..normalized.len() - 3]
+    } else {
+        normalized
+    };
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+    let slugged = normalized.replace(' ', "-");
+    if slugged == normalized {
+        vec![normalized.to_string()]
+    } else {
+        vec![normalized.to_string(), slugged]
+    }
 }
 
 fn extract_type(content: &str) -> String {
@@ -2492,32 +2819,35 @@ fn extract_type(content: &str) -> String {
     "other".to_string()
 }
 
-fn extract_wikilinks(content: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = content;
-    while let Some(start) = rest.find("[[") {
-        rest = &rest[start + 2..];
-        let Some(end) = rest.find("]]") else {
-            break;
-        };
-        let inner = &rest[..end];
-        let target = inner.split('|').next().unwrap_or("").trim();
-        if !target.is_empty() {
-            out.push(target.to_string());
-        }
-        rest = &rest[end + 2..];
+fn resolve_link(raw: &str, aliases: &GraphAliases) -> Option<String> {
+    let exact = raw
+        .split('|')
+        .next()
+        .unwrap_or("")
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .trim();
+    if let Some(id) = aliases.exact_ids.get(exact) {
+        return Some(id.clone());
     }
-    out
+    let keys = link_alias_keys(raw);
+    for tier in [&aliases.ids, &aliases.stems, &aliases.titles] {
+        for key in &keys {
+            if let Some(resolved) = tier.get(key) {
+                return resolved.clone();
+            }
+        }
+    }
+    None
 }
 
-fn resolve_link(raw: &str, ids: &BTreeSet<String>) -> Option<String> {
-    if ids.contains(raw) {
-        return Some(raw.to_string());
+fn invalidate_graph_cache(project_path: &str) {
+    if let Some(cache) = GRAPH_CACHE.get() {
+        if let Ok(mut cache) = cache.lock() {
+            cache.remove(project_path);
+        }
     }
-    let normalized = raw.to_lowercase().replace(' ', "-");
-    ids.iter()
-        .find(|id| id.to_lowercase() == normalized || id.to_lowercase() == raw.to_lowercase())
-        .cloned()
 }
 
 fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
@@ -2525,12 +2855,14 @@ fn handle_rescan(app: &AppHandle, project_id: &str) -> ApiResponse {
         Ok(project) => project,
         Err(e) => return err(404, e),
     };
+    invalidate_graph_cache(&project.path);
     let source_watch_config = load_source_watch_config(app, &project.id);
     match commands::file_sync::rescan_project_files(
         app.clone(),
         project.id.clone(),
         project.path.clone(),
         source_watch_config,
+        None,
     ) {
         Ok(result) => ok(json!({ "ok": true, "projectId": project.id, "result": result })),
         Err(e) => err(500, e),
@@ -2606,6 +2938,222 @@ mod tests {
         let root_str = root.to_string_lossy();
         let joined = safe_join(&root_str, "wiki/index.md").unwrap();
         assert_eq!(joined, root.join("wiki/index.md"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_uses_relative_slugs_and_resolves_path_links() {
+        let root = test_project_dir();
+        fs::create_dir_all(root.join("wiki/topic")).unwrap();
+        fs::write(
+            root.join("wiki/index.md"),
+            "---\ntype: overview\n---\n# Index\n[[topic/Detail Page.md#section|Detail]]",
+        )
+        .unwrap();
+        fs::write(
+            root.join("wiki/topic/Detail Page.md"),
+            "---\ntype: entity\n---\n# Detail Page",
+        )
+        .unwrap();
+
+        let (nodes, edges) = build_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert!(nodes.iter().any(|node| node.id == "Detail Page"));
+        assert!(edges
+            .iter()
+            .any(|edge| { edge.source == "index" && edge.target == "Detail Page" }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_includes_frontmatter_related_links() {
+        let root = test_project_dir();
+        fs::write(
+            root.join("wiki/source.md"),
+            "---\nrelated: [target]\n---\n# Source",
+        )
+        .unwrap();
+        fs::write(root.join("wiki/target.md"), "# Target").unwrap();
+
+        let (_, edges) = build_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert!(edges
+            .iter()
+            .any(|edge| edge.source == "source" && edge.target == "target"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_drops_edges_to_hidden_query_pages() {
+        let root = test_project_dir();
+        fs::write(
+            root.join("wiki/source.md"),
+            "---\nrelated: [hidden]\n---\n# Source",
+        )
+        .unwrap();
+        fs::write(
+            root.join("wiki/hidden.md"),
+            "---\ntype: query\n---\n# Hidden\n[[source]]",
+        )
+        .unwrap();
+
+        let (nodes, edges) = build_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert!(nodes.iter().all(|node| node.id != "hidden"));
+        assert!(edges.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_does_not_resolve_ambiguous_bare_stems() {
+        let root = test_project_dir();
+        fs::create_dir_all(root.join("wiki/a")).unwrap();
+        fs::create_dir_all(root.join("wiki/b")).unwrap();
+        fs::write(root.join("wiki/index.md"), "# Index\n[[same]]").unwrap();
+        fs::write(root.join("wiki/a/same.md"), "# A").unwrap();
+        fs::write(root.join("wiki/b/same.md"), "# B").unwrap();
+
+        let (nodes, edges) = build_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert!(nodes.iter().any(|node| node.id == "a/same"));
+        assert!(nodes.iter().any(|node| node.id == "b/same"));
+        assert!(edges.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_exact_id_wins_over_a_colliding_title() {
+        let root = test_project_dir();
+        fs::write(root.join("wiki/index.md"), "# Home").unwrap();
+        fs::write(root.join("wiki/glossary.md"), "# Index\n[[index]]").unwrap();
+
+        let (_, edges) = build_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, "index");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn graph_exact_id_wins_over_a_normalized_id_collision() {
+        let mut raw = BTreeMap::new();
+        for id in ["Machine Learning", "machine-learning"] {
+            raw.insert(
+                id.to_string(),
+                (
+                    id.to_string(),
+                    "entity".to_string(),
+                    format!("wiki/{id}.md"),
+                    vec![],
+                ),
+            );
+        }
+        let aliases = graph_aliases(&raw);
+        assert_eq!(
+            resolve_link("Machine Learning", &aliases).as_deref(),
+            Some("Machine Learning")
+        );
+        assert_eq!(
+            resolve_link("machine-learning", &aliases).as_deref(),
+            Some("machine-learning")
+        );
+    }
+
+    #[test]
+    fn graph_link_normalization_accepts_common_path_forms() {
+        let mut raw = BTreeMap::new();
+        raw.insert(
+            "Page".to_string(),
+            (
+                "Display Title".to_string(),
+                "entity".to_string(),
+                "wiki/Page.md".to_string(),
+                vec![],
+            ),
+        );
+        let aliases = graph_aliases(&raw);
+        for link in [
+            "./Page",
+            "wiki/Page",
+            "/wiki/Page",
+            "Page.MD",
+            "Display Title",
+        ] {
+            assert_eq!(
+                resolve_link(link, &aliases).as_deref(),
+                Some("Page"),
+                "{link}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_pagination_can_be_merged_without_losing_edges() {
+        let nodes = ["a", "b", "c"]
+            .into_iter()
+            .map(|id| ApiGraphNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                node_type: "entity".to_string(),
+                path: format!("wiki/{id}.md"),
+                link_count: 1,
+            })
+            .collect::<Vec<_>>();
+        let edges = vec![
+            ApiGraphEdge {
+                source: "a".to_string(),
+                target: "c".to_string(),
+                weight: 1.0,
+            },
+            ApiGraphEdge {
+                source: "b".to_string(),
+                target: "c".to_string(),
+                weight: 1.0,
+            },
+        ];
+
+        let first = select_graph_page(&nodes, &edges, None, None, 0, 2, true);
+        let second = select_graph_page(&nodes, &edges, None, None, 2, 2, true);
+        assert_eq!(first.nodes.len(), 2);
+        assert_eq!(first.total_count, 3);
+        assert!(first.has_more);
+        assert_eq!(second.nodes.len(), 1);
+        assert!(!second.has_more);
+        assert_eq!(first.edges.len() + second.edges.len(), 2);
+    }
+
+    #[test]
+    fn graph_legacy_response_keeps_edge_endpoints_in_the_node_page() {
+        let nodes = ["a", "b", "c"]
+            .into_iter()
+            .map(|id| ApiGraphNode {
+                id: id.to_string(),
+                label: id.to_string(),
+                node_type: "entity".to_string(),
+                path: format!("wiki/{id}.md"),
+                link_count: 1,
+            })
+            .collect::<Vec<_>>();
+        let edges = vec![ApiGraphEdge {
+            source: "a".to_string(),
+            target: "c".to_string(),
+            weight: 1.0,
+        }];
+        let page = select_graph_page(&nodes, &edges, None, None, 0, 2, false);
+        assert!(page.edges.is_empty());
+    }
+
+    #[test]
+    fn graph_cache_invalidates_when_a_page_changes() {
+        let root = test_project_dir();
+        let page = root.join("wiki/page.md");
+        fs::write(&page, "# Before").unwrap();
+        let before = load_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(before.nodes[0].label, "Before");
+        let cached = load_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert!(Arc::ptr_eq(&before, &cached));
+
+        fs::write(&page, "# After with a different length").unwrap();
+        invalidate_graph_cache(root.to_string_lossy().as_ref());
+        let after = load_graph(root.to_string_lossy().as_ref()).unwrap();
+        assert_eq!(after.nodes[0].label, "After with a different length");
+        assert!(!Arc::ptr_eq(&before, &after));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3156,6 +3704,10 @@ mod tests {
             body_limit_for_request(&Method::Post, "/api/v1/projects/current/search"),
             MAX_BODY_BYTES
         );
+        assert_eq!(
+            body_limit_for_request(&Method::Post, "/api/v1/projects/current/pages/write"),
+            MAX_PAGE_WRITE_BODY_BYTES
+        );
     }
 
     #[test]
@@ -3183,6 +3735,10 @@ mod tests {
         assert!(is_token_required_request(
             &Method::Post,
             "/api/v1/projects/current/pages/embed"
+        ));
+        assert!(is_token_required_request(
+            &Method::Post,
+            "/api/v1/projects/current/pages/write"
         ));
         assert!(is_token_required_request(
             &Method::Post,

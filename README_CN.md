@@ -361,7 +361,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 - **macOS 关闭隐藏** —— 关闭按钮隐藏窗口（程序后台运行），点击 Dock 图标恢复，Cmd+Q 退出
 - **Windows/Linux 关闭确认** —— 关闭时弹出确认对话框，防止误操作导致数据丢失
 - **Tauri v2** —— macOS、Windows、Linux 原生桌面
-- **GitHub Actions CI/CD** —— 自动构建 macOS（ARM + Intel）、Windows（.msi）、Linux（.deb / .AppImage）
+- **GitHub Actions CI/CD** —— 自动构建 macOS（Apple Silicon）、Windows（.msi）、Linux（.deb / .AppImage）
 
 ### 19. 其他新增
 
@@ -398,7 +398,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 ### 预编译二进制文件
 
 从 [Releases](https://github.com/nashsu/llm_wiki/releases) 下载：
-- **macOS**：`.dmg`（Apple Silicon + Intel）
+- **macOS**：`.dmg`（Apple Silicon）
 - **Windows**：`.msi`
 - **Linux**：`.deb` / `.AppImage`
 

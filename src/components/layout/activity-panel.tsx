@@ -112,9 +112,7 @@ export function ActivityPanel() {
 
   const queueSummary = getQueueSummary()
   const hasQueue = queueSummary.total > 0
-  const shouldResumeQueue =
-    queueSummary.userPaused ||
-    (queueSummary.restoredBacklogWaiting && queueSummary.processing === 0)
+  const shouldResumeQueue = queueSummary.userPaused || queueSummary.blockedOnLlmConfig
   const hasFileSync = fileSyncTasks.length > 0 || Boolean(fileSyncError)
   const fileSyncPending = fileSyncTasks.filter((t) => t.status === "pending").length
   const fileSyncProcessing = fileSyncTasks.filter((t) => t.status === "processing").length

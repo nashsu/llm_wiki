@@ -75,6 +75,12 @@ export const realFs = {
       () => false,
     )
   },
+  getFileModifiedTime: async (p: string): Promise<number> => {
+    return (await fs.stat(p)).mtimeMs
+  },
+  getFileSize: async (p: string): Promise<number> => {
+    return (await fs.stat(p)).size
+  },
   findRelatedWikiPages: async (): Promise<string[]> => {
     return []
   },

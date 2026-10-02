@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ReviewItem } from "@/stores/review-store"
-import { reviewResearchTopic, selectedResearchReviews } from "./review-batch-research"
+import { reviewResearchQueries, reviewResearchTopic, selectedResearchReviews } from "./review-batch-research"
 
 function review(id: string, type: ReviewItem["type"], resolved = false): ReviewItem {
   return {
@@ -36,5 +36,28 @@ describe("selectedResearchReviews", () => {
       title: " ",
       description: "First line\nSecond line",
     })).toBe("First line")
+  })
+
+  it("grounds bare generated queries with the review description", () => {
+    expect(reviewResearchQueries({
+      ...review("a", "suggestion"),
+      title: "AF",
+      description: "attention filter signal in the project pipeline",
+      searchQueries: ["AF", "AF cognitive signal"],
+    })).toEqual([
+      "AF attention filter signal in the project pipeline",
+      "AF cognitive signal",
+    ])
+  })
+
+  it("uses an action-derived topic without reusing queries for the original title", () => {
+    const item = {
+      ...review("a", "suggestion"),
+      title: "Original topic",
+      description: "comparison of two internal mechanisms",
+      searchQueries: undefined,
+    }
+    expect(reviewResearchQueries(item, "X comparison"))
+      .toEqual(["X comparison comparison of two internal mechanisms"])
   })
 })

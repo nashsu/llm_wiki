@@ -2,6 +2,17 @@ import Graph from "graphology"
 import louvain from "graphology-communities-louvain"
 import type { CommunityInfo, GraphEdge } from "./wiki-graph"
 
+export function computeCommunityConnectivity(nodeCount: number, intraEdges: number): {
+  cohesion: number
+  meanIntraDegree: number
+} {
+  const possibleEdges = nodeCount > 1 ? (nodeCount * (nodeCount - 1)) / 2 : 1
+  return {
+    cohesion: intraEdges / possibleEdges,
+    meanIntraDegree: nodeCount > 0 ? (2 * intraEdges) / nodeCount : 0,
+  }
+}
+
 /** Run Louvain community detection and compute cohesion per community. */
 export function detectCommunities(
   nodes: { id: string; label: string; linkCount: number }[],
@@ -51,8 +62,8 @@ export function detectCommunities(
   const communities: CommunityInfo[] = []
   for (const [communityId, memberIds] of groups) {
     const nodeCount = memberIds.length
-    const possibleEdges = nodeCount > 1 ? (nodeCount * (nodeCount - 1)) / 2 : 1
-    const cohesion = (intraEdgesByCommunity.get(communityId) ?? 0) / possibleEdges
+    const intraEdges = intraEdgesByCommunity.get(communityId) ?? 0
+    const { cohesion, meanIntraDegree } = computeCommunityConnectivity(nodeCount, intraEdges)
     const topNodes = [...memberIds]
       .sort(
         (left, right) =>
@@ -61,7 +72,7 @@ export function detectCommunities(
       )
       .slice(0, 5)
       .map((id) => nodeInfo.get(id)?.label ?? id)
-    communities.push({ id: communityId, nodeCount, cohesion, topNodes })
+    communities.push({ id: communityId, nodeCount, cohesion, meanIntraDegree, topNodes })
   }
 
   communities.sort((left, right) => right.nodeCount - left.nodeCount)

@@ -22,6 +22,7 @@ import { McpProjectBinding, withActiveProject } from "./project-binding.js"
 
 const DEFAULT_PROJECT_ID = "current"
 const MAX_TEXT_BYTES = 120_000
+const MAX_WRITE_PAGE_BYTES = 2 * 1024 * 1024
 
 const client = new LlmWikiApiClient()
 const projectBinding = new McpProjectBinding()
@@ -154,6 +155,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           q: { type: "string", description: "Optional text filter." },
           node_type: { type: "string", description: "Optional node type filter." },
           limit: { type: "number", description: "Maximum nodes. The local API clamps to its configured maximum." },
+          offset: { type: "number", minimum: 0, description: "Zero-based node offset." },
+          edge_scope: { type: "string", enum: ["page", "filtered"], description: "Use 'page' for self-contained edges or 'filtered' when merging all pages." },
         },
         additionalProperties: false,
       },
@@ -180,6 +183,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           force: { type: "boolean", description: "Force rebuilding vectors even when the page content and embedding configuration are unchanged." },
         },
         required: ["path"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "llm_wiki_write_page",
+      description: "Create or explicitly overwrite one Markdown page under wiki/. Success is returned only after byte-for-byte persistence verification.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID, project path, or 'current'. Defaults to current." },
+          path: { type: "string", description: "Canonical project-relative Markdown path under wiki/." },
+          content: { type: "string", description: "Exact UTF-8 page content to persist." },
+          allow_overwrite: { type: "boolean", description: "Defaults to false. Must be true to replace an existing page." },
+        },
+        required: ["path", "content"],
         additionalProperties: false,
       },
     },
@@ -274,8 +292,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           q: optionalStringArg(args.q),
           nodeType: optionalStringArg(args.node_type),
           limit: numberArg(args.limit),
+          offset: numberArg(args.offset),
+          edgeScope: optionalStringArg(args.edge_scope)
+            ? enumArg(args.edge_scope, ["page", "filtered"] as const, "page")
+            : (args.offset !== undefined ? "filtered" : "page"),
         })
-        return textResult(withActiveProject(formatGraph(graph.nodes, graph.edges), scope.project, scope.id))
+        return textResult(withActiveProject(formatGraph(graph), scope.project, scope.id))
       }
       case "llm_wiki_rescan_sources": {
         await assertMcpEnabled()
@@ -287,6 +309,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const path = stringArg(args.path, "path")
         const scope = await resolveProjectScope(args)
         const result = await client.embedPage(path, scope.id, boolArg(args.force, false))
+        return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
+      }
+      case "llm_wiki_write_page": {
+        await assertMcpEnabled()
+        const path = wikiWritePathArg(args.path)
+        const content = writeContentArg(args.content)
+        const scope = await resolveProjectScope(args)
+        const result = await client.writePage(
+          path,
+          content,
+          scope.id,
+          boolArg(args.allow_overwrite, false),
+        )
         return textResult(withActiveProject(JSON.stringify(result, null, 2), scope.project, scope.id))
       }
       default:
@@ -349,6 +384,31 @@ function scopedErrorMessage(error: unknown): string {
 function stringArg(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new McpError(ErrorCode.InvalidParams, `${name} is required`)
+  }
+  return value
+}
+
+function wikiWritePathArg(value: unknown): string {
+  const path = stringArg(value, "path")
+  if (Buffer.byteLength(path, "utf8") > 4_096) {
+    throw new McpError(ErrorCode.InvalidParams, "path is too large")
+  }
+  if (path.includes("\\") || path.startsWith("/") || !path.startsWith("wiki/") || !path.endsWith(".md")) {
+    throw new McpError(ErrorCode.InvalidParams, "path must be a canonical Markdown path under wiki/")
+  }
+  const segments = path.split("/")
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || segment.startsWith("."))) {
+    throw new McpError(ErrorCode.InvalidParams, "path contains a noncanonical component")
+  }
+  return path
+}
+
+function writeContentArg(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new McpError(ErrorCode.InvalidParams, "content is required")
+  }
+  if (Buffer.byteLength(value, "utf8") > MAX_WRITE_PAGE_BYTES) {
+    throw new McpError(ErrorCode.InvalidParams, "content is too large")
   }
   return value
 }
@@ -500,7 +560,8 @@ function formatReviewOptions(review: ApiReviewItem): string {
     .join(", ")
 }
 
-function formatGraph(nodes: ApiGraphNode[], edges: Array<{ source: string; target: string; weight?: number }>): string {
+function formatGraph(graph: { nodes: ApiGraphNode[]; edges: Array<{ source: string; target: string; weight?: number }>; offset: number; totalCount: number; hasMore: boolean }): string {
+  const { nodes, edges } = graph
   const typeCounts = new Map<string, number>()
   for (const node of nodes) typeCounts.set(node.type, (typeCounts.get(node.type) ?? 0) + 1)
   const lines = [
@@ -508,6 +569,7 @@ function formatGraph(nodes: ApiGraphNode[], edges: Array<{ source: string; targe
     "",
     `Nodes: ${nodes.length}`,
     `Edges: ${edges.length}`,
+    `Page: offset ${graph.offset}, ${nodes.length} of ${graph.totalCount}${graph.hasMore ? " (more available)" : ""}`,
     "",
     "## Node types",
     ...[...typeCounts.entries()]

@@ -38,6 +38,7 @@ export interface SavedImage {
  *  a one-line change here. */
 const SUPPORTED_PDF_EXTS = ["pdf"] as const
 const SUPPORTED_OFFICE_EXTS = ["pptx", "docx"] as const
+const SUPPORTED_SOURCE_IMAGE_EXTS = new Set(["png", "jpg", "jpeg"])
 // Legacy binary .doc/.ppt text extraction is handled separately; image
 // extraction here is ZIP-based and only supports OOXML files.
 const MARKDOWN_IMAGE_EXTS = new Set([
@@ -160,13 +161,30 @@ export async function extractAndSaveSourceImages(
 
   const isPdf = (SUPPORTED_PDF_EXTS as readonly string[]).includes(ext)
   const isOffice = (SUPPORTED_OFFICE_EXTS as readonly string[]).includes(ext)
-  if (!isPdf && !isOffice) return []
+  const isStandaloneImage = SUPPORTED_SOURCE_IMAGE_EXTS.has(ext)
+  if (!isPdf && !isOffice && !isStandaloneImage) return []
 
   const slug = slugOverride ?? fileName.replace(/\.[^.]+$/, "")
   const destDir = `${pp}/wiki/media/${slug}`
   const relTo = `${pp}/wiki`
 
   try {
+    if (isStandaloneImage) {
+      await createDirectory(destDir)
+      const destName = uniqueDestName(1, sp)
+      const dest = `${destDir}/${destName}`
+      await copyFile(sp, dest)
+      return [{
+        index: 1,
+        mimeType: imageMimeType(dest),
+        page: null,
+        width: 0,
+        height: 0,
+        relPath: `media/${slug}/${destName}`,
+        absPath: dest,
+        sha256: await sha256OfFile(dest),
+      }]
+    }
     const images = await invoke<unknown[]>(
       isPdf ? "extract_and_save_pdf_images_cmd" : "extract_and_save_office_images_cmd",
       { sourcePath: sp, destDir, relTo },

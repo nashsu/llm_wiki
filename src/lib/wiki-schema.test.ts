@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  correctWikiPageRouting,
   parseWikiSchemaRouting,
   validateWikiPageRouting,
 } from "./wiki-schema"
@@ -52,6 +53,47 @@ describe("parseWikiSchemaRouting", () => {
     expect(routing.typeDirs).toEqual({
       concept: "wiki/concepts",
     })
+  })
+
+  it("rejects schema directories that escape or are invalid on Windows", () => {
+    const routing = parseWikiSchemaRouting([
+      "## Page Types",
+      "| Type | Directory |",
+      "| --- | --- |",
+      "| escape | wiki/../outside/ |",
+      "| windows | wiki/bad:name/ |",
+      "| safe | wiki/安全/ |",
+    ].join("\n"))
+
+    expect(routing.typeDirs).toEqual({ safe: "wiki/安全" })
+  })
+})
+
+describe("correctWikiPageRouting", () => {
+  const routing = parseWikiSchemaRouting(SCHEMA)
+
+  it("moves a typed page to its schema directory while preserving its filename", () => {
+    expect(correctWikiPageRouting(
+      "wiki/concepts/retrieval.md",
+      "---\ntype: method\ntitle: Retrieval\n---\n# Retrieval",
+      routing,
+    )).toEqual({
+      path: "wiki/methods/retrieval.md",
+      message: 'Auto-routed page type "method" from "wiki/concepts/" to "wiki/methods/".',
+    })
+  })
+
+  it("leaves unknown and already-correct routes unchanged", () => {
+    expect(correctWikiPageRouting(
+      "wiki/methods/retrieval.md",
+      "---\ntype: method\n---",
+      routing,
+    ).message).toBeNull()
+    expect(correctWikiPageRouting(
+      "wiki/custom/item.md",
+      "---\ntype: custom\n---",
+      routing,
+    ).path).toBe("wiki/custom/item.md")
   })
 })
 

@@ -9,6 +9,11 @@ export interface WikiSchemaRoutingIssue {
   message: string
 }
 
+export interface WikiSchemaRouteCorrection {
+  path: string
+  message: string | null
+}
+
 export async function loadProjectWikiSchemaRouting(
   projectPath: string,
 ): Promise<WikiSchemaRouting | null> {
@@ -36,7 +41,7 @@ export function parseWikiSchemaRouting(markdown: string): WikiSchemaRouting {
 
     const [type, dir] = cells
     if (!/^[a-z][a-z0-9_-]*$/i.test(type)) continue
-    if (dir !== "wiki" && !dir.startsWith("wiki/")) continue
+    if (!isSafeWikiDirectory(dir)) continue
 
     typeDirs[type] = stripTrailingSlash(dir)
   }
@@ -91,6 +96,31 @@ export function validateWikiPageRouting(
   return null
 }
 
+export function correctWikiPageRouting(
+  relativePath: string,
+  content: string,
+  routing: WikiSchemaRouting,
+): WikiSchemaRouteCorrection {
+  const parsed = parseFrontmatter(content)
+  const type = parsed.frontmatter?.type
+  const normalizedPath = normalizeRelativePath(relativePath)
+  if (typeof type !== "string" || !type.trim()) {
+    return { path: normalizedPath, message: null }
+  }
+
+  const expectedDir = routing.typeDirs[type]
+  const actualDir = dirname(normalizedPath)
+  if (!expectedDir || actualDir === expectedDir) {
+    return { path: normalizedPath, message: null }
+  }
+
+  const fileName = normalizedPath.slice(normalizedPath.lastIndexOf("/") + 1)
+  return {
+    path: `${expectedDir}/${fileName}`,
+    message: `Auto-routed page type "${type}" from "${actualDir}/" to "${expectedDir}/".`,
+  }
+}
+
 function inferTypeFromSchemaPath(
   relativePath: string,
   routing: WikiSchemaRouting,
@@ -114,4 +144,14 @@ function dirname(relativePath: string): string {
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "")
+}
+
+function isSafeWikiDirectory(value: string): boolean {
+  const withoutTrailingSlash = stripTrailingSlash(value)
+  const normalized = normalizeRelativePath(withoutTrailingSlash)
+  if (normalized !== withoutTrailingSlash) return false
+  if (normalized !== "wiki" && !normalized.startsWith("wiki/")) return false
+  return normalized.split("/").every((segment) => (
+    segment.length > 0 && segment !== "." && segment !== ".." && !/[<>:"|?*\\]/.test(segment)
+  ))
 }

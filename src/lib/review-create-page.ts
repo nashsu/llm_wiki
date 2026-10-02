@@ -1,4 +1,5 @@
 import type { ReviewItem } from "@/stores/review-store"
+import { makeQueryFileName, makeQuerySlug } from "@/lib/wiki-filename"
 
 export type ReviewPageType = "entity" | "concept" | "comparison" | "synthesis" | "query"
 
@@ -94,4 +95,28 @@ export function createReviewPageDrafts(item: ReviewItem, action: string): Review
     pageType,
     dir: dirForPageType(pageType),
   }))
+}
+
+export async function availableReviewPageFileName(
+  title: string,
+  fileExists: (fileName: string) => Promise<boolean>,
+  now: Date = new Date(),
+): Promise<{ fileName: string; date: string }> {
+  const timestamped = makeQueryFileName(title, now)
+  const stableName = `${makeQuerySlug(title)}.md`
+  if (!(await fileExists(stableName))) {
+    return { fileName: stableName, date: timestamped.date }
+  }
+  if (!(await fileExists(timestamped.fileName))) {
+    return { fileName: timestamped.fileName, date: timestamped.date }
+  }
+
+  const stem = timestamped.fileName.replace(/\.md$/, "")
+  for (let suffix = 2; suffix <= 10_000; suffix += 1) {
+    const candidate = `${stem}-${suffix}.md`
+    if (!(await fileExists(candidate))) {
+      return { fileName: candidate, date: timestamped.date }
+    }
+  }
+  throw new Error("Could not allocate a unique wiki page filename")
 }

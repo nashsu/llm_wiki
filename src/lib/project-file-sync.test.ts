@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
     }),
     emit: (event: string, payload: unknown) => listeners[event]?.({ payload }),
     stopProjectFileWatcher: vi.fn(async () => undefined),
+    invalidateProjectFileSnapshotPaths: vi.fn(async () => undefined),
     rescanProjectFiles: vi.fn(async (projectId: string): Promise<{
       queue: {
         version: number
@@ -79,14 +80,42 @@ const mocks = vi.hoisted(() => {
     }>),
     readFile: vi.fn(async (_path?: string) => ""),
     getFileSize: vi.fn(async (_path?: string) => 1024),
+    preprocessFile: vi.fn(async (path: string) => path),
     fileExists: vi.fn(async (_path?: string) => false),
     writeFile: vi.fn(async () => undefined),
     deleteFile: vi.fn(async () => undefined),
     findRelatedWikiPages: vi.fn(async () => []),
     enqueueBatch: vi.fn(async () => []),
+    enqueueInactiveProjectBatch: vi.fn(async () => []),
+    discardInactiveProjectTasksForSources: vi.fn(async () => 0),
+    getRecentProjects: vi.fn(async (): Promise<Array<{
+      id: string
+      name: string
+      path: string
+    }>> => []),
+    loadSourceWatchConfig: vi.fn(async () => ({
+      enabled: true,
+      autoIngest: true,
+      persistExtractedMarkdown: false,
+      parsingConcurrency: 2,
+      ingestConcurrency: 1,
+      includeExtensions: ["md", "pdf"],
+      excludeExtensions: [],
+      excludeDirs: [],
+      excludeGlobs: [],
+      maxFileSizeMb: 100,
+    })),
     removeFromIngestCache: vi.fn(async () => undefined),
     moveIngestCacheEntry: vi.fn(async () => undefined),
     removePageEmbedding: vi.fn(async () => undefined),
+    wikiPageIdFromPath: vi.fn((projectPath: string, pagePath: string) => {
+      const normalizedProject = projectPath.replace(/\\/g, "/").replace(/\/$/, "")
+      const normalizedPage = pagePath.replace(/\\/g, "/")
+      const relative = normalizedPage.startsWith(`${normalizedProject}/`)
+        ? normalizedPage.slice(normalizedProject.length + 1)
+        : normalizedPage
+      return relative.replace(/^wiki\//i, "").replace(/\.md$/i, "")
+    }),
     cascadeDeleteWikiPagesWithRefs: vi.fn(async () => ({
       deletedPaths: [] as string[],
       rewrittenFiles: 0,
@@ -99,6 +128,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }))
 
 vi.mock("@/commands/file-sync", () => ({
+  invalidateProjectFileSnapshotPaths: mocks.invalidateProjectFileSnapshotPaths,
   rescanProjectFiles: mocks.rescanProjectFiles,
   startProjectFileWatcher: mocks.startProjectFileWatcher,
   stopProjectFileWatcher: mocks.stopProjectFileWatcher,
@@ -108,6 +138,7 @@ vi.mock("@/commands/fs", () => ({
   listDirectory: mocks.listDirectory,
   readFile: mocks.readFile,
   getFileSize: mocks.getFileSize,
+  preprocessFile: mocks.preprocessFile,
   fileExists: mocks.fileExists,
   writeFile: mocks.writeFile,
   deleteFile: mocks.deleteFile,
@@ -116,6 +147,13 @@ vi.mock("@/commands/fs", () => ({
 
 vi.mock("@/lib/ingest-queue", () => ({
   enqueueBatch: mocks.enqueueBatch,
+  enqueueInactiveProjectBatch: mocks.enqueueInactiveProjectBatch,
+  discardInactiveProjectTasksForSources: mocks.discardInactiveProjectTasksForSources,
+}))
+
+vi.mock("@/lib/project-store", () => ({
+  getRecentProjects: mocks.getRecentProjects,
+  loadSourceWatchConfig: mocks.loadSourceWatchConfig,
 }))
 
 vi.mock("@/lib/ingest-cache", () => ({
@@ -125,6 +163,7 @@ vi.mock("@/lib/ingest-cache", () => ({
 
 vi.mock("@/lib/embedding", () => ({
   removePageEmbedding: mocks.removePageEmbedding,
+  wikiPageIdFromPath: mocks.wikiPageIdFromPath,
 }))
 
 vi.mock("@/lib/wiki-page-delete", () => ({
@@ -149,6 +188,7 @@ describe("project file sync", () => {
     mocks.listDirectory.mockImplementation(async (_path?: string) => [])
     mocks.readFile.mockImplementation(async (_path?: string) => "")
     mocks.getFileSize.mockImplementation(async (_path?: string) => 1024)
+    mocks.preprocessFile.mockImplementation(async (path: string) => path)
     mocks.fileExists.mockImplementation(async (_path?: string) => false)
     mocks.writeFile.mockImplementation(async () => undefined)
     mocks.deleteFile.mockImplementation(async () => undefined)
@@ -163,7 +203,26 @@ describe("project file sync", () => {
     }))
     const { useWikiStore } = await import("@/stores/wiki-store")
     const { useFileSyncStore } = await import("@/stores/file-sync-store")
-    await import("@/lib/project-file-sync").then((m) => m.stopProjectFileSync())
+    await import("@/lib/project-file-sync").then((m) => {
+      m.stopAllProjectFileSync()
+      return m.stopProjectFileSync()
+    })
+    mocks.getRecentProjects.mockResolvedValue([])
+    mocks.loadSourceWatchConfig.mockResolvedValue({
+      enabled: true,
+      autoIngest: true,
+      persistExtractedMarkdown: false,
+      parsingConcurrency: 2,
+      ingestConcurrency: 1,
+      includeExtensions: ["md", "pdf"],
+      excludeExtensions: [],
+      excludeDirs: [],
+      excludeGlobs: [],
+      maxFileSizeMb: 100,
+    })
+    mocks.enqueueInactiveProjectBatch.mockResolvedValue([])
+    mocks.invalidateProjectFileSnapshotPaths.mockResolvedValue(undefined)
+    mocks.discardInactiveProjectTasksForSources.mockResolvedValue(0)
     useWikiStore.getState().setProject(null)
     useWikiStore.getState().setLlmConfig({
       provider: "openai",
@@ -253,6 +312,7 @@ describe("project file sync", () => {
 
     expect(mocks.enqueueBatch).toHaveBeenCalledWith("A", [
       { sourcePath: "raw/sources/report.pdf", folderContext: "" },
+      { sourcePath: "raw/sources/image.png", folderContext: "" },
     ])
   })
 
@@ -850,5 +910,186 @@ describe("project file sync", () => {
       expect(mocks.cascadeDeleteWikiPagesWithRefs).toHaveBeenCalledTimes(1)
     })
     expect(mocks.listDirectory.mock.calls.filter(([path]) => path === "/tmp/a/wiki")).toHaveLength(1)
+  })
+
+  it("monitors enabled inactive projects and queues their source changes separately", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const active = { id: "A", name: "A", path: "/tmp/a" }
+    const inactive = { id: "B", name: "B", path: "/tmp/b" }
+    mocks.getRecentProjects.mockResolvedValue([active, inactive])
+    mocks.rescanProjectFiles.mockImplementation(async (projectId: string) => ({
+      queue: { version: 1, tasks: [] },
+      changedTasks: projectId === "B" ? [{
+        id: "background-created",
+        projectId: "B",
+        path: "raw/sources/chapter 2.pdf",
+        kind: "created" as const,
+        status: "done" as const,
+        createdAt: 1,
+        updatedAt: 1,
+        retryCount: 0,
+        needsRerun: false,
+      }] : [],
+    }))
+
+    startAllProjectFileSync(active)
+
+    await vi.waitFor(() => {
+      expect(mocks.enqueueInactiveProjectBatch).toHaveBeenCalledWith(
+        "B",
+        "/tmp/b",
+        [{ sourcePath: "raw/sources/chapter 2.pdf", folderContext: "" }],
+      )
+    })
+    expect(mocks.rescanProjectFiles).not.toHaveBeenCalledWith(
+      "A",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    )
+    expect(mocks.rescanProjectFiles).toHaveBeenCalledWith(
+      "B",
+      "/tmp/b",
+      expect.objectContaining({ enabled: true }),
+      true,
+    )
+    stopAllProjectFileSync()
+  })
+
+  it("skips inactive projects whose source monitoring is disabled", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const active = { id: "A", name: "A", path: "/tmp/a" }
+    const inactive = { id: "B", name: "B", path: "/tmp/b" }
+    mocks.getRecentProjects.mockResolvedValue([inactive])
+    mocks.loadSourceWatchConfig.mockResolvedValue({
+      enabled: false,
+      autoIngest: true,
+      persistExtractedMarkdown: false,
+      parsingConcurrency: 2,
+      ingestConcurrency: 1,
+      includeExtensions: ["pdf"],
+      excludeExtensions: [],
+      excludeDirs: [],
+      excludeGlobs: [],
+      maxFileSizeMb: 100,
+    })
+
+    startAllProjectFileSync(active)
+    await vi.waitFor(() => expect(mocks.loadSourceWatchConfig).toHaveBeenCalledWith("B"))
+
+    expect(mocks.rescanProjectFiles).not.toHaveBeenCalled()
+    expect(mocks.enqueueInactiveProjectBatch).not.toHaveBeenCalled()
+    stopAllProjectFileSync()
+  })
+
+  it("removes stale inactive ingest tasks when a source is deleted", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const active = { id: "A", name: "A", path: "/tmp/a" }
+    const inactive = { id: "B", name: "B", path: "/tmp/b" }
+    mocks.getRecentProjects.mockResolvedValue([inactive])
+    mocks.rescanProjectFiles.mockResolvedValue({
+      queue: { version: 1, tasks: [] },
+      changedTasks: [{
+        id: "background-deleted",
+        projectId: "B",
+        path: "raw/sources/old.pdf",
+        kind: "deleted",
+        status: "done",
+        createdAt: 1,
+        updatedAt: 1,
+        retryCount: 0,
+        needsRerun: false,
+      }],
+    })
+
+    startAllProjectFileSync(active)
+    await vi.waitFor(() => {
+      expect(mocks.discardInactiveProjectTasksForSources).toHaveBeenCalledWith(
+        "B",
+        "/tmp/b",
+        ["raw/sources/old.pdf"],
+      )
+    })
+    expect(mocks.enqueueInactiveProjectBatch).not.toHaveBeenCalled()
+    stopAllProjectFileSync()
+  })
+
+  it("invalidates the background snapshot when inactive enqueue persistence fails", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const active = { id: "A", name: "A", path: "/tmp/a" }
+    const inactive = { id: "B", name: "B", path: "/tmp/b" }
+    mocks.getRecentProjects.mockResolvedValue([inactive])
+    mocks.rescanProjectFiles.mockResolvedValue({
+      queue: { version: 1, tasks: [] },
+      changedTasks: [{
+        id: "background-created",
+        projectId: "B",
+        path: "raw/sources/retry.pdf",
+        kind: "created",
+        status: "done",
+        createdAt: 1,
+        updatedAt: 1,
+        retryCount: 0,
+        needsRerun: false,
+      }],
+    })
+    mocks.enqueueInactiveProjectBatch.mockRejectedValueOnce(new Error("disk full"))
+
+    startAllProjectFileSync(active)
+    await vi.waitFor(() => {
+      expect(mocks.invalidateProjectFileSnapshotPaths).toHaveBeenCalledWith(
+        "/tmp/b",
+        ["raw/sources/retry.pdf"],
+      )
+    })
+    stopAllProjectFileSync()
+  })
+
+  it("deduplicates recent projects that point to the same path", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const active = { id: "A", name: "A", path: "/tmp/a" }
+    mocks.getRecentProjects.mockResolvedValue([
+      { id: "B", name: "B", path: "/tmp/shared" },
+      { id: "C", name: "C", path: "/tmp/shared" },
+    ])
+
+    startAllProjectFileSync(active)
+    await vi.waitFor(() => expect(mocks.rescanProjectFiles).toHaveBeenCalledTimes(1))
+    expect(mocks.rescanProjectFiles).toHaveBeenCalledWith(
+      "B",
+      "/tmp/shared",
+      expect.anything(),
+      true,
+    )
+    stopAllProjectFileSync()
+  })
+
+  it("immediately rescans for the latest active project after a switch", async () => {
+    const { startAllProjectFileSync, stopAllProjectFileSync } = await import("@/lib/project-file-sync")
+    const projectA = { id: "A", name: "A", path: "/tmp/a" }
+    const projectB = { id: "B", name: "B", path: "/tmp/b" }
+    let releaseFirstScan: (() => void) | undefined
+    const firstScan = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+    mocks.getRecentProjects.mockResolvedValue([projectA, projectB])
+    mocks.rescanProjectFiles.mockImplementationOnce(async () => {
+      await firstScan
+      return { queue: { version: 1, tasks: [] }, changedTasks: [] }
+    })
+
+    startAllProjectFileSync(projectA)
+    await vi.waitFor(() => expect(mocks.rescanProjectFiles).toHaveBeenCalledTimes(1))
+    startAllProjectFileSync(projectB)
+    releaseFirstScan?.()
+
+    await vi.waitFor(() => expect(mocks.rescanProjectFiles).toHaveBeenCalledTimes(2))
+    expect(mocks.rescanProjectFiles).toHaveBeenLastCalledWith(
+      "A",
+      "/tmp/a",
+      expect.anything(),
+      true,
+    )
+    stopAllProjectFileSync()
   })
 })

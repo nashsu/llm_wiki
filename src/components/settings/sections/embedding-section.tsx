@@ -16,6 +16,7 @@ import {
 } from "@/lib/embedding"
 import { testEmbeddingConnection, testEmbeddingFunction, type ProviderTestResult } from "@/lib/connection-tests"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
+import { MAX_USER_CONCURRENCY, clampUserConcurrency } from "@/lib/concurrency-limits"
 
 interface Props {
   draft: SettingsDraft
@@ -330,12 +331,12 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                 <Input
                   type="number"
                   min={1}
-                  max={32}
+                  max={MAX_USER_CONCURRENCY}
                   step={1}
                   value={draft.embeddingConcurrency}
                   onChange={(e) => setDraft(
                     "embeddingConcurrency",
-                    Math.max(1, Math.min(32, Number(e.target.value) || 1)),
+                    clampUserConcurrency(Number(e.target.value) || 1),
                   )}
                 />
                 <p className="text-xs text-muted-foreground">

@@ -115,6 +115,51 @@ test("embedPage rejects malformed success payloads", async () => {
   )
 })
 
+test("writePage posts exact content and requires verified persistence", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:19828/api/v1/projects/project%20a/pages/write")
+    assert.equal(init?.method, "POST")
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      path: "wiki/ops/page.md",
+      content: "# Exact\n",
+      allowOverwrite: true,
+    })
+    return new Response(JSON.stringify({
+      ok: true,
+      result: {
+        path: "wiki/ops/page.md",
+        bytes: 8,
+        allowOverwrite: true,
+        verified: true,
+        existedBefore: true,
+      },
+    }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ fetchImpl })
+
+  assert.deepEqual(await client.writePage("wiki/ops/page.md", "# Exact\n", "project a", true), {
+    path: "wiki/ops/page.md",
+    bytes: 8,
+    allowOverwrite: true,
+    verified: true,
+    existedBefore: true,
+  })
+})
+
+test("writePage rejects an unverified success response", async () => {
+  const client = new LlmWikiApiClient({
+    fetchImpl: async () => new Response(JSON.stringify({
+      ok: true,
+      result: { path: "wiki/page.md", bytes: 1, verified: false },
+    }), { status: 200 }),
+  })
+
+  await assert.rejects(
+    () => client.writePage("wiki/page.md", "x"),
+    /verified: expected true/,
+  )
+})
+
 test("chat posts agent request and parses references", async () => {
   let url = ""
   let body = ""
@@ -200,6 +245,31 @@ test("graph parses nodeType from API graph nodes", async () => {
   assert.equal(graph.nodes[0]?.type, "concept")
   assert.equal(graph.nodes[0]?.linkCount, 4)
   assert.equal(graph.edges[0]?.weight, 0.75)
+})
+
+test("graph forwards pagination and exposes page metadata", async () => {
+  let requestedUrl = ""
+  const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
+    requestedUrl = String(input)
+    return new Response(JSON.stringify({
+      ok: true,
+      nodes: [],
+      edges: [],
+      offset: 200,
+      limit: 200,
+      totalCount: 450,
+      hasMore: true,
+    }), { status: 200 })
+  }
+  const client = new LlmWikiApiClient({ fetchImpl })
+  const graph = await client.graph("current", { limit: 200, offset: 200, edgeScope: "filtered" })
+  assert.match(requestedUrl, /limit=200/)
+  assert.match(requestedUrl, /offset=200/)
+  assert.match(requestedUrl, /edgeScope=filtered/)
+  assert.equal(graph.totalCount, 450)
+  assert.equal(graph.offset, 200)
+  assert.equal(graph.limit, 200)
+  assert.equal(graph.hasMore, true)
 })
 
 test("files exposes truncated flag", async () => {

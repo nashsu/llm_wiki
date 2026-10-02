@@ -30,7 +30,10 @@
     "rtf",
     "html",
     "htm",
-    "csv"
+    "csv",
+    "png",
+    "jpg",
+    "jpeg"
   ],
   "excludeExtensions": [
     "tmp",

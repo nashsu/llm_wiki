@@ -21,10 +21,58 @@ export interface ChangelogEntry {
   highlights: {
     en: string[]
     zh: string[]
+    it?: string[]
+    ru?: string[]
   }
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.6.12",
+    date: "2026-09-27",
+    highlights: {
+      en: [
+        "Added background source monitoring across recent projects and raised configurable document processing and Ingest concurrency limits to 64.",
+        "Added verified MCP wiki-page writes and standalone PNG, JPG, and JPEG image ingestion with multimodal captions.",
+        "Made Ingest resumable after interrupted generation, added schema-based page routing, and strengthened truncation and queue recovery.",
+        "Improved Deep Research with project-grounded queries, source relevance filtering, and better entity-page selection.",
+        "Improved large knowledge-graph loading, analysis, link resolution, and API performance.",
+        "Fixed duplicate vector identities, malformed generated wikilinks, page-merge scaffolding, and image paths containing spaces.",
+        "Improved Anthropic-compatible provider authentication and Claude CLI diagnostics, OAuth errors, and timeout handling.",
+        "Improved spreadsheet dates, dark-theme controls, macOS release checks, and general stability and compatibility.",
+      ],
+      zh: [
+        "新增最近项目的后台资料监控，并将可配置的文档处理和 Ingest 并发上限提升至 64。",
+        "新增经过校验的 MCP Wiki 页面写入，以及 PNG、JPG、JPEG 图片资料摄取与多模态描述。",
+        "Ingest 支持生成中断恢复和基于 Schema 的页面路由，并强化截断检测与队列恢复。",
+        "深度研究新增项目语境查询、来源相关性过滤，并改进实体页面筛选。",
+        "优化大型知识图谱的加载、分析、链接解析和 API 性能。",
+        "修复向量 ID 冲突、生成式 Wiki 链接异常、页面合并模板残留及含空格的图片路径。",
+        "完善 Anthropic 兼容 Provider 鉴权，以及 Claude CLI 诊断、OAuth 错误和超时处理。",
+        "改进电子表格日期、深色主题控件、macOS 发布检查及整体稳定性与兼容性。",
+      ],
+      it: [
+        "Aggiunto il monitoraggio in background delle fonti nei progetti recenti e aumentato a 64 il limite configurabile di elaborazione documenti e Ingest.",
+        "Aggiunte la scrittura verificata delle pagine Wiki tramite MCP e l'acquisizione di immagini PNG, JPG e JPEG con descrizioni multimodali.",
+        "Ingest ora riprende dopo un'interruzione, instrada le pagine in base allo Schema e gestisce meglio troncamenti e ripristino della coda.",
+        "Migliorata la Ricerca approfondita con query basate sul contesto del progetto, filtro di pertinenza delle fonti e selezione più accurata delle entità.",
+        "Ottimizzate prestazioni, analisi, risoluzione dei collegamenti e API dei grafi della conoscenza di grandi dimensioni.",
+        "Corretti conflitti degli ID vettoriali, wikilink generati non validi, residui dei template di unione e percorsi immagine con spazi.",
+        "Migliorati l'autenticazione dei provider compatibili con Anthropic e i messaggi diagnostici, OAuth e timeout di Claude CLI.",
+        "Migliorate date dei fogli di calcolo, controlli del tema scuro, verifiche delle release macOS, stabilità e compatibilità generali.",
+      ],
+      ru: [
+        "Добавлен фоновый мониторинг источников во всех недавних проектах, а настраиваемый предел параллельной обработки документов и Ingest увеличен до 64.",
+        "Добавлены проверенная запись Wiki-страниц через MCP и импорт изображений PNG, JPG и JPEG с мультимодальными описаниями.",
+        "Ingest теперь возобновляется после прерывания генерации, маршрутизирует страницы по Schema и надёжнее обрабатывает усечение и восстановление очереди.",
+        "Улучшено глубокое исследование: запросы учитывают контекст проекта, источники фильтруются по релевантности, а страницы сущностей создаются точнее.",
+        "Оптимизированы загрузка, анализ, разрешение ссылок и API больших графов знаний.",
+        "Исправлены конфликты векторных ID, некорректные сгенерированные Wiki-ссылки, остатки шаблонов слияния и пути к изображениям с пробелами.",
+        "Улучшены аутентификация Anthropic-совместимых провайдеров, диагностика Claude CLI, обработка OAuth-ошибок и тайм-аутов.",
+        "Улучшены даты в таблицах, элементы тёмной темы, проверки релизов macOS, общая стабильность и совместимость.",
+      ],
+    },
+  },
   {
     version: "0.6.11",
     date: "2026-08-25",

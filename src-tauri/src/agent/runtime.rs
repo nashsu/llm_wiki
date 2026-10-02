@@ -1258,15 +1258,7 @@ impl AgentRuntime {
                 }
             }
         } else {
-            if references.is_empty() {
-                return Err(
-                    "Backend Agent LLM is not configured or the selected Chat model is unavailable. Check Settings > Models and try again."
-                        .to_string(),
-                );
-            }
-            // Preserve the retrieval-only API behavior, but never expose
-            // router diagnostics as assistant prose when no generator exists.
-            build_retrieval_answer(message, &references)
+            answer_without_backend_generator(message, &references, request.allow_empty_retrieval)?
         };
         emit_event(
             &mut events,
@@ -4008,6 +4000,26 @@ fn build_retrieval_answer(query: &str, references: &[AgentReference]) -> String 
     out
 }
 
+fn answer_without_backend_generator(
+    query: &str,
+    references: &[AgentReference],
+    allow_empty_retrieval: bool,
+) -> Result<String, String> {
+    if references.is_empty() {
+        return if allow_empty_retrieval {
+            Ok(String::new())
+        } else {
+            Err(
+                "Backend Agent LLM is not configured or the selected Chat model is unavailable. Check Settings > Models and try again."
+                    .to_string(),
+            )
+        };
+    }
+    // Preserve the retrieval-only API behavior, but never expose router
+    // diagnostics as assistant prose when no generator exists.
+    Ok(build_retrieval_answer(query, references))
+}
+
 fn mode_label(mode: AgentMode) -> &'static str {
     match mode {
         AgentMode::Fast => "fast",
@@ -5771,5 +5783,34 @@ mod tests {
 
         let too_many = vec![valid; MAX_IMAGES_PER_TURN + 1];
         assert!(validate_images(&too_many).is_err());
+    }
+
+    #[test]
+    fn retrieval_only_preflight_allows_an_empty_reference_set() {
+        assert_eq!(
+            answer_without_backend_generator("hello", &[], true).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn retrieval_preflight_with_references_returns_the_evidence_summary() {
+        let references = vec![AgentReference {
+            title: "Page".to_string(),
+            path: "wiki/page.md".to_string(),
+            kind: "wiki".to_string(),
+            snippet: Some("Relevant evidence".to_string()),
+            score: None,
+            knowledge_context: None,
+        }];
+        let answer = answer_without_backend_generator("question", &references, true).unwrap();
+        assert!(answer.contains("Page (wiki/page.md)"));
+        assert!(answer.contains("Relevant evidence"));
+    }
+
+    #[test]
+    fn normal_backend_requests_still_require_a_generator_or_references() {
+        let error = answer_without_backend_generator("hello", &[], false).unwrap_err();
+        assert!(error.contains("Backend Agent LLM is not configured"));
     }
 }

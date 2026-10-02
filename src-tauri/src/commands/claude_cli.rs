@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -28,7 +27,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use super::cli_resolver::{child_path_env, find_cli_command};
+use super::cli_resolver::{
+    child_path_env, cli_version_timeout_error, find_cli_command, CLI_VERSION_PROBE_TIMEOUT,
+};
 
 const ISOLATED_MCP_CONFIG: &str = "{\"mcpServers\":{}}";
 
@@ -167,7 +168,7 @@ fn suppress_windows_console(_cmd: &mut Command) {
 }
 
 /// Locate `claude` on PATH and confirm it's runnable by calling
-/// `claude --version` with a short timeout. Cheap — safe to call on
+/// `claude --version` with a bounded timeout. Safe to call on
 /// mount of the settings panel.
 #[tauri::command]
 pub async fn claude_cli_detect() -> Result<DetectResult, String> {
@@ -192,7 +193,8 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
     if let Some(path_env) = child_path_env().await {
         cmd.env("PATH", path_env);
     }
-    let output = tokio::time::timeout(Duration::from_secs(3), cmd.arg("--version").output()).await;
+    let output =
+        tokio::time::timeout(CLI_VERSION_PROBE_TIMEOUT, cmd.arg("--version").output()).await;
 
     match output {
         Ok(Ok(out)) if out.status.success() => {
@@ -235,7 +237,7 @@ pub async fn claude_cli_detect() -> Result<DetectResult, String> {
             installed: false,
             version: None,
             path: Some(path_str),
-            error: Some("`claude --version` timed out after 3s".to_string()),
+            error: Some(cli_version_timeout_error("claude")),
         }),
     }
 }

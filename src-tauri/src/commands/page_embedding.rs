@@ -39,7 +39,6 @@ pub enum PageEmbeddingErrorKind {
     NotFound,
     Provider,
     Storage,
-    Conflict,
     Timeout,
 }
 
@@ -105,21 +104,17 @@ pub async fn embed_wiki_page(
         )
     })?;
 
-    let page_id = page_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            PageEmbeddingError::new(
-                PageEmbeddingErrorKind::InvalidRequest,
-                "Invalid wiki page name",
-            )
-        })?
-        .to_string();
+    let page_id = vector_page_id(&normalized_path).ok_or_else(|| {
+        PageEmbeddingError::new(
+            PageEmbeddingErrorKind::InvalidRequest,
+            "Invalid wiki page name",
+        )
+    })?;
     vectorstore::validate_page_id_for_v2(&page_id)
         .map_err(|err| PageEmbeddingError::new(PageEmbeddingErrorKind::InvalidRequest, err))?;
+    let page_stem = page_id.rsplit('/').next().unwrap_or(&page_id);
     if matches!(
-        page_id.to_ascii_lowercase().as_str(),
+        page_stem.to_ascii_lowercase().as_str(),
         "index" | "log" | "overview"
     ) {
         return Err(PageEmbeddingError::new(
@@ -127,8 +122,6 @@ pub async fn embed_wiki_page(
             "Aggregate wiki pages index.md, log.md, and overview.md are maintained by the app and are not vector-indexed",
         ));
     }
-    ensure_unique_page_stem(project_path, &page_path, &page_id)?;
-
     let revision = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
     let fingerprint = embedding_fingerprint(&revision, &config);
     if !force {
@@ -195,6 +188,7 @@ pub async fn embed_wiki_page(
     vectorstore::vector_upsert_chunks_with_revision(project_path, &page_id, rows, &fingerprint)
         .await
         .map_err(|err| PageEmbeddingError::new(PageEmbeddingErrorKind::Storage, err))?;
+    remove_legacy_vector_id_if_safe(project_path, &page_id).await;
     Ok(PageEmbeddingResult {
         path: normalized_path,
         page_id,
@@ -285,18 +279,22 @@ fn embedding_fingerprint(revision: &str, config: &SearchEmbeddingConfig) -> Stri
     )
 }
 
-fn ensure_unique_page_stem(
-    project_path: &str,
-    page_path: &Path,
-    page_id: &str,
-) -> Result<(), PageEmbeddingError> {
-    let wiki_root = fs::canonicalize(Path::new(project_path).join("wiki")).map_err(|err| {
-        PageEmbeddingError::new(
-            PageEmbeddingErrorKind::NotFound,
-            format!("Failed to resolve project wiki directory: {err}"),
-        )
-    })?;
-    let mut collisions = WalkDir::new(wiki_root)
+fn vector_page_id(normalized_path: &str) -> Option<String> {
+    let normalized = normalized_path.replace('\\', "/");
+    let relative = normalized.strip_prefix("wiki/")?;
+    if relative.len() < 3 || !relative[relative.len() - 3..].eq_ignore_ascii_case(".md") {
+        return None;
+    }
+    let relative = relative[..relative.len() - 3].trim_matches('/').to_string();
+    (!relative.is_empty()).then_some(relative)
+}
+
+async fn remove_legacy_vector_id_if_safe(project_path: &str, page_id: &str) {
+    let Some(legacy_id) = page_id.rsplit('/').next().filter(|_| page_id.contains('/')) else {
+        return;
+    };
+    let wiki_root = Path::new(project_path).join("wiki");
+    let owners = WalkDir::new(&wiki_root)
         .follow_links(false)
         .into_iter()
         .filter_map(Result::ok)
@@ -311,20 +309,18 @@ fn ensure_unique_page_stem(
                     .path()
                     .file_stem()
                     .and_then(|value| value.to_str())
-                    .is_some_and(|stem| stem.eq_ignore_ascii_case(page_id))
+                    .is_some_and(|stem| stem.eq_ignore_ascii_case(legacy_id))
         })
-        .filter_map(|entry| fs::canonicalize(entry.path()).ok())
-        .filter(|path| path != page_path);
-    if let Some(collision) = collisions.next() {
-        return Err(PageEmbeddingError::new(
-            PageEmbeddingErrorKind::Conflict,
-            format!(
-                "Cannot index this page because another wiki page has the same filename stem: {}",
-                collision.to_string_lossy()
-            ),
-        ));
+        .take(2)
+        .count();
+    if owners != 1 {
+        return;
     }
-    Ok(())
+    if let Err(error) =
+        vectorstore::vector_delete_page(project_path.to_string(), legacy_id.to_string()).await
+    {
+        eprintln!("[Embedding] failed to remove legacy vector id '{legacy_id}': {error}");
+    }
 }
 
 fn revision_path(project_path: &str, page_id: &str) -> PathBuf {
@@ -805,15 +801,20 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_stems_in_different_wiki_folders_are_rejected() {
-        let root = project();
-        let first = root.join("wiki/nested/page.md");
-        fs::write(&first, "# First").unwrap();
-        fs::create_dir_all(root.join("wiki/other")).unwrap();
-        fs::write(root.join("wiki/other/page.md"), "# Second").unwrap();
-        let error = ensure_unique_page_stem(root.to_str().unwrap(), &first, "page").unwrap_err();
-        assert_eq!(error.kind, PageEmbeddingErrorKind::Conflict);
-        let _ = fs::remove_dir_all(root);
+    fn vector_page_ids_include_the_wiki_relative_directory() {
+        assert_eq!(
+            vector_page_id("wiki/nested/page.md").as_deref(),
+            Some("nested/page")
+        );
+        assert_eq!(
+            vector_page_id("wiki/other/page.md").as_deref(),
+            Some("other/page")
+        );
+        assert_eq!(
+            vector_page_id("wiki/notes/Foo.MD").as_deref(),
+            Some("notes/Foo")
+        );
+        assert_eq!(vector_page_id("outside/page.md"), None);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import type { ReviewItem } from "@/stores/review-store"
+import { groundBareResearchQueries } from "@/lib/research-query-grounding"
 
 const ACTIVE_RESEARCH_STATUSES = new Set([
   "queued",
@@ -13,6 +14,15 @@ export function reviewSupportsResearch(item: ReviewItem): boolean {
 
 export function reviewResearchTopic(item: ReviewItem): string {
   return item.title.trim() || item.description.split("\n")[0]?.trim() || ""
+}
+
+export function reviewResearchQueries(item: ReviewItem, topic = reviewResearchTopic(item)): string[] {
+  return groundBareResearchQueries(
+    item.searchQueries?.length ? item.searchQueries : [topic],
+    topic,
+    item.description,
+    [item.title],
+  )
 }
 
 export function selectedResearchReviews(
