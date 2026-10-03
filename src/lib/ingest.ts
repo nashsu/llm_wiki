@@ -2226,19 +2226,73 @@ function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
   )
 }
 
-const REVIEW_BLOCK_REGEX = /---REVIEW:\s*(\w[\w-]*)\s*\|\s*(.+?)\s*---\n([\s\S]*?)---END REVIEW---/g
+/**
+ * REVIEW block markers.
+ *
+ * Companion of `parseFileBlocks`, same class of hazard: a model that omits a
+ * marker. This parser required a literal `---END REVIEW---`, so one missing
+ * closer made `([\s\S]*?)` run on to the next *closer* and fold every following
+ * block into the first. Observed on unmodified v0.6.12 (two unrelated projects,
+ * read out of the shipped `.llm-wiki/review.json`): a 5-block response produced
+ * 2 cards, the swallowed blocks lost their own `type`, and their
+ * `OPTIONS:`/`PAGES:`/`SEARCH:` lines leaked into the card's description.
+ *
+ * A block ends at the nearest closer, or at the next opener, whichever comes
+ * first. A trailing block with no closer is dropped — indistinguishable from a
+ * truncated stream, and `parses generation and dedicated review-stage blocks
+ * separately` asserts that drop. Mirrors the FILE side's H3 (tolerant markers;
+ * `[ \t]` not `\s`, because these regexes span lines) and H2/H6 (surface,
+ * don't hide).
+ *
+ * Not addressed: H5's code-fence awareness.
+ */
+const REVIEW_OPENER_LINE = /^[ \t]*---[ \t]*REVIEW:[ \t]*(\w[\w-]*)[ \t]*\|[ \t]*(.+?)[ \t]*---[ \t]*(?:\n|$)/gim
+const REVIEW_CLOSER_LINE = /^[ \t]*---[ \t]*END[ \t]+REVIEW[ \t]*---[ \t]*$/im
 
-function parseReviewBlocks(
+export function parseReviewBlocks(
   text: string,
   sourcePath: string,
 ): Omit<ReviewItem, "id" | "resolved" | "createdAt">[] {
   const items: Omit<ReviewItem, "id" | "resolved" | "createdAt">[] = []
-  const matches = text.matchAll(REVIEW_BLOCK_REGEX)
 
-  for (const match of matches) {
-    const rawType = match[1].trim().toLowerCase()
-    const title = match[2].trim()
-    const body = match[3].trim()
+  // Slice at every opener, then cut each slice at whichever comes first: the
+  // closing marker, or the next opener. That second terminator is the
+  // tolerance — it keeps a missing `---END REVIEW---` local instead of
+  // letting it eat every later block.
+  const openers = [...text.matchAll(REVIEW_OPENER_LINE)]
+  for (let index = 0; index < openers.length; index += 1) {
+    const opener = openers[index]
+    const headerEnd = (opener.index ?? 0) + opener[0].length
+    const isLast = index + 1 >= openers.length
+    const nextHeaderStart = isLast ? text.length : openers[index + 1].index ?? text.length
+    const slice = text.slice(headerEnd, nextHeaderStart)
+    const closer = REVIEW_CLOSER_LINE.exec(slice)
+    const title = opener[2].trim()
+
+    if (!closer && isLast) {
+      // A trailing block with no closer is indistinguishable from a truncated
+      // stream, and half-written text is worse than nothing — drop it, which
+      // is what `parses generation and dedicated review-stage blocks
+      // separately` already asserts. Mirrors parseFileBlocks' H2.
+      console.warn(
+        `[ingest] REVIEW block "${title}" was not closed with \`---END REVIEW---\` and no further block followed; treated as truncated and dropped.`,
+      )
+      continue
+    }
+
+    if (!closer) {
+      // No closer, but a following opener is positive evidence that this
+      // block *did* end — recover it instead of letting it swallow everything
+      // after it. This is the bug fixed here: the old expression ran to the
+      // next *closer*, folding N blocks into a single card.
+      console.warn(
+        `[ingest] REVIEW block "${title}" was not closed with \`---END REVIEW---\`; the block boundary was inferred from the next block.`,
+      )
+    }
+
+    const bodyEnd = closer ? headerEnd + closer.index : nextHeaderStart
+    const rawType = opener[1].trim().toLowerCase()
+    const body = text.slice(headerEnd, bodyEnd).trim()
 
     const type = (
       ["contradiction", "duplicate", "missing-page", "suggestion"].includes(rawType)
@@ -2270,11 +2324,14 @@ function parseReviewBlocks(
       ? searchMatch[1].split("|").map((q) => q.trim()).filter((q) => q.length > 0)
       : undefined
 
-    // Description is the body minus OPTIONS, PAGES, and SEARCH lines
+    // Description is the body minus OPTIONS, PAGES, and SEARCH lines.
+    // The `g` flag matters: a body that already absorbed later blocks can
+    // hold several triplets, and a non-global replace left every triplet
+    // after the first one visible in the card the user reads.
     const description = body
-      .replace(/^OPTIONS:.*$/m, "")
-      .replace(/^PAGES:.*$/m, "")
-      .replace(/^SEARCH:.*$/m, "")
+      .replace(/^OPTIONS:.*$/gm, "")
+      .replace(/^PAGES:.*$/gm, "")
+      .replace(/^SEARCH:.*$/gm, "")
       .trim()
 
     items.push({
@@ -2541,6 +2598,8 @@ export function buildGenerationPrompt(
     "---END REVIEW---",
     "```",
     "",
+    "Every REVIEW block MUST be closed by its own `---END REVIEW---` line, and every `---REVIEW:` header MUST start at the beginning of a line (column 0).",
+    "",
     "## Output Requirements (STRICT — deviations will cause parse failure)",
     "",
     "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
@@ -2550,6 +2609,7 @@ export function buildGenerationPrompt(
     "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
     "6. Between blocks, use only blank lines — no prose.",
     "7. FILE block prose (body, explanations, descriptions, section text) must use the mandatory output language specified below. Preserve proper nouns, acronyms, model names, dataset names, tool/library names, code identifiers, URLs, file names, citation strings, paper titles, and technical terms with no widely-used localized equivalent in their standard original form, including in page names and section headings.",
+    "8. EVERY REVIEW block MUST be closed by its own `---END REVIEW---` line, and every `---REVIEW:` header MUST start at the beginning of a line. A missing closer merges your next review into the previous block: the user then loses both the title of the next review and its OPTIONS/PAGES/SEARCH lines.",
     "",
     "If you start with anything other than `---FILE:`, the entire response will be discarded.",
     "",
@@ -2603,6 +2663,8 @@ export function buildReviewSuggestionPrompt(
     "SEARCH: query 1 | query 2 | query 3",
     "---END REVIEW---",
     "```",
+    "",
+    "Every block MUST be closed by its own `---END REVIEW---` line, and every `---REVIEW:` header MUST start at the beginning of a line. A missing closer merges two reviews into one card.",
     "",
     "Return REVIEW blocks only. Do not output FILE blocks. Do not wrap the response in markdown fences.",
     "",
