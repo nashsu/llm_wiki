@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { transformImageEmbeds, transformWikilinks } from "./wikilink-transform"
+import { decodeWikilinkHref, transformImageEmbeds, transformWikilinks } from "./wikilink-transform"
 
 describe("transformWikilinks", () => {
   it("returns input unchanged when there are no wikilinks", () => {
@@ -9,55 +9,55 @@ describe("transformWikilinks", () => {
 
   it("converts a bare [[slug]] to a standard markdown link", () => {
     expect(transformWikilinks("see [[foo]] for details")).toBe(
-      "see [foo](#foo) for details",
+      "see [foo](#wiki:foo) for details",
     )
   })
 
   it("uses the alias as label and target as href for [[slug|alias]]", () => {
     expect(transformWikilinks("see [[foo|the foo page]]")).toBe(
-      "see [the foo page](#foo)",
+      "see [the foo page](#wiki:foo)",
     )
   })
 
   it("trims whitespace inside the wikilink", () => {
     expect(transformWikilinks("[[ foo | the alias ]]")).toBe(
-      "[the alias](#foo)",
+      "[the alias](#wiki:foo)",
     )
   })
 
   it("converts multiple wikilinks on the same line", () => {
     expect(transformWikilinks("[[a]] and [[b|B]] and [[c]]")).toBe(
-      "[a](#a) and [B](#b) and [c](#c)",
+      "[a](#wiki:a) and [B](#wiki:b) and [c](#wiki:c)",
     )
   })
 
   it("encodes special characters in the href", () => {
     expect(transformWikilinks("[[hello world]]")).toBe(
-      "[hello world](#hello%20world)",
+      "[hello world](#wiki:hello%20world)",
     )
   })
 
   it("does not touch wikilinks inside fenced code blocks", () => {
     const input = "before [[a]]\n```md\ncode [[b]] block\n```\nafter [[c]]"
     expect(transformWikilinks(input)).toBe(
-      "before [a](#a)\n```md\ncode [[b]] block\n```\nafter [c](#c)",
+      "before [a](#wiki:a)\n```md\ncode [[b]] block\n```\nafter [c](#wiki:c)",
     )
   })
 
   it("does not touch wikilinks inside inline code spans", () => {
     expect(transformWikilinks("text `[[skip]]` and [[keep]]")).toBe(
-      "text `[[skip]]` and [keep](#keep)",
+      "text `[[skip]]` and [keep](#wiki:keep)",
     )
   })
 
   it("handles multiple inline-code spans correctly", () => {
     expect(transformWikilinks("[[a]] `[[b]]` [[c]] `[[d]]` [[e]]")).toBe(
-      "[a](#a) `[[b]]` [c](#c) `[[d]]` [e](#e)",
+      "[a](#wiki:a) `[[b]]` [c](#wiki:c) `[[d]]` [e](#wiki:e)",
     )
   })
 
   it("preserves [[empty alias|]] by falling back to target as label", () => {
-    expect(transformWikilinks("[[foo|]]")).toBe("[foo](#foo)")
+    expect(transformWikilinks("[[foo|]]")).toBe("[foo](#wiki:foo)")
   })
 
   it("matches the real DPAO body wikilink density", () => {
@@ -66,17 +66,17 @@ describe("transformWikilinks", () => {
       "and store [[pha|polyhydroxyalkanoates (PHAs)]] from [[vfa|volatile fatty acids (VFAs)]]. " +
       "[[accumulibacter]] is the most-characterized genus."
     const out = transformWikilinks(input)
-    expect(out).toContain("[Polyphosphate-Accumulating Organisms (PAOs)](#paos)")
-    expect(out).toContain("[polyhydroxyalkanoates (PHAs)](#pha)")
-    expect(out).toContain("[volatile fatty acids (VFAs)](#vfa)")
-    expect(out).toContain("[accumulibacter](#accumulibacter)")
+    expect(out).toContain("[Polyphosphate-Accumulating Organisms (PAOs)](#wiki:paos)")
+    expect(out).toContain("[polyhydroxyalkanoates (PHAs)](#wiki:pha)")
+    expect(out).toContain("[volatile fatty acids (VFAs)](#wiki:vfa)")
+    expect(out).toContain("[accumulibacter](#wiki:accumulibacter)")
     expect(out).not.toContain("[[")
   })
 
   it("does not mangle existing standard markdown links", () => {
     const input = "see [foo](https://example.com) and [[bar]]"
     expect(transformWikilinks(input)).toBe(
-      "see [foo](https://example.com) and [bar](#bar)",
+      "see [foo](https://example.com) and [bar](#wiki:bar)",
     )
   })
 
@@ -150,7 +150,7 @@ describe("composition: embeds then wikilinks", () => {
     // This is the real pipeline order used by the renderers.
     const input = "See ![[../assets/x.png]] and the [[concept]] page."
     const out = transformWikilinks(transformImageEmbeds(input))
-    expect(out).toBe("See ![](<../assets/x.png>) and the [concept](#concept) page.")
+    expect(out).toBe("See ![](<../assets/x.png>) and the [concept](#wiki:concept) page.")
   })
 
   it("REGRESSION: wikilinks-only would have mangled an image embed", () => {
@@ -158,9 +158,25 @@ describe("composition: embeds then wikilinks", () => {
     // wikilink transform alone turns `![[x.png]]` into a broken
     // image whose src is a `#fragment`. The embed pass must run first.
     const mangled = transformWikilinks("![[x.png]]")
-    expect(mangled).toBe("![x.png](#x.png)")
+    expect(mangled).toBe("![x.png](#wiki:x.png)")
     // …whereas the correct pipeline yields a real image reference:
     const correct = transformWikilinks(transformImageEmbeds("![[x.png]]"))
     expect(correct).toBe("![](<x.png>)")
+  })
+})
+
+
+describe("wiki navigation fragments", () => {
+  it("keeps footnotes, backreferences and document headings as document anchors", () => {
+    for (const href of ["#user-content-fn-note", "#user-content-fnref-note", "#heading"]) {
+      expect(decodeWikilinkHref(href)).toBeNull()
+    }
+    const input = "[[entities/foo|Foo]] and [note](#user-content-fn-note)"
+    expect(transformWikilinks(input)).toBe("[Foo](#wiki:entities%2Ffoo) and [note](#user-content-fn-note)")
+  })
+
+  it("decodes generated page navigation without confusing it with document anchors", () => {
+    expect(decodeWikilinkHref("#wiki:concepts%2F%E6%9D%A1%E7%9B%AE")).toBe("concepts/条目")
+    expect(decodeWikilinkHref("https://example.com/#wiki:foo")).toBeNull()
   })
 })

@@ -179,6 +179,20 @@ describe("findInTreeByName", () => {
 })
 
 describe("resolveRelatedSlug", () => {
+  it.each([
+    "entities/foo",
+    "entities/foo.md",
+    "wiki/entities/foo",
+    "wiki/entities/foo.md",
+    "wiki\\entities\\foo.md",
+  ])("resolves indexed page path %s", (reference) => {
+    expect(resolveRelatedSlug(INDEX, reference, WIKI)).toBe(`${WIKI}/entities/foo.md`)
+  })
+
+  it("resolves source-summary paths used in body citations", () => {
+    expect(resolveRelatedSlug(INDEX, "sources/paper", WIKI)).toBe(`${WIKI}/sources/paper.md`)
+  })
+
   it("appends .md and finds entities by bare slug", () => {
     expect(resolveRelatedSlug(INDEX, "foo", WIKI)).toBe(`${WIKI}/entities/foo.md`)
   })

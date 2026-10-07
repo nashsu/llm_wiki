@@ -4,11 +4,11 @@
  * commonmark renderer (Milkdown / ReactMarkdown) styles them as
  * links instead of dumping the bracket syntax as raw text.
  *
- * Output format: `[label](#target)` — using a fragment href so
+ * Output format: `[label](#wiki:target)` — using a fragment href so
  * Tauri's webview doesn't try to navigate externally on click.
- * In-app navigation can be wired up later via a click intercept
- * on `<a href="#…">` elements; for now the goal is just to stop
- * the wikilinks from looking like "raw code".
+ * WikiReader intercepts the reserved prefix for page navigation.
+ * Ordinary document fragments, including GFM footnotes, retain
+ * their native anchor behavior.
  *
  * Skips content inside fenced code blocks (```…```) and inline
  * code spans (`…`) so wikilinks shown as code examples in
@@ -76,6 +76,18 @@ function replaceImageEmbeds(text: string): string {
   )
 }
 
+export const WIKILINK_HREF_PREFIX = "#wiki:"
+
+export function decodeWikilinkHref(href: string): string | null {
+  if (!href.startsWith(WIKILINK_HREF_PREFIX)) return null
+  const target = href.slice(WIKILINK_HREF_PREFIX.length)
+  try {
+    return decodeURIComponent(target)
+  } catch {
+    return target
+  }
+}
+
 export function transformWikilinks(body: string): string {
   if (!body.includes("[[")) return body
 
@@ -108,7 +120,7 @@ function replaceWikilinks(text: string): string {
     // Encode the target so spaces / parens / hashes don't break the
     // markdown link parser. encodeURIComponent is overkill for a
     // fragment but it's the safe default.
-    const href = `#${encodeURIComponent(target)}`
+    const href = `${WIKILINK_HREF_PREFIX}${encodeURIComponent(target)}`
     // Escape any closing brackets in the label that would otherwise
     // terminate the markdown link text.
     const escapedLabel = label.replace(/\[/g, "\\[").replace(/\]/g, "\\]")

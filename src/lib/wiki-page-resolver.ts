@@ -107,10 +107,11 @@ export function findInTreeByName(
 
 /**
  * Resolve a `related:` reference to an absolute wiki page path.
- * Accepts three shapes the wiki has historically written:
+ * Accepts the shapes used by generated pages and rebuilt indexes:
  *   1. project-relative path:  `wiki/entities/dpao.md`
  *   2. bare filename with .md: `dpao.md`
  *   3. bare slug:              `dpao`
+ *   4. wiki-relative path:     `entities/dpao` or `entities/dpao.md`
  * Returns the absolute path of an existing file, or null if none
  * matches. Always restricts the lookup to `wiki/` to avoid pulling
  * in a same-named file from `raw/sources/`.
@@ -120,16 +121,16 @@ export function resolveRelatedSlug(
   ref: string,
   wikiRoot: string,
 ): string | null {
-  // Path-like → resolve relative to project root (one segment up
-  // from wikiRoot).
-  if (ref.includes("/")) {
-    const projectRoot = wikiRoot.replace(/\/wiki$/, "")
-    const target = `${projectRoot}/${ref}`
+  const normalized = ref.trim().replace(/\\/g, "/")
+  if (normalized.includes("/")) {
+    const relative = normalized.startsWith("wiki/") ? normalized.slice(5) : normalized
+    const filename = relative.endsWith(".md") ? relative : `${relative}.md`
+    const target = `${wikiRoot}/${filename}`
     const found = findInTreeByPath(index, target)
     return found && found.includes(`${wikiRoot}/`) ? found : null
   }
 
-  const filename = ref.endsWith(".md") ? ref : `${ref}.md`
+  const filename = normalized.endsWith(".md") ? normalized : `${normalized}.md`
   return findInTreeByName(index, filename, `${wikiRoot}/`)
 }
 

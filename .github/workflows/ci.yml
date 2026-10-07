@@ -52,6 +52,9 @@ jobs:
       - name: Check frontend build
         run: npx vite build
 
+      - name: Check Wiki link navigation regressions
+        run: npx vitest run src/lib/wiki-page-resolver.test.ts src/lib/wikilink-transform.test.ts
+
       - name: Prepare MCP server resources
         run: |
           npm --prefix mcp-server ci
@@ -60,3 +63,7 @@ jobs:
       - name: Check Rust build
         working-directory: src-tauri
         run: cargo build
+
+      - name: Check page-link resolution regressions
+        working-directory: src-tauri
+        run: cargo test page_links_

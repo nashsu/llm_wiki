@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
-import { transformImageEmbeds, transformWikilinks } from "@/lib/wikilink-transform"
+import { decodeWikilinkHref, transformImageEmbeds, transformWikilinks, WIKILINK_HREF_PREFIX } from "@/lib/wikilink-transform"
 import { resolveRelatedSlug } from "@/lib/wiki-page-resolver"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { normalizePath } from "@/lib/path-utils"
@@ -34,10 +34,10 @@ interface WikiReaderProps {
  * (Milkdown WYSIWYG) because Milkdown round-trips the markdown
  * through prosemirror — applying our wikilink → markdown-link
  * pre-processing there would mean the user's saves overwrite the
- * original `[[…]]` source with `[label](#slug)`. Here, since we
+ * original `[[…]]` source with `[label](#wiki:slug)`. Here, since we
  * never serialize back to disk, transforming for display is safe.
  *
- * Wikilink anchor clicks are intercepted: `#slug` is resolved
+ * Wikilink anchor clicks are intercepted: `#wiki:slug` is resolved
  * against the project's wiki tree and routed to the wiki preview,
  * giving the user single-click navigation between pages.
  */
@@ -88,16 +88,10 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
   }, [filePath])
 
   function handleAnchorClick(e: React.MouseEvent<HTMLAnchorElement>, href: string) {
-    if (!href.startsWith("#")) return
+    const slug = decodeWikilinkHref(href)
+    if (slug === null) return
     e.preventDefault()
     if (!wikiRoot) return
-    const slug = (() => {
-      try {
-        return decodeURIComponent(href.slice(1))
-      } catch {
-        return href.slice(1)
-      }
-    })()
     const path = resolveRelatedSlug(projectPathIndex, slug, wikiRoot)
     if (path) openPathInPreview(path)
   }
@@ -118,7 +112,7 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           blockquote: ({ node, children, ...props }) => <blockquote {...sourceAttrs(node)} {...props}>{children}</blockquote>,
           a: ({ href, children, ...props }) => {
             const h = typeof href === "string" ? href : ""
-            const isWikilink = h.startsWith("#")
+            const isWikilink = h.startsWith(WIKILINK_HREF_PREFIX)
             return (
               <a
                 href={h || undefined}

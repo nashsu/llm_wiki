@@ -268,7 +268,7 @@ fn get_page_links_inner(project_path: &str, file_path: &str) -> Result<PageLinks
 }
 
 /// Mirror `resolveRelatedSlug` in the frontend reader. Path-shaped links must
-/// match their project-relative path exactly; bare links resolve by exact
+/// resolve under wiki/ with an optional wiki/ prefix and .md extension; bare links resolve by exact
 /// filename after adding `.md`. Deliberately avoid title and fuzzy aliases so
 /// the links panel never claims a target that the rendered page cannot open.
 fn resolve_reader_wikilink<'a>(
@@ -277,7 +277,15 @@ fn resolve_reader_wikilink<'a>(
 ) -> Option<&'a String> {
     let link = link.trim().replace('\\', "/");
     if link.contains('/') {
-        return pages.get_key_value(&link).map(|(path, _)| path);
+        let mut path = if link.starts_with("wiki/") {
+            link
+        } else {
+            format!("wiki/{link}")
+        };
+        if !path.ends_with(".md") {
+            path.push_str(".md");
+        }
+        return pages.get_key_value(&path).map(|(path, _)| path);
     }
     let filename = if link.ends_with(".md") {
         link
@@ -2337,6 +2345,46 @@ mod tests {
             .missing
             .iter()
             .any(|entry| entry.title == "Title Only"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn page_links_accept_wiki_relative_paths_without_extension() {
+        let root = tmp_project();
+        write_page(
+            &root,
+            "wiki/entities/target.md",
+            "---\ntitle: Entity target\n---\n# Target",
+        );
+        write_page(
+            &root,
+            "wiki/concepts/target.md",
+            "# Different page with the same basename",
+        );
+        for reference in [
+            "entities/target",
+            "entities/target.md",
+            "wiki/entities/target",
+            "wiki/entities/target.md",
+            r"wiki\entities\target.md",
+        ] {
+            write_page(
+                &root,
+                "wiki/concepts/current.md",
+                &format!("[[{reference}|Target]]"),
+            );
+            let links = get_page_links_inner(
+                root.to_str().unwrap(),
+                root.join("wiki/concepts/current.md").to_str().unwrap(),
+            )
+            .unwrap();
+            assert!(links.missing.is_empty(), "{reference}");
+            assert_eq!(links.outgoing.len(), 1);
+            assert_eq!(
+                links.outgoing[0].path.as_deref(),
+                Some("wiki/entities/target.md")
+            );
+        }
         let _ = fs::remove_dir_all(root);
     }
 
