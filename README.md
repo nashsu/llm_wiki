@@ -495,6 +495,8 @@ my-wiki/
 
 ## Star History
 
+Local model profiles can be explicitly imported in Settings → LLM without activating a model or importing credentials. See [independent model profile contract](docs/MODEL-PROFILES.md). Wiki execution, task routing and authentication remain independent.
+
 <a href="https://www.star-history.com/?repos=nashsu%2Fllm_wiki&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=nashsu/llm_wiki&type=date&theme=dark&legend=top-left" />

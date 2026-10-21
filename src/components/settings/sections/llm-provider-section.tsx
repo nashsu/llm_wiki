@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { ModelProfileImport } from "./model-profile-import"
 import { ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Loader2, XCircle, Plus, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
@@ -245,6 +246,8 @@ export function LlmProviderSection() {
           </p>
         </div>
       )}
+
+      <ModelProfileImport />
 
       <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
         <TaskModelSelect

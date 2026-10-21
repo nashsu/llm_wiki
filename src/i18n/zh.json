@@ -541,6 +541,22 @@
           "modelPlaceholder": "使用 Provider 已配置的模型",
           "hint": "启用后，当前项目的 Chat 和 Ingest 都使用这里选择的 Provider 与模型；API Key 仍保存在全局 Provider 设置中。"
         },
+        "profileImport": {
+          "title": "导入模型档案",
+          "hint": "仅添加本地预设，不导入凭据、不启用模型、不更改任务路由或运行策略。请在下方配置认证并测试连接，再按需选择。",
+          "file": "模型档案 JSON",
+          "reading": "正在读取和校验…",
+          "preview": "请核对网关地址和模型，再添加预设。",
+          "saving": "正在保存本地预设…",
+          "saved": "预设已保存。当前模型和任务路由未改变；请配置本地认证、测试连接，再按需选择。",
+          "failed": "未完成导入；已有模型与路由保持不变。",
+          "cancelled": "已清除预览，已保存预设不受影响。",
+          "model": "模型",
+          "endpoint": "网关地址",
+          "revision": "档案／修订",
+          "apply": "添加预设",
+          "cancel": "清除预览"
+        },
         "customProfiles": {
           "add": "添加自定义 Provider",
           "defaultName": "自定义 Provider {{number}}",

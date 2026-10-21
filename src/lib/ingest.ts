@@ -52,6 +52,9 @@ import { PROJECT_LOCAL_TERM_QUERY_RULES } from "@/lib/research-query-grounding"
 const LONG_SOURCE_MIN_BUDGET = 8_000
 const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
 const LONG_SOURCE_CHUNK_MIN = 12_000
+// Output density can overflow on much shorter documents. Recovery may go
+// below the normal throughput-oriented chunk size, but never recurse forever.
+const ANALYSIS_RECOVERY_CHUNK_MIN = 1_000
 const LONG_SOURCE_CHUNK_MAX = 60_000
 const LONG_SOURCE_DIGEST_MAX = 15_000
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
@@ -1101,11 +1104,45 @@ async function autoIngestImpl(
       { temperature: 0.1, reasoning: analysisRequest.reasoning, max_tokens: analysisRequest.maxTokens },
     )
     if (analysisTruncated) {
-      const message =
-        `Analysis was truncated after reaching the ${analysisRequest.maxTokens.toLocaleString()} token output limit. ` +
-        "Wiki pages were not generated from the incomplete analysis. Split the source or use a model with a larger output limit."
-      activity.updateItem(activityId, { status: "error", detail: message })
-      throw new NonRetryableIngestError(message)
+      // The single-pass analysis hit the output token limit. This is driven by
+      // the source's information density, not its raw length — a short but
+      // dense document can overflow the output budget while a much longer one
+      // succeeds. The chunk trigger above is length-based, so such sources fall
+      // through the gap and fail permanently. Recover by falling back to
+      // semantic chunking with the smallest chunk size, which keeps each
+      // per-chunk analysis well under the output limit and gains checkpointed
+      // resume. Only fail if the source genuinely cannot be chunked.
+      activity.updateItem(activityId, {
+        detail: "Analysis output truncated; falling back to chunked analysis...",
+      })
+      analysis = ""
+      const fallbackPlan = await analyzeLongSourceInChunks(
+        pp,
+        llmConfig,
+        purpose,
+        schema,
+        index,
+        sourceIdentity,
+        sourceSummarySlug,
+        folderContext,
+        sourceContext,
+        sourceBudget,
+        activityId,
+        signal,
+        Math.max(ANALYSIS_RECOVERY_CHUNK_MIN, Math.min(LONG_SOURCE_CHUNK_MIN, Math.floor(sourceContext.length / 2))),
+      )
+      if (fallbackPlan.chunked) {
+        analysis = fallbackPlan.analysis
+        sourceContext = fallbackPlan.sourceContext
+        longSourceCheckpointPath = fallbackPlan.checkpointPath
+      } else {
+        const message =
+          `Analysis was truncated after reaching the ${analysisRequest.maxTokens.toLocaleString()} token output limit ` +
+          "and the source could not be split into smaller chunks. " +
+          "Split the source manually or use a model with a larger output limit."
+        activity.updateItem(activityId, { status: "error", detail: message })
+        throw new NonRetryableIngestError(message)
+      }
     }
   }
 
@@ -3161,9 +3198,12 @@ async function analyzeLongSourceInChunks(
   sourceBudget: number,
   activityId: string,
   signal?: AbortSignal,
+  overrideTargetChars?: number,
 ): Promise<LongSourcePlan> {
-  const targetChars = clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
-  const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 800, 3_000)
+  const targetChars = overrideTargetChars
+    ? clampNumber(overrideTargetChars, ANALYSIS_RECOVERY_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+    : clampNumber(Math.floor(sourceBudget * 0.55), LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+  const overlapChars = clampNumber(Math.floor(targetChars * 0.08), 80, 3_000)
   const chunks = splitSourceIntoSemanticChunks(sourceContent, targetChars, overlapChars)
   if (chunks.length <= 1) {
     return { chunked: false, analysis: "", sourceContext: sourceContent }
@@ -3233,11 +3273,18 @@ async function analyzeLongSourceInChunks(
     throwIfIngestAborted(signal, activityId)
     if (hadError) throw new Error("Chunk analysis stream failed")
     if (analysisTruncated) {
+      if (targetChars > ANALYSIS_RECOVERY_CHUNK_MIN) {
+        const smallerTarget = Math.max(ANALYSIS_RECOVERY_CHUNK_MIN, Math.floor(targetChars / 2))
+        activity.updateItem(activityId, { detail: "Chunk analysis output truncated; reducing recovery chunk size..." })
+        return analyzeLongSourceInChunks(projectPath, llmConfig, purpose, schema, index,
+          sourceIdentity, sourceSummarySlug, folderContext, sourceContent, sourceBudget,
+          activityId, signal, smallerTarget)
+      }
       const message =
         `Chunk ${chunk.index}/${chunk.total} analysis was truncated after reaching the ` +
-        `${analysisRequest.maxTokens.toLocaleString()} token output limit; the saved checkpoint will be retried`
+        `${analysisRequest.maxTokens.toLocaleString()} token output limit at the minimum recovery size`
       activity.updateItem(activityId, { status: "error", detail: message })
-      throw new Error(message)
+      throw new NonRetryableIngestError(message)
     }
 
     const chunkAnalysis = extractMarkedSection(raw, "Chunk Analysis") || raw.trim()

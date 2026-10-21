@@ -97,6 +97,16 @@ export function resolveReasoningCapabilities(config: LlmConfig): ReasoningCapabi
     if (/api\.deepseek\.(?:com|cn)(?:[:/]|$)/.test(endpoint)) {
       return capabilities(DEEPSEEK_LEVELS)
     }
+    // DeepSeek V4 served through a third-party proxy or aggregator won't
+    // match the official deepseek.com host, but the model still thinks by
+    // default and still honours `thinking: {type:"disabled"}`. Detect by
+    // model name so structured ingest (which always requests reasoning off)
+    // isn't silently forced back to auto — otherwise the model burns the
+    // whole output budget on reasoning_content and every ingest fails as
+    // "truncated".
+    if (/deepseek[-_]?v4/i.test(config.model)) {
+      return capabilities(DEEPSEEK_LEVELS)
+    }
     if (/xiaomimimo\.com(?:[:/]|$)/.test(endpoint)) {
       return capabilities(TOGGLE_LEVELS)
     }
