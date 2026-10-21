@@ -59,7 +59,7 @@ LLM Wiki は、手元の文書を整理された相互リンク付きの知識�
 このプロジェクトは、LLM を使ってパーソナル知識ベースを構築する方法論である [Karpathy の LLM Wiki パターン](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) に基づいています。llm_wiki は [nash_su](https://x.com/nash_su) によって作成・メンテナンスされ、コアアイデアを実用的なデスクトップアプリとして実装し、大幅な拡張を加えています。
 
 <p align="center">
-  <img src="assets/llm_wiki_arch.jpg" width="100%" alt="LLM Wiki アーキテクチャ">
+  <img src="assets/llm_wiki_arch_ja.jpg" width="100%" alt="LLM Wiki アーキテクチャ">
 </p>
 
 ## クレジット
