@@ -509,3 +509,76 @@ describe("mergeArrayFieldsIntoContent", () => {
     expect(b).toContain("new body")
   })
 })
+
+// ── Regression: `]` inside values (e.g. `[YYYYMMDDHHMM]标题.html` filenames) ──
+//
+// The old inline regex `\[([^\]]*)\]` stopped at the FIRST `]`, so a
+// filename like `[202603251545]拒绝感觉有效….html` was truncated at
+// parse time and left a trailing tail (`…标题.html"]`) after the
+// write-time replacement — producing malformed YAML like
+//   sources: ["[202603251545]标题.html"]标题.html"]
+// on every page update that went through the merge path.
+
+const BRACKET_FILENAME = "[202603251545]拒绝感觉有效用数据证明AICoding的真实团队价值.html"
+
+describe("parse/write round-trip with `]` inside values", () => {
+  it("parseFrontmatterArray keeps the full bracketed filename", () => {
+    expect(parseSources(WRAP(`sources: ["${BRACKET_FILENAME}"]`))).toEqual([
+      BRACKET_FILENAME,
+    ])
+  })
+
+  it("parse keeps a second entry after a bracketed filename", () => {
+    expect(
+      parseSources(WRAP(`sources: ["${BRACKET_FILENAME}", "plain.md"]`)),
+    ).toEqual([BRACKET_FILENAME, "plain.md"])
+  })
+
+  it("writeSources replaces the whole line — no trailing tail", () => {
+    const content = WRAP(`sources: ["${BRACKET_FILENAME}"]`)
+    const rewritten = writeSources(content, [BRACKET_FILENAME, "plain.md"])
+    expect(rewritten).toBe(
+      WRAP(`sources: ["${BRACKET_FILENAME}", "plain.md"]`),
+    )
+  })
+
+  it("writeSources round-trips through parse unchanged", () => {
+    const content = WRAP(`sources: ["${BRACKET_FILENAME}"]`, "body\n")
+    const rewritten = writeSources(content, [BRACKET_FILENAME])
+    expect(rewritten).toBe(content)
+    expect(parseSources(rewritten)).toEqual([BRACKET_FILENAME])
+  })
+
+  it("merge is idempotent for bracketed filenames (merge twice = merge once)", () => {
+    const existing = WRAP(`sources: ["${BRACKET_FILENAME}"]`, "old body\n")
+    const incoming = WRAP(`sources: ["${BRACKET_FILENAME}"]`, "new body\n")
+    const once = mergeArrayFieldsIntoContent(incoming, existing, ["sources"])
+    const twice = mergeArrayFieldsIntoContent(once, existing, ["sources"])
+    expect(twice).toBe(once)
+    expect(parseSources(once)).toEqual([BRACKET_FILENAME])
+  })
+
+  it("union merge preserves both sources when the new one has brackets", () => {
+    const existing = WRAP('sources: ["plain.md"]', "old\n")
+    const incoming = WRAP(`sources: ["${BRACKET_FILENAME}"]`, "new\n")
+    const merged = mergeSourcesIntoContent(incoming, existing)
+    expect(parseSources(merged).sort()).toEqual(["plain.md", BRACKET_FILENAME].sort())
+    // The rewritten line must be the ONLY sources line and well-formed:
+    const line = merged.split("\n").find((l) => l.startsWith("sources:"))
+    expect(line!.startsWith("sources: [")).toBe(true)
+    expect(line!.endsWith("]")).toBe(true)
+    expect(line!.match(/"/g)!.length % 2).toBe(0)
+  })
+
+  it("parse reads through the historical corruption tail (self-heal on next merge)", () => {
+    // A line already corrupted by the old writer still parses to the
+    // full filename — the garbage tail is ignored, so the next merge
+    // rewrites a clean line.
+    const corrupted = WRAP(`sources: ["${BRACKET_FILENAME}"]${BRACKET_FILENAME.slice(13)}"]`)
+    expect(parseSources(corrupted)).toEqual([BRACKET_FILENAME])
+  })
+
+  it("unterminated inline array is treated as malformed (returns empty)", () => {
+    expect(parseSources(WRAP('sources: ["no-close'))).toEqual([])
+  })
+})
