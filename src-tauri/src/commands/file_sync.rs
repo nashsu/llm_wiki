@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use md5::{Digest, Md5};
+use notify::event::{AccessKind, AccessMode, EventKind};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -273,6 +274,9 @@ pub fn start_project_file_watcher(
         let mut watcher = RecommendedWatcher::new(
             move |res: notify::Result<Event>| match res {
                 Ok(event) => {
+                    if !is_content_change_event(&event.kind) {
+                        return;
+                    }
                     for path in event.paths {
                         if tx_for_watcher.try_send(path).is_err() {
                             let _ = tx_for_watcher.try_send(root_for_overflow.clone());
@@ -1443,6 +1447,22 @@ fn normalize_path_key(path: &Path) -> String {
     normalize_key(&path.to_string_lossy().replace('\\', "/"))
 }
 
+/// Whether a watcher event can mean the file *content* changed.
+///
+/// On Linux the inotify backend of `notify` also reports read-only activity
+/// (`IN_OPEN`, `IN_CLOSE_NOWRITE`, `IN_ACCESS`). Handling a change re-reads
+/// files (`md5_file`), which emits new read events, which schedule another pass:
+/// a self-sustaining loop that keeps a CPU core busy even when nothing on disk
+/// changes. Only a finished write (`IN_CLOSE_WRITE`) is an access-type event
+/// that matters; every non-access kind (create / modify / remove / rename / ...)
+/// is still forwarded.
+fn is_content_change_event(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(access) => matches!(access, AccessKind::Close(AccessMode::Write)),
+        _ => true,
+    }
+}
+
 fn is_app_write_ignored(path: &Path) -> bool {
     let key = path_key(path);
     let now = now_ms();
@@ -1459,6 +1479,37 @@ fn is_app_write_ignored(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+
+    #[test]
+    fn read_only_access_events_do_not_count_as_content_changes() {
+        assert!(!is_content_change_event(&EventKind::Access(AccessKind::Open(
+            AccessMode::Any
+        ))));
+        assert!(!is_content_change_event(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(!is_content_change_event(&EventKind::Access(AccessKind::Read)));
+        assert!(!is_content_change_event(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(!is_content_change_event(&EventKind::Access(AccessKind::Any)));
+    }
+
+    #[test]
+    fn finished_writes_and_non_access_events_still_count() {
+        assert!(is_content_change_event(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(is_content_change_event(&EventKind::Create(CreateKind::File)));
+        assert!(is_content_change_event(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_content_change_event(&EventKind::Modify(ModifyKind::Name(
+            RenameMode::To
+        ))));
+        assert!(is_content_change_event(&EventKind::Remove(RemoveKind::File)));
+        assert!(is_content_change_event(&EventKind::Any));
+        assert!(is_content_change_event(&EventKind::Other));
+    }
 
     fn temp_root(name: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()
