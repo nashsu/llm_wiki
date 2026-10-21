@@ -48,7 +48,19 @@ export function SidebarPanel({ onCollapse }: SidebarPanelProps) {
         )}
       </div>
       <div className="flex-1 overflow-hidden">
-        {mode === "knowledge" ? <KnowledgeTree /> : <FileTree />}
+        {/*
+         * Keep both trees mounted so switching tabs does not remount the
+         * other one. KnowledgeTree's mount effect re-reads every wiki page
+         * over IPC (hundreds of files), discarding expanded groups, the
+         * source filter, and scroll position — a full rebuild every time
+         * the user pokes the "Files" tab and comes back. Hide instead.
+         */}
+        <div className={mode === "knowledge" ? "h-full" : "hidden"}>
+          <KnowledgeTree />
+        </div>
+        <div className={mode === "files" ? "h-full" : "hidden"}>
+          <FileTree />
+        </div>
       </div>
     </div>
   )

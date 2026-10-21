@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Wiki 使用指南</title>
+<style>
+/* ===== swiss-grid tokens ===== */
+:root{
+  --bg:#ffffff;--bg-soft:#f4f4f4;--surface:#ffffff;--surface-2:#f4f4f4;
+  --border:#111111;--border-strong:#111111;
+  --text-1:#111111;--text-2:#444444;--text-3:#888888;
+  --accent:#d6001c;--accent-2:#111111;--accent-3:#888888;
+  --good:#0f8a2f;--warn:#d38a00;--bad:#d6001c;
+  --grad:linear-gradient(135deg,#d6001c,#111);
+  --radius:0;--radius-sm:0;--radius-lg:0;
+  --shadow:none;--shadow-lg:none;
+  --font-sans:'Inter','Helvetica Neue',Helvetica,'Noto Sans SC','Microsoft YaHei',sans-serif;
+  --font-display:'Inter','Helvetica Neue',Helvetica,sans-serif;
+  --letter-tight:-.04em;--letter-normal:-.01em;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--text-1);
+  font-family:var(--font-sans);font-weight:400;line-height:1.65;
+  -webkit-font-smoothing:antialiased;letter-spacing:var(--letter-normal);
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code,kbd,pre,samp{font-family:'JetBrains Mono','SF Mono',Consolas,Menlo,monospace;font-size:.92em;background:var(--bg-soft);padding:1px 6px;border:1px solid #ddd}
+
+/* ===== top nav ===== */
+.nav{
+  position:sticky;top:0;z-index:100;background:#fff;
+  border-bottom:2px solid #111;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 36px;height:60px;
+}
+.nav .brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:16px;letter-spacing:-.02em}
+.nav .brand .dot{width:12px;height:12px;background:var(--accent)}
+.nav .brand small{font-weight:500;color:var(--text-3);font-size:12px;letter-spacing:.04em}
+.nav .links{display:flex;gap:20px;font-size:13px}
+.nav .links a{color:var(--text-2);padding:4px 2px;border-bottom:2px solid transparent}
+.nav .links a:hover{color:var(--accent);border-bottom-color:var(--accent);text-decoration:none}
+
+/* ===== container ===== */
+.wrap{max-width:1040px;margin:0 auto;padding:0 36px}
+
+/* ===== hero ===== */
+.hero{padding:96px 0 64px;border-bottom:2px solid #111}
+.hero .kicker{font-size:14px;font-weight:700;color:var(--accent);letter-spacing:.1em;text-transform:uppercase;margin:0 0 18px}
+.hero h1{font-family:var(--font-display);font-size:clamp(44px,6vw,72px);line-height:1.02;font-weight:800;letter-spacing:var(--letter-tight);margin:0 0 20px}
+.hero h1 .red{color:var(--accent)}
+.hero .lede{font-size:20px;line-height:1.55;color:var(--text-2);max-width:60ch;margin:0}
+.hero .meta{margin-top:34px;display:flex;gap:12px;flex-wrap:wrap}
+.pill{display:inline-block;padding:5px 14px;font-size:13px;font-weight:600;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border)}
+.pill-accent{background:rgba(214,0,28,.08);color:var(--accent);border-color:var(--accent)}
+
+/* ===== section ===== */
+section.block{padding:72px 0;border-bottom:1px solid #111}
+section.block:last-of-type{border-bottom:none}
+.sec-head{display:flex;align-items:baseline;gap:18px;margin:0 0 30px}
+.sec-head .num{font-family:var(--font-display);font-weight:800;font-size:clamp(40px,5vw,58px);line-height:1;color:transparent;-webkit-text-stroke:2px #111}
+.sec-head h2{font-family:var(--font-display);font-size:clamp(28px,3.4vw,38px);font-weight:800;letter-spacing:var(--letter-tight);margin:0}
+.sec-head .sub{font-size:14px;color:var(--text-3);margin-left:auto}
+.step-tag{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);border-bottom:2px solid var(--accent);padding-bottom:3px;margin-bottom:20px}
+
+/* ===== list ===== */
+.guide-list{list-style:none;margin:0 0 4px;padding:0;display:grid;gap:14px}
+.guide-list li{position:relative;padding:2px 0 2px 30px;font-size:17px;line-height:1.5}
+.guide-list li::before{content:"";position:absolute;left:0;top:13px;width:16px;height:2px;background:var(--accent)}
+.guide-list li strong{font-weight:700}
+.guide-list li code{margin:0 1px}
+
+/* ===== note / example ===== */
+.note{margin-top:26px;background:#fff;border:1px solid var(--warn);border-left:5px solid var(--warn);padding:16px 20px;font-size:14px;color:#6b4d00}
+.note strong{font-weight:700}
+.example{margin-top:26px;background:#fff;border:1px solid #111;border-top:2px solid #111;padding:22px 24px}
+.example h5{margin:0 0 12px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.example ul{margin:0;padding-left:22px} .example li{margin:6px 0;font-size:15px}
+.example code{word-break:break-all}
+
+/* ===== grid cards ===== */
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:#fff;border:1px solid #111;border-top:2px solid #111;padding:24px 26px}
+.card .h4{font-size:18px;font-weight:800;letter-spacing:-.01em;margin:0 0 8px}
+.card .dim{font-size:15px;color:var(--text-2);line-height:1.55}
+.card.hl{border-top-color:var(--accent)}
+.card.hl .h4::after{content:" ▍";color:var(--accent)}
+
+/* ===== footer ===== */
+footer{padding:56px 0 80px;border-top:2px solid #111}
+footer .cols{display:grid;grid-template-columns:repeat(3,1fr);gap:28px}
+footer h6{margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
+footer p,footer a{font-size:14px;color:var(--text-2);margin:4px 0}
+footer .muted{color:var(--text-3);font-size:12px;margin-top:34px}
+
+@media (max-width:720px){
+  .nav .links{display:none}
+  .wrap{padding:0 20px}
+  .g2,.g3,.g3{grid-template-columns:1fr}
+  footer .cols{grid-template-columns:1fr}
+  .sec-head{flex-wrap:wrap;gap:10px}
+  .sec-head .sub{margin-left:0}
+}
+</style>
+</head>
+<body>
+
+<!-- ===== top nav ===== -->
+<header class="nav">
+  <div class="brand">
+    <span class="dot"></span>
+    LLM Wiki
+    <small>V0.6.11 · 快速上手</small>
+  </div>
+  <nav class="links">
+    <a href="#install">安装</a>
+    <a href="#project">项目</a>
+    <a href="#llm">LLM</a>
+    <a href="#import">导入</a>
+    <a href="#ingest">摄入</a>
+    <a href="#ask">提问</a>
+    <a href="#effects">效果</a>
+    <a href="#browse">浏览</a>
+    <a href="#team">团队</a>
+    <a href="#extras">特性</a>
+  </nav>
+</header>
+
+<!-- ===== hero ===== -->
+<section class="hero">
+  <div class="wrap">
+    <p class="kicker">安装 · 配置 · 导入 · 提问</p>
+    <h1>把资料整理成<br><span class="red">可对话</span>的知识库</h1>
+    <p class="lede">LLM Wiki 把散落的文档整理成结构化的 Wiki 页面，你用一个带引用来源的对话框，就能随时向它提问。从装好到用起来，七个步骤。</p>
+    <div class="meta">
+      <span class="pill pill-accent">本地部署</span>
+      <span class="pill">可接 AI Agent</span>
+      <span class="pill">Windows / 64 位</span>
+      <span class="pill">基于开源 llm_wiki 更新</span>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+
+  <!-- 01 安装 -->
+  <section class="block" id="install">
+    <div class="sec-head">
+      <span class="num">01</span>
+      <h2>安装并启动</h2>
+      <span class="sub">64 位 Windows 10 / 11</span>
+    </div>
+    <span class="step-tag">第一步</span>
+    <ul class="guide-list">
+      <li>双击 <code>LLM Wiki_0.6.11_x64_en-US.msi</code>，按提示完成安装。</li>
+      <li>从开始菜单或桌面图标打开 <strong>LLM Wiki</strong>。</li>
+    </ul>
+    <div class="note"><strong>提示：</strong>首次启动若提示缺少 WebView2，先安装微软 WebView2 Runtime，再重新打开应用。</div>
+  </section>
+
+  <!-- 02 创建项目 -->
+  <section class="block" id="project">
+    <div class="sec-head">
+      <span class="num">02</span>
+      <h2>创建项目</h2>
+      <span class="sub">项目 = 你的知识库</span>
+    </div>
+    <span class="step-tag">第二步</span>
+    <ul class="guide-list">
+      <li>欢迎页点 <code>新建项目</code>；之后可用 <code>打开项目</code> 重新打开已有项目。</li>
+      <li>填写<strong>项目名称</strong>。</li>
+      <li>选择<strong>父目录</strong>——项目要保存到的位置。</li>
+      <li>选一个<strong>模板</strong>：研究 / 阅读 / 个人成长 / 商务 / 通用。</li>
+      <li>选<strong>AI 输出语言</strong>——AI 生成内容所使用的语言。</li>
+      <li>点 <code>创建</code>。</li>
+    </ul>
+  </section>
+
+  <!-- 03 配置 LLM -->
+  <section class="block" id="llm">
+    <div class="sec-head">
+      <span class="num">03</span>
+      <h2>配置 LLM 提供商</h2>
+      <span class="sub">必须先做</span>
+    </div>
+    <span class="step-tag">第三步 · 关键</span>
+    <p style="font-size:17px;margin:0 0 20px">没配好 LLM，导入的资料<strong>不会被摄取</strong>，也<strong>无法对话</strong>。这一步是前提。</p>
+    <ul class="guide-list">
+      <li>打开左侧栏 <code>设置</code> → <code>LLM 模型</code>。</li>
+      <li>选择<strong>提供商</strong>：OpenAI、Anthropic、Google、Ollama、自定义 OpenAI 兼容等。</li>
+      <li>填入对应的 <strong>API 密钥</strong>。</li>
+      <li>选择（或手动输入）<strong>模型</strong>。</li>
+    </ul>
+    <div class="example">
+      <h5>示例 · 接入 CVTE CCH</h5>
+      <ul>
+        <li>提供商：<code>Custom</code></li>
+        <li>API 模式：<code>Anthropic 兼容</code></li>
+        <li>API 端点：<code>https://token.cvte.com</code></li>
+        <li>API 密钥：填入你自己的 API_KEY</li>
+      </ul>
+    </div>
+    <div class="note"><strong>关键：</strong>每个用户的密钥需自行配置。需要免费 / 本地模型时，可用 Ollama 等本地端点。</div>
+  </section>
+
+  <!-- 04 导入资料 -->
+  <section class="block" id="import">
+    <div class="sec-head">
+      <span class="num">04</span>
+      <h2>导入资料</h2>
+      <span class="sub">把你的文档喂进来</span>
+    </div>
+    <span class="step-tag">第四步</span>
+    <ul class="guide-list">
+      <li>打开左侧栏 <code>原始资料</code>。</li>
+      <li>点 <code>导入</code>，选择<strong>导入文件</strong> / <strong>文件夹</strong> / <strong>网址</strong>。</li>
+      <li>选中你的文档（支持 PDF、Word、Markdown、电子书等）。</li>
+    </ul>
+    <div class="note"><strong>提示：</strong>导入后，符合规则的文件会自动开始「摄入」。也可以直接把文件拖进项目的 <code>raw/sources</code> 文件夹，会被自动监听。</div>
+  </section>
+
+  <!-- 05 摄入 -->
+  <section class="block" id="ingest">
+    <div class="sec-head">
+      <span class="num">05</span>
+      <h2>摄入：整理成 Wiki 页面</h2>
+      <span class="sub">默认自动</span>
+    </div>
+    <span class="step-tag">第五步</span>
+    <p style="font-size:17px;margin:0 0 20px">LLM 把导入的资料整理成 Wiki 页面（实体、概念、来源等）的过程，称为「<strong>摄入</strong>」，默认<strong>自动</strong>进行。</p>
+    <ul class="guide-list">
+      <li>在 <code>设置</code> → <code>资料文件夹监控</code>，打开「<strong>监控项目资料文件夹</strong>」和「<strong>自动提取允许的原始资料文件</strong>」。</li>
+      <li>导入或放入 <code>raw/sources</code> 的允许文件，会自动进入<strong>摄取队列</strong>开始摄入。</li>
+      <li>在「<code>摄取队列</code>」可看到每个任务的实时阶段与进度。</li>
+    </ul>
+    <div class="note"><strong>手动单点：</strong>到 <code>原始资料</code>，选中某个文件，点「<strong>提取到 Wiki</strong>」即可手动触发。</div>
+  </section>
+
+  <!-- 06 提问 -->
+  <section class="block" id="ask">
+    <div class="sec-head">
+      <span class="num">06</span>
+      <h2>用对话提问</h2>
+      <span class="sub">带引用来源</span>
+    </div>
+    <span class="step-tag">第六步</span>
+    <ul class="guide-list">
+      <li>摄入完成后，打开左侧栏 <code>对话</code>。</li>
+      <li>在输入框问你的知识库相关问题，回车发送。</li>
+      <li>答案会附带<strong>引用来源</strong>，点引用可跳转到对应 Wiki 页面核对。</li>
+      <li>回答里蓝色下划线的 <code>路径 / 页面名</code> 也可点击，直接打开对应页面。</li>
+    </ul>
+    <div class="example">
+      <h5>进一步 · 把外部 AI Agent 接进知识库</h5>
+      <ul>
+        <li>LLM Wiki 提供<strong>本地 HTTP API + MCP Server + AI Agent Skill</strong>，可把 Claude Code / Codex 这类 Agent 接进来查询知识库。</li>
+        <li>在 <code>设置</code> → <code>API + MCP</code> 中开启 API、生成 Token，并按需选择是否允许本机无鉴权访问。</li>
+        <li>安装配套的 agent skill（单独维护在另一个仓库），装进 Claude Code / Codex / 任意兼容 skills 的 runtime：<br><code>npx skills add https://github.com/nashsu/llm_wiki_skill.git --skill llm-wiki</code></li>
+        <li>装完后，Agent 就能响应如「我的 LLM Wiki 里关于 X 是怎么说的」等请求——直接调用本机运行的 App，默认只读，引用 wiki 页面路径方便你在 App 内核对。</li>
+      </ul>
+      <p style="margin:10px 0 0;font-size:13px;color:var(--text-3)">
+        <strong>触发约束：</strong>刻意<strong>不会</strong>响应「搜我的笔记」「看我的 Obsidian / Notion / Logseq」这类泛指请求——只有你明确说 LLM Wiki / 我的 wiki / 我的知识库时才会被调用。
+      </p>
+    </div>
+  </section>
+
+  <!-- 07 效果演示 -->
+  <section class="block" id="effects">
+    <div class="sec-head">
+      <span class="num">07</span>
+      <h2>效果演示</h2>
+      <span class="sub">多平台对话效果展示</span>
+    </div>
+    <span class="step-tag">第七步</span>
+    <div class="grid g2">
+      <div class="card">
+        <div class="h4">飞书 Bot</div>
+        <div style="margin-top:12px">
+          <img src="assert/对话效果/飞书Bot对话效果.jpeg" alt="飞书Bot对话效果" style="width:100%;max-width:400px;height:auto;border:1px solid var(--border);border-radius:4px">
+        </div>
+      </div>
+      <div class="card">
+        <div class="h4">Trae_Work</div>
+        <div style="margin-top:12px">
+          <img src="assert/对话效果/Trae_Work对话效果.jpeg" alt="Trae_Work对话效果" style="width:100%;max-width:400px;height:auto;border:1px solid var(--border);border-radius:4px">
+        </div>
+      </div>
+      <div class="card">
+        <div class="h4">LLM_WIKI APP</div>
+        <div style="margin-top:12px">
+          <img src="assert/对话效果/LLM_WIKI对话效果.jpeg" alt="LLM_WIKI对话效果" style="width:100%;max-width:400px;height:auto;border:1px solid var(--border);border-radius:4px">
+        </div>
+      </div>
+      <div class="card">
+        <div class="h4">Obsidian (llm_wiki 插件)</div>
+        <div style="margin-top:12px">
+          <img src="assert/对话效果/Obsidian用llm_wiki插件的对话效果.jpeg" alt="Obsidian用llm_wiki插件的对话效果" style="width:100%;max-width:400px;height:auto;border:1px solid var(--border);border-radius:4px">
+        </div>
+      </div>
+      <div class="card">
+        <div class="h4">Claude Code</div>
+        <div style="margin-top:12px">
+          <img src="assert/对话效果/Claude Code对话效果.jpeg" alt="Claude Code对话效果" style="width:100%;max-width:400px;height:auto;border:1px solid var(--border);border-radius:4px">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08 浏览 -->
+  <section class="block" id="browse">
+    <div class="sec-head">
+      <span class="num">08</span>
+      <h2>浏览与核对</h2>
+      <span class="sub">查看页面与关系</span>
+    </div>
+    <span class="step-tag">第八步</span>
+    <ul class="guide-list">
+      <li>左侧栏 <code>Wiki</code>：按类型浏览所有生成的页面。</li>
+      <li>左侧栏 <code>关系图</code>：查看页面之间的关系。</li>
+      <li>页面列表里可点开单个页面查看内容。</li>
+    </ul>
+  </section>
+
+  <!-- 09 团队使用 -->
+  <section class="block" id="team">
+    <div class="sec-head">
+      <span class="num">09</span>
+      <h2>团队使用</h2>
+      <span class="sub">多用户协作方案</span>
+    </div>
+    <span class="step-tag">第九步 · 协作</span>
+    <p style="font-size:17px;margin:0 0 26px">LLM Wiki 支持多种团队协作方式，从简单的项目共享到完整的服务器部署，让团队成员能够共同使用和维护知识库。</p>
+
+    <div class="grid g2">
+      <!-- 方案1：项目导入/导出 -->
+      <div class="card hl">
+        <div class="h4">📦 项目导入/导出共享</div>
+        <div class="dim">
+          <strong>位置：</strong>设置 → 维护 → 项目数据<br><br>
+          <strong>功能：</strong>
+          <ul style="margin:10px 0 0;padding-left:20px">
+            <li>导出项目为 <code>.llmwiki.zip</code> 文件</li>
+            <li>团队成员可以导入这个ZIP文件到自己的应用中</li>
+            <li>支持重建Wiki索引，确保项目完整性</li>
+          </ul>
+          <strong>适用场景：</strong>
+          <ul style="margin:10px 0 0;padding-left:20px">
+            <li>知识库的定期同步和备份</li>
+            <li>团队间的知识库传递和分享</li>
+            <li>跨设备迁移和灾难恢复</li>
+          </ul>
+          <strong>云同步方案：</strong>
+          <div style="margin-top:12px;padding:12px;background:#f9f9f9;border-radius:4px;font-size:14px">
+            <strong>坚果云 / Dropbox / OneDrive 同步：</strong><br>
+            1. 将项目文件夹放入云同步目录<br>
+            2. 每个团队成员安装同步客户端<br>
+            3. 设置定时自动导出或手动导出更新<br>
+            4. 团队成员定期导入最新版本<br>
+            <small style="color:var(--text-3)">注意：多人同时编辑可能产生冲突，建议约定更新周期</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- 方案2：服务器部署 -->
+      <div class="card hl">
+        <div class="h4">🌐 服务器部署 + API 访问</div>
+        <div class="dim">
+          <strong>架构：</strong>在一台服务器上运行 LLM Wiki，团队成员通过网络访问<br><br>
+          <strong>配置步骤：</strong>
+          <ol style="margin:10px 0;padding-left:20px">
+            <li>在服务器上安装并运行 LLM Wiki</li>
+            <li>启用局域网访问：设置 → API + MCP → 允许局域网访问</li>
+            <li>生成API Token（或启用无认证访问）</li>
+            <li>获取服务器IP地址，分享给团队</li>
+          </ol>
+          <strong>团队成员访问方式：</strong>
+          <ul style="margin:10px 0 0;padding-left:20px">
+            <li><strong>直接HTTP访问：</strong>通过API直接查询知识库</li>
+            <li><strong>MCP客户端：</strong>AI助手通过MCP协议访问</li>
+            <li><strong>Skill集成：</strong>Claude Code等Agent通过Skill访问</li>
+          </ul>
+          <strong>核心优势：</strong>
+          <div style="margin-top:12px;padding:12px;background:#f9f9f9;border-radius:4px;font-size:14px">
+            <strong>无需本地运行：</strong><br>
+            团队成员<strong>不需要</strong>在本地安装运行 LLM Wiki 应用，通过 <strong>API + MCP + Skill</strong> 就能让各种AI应用访问团队知识库：<br><br>
+            • 搜索知识库内容<br>
+            • 向知识库提问并获得带引用的回答<br>
+            • 查看知识图谱和页面关系<br>
+            • 触发深度研究和内容审查
+          </div>
+        </div>
+      </div>
+
+      <!-- 实际应用场景 -->
+      <div class="card">
+        <div class="h4">🚀 实际应用场景</div>
+        <div class="dim">
+          <strong>1. 小团队（2-5人）：</strong><br>
+          同一WiFi环境，一台机器运行 LLM Wiki，启用局域网访问。团队成员直接通过IP访问API，或使用简单的Web界面搜索知识库。<br><br>
+          <strong>2. 大型团队/远程团队：</strong><br>
+          在公司服务器上部署 LLM Wiki，通过VPN或内网访问。所有团队成员连接到同一服务器，实现统一的知识管理和访问。<br><br>
+          <strong>3. 开发团队：</strong><br>
+          通过 API + MCP 集成到开发工作流，让 AI 助手（Claude Code、Codex等）能够直接访问团队知识库，提供技术支持和代码建议。
+        </div>
+      </div>
+
+      <!-- 安全建议 -->
+      <div class="card">
+        <div class="h4">🔒 安全建议</div>
+        <div class="dim">
+          <strong>认证管理：</strong><br>
+          • 启用API Token认证，定期更换Token<br>
+          • 避免将Token提交到代码仓库<br>
+          • 根据需要选择是否允许无认证访问<br><br>
+          <strong>网络安全：</strong><br>
+          • 局域网部署相对安全，但仍需注意内部网络安全<br>
+          • 服务器部署建议配置HTTPS和防火墙规则<br>
+          • 监控访问日志，及时发现异常访问<br><br>
+          <strong>数据备份：</strong><br>
+          • 定期导出项目文件作为备份<br>
+          • 重要知识库建议多处备份<br>
+          • 制定灾难恢复计划
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>团队协作最佳实践：</strong>根据团队规模和需求选择合适的方案。小团队推荐局域网共享，大团队推荐服务器部署。无论哪种方案，都建议建立明确的知识库维护规范和更新机制。
+    </div>
+  </section>
+
+  <!-- 补充特性 -->
+  <section class="block" id="extras">
+    <div class="sec-head">
+      <span class="num">+</span>
+      <h2>补充说明</h2>
+      <span class="sub">王锦 · 13 个提交 · 2026-08-25 ~ 09-30</span>
+    </div>
+    <p style="font-size:17px;margin:0 0 12px">本项目基于开源仓库 <a href="https://github.com/nashsu/llm_wiki" target="_blank" rel="noopener">github.com/nashsu/llm_wiki</a> 进行了更新，详细文档可去开源项目查看。改动集中在两块：一是<strong>飞书 / Jira 集成</strong>三个独立模块，二是编辑器、视图与维护体验的成批增强。</p>
+    <p style="font-size:15px;color:var(--text-2);margin:0 0 18px">按提交时间倒序排列，下面是全部新增与增强项。</p>
+    <h5 style="font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--accent);margin:0 0 14px">集成模块（飞书 / Jira）</h5>
+    <div class="grid g2">
+      <div class="card hl"><div class="h4">飞书通知与机器人应答</div><div class="dim">AI 回复后可把内容作为简略回答发到飞书（私聊 <code>open_id</code> 或群聊 <code>chat_id</code>）。开启「飞书遥控对话」后，在飞书里给 bot 发消息，应用用与聊天界面<strong>完全相同</strong>的 AI 链路应答并回发——不碰 HTTP API、不加 token 假设；飞书会话以 <code>feishu_{chat_id}</code> 隔离，与前端 UI 会话互不干扰但天然支持多轮；<code>lark-cli event consume</code> 常驻单例、读取阻塞在 websocket 上 CPU 占用≈0；Windows 下用 <code>taskkill /T /F</code> 整树终止，防止 <code>event _bus</code> 孤儿子进程占住长连接导致下次连不上。</div></div>
+      <div class="card hl"><div class="h4">飞书文档发布</div><div class="dim">回复升级为文档发布，三种模式：新建（可指定飞书目录）/ 覆盖固定文档 / 追加问答日志，两级用户身份策略。mermaid 代码块自动转 <code>mermaid.ink</code> 渲染图并<strong>保留源码</strong>；单行回复防御性规整；覆盖模式自动重设标题防劫持；新文档默认组织内可编辑（<code>link_share tenant_editable</code>）。设置页提供 Device Flow 授权引导（生成链接 / 完成登录）与测试目录、测试文档按钮。聊天通知与机器人行为对齐：开文档开关发链接，关闭则发完整原文（去掉 200 字摘要截断）。</div></div>
+      <div class="card hl"><div class="h4">Jira 工单视图</div><div class="dim">从内网 Jira（Server/DC，REST v2，Basic 认证）把工单抓成本地资料。搜索上 JQL 只当召回预筛，客户端 NFKC + 子串匹配才是权威判定（所以 <code>BOX</code> 能命中 <code>DAB_box 收音</code>）；narrow 查空时自动 sweep 最近窗口。导出为固定七节中文 md（顺序固定、空节写「（无）」、含 Jira wiki markup 转换），附件下载进 <code>KEY.attachments/</code>，覆盖同工单前弹窗确认并沿用原文件名，避免同一工单被摄取成新源。已导出列表扫目录解析文件名，不额外建索引。设置页 Jira 段自持久化，密码明文存储并给出告警。</div></div>
+      <div class="card hl"><div class="h4">Jira 搜索与筛选增强</div><div class="dim">搜索改为<strong>显式触发</strong>：空查询不再自动拉最近工单，点「搜索」或回车才执行，空词点搜索 = 浏览最近更新。结果条数可选 50 / 100 / 200 / 500，切换即重查。搜索维度可勾选（标题 / 关键词 / 工单号）并持久化：标题走 <code>summary ~</code> 客户端匹配；关键词走全文并兜底匹配 labels；工单号自动识别 issue key（单个 <code>issuekey =</code>、多个 <code>issuekey in (...)</code>）。五维度筛选（项目 / 问题类型 / 状态 / 经办人 / 责任人）从客户端过滤升级为拼进 JQL 服务端重查；新增维度盘点请求构建全量选项池，失败静默降级；原生 select 换成自制 combobox（输入过滤如输「王」出「王锦 (12)」、键盘导航、计数显示、未分配可选可筛）；重新搜索后失效的选中值自动清理。</div></div>
+      <div class="card hl"><div class="h4">资料树摄入状态筛选</div><div class="dim">资料树新增摄入状态筛选（全部 / 已摄入 / 未摄入），与关键字搜索叠加生效，空态与底部计数同步区分。文件夹行新增「摄取到 Wiki」按钮，一次把目录下所有可摄入文件批量入队，不支持的格式静默跳过；预过滤补齐禁止摄取列表检查，整目录全被禁止时弹框提示，不再静默无反应。</div></div>
+    </div>
+    <h5 style="font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--accent);margin:30px 0 14px">编辑器与对话</h5>
+    <div class="grid g2">
+      <div class="card hl"><div class="h4">编辑器普通对话模式</div><div class="dim">编辑页右侧对话面板在「取消选中」后进入普通对话模式，基于整个知识库问答；Enter 提交、Ctrl+Enter 换行，保留多轮上下文。回答可一键保存到聊天会话并跳转完整聊天视图。</div></div>
+      <div class="card hl"><div class="h4">选区对话增强</div><div class="dim">点「保存到对话」弹出命名输入框（留空用默认标题）；面板头部显示已保存对话的命名；新增「退出当前对话」按钮，解绑后可另起新对话；绑定对话后，新轮次自动存入聊天页，无需手动保存。</div></div>
+      <div class="card hl"><div class="h4">预览区多标签页</div><div class="dim">预览区顶部显示最近打开文件的标签条（上限 10 个）：点标签切换文件，可关闭单个 / 其他 / 全部标签；切换视图后标签仍在。聊天引用类临时预览不产生标签。</div></div>
+      <div class="card hl"><div class="h4">视图常驻挂载</div><div class="dim">搜索页、检查页、知识库视图与左侧面板常驻挂载：切换视图再返回不重载页面，保留阅读/编辑模式、展开分组、滚动位置等状态；检查分析可在后台持续进行。</div></div>
+      <div class="card"><div class="h4">检查页重新分析</div><div class="dim">新增「重新分析」按钮，可中途取消；扫尾全程在活动面板显示实时进度。已解决项的 wiki/raw 文件路径渲染为可点击链接，直接打开预览。</div></div>
+      <div class="card"><div class="h4">知识库辅助编辑</div><div class="dim">检查页新增辅助编辑面板：按指令整文件 LLM 重写，词级 diff 预览确认后原子应用，并自动解决对应审阅项。</div></div>
+      <div class="card"><div class="h4">会话管理</div><div class="dim">聊天会话支持收藏（置顶分组）与重命名；新增「退出当前对话」；对话页「新建对话」后直接进入行内命名输入（留空回车保留默认标题）。</div></div>
+      <div class="card"><div class="h4">搜索页资料 / 路径模式</div><div class="dim">搜索页新增「知识库 / 资料」双模式：资料模式浏览并按名称或路径实时筛选 raw/sources 目录文件；另支持按名称 / 路径筛选整个仓库文件，点击直接打开预览。</div></div>
+      <div class="card"><div class="h4">链接跳转失败提示</div><div class="dim">点击文档里的 wikilink 跳转失败时，在链接后以红色小字提示原因（数秒后自动消失）；来源卡片感叹号悬停可查看具体原因。</div></div>
+    </div>
+    <h5 style="font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--accent);margin:30px 0 14px">桌面、性能与维护</h5>
+    <div class="grid g2">
+      <div class="card"><div class="h4">桌面悬浮窗</div><div class="dim">应用内「收起为浮窗」，支持 圆球 / 只读迷你对话窗 / 回复完成摘要胶囊 三种形态，贴屏幕右侧垂直居中；AI 回复结束时自动以摘要胶囊提醒，可一键回到完整应用。</div></div>
+      <div class="card"><div class="h4">浮窗窗口权限</div><div class="dim">补充尺寸、位置、装饰、置顶、隐藏任务栏、拖动、最大最小化等。</div></div>
+      <div class="card"><div class="h4">知识树加载优化</div><div class="dim">并发读取 wiki 元数据 + dataVersion 防抖刷新，区分「加载中 / 失败原因 / 真正为空」三种状态。</div></div>
+      <div class="card"><div class="h4">定时维护</div><div class="dim">新增定时 lint 与定时索引重建。</div></div>
+      <div class="card"><div class="h4">Source 禁止摄入</div><div class="dim">可禁止文件、文件夹被摄入；已摄入的设为禁止后，可从 wiki 移除。</div></div>
+      <div class="card"><div class="h4">来源路径标注</div><div class="dim">聊天回复标注来源路径，可点击核对；另有历史操作视图。</div></div>
+      <div class="card"><div class="h4">自定义背景图层</div><div class="dim">支持在设置中调节透明度与亮度。</div></div>
+      <div class="card"><div class="h4">文件管理器定位</div><div class="dim">在原始资料树、Wiki 文件树和知识库页面列表中，可将文件 / 文件夹在系统文件管理器中定位打开。</div></div>
+      <div class="card"><div class="h4">摄入队列增强</div><div class="dim">批量移除（仅移除已取消任务）；队列行展示实时摄入阶段；拦截时（类型不支持 / 未配置可用 LLM）弹出原因；显示单个文字的摄入进度。</div></div>
+    </div>
+  </section>
+
+</div><!-- /wrap -->
+
+<!-- ===== footer ===== -->
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h6>关于</h6>
+        <p>LLM Wiki · V0.6.11</p>
+        <p>把资料整理成可对话的知识库</p>
+      </div>
+      <div>
+        <h6>开源项目</h6>
+        <p><a href="https://github.com/nashsu/llm_wiki" target="_blank" rel="noopener">github.com/nashsu/llm_wiki</a></p>
+      </div>
+      <div>
+        <h6>系统要求</h6>
+        <p>64 位 Windows 10 / 11</p>
+        <p>首次运行需 WebView2 Runtime</p>
+      </div>
+    </div>
+    <p class="muted">LLM Wiki · 基础使用说明</p>
+  </div>
+</footer>
+
+</body>
+</html>

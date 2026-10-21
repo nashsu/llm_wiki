@@ -241,6 +241,7 @@ describe("scanAndImport failure handling", () => {
         excludeExtensions: [],
         excludeDirs: [],
         excludeGlobs: [],
+        excludedPaths: [],
         maxFileSizeMb: 100,
       },
       llmConfig: {
@@ -575,6 +576,7 @@ describe("scanAndImport failure handling", () => {
     useWikiStore.setState({
       sourceWatchConfig: {
         ...useWikiStore.getState().sourceWatchConfig,
+        excludedPaths: [],
         maxFileSizeMb: 5,
       },
     })

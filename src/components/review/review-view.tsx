@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react"
 import { queueResearch, queueResearchBatch } from "@/lib/deep-research"
 import {
   AlertTriangle,
@@ -9,8 +9,11 @@ import {
   MessageSquare,
   X,
   Check,
-  Trash2,
   RotateCcw,
+  Link2,
+  Loader2,
+  Sparkles,
+  Wand2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
@@ -25,7 +28,10 @@ import { cleanAssistantContentForWikiSave, titleFromCleanAssistantContent } from
 import { useTranslation } from "react-i18next"
 import { useAppDialog } from "@/stores/app-dialog-store"
 import { useResearchStore } from "@/stores/research-store"
+import { useActivityStore } from "@/stores/activity-store"
 import { reviewResearchQueries, reviewResearchTopic, selectedResearchReviews } from "@/lib/review-batch-research"
+import { extractFilePathFromResolvedAction } from "@/lib/review-path-parser"
+import { ReviewEditPanel } from "@/components/review/review-edit-panel"
 
 const typeConfig: Record<ReviewItem["type"], { icon: typeof AlertTriangle; color: string }> = {
   contradiction: { icon: AlertTriangle, color: "text-amber-500" },
@@ -41,14 +47,21 @@ export function ReviewView() {
   const items = useReviewStore((s) => s.items)
   const resolveItem = useReviewStore((s) => s.resolveItem)
   const dismissItem = useReviewStore((s) => s.dismissItem)
-  const clearResolved = useReviewStore((s) => s.clearResolved)
   const setItems = useReviewStore((s) => s.setItems)
   const project = useWikiStore((s) => s.project)
   const [refreshing, setRefreshing] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(() => new Set())
   const [workingReviewIds, setWorkingReviewIds] = useState<Set<string>>(() => new Set())
   const [reviewErrors, setReviewErrors] = useState<Record<string, string>>({})
+  const [editTargetId, setEditTargetId] = useState<string | null>(null)
   const researchTasks = useResearchStore((s) => s.tasks)
+  // Live progress of the in-flight review sweep (posted to the activity store
+  // by sweepResolvedReviews). null when nothing is running, so the toolbar
+  // shows either the sweep's stage ("Judging N pending reviews…") or nothing.
+  const sweepProgress = useActivityStore((s) =>
+    s.items.find((i) => i.title === "Review cleanup" && i.status === "running")?.detail ?? null,
+  )
 
   const setReviewWorking = useCallback((id: string, working: boolean) => {
     setWorkingReviewIds((current) => {
@@ -86,6 +99,39 @@ export function ReviewView() {
       setRefreshing(false)
     }
   }, [project, refreshing, setItems])
+
+  // Abort controller for the in-flight re-analysis sweep. Clicking the
+  // "Analyzing…" button cancels it via an AbortSignal passed through to
+  // sweepResolvedReviews, which stops between batches.
+  const reanalyzeAbortRef = useRef<AbortController | null>(null)
+
+  // Re-run the stale-review sweep (the same analysis that used to run when
+  // the ingest queue drained). Resolves pending items whose underlying
+  // condition no longer holds, and reports progress via the activity store.
+  const handleReanalyze = useCallback(async () => {
+    if (!project || analyzing) return
+    const controller = new AbortController()
+    reanalyzeAbortRef.current = controller
+    setAnalyzing(true)
+    try {
+      const { sweepResolvedReviews } = await import("@/lib/sweep-reviews")
+      const resolvedCount = await sweepResolvedReviews(project.path, controller.signal)
+      if (resolvedCount > 0) {
+        setItems(useReviewStore.getState().items)
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.name === "AbortError")) {
+        console.error("Failed to re-analyze review items:", err)
+      }
+    } finally {
+      reanalyzeAbortRef.current = null
+      setAnalyzing(false)
+    }
+  }, [project, analyzing, setItems])
+
+  const cancelReanalyze = useCallback(() => {
+    reanalyzeAbortRef.current?.abort()
+  }, [])
 
   const handleResolve = useCallback(async (id: string, action: string) => {
     const pp = project ? normalizePath(project.path) : ""
@@ -406,18 +452,34 @@ export function ReviewView() {
             variant="ghost"
             size="sm"
             onClick={handleRefresh}
-            disabled={refreshing}
+            disabled={refreshing || analyzing}
             className="text-xs"
             title={t("review.refreshHint", "Reload review items from disk")}
           >
             <RotateCcw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
             {t("review.refresh", "Refresh")}
           </Button>
-          {resolved.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearResolved} className="text-xs">
-              <Trash2 className="mr-1 h-3 w-3" />
-              {t("review.clearResolved")}
-            </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={analyzing ? cancelReanalyze : handleReanalyze}
+            disabled={refreshing}
+            className="text-xs"
+            title={analyzing
+              ? t("review.cancelAnalyzeHint", "Click to stop the analysis")
+              : t("review.reanalyzeHint", "Re-scan pending reviews and auto-resolve stale ones")}
+          >
+            {analyzing ? (
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            ) : (
+              <Sparkles className="mr-1 h-3 w-3" />
+            )}
+            {analyzing ? t("review.analyzing", "Analyzing...") : t("review.reanalyze", "Re-analyze")}
+          </Button>
+          {analyzing && sweepProgress && (
+            <span className="text-xs text-muted-foreground" title={sweepProgress}>
+              {sweepProgress}
+            </span>
           )}
         </div>
       </div>
@@ -484,6 +546,18 @@ export function ReviewView() {
                 onSelectedChange={setReviewSelected}
                 working={workingReviewIds.has(item.id)}
                 error={reviewErrors[item.id]}
+                projectPath={project?.path}
+                editOpen={editTargetId === item.id}
+                onToggleEdit={() => setEditTargetId(editTargetId === item.id ? null : item.id)}
+                editPanel={
+                  editTargetId === item.id && project ? (
+                    <ReviewEditPanel
+                      item={item}
+                      projectPath={project.path}
+                      onClose={() => setEditTargetId(null)}
+                    />
+                  ) : null
+                }
               />
             ))}
             {resolved.length > 0 && pending.length > 0 && (
@@ -501,6 +575,7 @@ export function ReviewView() {
                 onSelectedChange={setReviewSelected}
                 working={workingReviewIds.has(item.id)}
                 error={reviewErrors[item.id]}
+                projectPath={project?.path}
               />
             ))}
           </div>
@@ -518,6 +593,10 @@ function ReviewCard({
   onSelectedChange,
   working,
   error,
+  projectPath,
+  editOpen,
+  onToggleEdit,
+  editPanel,
 }: {
   item: ReviewItem
   onResolve: (id: string, action: string) => void
@@ -526,6 +605,10 @@ function ReviewCard({
   onSelectedChange: (id: string, selected: boolean) => void
   working: boolean
   error?: string
+  projectPath?: string
+  editOpen?: boolean
+  onToggleEdit?: () => void
+  editPanel?: ReactNode
 }) {
   const { t } = useTranslation()
   const config = typeConfig[item.type]
@@ -618,15 +701,80 @@ function ReviewCard({
               {opt.label}
             </Button>
           ))}
+          {onToggleEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={researchRunning || working}
+              onClick={onToggleEdit}
+            >
+              <Wand2 className="mr-1 h-3 w-3" />
+              {editOpen ? t("review.edit.close") : t("review.edit.title")}
+            </Button>
+          )}
           </div>
+          {editPanel}
         </div>
       ) : (
         <div className="flex items-center gap-1 text-xs text-emerald-600">
           <Check className="h-3 w-3" />
-          {item.resolvedAction}
+          {item.resolvedAction && projectPath ? (
+            <ResolvedActionLink
+              action={item.resolvedAction}
+              projectPath={projectPath}
+            />
+          ) : (
+            item.resolvedAction
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Render a resolvedAction string, turning an embedded wiki/raw file path
+ * into a clickable link that opens the page in the preview pane.
+ */
+function ResolvedActionLink({ action, projectPath }: { action: string; projectPath: string }) {
+  const { t } = useTranslation()
+  const filePath = extractFilePathFromResolvedAction(action)
+  const [opening, setOpening] = useState(false)
+
+  if (!filePath) {
+    return <span>{action}</span>
+  }
+
+  const fileName = filePath.split("/").pop()
+  const fullPath = `${normalizePath(projectPath)}/${filePath}`
+
+  const handleOpen = async () => {
+    if (opening) return
+    setOpening(true)
+    try {
+      const content = await readFile(fullPath)
+      useWikiStore.getState().openFileInPreview(fullPath, content)
+    } catch (err) {
+      console.error("Failed to open created page:", err)
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleOpen}
+      className="flex items-center gap-1 hover:underline"
+      title={t("review.openCreatedPageHint", "Open the page created from this review item")}
+    >
+      {opening ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Link2 className="h-3 w-3" />
+      )}
+      {action === filePath ? fileName : action}
+    </button>
   )
 }
 

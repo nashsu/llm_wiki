@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react"
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react"
+import { ChevronRight, ChevronDown, File, Folder, FolderOpen, FolderSearch } from "lucide-react"
 import { message } from "@tauri-apps/plugin-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useWikiStore } from "@/stores/wiki-store"
 import type { FileNode } from "@/types/wiki"
 import { useTranslation } from "react-i18next"
-import { listDirectory, openProjectFolder } from "@/commands/fs"
+import { listDirectory, openProjectFolder, revealInFileManager } from "@/commands/fs"
+import { isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { replaceNodeChildren } from "./file-tree-utils"
 
 function TreeNode({
@@ -22,6 +23,33 @@ function TreeNode({
   const [loadingChildren, setLoadingChildren] = useState(false)
   const selectedFile = useWikiStore((s) => s.selectedFile)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
+  const project = useWikiStore((s) => s.project)
+
+  const handleReveal = async () => {
+    const pp = project ? normalizePath(project.path) : ""
+    const full = isAbsolutePath(node.path)
+      ? normalizePath(node.path)
+      : pp
+        ? `${pp}/${normalizePath(node.path)}`
+        : node.path
+    try {
+      await revealInFileManager(full)
+    } catch (err) {
+      console.error("[FileTree] reveal failed:", err)
+      await message(
+        t("fileTree.revealInExplorerFailed", {
+          defaultValue: "Failed to open in the file manager.",
+          error: String(err),
+        }),
+        {
+          title: t("fileTree.revealInExplorer", {
+            defaultValue: "Open in file manager",
+          }),
+          kind: "error",
+        },
+      )
+    }
+  }
 
   const isSelected = selectedFile === node.path
   const paddingLeft = 12 + depth * 16
@@ -72,18 +100,30 @@ function TreeNode({
   }
 
   return (
-    <button
-      onClick={() => openPathInPreview(node.path)}
-      className={`flex w-full items-center gap-1 py-1 text-sm ${
+    <div
+      className={`group flex w-full items-center py-1 text-sm ${
         isSelected
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
       }`}
       style={{ paddingLeft: paddingLeft + 14 }}
     >
-      <File className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{node.name}</span>
-    </button>
+      <button
+        onClick={() => openPathInPreview(node.path)}
+        className="flex min-w-0 flex-1 items-center gap-1 text-left"
+      >
+        <File className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{node.name}</span>
+      </button>
+      <button
+        onClick={() => void handleReveal()}
+        className="mr-1 shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+        title={t("fileTree.revealInExplorer", { defaultValue: "Open in file manager" })}
+        aria-label={t("fileTree.revealInExplorer", { defaultValue: "Open in file manager" })}
+      >
+        <FolderSearch className="h-3.5 w-3.5" />
+      </button>
+    </div>
   )
 }
 

@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react"
 import {
-  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, MessageSquare, Sparkles,
+  FileText, FolderOpen, Search, Network, ClipboardCheck, Settings, ArrowLeftRight, ClipboardList, Globe, MessageSquare, Sparkles, Minimize2, History, Ticket,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useFloatingStore } from "@/stores/floating-store"
 import { useReviewStore } from "@/stores/review-store"
 import { useResearchStore } from "@/stores/research-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
@@ -25,6 +26,8 @@ const NAV_ITEMS: { view: NavView; icon: typeof FileText; labelKey: string }[] = 
   { view: "graph", icon: Network, labelKey: "nav.graph" },
   { view: "lint", icon: ClipboardCheck, labelKey: "nav.lint" },
   { view: "review", icon: ClipboardList, labelKey: "nav.review" },
+  { view: "jira", icon: Ticket, labelKey: "nav.jira" },
+  { view: "history", icon: History, labelKey: "nav.history" },
 ]
 
 interface IconSidebarProps {
@@ -47,6 +50,7 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
   // remaining indicator that an update is available, so the user
   // never finds their way back to it.
   const updateAvailable = useUpdateStore((s) => hasAvailableUpdate(s))
+  const setFloatingMode = useFloatingStore((s) => s.setMode)
 
   // Daemon health check
   const [daemonStatus, setDaemonStatus] = useState<string>("starting")
@@ -201,6 +205,15 @@ export function IconSidebar({ onSwitchProject }: IconSidebarProps) {
               <ArrowLeftRight className="h-5 w-5" />
             </TooltipTrigger>
             <TooltipContent side="right">{t("nav.switchProject")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              onClick={() => setFloatingMode("ball")}
+              className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+            >
+              <Minimize2 className="h-5 w-5" />
+            </TooltipTrigger>
+            <TooltipContent side="right">{t("floating.collapseToFloat")}</TooltipContent>
           </Tooltip>
         </div>
       </div>

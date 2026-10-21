@@ -333,14 +333,48 @@ fn resolve_agent_project(
 ) -> Result<AgentProjectEntry, String> {
     let decoded = percent_decode(project_id);
     let wants_current = decoded.eq_ignore_ascii_case("current");
-    load_agent_projects(app)
-        .into_iter()
-        .find(|project| {
-            project.id == decoded
-                || project_path_matches(&project.path, &decoded)
-                || (wants_current && project.current)
-        })
-        .ok_or_else(|| format!("Unknown project: {decoded}"))
+    if let Some(project) = load_agent_projects(app).into_iter().find(|project| {
+        project.id == decoded
+            || project_path_matches(&project.path, &decoded)
+            || (wants_current && project.current)
+    }) {
+        return Ok(project);
+    }
+    // 兜底：`CURRENT_PROJECT` 是内存态，由前端 openProject 完成后 POST /project
+    // 才写入。冷启动或前端尚未加载完项目时它为空，"current" 会解析失败
+    // （表现为飞书桥接首条消息回 "Unknown project: current"）。此时回退到
+    // app-state 里持久化的 lastProject。
+    if wants_current {
+        if let Some(fallback) = load_last_agent_project(app) {
+            return Ok(fallback);
+        }
+    }
+    Err(format!("Unknown project: {decoded}"))
+}
+
+/// 读取 app-state.json 的 `lastProject`，作为 `current` 的兜底项目。
+fn load_last_agent_project(app: &tauri::AppHandle) -> Option<AgentProjectEntry> {
+    let parsed = load_agent_app_state(app)?;
+    let last = parsed.get("lastProject")?;
+    let path = normalize_path(last.get("path").and_then(Value::as_str)?);
+    if path.is_empty() {
+        return None;
+    }
+    let id = last
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| read_project_id(&path).unwrap_or_else(|| path.clone()));
+    Some(AgentProjectEntry {
+        id,
+        name: last
+            .get("name")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| project_name_from_path(&path)),
+        current: true,
+        path,
+    })
 }
 
 fn load_agent_projects(app: &tauri::AppHandle) -> Vec<AgentProjectEntry> {
@@ -598,6 +632,14 @@ pub fn run() {
             app.manage(commands::file_sync::FileSyncState::default());
             app.manage(agent::session::AgentSessionStore::default());
             app.manage(agent::cancel::AgentCancellationRegistry::default());
+            app.manage(commands::feishu_bridge::FeishuBridgeState::default());
+            // 飞书遥控对话：上次开着的话，启动 2s 后自动恢复监听。
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::feishu_bridge::autostart_if_enabled(&handle).await;
+                });
+            }
             app.manage(CloseBehaviorState(Mutex::new("minimize".to_string())));
             app.manage(TrayAvailabilityState(Mutex::new(false)));
             // Start the API before optional desktop integrations so the
@@ -659,6 +701,17 @@ pub fn run() {
             commands::search::get_page_links,
             commands::external_search::web_search,
             commands::external_search::anytxt_search,
+            commands::feishu::feishu_detect,
+            commands::feishu::feishu_send_message,
+            commands::feishu::feishu_get_my_id,
+            commands::feishu::feishu_test_doc_folder,
+            commands::feishu::feishu_test_doc_target,
+            commands::feishu::feishu_auth_begin,
+            commands::feishu::feishu_auth_complete,
+            commands::feishu::feishu_publish_chat_reply,
+            commands::feishu_bridge::feishu_bridge_start,
+            commands::feishu_bridge::feishu_bridge_stop,
+            commands::feishu_bridge::feishu_bridge_status,
             clip_server_status,
             api_server_status,
             api_server_reload_config,
@@ -691,6 +744,8 @@ pub fn run() {
             commands::extract_images::extract_office_images_cmd,
             commands::extract_images::extract_and_save_pdf_images_cmd,
             commands::extract_images::extract_and_save_office_images_cmd,
+            commands::wiki_dict::scan_wiki_terms,
+            commands::wiki_dict::qingjian_dict_target,
             commands::file_sync::start_project_file_watcher,
             commands::file_sync::stop_project_file_watcher,
             commands::file_sync::rescan_project_files,
@@ -751,6 +806,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            handle_run_event_exit(app, &event);
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,
@@ -767,6 +823,15 @@ pub fn run() {
             }
             let _ = (app, event); // suppress unused warnings on non-macOS
         });
+}
+
+/// 应用退出时收尾：停掉飞书桥接的常驻子进程，避免留孤儿 lark-cli。
+fn handle_run_event_exit(app: &tauri::AppHandle, event: &tauri::RunEvent) {
+    if let tauri::RunEvent::Exit = event {
+        use tauri::Manager;
+        let state = app.state::<commands::feishu_bridge::FeishuBridgeState>().inner().clone();
+        tauri::async_runtime::block_on(state.shutdown());
+    }
 }
 
 #[cfg(target_os = "linux")]

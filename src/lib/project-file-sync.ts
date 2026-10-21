@@ -34,6 +34,8 @@ let unlistenQueue: UnlistenFn | null = null
 let unlistenChanged: UnlistenFn | null = null
 let startSeq = 0
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
+let wikiDictTimer: ReturnType<typeof setTimeout> | null = null
+let wikiDictRunning = false
 let pendingRefreshPaths = new Set<string>()
 let pendingChangeTasks = new Map<string, FileChangeTask>()
 let activeSourceWatchConfig = normalizeSourceWatchConfig()
@@ -107,6 +109,10 @@ export async function stopProjectFileSync(): Promise<void> {
   if (refreshTimer) {
     clearTimeout(refreshTimer)
     refreshTimer = null
+  }
+  if (wikiDictTimer) {
+    clearTimeout(wikiDictTimer)
+    wikiDictTimer = null
   }
   pendingRefreshPaths.clear()
   pendingChangeTasks.clear()
@@ -201,6 +207,7 @@ export async function rescanProjectFileSync(
 }
 
 function scheduleRefreshAfterFileChanges(tasks: FileChangeTask[]): void {
+  scheduleWikiDictExportAfterFileChanges(tasks)
   for (const task of tasks) {
     pendingRefreshPaths.add(task.path)
     pendingChangeTasks.set(task.path, task)
@@ -378,6 +385,37 @@ async function enqueueRawSourceChanges(
       }
     }
   }
+}
+
+function isWikiPageForDictExport(relativePath: string): boolean {
+  const path = normalizePath(relativePath).toLowerCase()
+  return path.startsWith("wiki/") && path.endsWith(".md") && !path.startsWith("wiki/media/")
+}
+
+function scheduleWikiDictExportAfterFileChanges(tasks: FileChangeTask[]): void {
+  const wikiChanged = tasks.some(
+    (task) =>
+      task.projectId === useWikiStore.getState().project?.id &&
+      task.kind !== "deleted" &&
+      isWikiPageForDictExport(task.path),
+  )
+  if (!wikiChanged) return
+  if (wikiDictTimer) clearTimeout(wikiDictTimer)
+  wikiDictTimer = setTimeout(async () => {
+    wikiDictTimer = null
+    const project = useWikiStore.getState().project
+    if (!project || wikiDictRunning) return
+    if (!useWikiStore.getState().wikiDictConfig.enabled) return
+    wikiDictRunning = true
+    try {
+      const { exportWikiDict } = await import("@/lib/wiki-dict-export")
+      await exportWikiDict(project.path)
+    } catch (err) {
+      console.warn("[file-sync] wiki dict export failed:", err)
+    } finally {
+      wikiDictRunning = false
+    }
+  }, 3000)
 }
 
 function isIngestableRawSource(relativePath: string): boolean {

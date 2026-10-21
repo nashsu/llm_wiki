@@ -1,14 +1,36 @@
 {
+  "floating": {
+    "chatTitle": "Chat",
+    "empty": "Nessuna conversazione attiva",
+    "openChat": "Apri chat",
+    "replyDone": "La risposta è pronta.",
+    "openApp": "Apri app",
+    "collapse": "Comprimi",
+    "collapseToFloat": "Comprimi in finestra flottante"
+  },
   "app": {
     "title": "LLM Wiki",
     "subtitle": "Costruisci e mantieni la tua knowledge base personale con gli LLM"
   },
   "common": {
-    "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
-    "dismiss": "Nascondi", "loading": "Caricamento...", "optional": "opzionale"
+    "retry": "Riprova",
+    "cancel": "Annulla",
+    "ignore": "Ignora",
+    "close": "Chiudi",
+    "ok": "OK",
+    "confirm": "Conferma",
+    "notice": "Avviso",
+    "dismiss": "Nascondi",
+    "loading": "Caricamento...",
+    "optional": "opzionale"
   },
-  "layout": { "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
-  "errors": { "generic": "Qualcosa è andato storto" },
+  "layout": {
+    "showSidebar": "Mostra la barra laterale",
+    "hideSidebar": "Nascondi la barra laterale"
+  },
+  "errors": {
+    "generic": "Qualcosa è andato storto"
+  },
   "mermaid": {
     "renderFailed": "Impossibile visualizzare il diagramma Mermaid",
     "showDetails": "Mostra i dettagli del parser",
@@ -24,17 +46,33 @@
     "graph": "Grafo",
     "lint": "Lint",
     "review": "Revisione",
+    "history": "Cronologia",
     "skills": "Skill",
     "settings": "Impostazioni",
     "settingsShortcut": " (Cmd/Ctrl+,)",
     "switchProject": "Cambia progetto",
     "updateAvailable": "Aggiornamento disponibile",
-    "updateAvailableSuffix": " · aggiorna"
+    "updateAvailableSuffix": " · aggiorna",
+    "jira": "Jira"
   },
   "updateBanner": {
     "message": "La versione {{version}} è disponibile",
     "openDownload": "Apri la pagina di download",
     "dismiss": "Nascondi"
+  },
+  "history": {
+    "title": "Cronologia operazioni",
+    "empty": "Nessuna cronologia operazioni.",
+    "refresh": "Aggiorna",
+    "openLog": "Apri log.md",
+    "actions": {
+      "ingest": "Ingestione",
+      "delete": "Eliminazione",
+      "exclude": "Escluso dall'ingestione",
+      "review": "Revisione",
+      "save": "Salva nel wiki",
+      "other": "Operazione"
+    }
   },
   "welcome": {
     "newProject": "Nuovo progetto",
@@ -49,17 +87,28 @@
     "allSources": "Tutte le fonti",
     "noWikiPages": "Ancora nessuna pagina wiki. Importa delle fonti per iniziare.",
     "typeLabels": {
-      "overview": "Panoramica", "entity": "Entità", "concept": "Concetti",
-      "source": "Fonti", "synthesis": "Sintesi", "finding": "Risultati",
-      "thesis": "Tesi", "methodology": "Metodologie",
-      "comparison": "Confronti", "query": "Query"
-    }
+      "overview": "Panoramica",
+      "entity": "Entità",
+      "concept": "Concetti",
+      "source": "Fonti",
+      "synthesis": "Sintesi",
+      "finding": "Risultati",
+      "thesis": "Tesi",
+      "methodology": "Metodologie",
+      "comparison": "Confronti",
+      "query": "Query"
+    },
+    "loadingWiki": "Caricamento pagine Wiki…",
+    "wikiLoadFailed": "Impossibile caricare le pagine Wiki: {{error}}"
   },
   "editor": {
     "edit": "Modifica",
     "done": "Fatto",
     "editRaw": "Modifica il Markdown grezzo",
     "doneEditing": "Fine modifica",
+    "reader": {
+      "linkNotFound": "Nessun file trovato per \"{{target}}\""
+    },
     "selection": {
       "askAgent": "Chiedi all'Agente sulla selezione",
       "placeholder": "Spiega, riscrivi, accorcia...",
@@ -73,6 +122,14 @@
       "wordDiff": "Modifiche parola per parola",
       "regenerate": "Rigenera",
       "closeReference": "Chiudi",
+      "openInPreview": "Apri in anteprima",
+      "cancelSelection": "Annulla selezione",
+      "generalChatMode": "Modalità chat generale - cerca nell'intera base di conoscenza",
+      "viewFullChat": "Visualizza chat completa",
+      "saveToConversation": "Salva nella conversazione",
+      "viewInConversation": "Visualizza conversazione",
+      "exitConversation": "Esci dalla conversazione",
+      "conversationNamePlaceholder": "Nome della conversazione",
       "requestFailed": "L'assistente di selezione non è riuscito a completare la richiesta.",
       "applyFailed": "Non è stato possibile aggiornare il testo selezionato.",
       "sourceChanged": "Il file è cambiato dopo la selezione del testo. Seleziona di nuovo il testo prima di applicare la modifica.",
@@ -94,7 +151,15 @@
       "createFailed": "Non è stato possibile creare la pagina mancante.",
       "emptyDraftError": "Il modello ha restituito una bozza vuota."
     },
-    "frontmatter": { "origin": "Origine", "more": "Altro" },
+    "frontmatter": {
+      "origin": "Origine",
+      "more": "Altro",
+      "sourceLocal": "Apri file sorgente: {{name}}",
+      "sourceExternal": "Apri link esterno: {{url}}",
+      "sourceMissing": "Sorgente non trovata: nessun \"{{name}}\" in raw/sources/ e non è un URL valido",
+      "relatedOpen": "Apri pagina correlata: {{slug}}",
+      "relatedMissing": "Pagina correlata non trovata: nessun \"{{slug}}\" in wiki/"
+    },
     "rawMarkdownEditor": "Editor Markdown grezzo"
   },
   "research": {
@@ -205,7 +270,16 @@
     },
     "openExternal": "Apri nell'app predefinita",
     "openExternalFailed": "Impossibile aprire {{name}}: {{error}}",
+    "revealInExplorer": "Apri nella gestione file",
+    "revealInExplorerFailed": "Impossibile aprire nella gestione file: {{error}}",
     "ingest": "Elabora",
+    "ingestBlocked": {
+      "unsupported-type": "Questo tipo di file non è supportato per l'acquisizione.",
+      "sensitive-config": "I file di configurazione non possono essere acquisiti.",
+      "no-llm": "Nessun LLM utilizzabile configurato. Imposta un modello o una chiave API nelle Impostazioni.",
+      "all-excluded": "Tutte le fonti di questa cartella sono escluse dall'acquisizione.",
+      "unknown": "Questo file non può essere acquisito."
+    },
     "ingestStatus": {
       "not-ingested": "Da elaborare",
       "ingested": "Elaborato",
@@ -215,6 +289,10 @@
       "failed": "Non riuscito",
       "cancelled": "Annullato"
     },
+    "excludeFromIngest": "Escludi dall'ingestione",
+    "allowIngest": "Consenti ingestione",
+    "excluded": "Escluso",
+    "excludeConfirm": "Escludere \"{{name}}\" dall'ingestione?\n\nIl file sorgente verrà mantenuto, ma le pagine wiki che ha generato verranno rimosse. Potrai reingestionarlo in seguito.",
     "delete": "Elimina la fonte e le pagine wiki collegate",
     "deleteConfirm": "Eliminare \"{{name}}\" e le pagine wiki collegate?\n\nQuesta operazione:\n- elimina il file sorgente\n- elimina le pagine wiki generate da questa fonte\n- aggiorna index.md",
     "deleteFolder": "Elimina la cartella {{name}} (ricorsivo)",
@@ -227,10 +305,16 @@
     "searchPlaceholder": "Filtra le fonti per nome o percorso",
     "clearSearch": "Cancella filtro fonti",
     "noSearchResults": "Nessuna fonte corrisponde a “{{query}}”",
+    "filterByIngestStatus": "Filtra per stato di acquisizione",
+    "filterAll": "Tutti i file",
+    "filterIngested": "Acquisiti",
+    "filterNotIngested": "Da acquisire",
+    "noIngestFilterResults": "Nessuna fonte corrisponde al filtro attuale",
     "filteredSourceCount": "{{count}} di {{total}} fonti",
     "sourceCount_plural": "{{count}} fonti"
   },
   "chat": {
+    "title": "Chat",
     "selectionEdit": {
       "title": "Modifica proposta per la selezione",
       "reviewHint": "Controlla prima di scrivere",
@@ -277,14 +361,24 @@
     "emptyHint": "Fai una domanda o avvia un'elaborazione per iniziare.",
     "sources": "Fonti",
     "newChat": "Nuova chat",
+    "exitConversation": "Esci dalla conversazione",
     "newConversation": "Nuova conversazione",
     "noConversationsYet": "Ancora nessuna conversazione",
     "msgCount": "msg",
+    "favorite": "Preferito",
+    "unfavorite": "Rimuovi dai preferiti",
+    "renameConversation": "Rinomina conversazione",
+    "deleteConversation": "Elimina conversazione",
+    "favoriteSection": "Preferiti",
+    "otherSection": "Altri",
     "startNewConversation": "Avvia una nuova conversazione",
     "clickNewChatToBegin": "Clicca su \"Nuova chat\" per iniziare",
     "typeAMessage": "Scrivi un messaggio...",
     "useWebSearch": "Ricerca web",
     "useAnyTxtSearch": "Ricerca AnyTXT",
+    "notifyFeishu": "Notifiche Feishu",
+    "feishuNotConfigured": "Le notifiche Feishu non sono configurate o non disponibili. Configurale in Impostazioni → Notifiche Feishu",
+    "feishuSendFailed": "Invio della notifica Feishu non riuscito",
     "skills": "Skill",
     "enabledSkills": "Skill attive",
     "skillsAutoMode": "Auto",
@@ -326,6 +420,7 @@
     "referencePreview": "Anteprima del riferimento",
     "references": "Riferimenti",
     "details": "Dettagli",
+    "noWikiMatch": "Nessuna pagina wiki corrispondente trovata. Questa risposta potrebbe non essere basata sulla knowledge base.",
     "contextDetails": "Dettagli del contesto",
     "contextDetailsScope": "Prove registrate fornite per questa risposta",
     "contextItems": "Elementi",
@@ -372,8 +467,17 @@
   },
   "search": {
     "title": "Ricerca",
+    "modeWiki": "Wiki",
+    "modeSource": "Fonti",
+    "modePath": "Percorso",
     "placeholder": "Cerca nelle pagine wiki...",
     "placeholderWithShortcut": "Cerca nelle pagine wiki... (Invio per cercare)",
+    "sourcePlaceholder": "Filtra i file originali per nome o percorso...",
+    "pathPlaceholder": "Cerca i file del repository per nome o percorso...",
+    "typeToFilterSource": "Digita per filtrare i file originali per nome o percorso",
+    "typeToFilterPath": "Digita per cercare nell'intero repository per nome o percorso",
+    "sourceFileCount": "{{count}} file",
+    "sourceFileCount_other": "{{count}} file",
     "searching": "Ricerca in corso...",
     "pressEnter": "Premi Invio per cercare",
     "pageCount": "{{count}} pagina",
@@ -407,6 +511,20 @@
     "runLint": "Esegui il lint",
     "runLintHint": "Esegui il lint per controllare lo stato del wiki",
     "runLintDescription": "Cerca pagine orfane, link non validi e altro",
+    "scheduleSetting": "Controllo programmato",
+    "scheduleEnabled": "Esegui il controllo automaticamente nei giorni selezionati a un'ora fissa",
+    "weekday": {
+      "sun": "Dom",
+      "mon": "Lun",
+      "tue": "Mar",
+      "wed": "Mer",
+      "thu": "Gio",
+      "fri": "Ven",
+      "sat": "Sab"
+    },
+    "scheduleTime": "Ora",
+    "scheduleHint": "Esegue automaticamente i controlli strutturali nei giorni selezionati all'ora impostata. Segue il toggle Semantico e le regole correnti.",
+    "lastScheduledRun": "Ultimo controllo",
     "allClear": "Tutto a posto!",
     "noIssues": "Nessun problema rilevato.",
     "warnings": "Avvisi",
@@ -446,6 +564,13 @@
     "clearResolved": "Rimuovi i risolti",
     "refresh": "Aggiorna",
     "refreshHint": "Ricarica dal disco gli elementi da revisionare",
+    "reanalyze": "Rianalizza",
+    "reanalyzeHint": "Riscansiona le revisioni in sospeso e risolvi automaticamente quelle obsolete",
+    "analyzing": "Analisi in corso...",
+    "cancelAnalyzeHint": "Clicca per fermare l'analisi",
+    "reanalyzeDone": "Risolti automaticamente {{count}} elementi obsoleti",
+    "reanalyzeEmpty": "Nessun elemento obsoleto da ripulire",
+    "reanalyzeFailed": "Rianalisi non riuscita",
     "selectPending": "Seleziona quelli in sospeso",
     "selectItem": "Seleziona {{title}}",
     "selectedCount": "{{count}} selezionati",
@@ -455,7 +580,27 @@
     "affectedPages": "Pagine",
     "allClear": "Tutto a posto — niente da revisionare",
     "resolvedDivider": "— Risolti —",
-    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}"
+    "actionFailed": "L'azione non è riuscita e resta in sospeso. Puoi riprovare: {{error}}",
+    "openCreatedPage": "Apri la pagina creata",
+    "openCreatedPageHint": "Apri la pagina creata da questo elemento di revisione",
+    "edit": {
+      "title": "Modifica con knowledge base",
+      "close": "Chiudi",
+      "noTarget": "Questo elemento non ha un file sorgente modificabile",
+      "fileUnreadable": "Impossibile leggere il file a cui si riferisce questo elemento",
+      "instructionPlaceholder": "Inserisci un'istruzione di modifica, es. espandi questa sezione in base alla knowledge base…",
+      "generate": "Genera modifica",
+      "generating": "Generazione…",
+      "searchingContext": "Ricerca nella knowledge base…",
+      "generatingWithDiff": "Generazione modifica…",
+      "stop": "Stop",
+      "reject": "Rifiuta",
+      "apply": "Applica modifica",
+      "applying": "Applicazione…",
+      "diffTitle": "Diff",
+      "generateFailed": "Impossibile generare la modifica, riprova",
+      "applyFailed": "Impossibile applicare la modifica"
+    }
   },
   "settings": {
     "title": "Impostazioni",
@@ -488,11 +633,14 @@
       "scheduledImport": "Importazione pianificata",
       "mineru": "MinerU PDF",
       "apiServer": "API + MCP",
+      "imeExport": "Dizionario IME",
+      "feishu": "Notifiche Feishu",
       "output": "Output",
       "interface": "Interfaccia",
       "maintenance": "Manutenzione",
       "changelog": "Changelog",
-      "about": "Informazioni"
+      "about": "Informazioni",
+      "jira": "Jira"
     },
     "sections": {
       "general": {
@@ -533,7 +681,7 @@
           "activeDefault": "Usa il modello attivo",
           "hint": "Scegli modelli distinti per la chat interattiva e per l'elaborazione dei documenti. Il modello attivo resta il fallback."
         },
-      "projectOverride": {
+        "projectOverride": {
           "enabled": "Usa un modello specifico per il progetto",
           "provider": "Provider del progetto",
           "selectProvider": "Seleziona un provider",
@@ -619,7 +767,6 @@
           "max": "Massimo",
           "custom": "Personalizzato",
           "budgetTokens": "token di budget per il ragionamento",
-
           "hint": "Controlla il ragionamento per la chat. L'elaborazione dei documenti usa l'impostazione separata qui sotto.",
           "ingestTitle": "Ragionamento durante l'ingest",
           "ingestHint": "Di norma va tenuto spento: l'ingest chiede output strutturato e il ragionamento costa tempo senza migliorarlo. Alzalo solo se il modello si rifiuta di funzionare con il ragionamento disattivato."
@@ -815,6 +962,81 @@
         "lastScan": "Ultima scansione: {{time}}",
         "never": "Mai"
       },
+      "feishu": {
+        "title": "Notifiche Feishu",
+        "description": "Dopo ogni risposta dell'AI, invia automaticamente un riepilogo su Feishu. Richiede lark-cli locale (cartella plugin Feishu di Trae o PATH).",
+        "environment": "Verifica ambiente",
+        "redetect": "Rileva di nuovo",
+        "detecting": "Rilevamento...",
+        "enable": "Attiva notifiche Feishu",
+        "enableHint": "Quando attivo, l'interruttore a campanella nella chat diventa utilizzabile; con la campanella attiva ogni risposta dell'AI viene inviata.",
+        "bridgeEnable": "Attiva chat di controllo remoto Feishu",
+        "bridgeEnableHint": "Resta in ascolto dei tuoi messaggi Feishu e risponde con il progetto corrente (stessa pipeline AI della chat). Ha effetto dopo il salvataggio delle impostazioni; impiego di risorse trascurabile.",
+        "bridgeReplyDoc": "Rispondi come documento Feishu",
+        "bridgeReplyDocHint": "Quando attivo, le risposte del bot e le notifiche della chat passano a \"pubblica documento Feishu completo + rimando del link\" (tabelle/mermaid funzionano; usa le impostazioni cartella/modalità qui sotto). Quando disattivo, viene inviato testo semplice — il bot invia il testo completo e le notifiche inviano l'originale integrale (blocchi di ragionamento esclusi). Richiede le credenziali utente di lark-cli locali; in caso di errore di pubblicazione torna automaticamente al testo semplice.",
+        "authTitle": "Autorizzazione credenziali utente (necessaria per pubblicare documenti)",
+        "authLinking": "Generazione...",
+        "authGen": "Genera link di autorizzazione",
+        "authHint": "La pubblicazione dei documenti usa la tua identità utente (le app bot non hanno permessi sui documenti). Premi \"Genera link di autorizzazione\" → aprilo nel browser e conferma (concedi gli ambiti docs/drive/im) → torna qui e premi \"Completa autorizzazione\". Una sola autorizzazione dura a lungo; i token si rinnovano automaticamente.",
+        "authStep1": "① Apri il link e conferma (codice ",
+        "authStep1b": ", valido 10 minuti):",
+        "authCompleting": "Completamento...",
+        "authDone": "② Ho autorizzato, completa l'accesso",
+        "authOk": "Autorizzazione riuscita, credenziali salvate localmente (~/.lark-cli); la pubblicazione dei documenti è pronta per un uso prolungato",
+        "bridgeDocFolder": "Cartella di destinazione dei documenti",
+        "folderTesting": "Test in corso...",
+        "folderTest": "Testa cartella",
+        "folderTestOk": "Documento di test creato: ",
+        "bridgeDocFolderHint": "Apri la cartella di destinazione in Feishu Drive, copia il link dalla barra degli indirizzi e incollalo qui; vale solo in modalità \"Nuovo documento ogni volta\".",
+        "bridgeDocMode": "Modalità documento",
+        "bridgeDocModeNew": "Nuovo documento ogni volta",
+        "bridgeDocModeFixed": "Sovrascrivi documento fisso",
+        "bridgeDocModeAppend": "Aggiungi a documento fisso",
+        "bridgeDocModeHint": "Nuovo = un documento per risposta; Sovrascrivi = sostituisce ogni volta lo stesso documento; Aggiungi = ogni risposta viene accodata alla fine (separatore e titolo della domanda aggiunti automaticamente), formando un registro di domande e risposte.",
+        "bridgeDocTarget": "Link del documento di destinazione",
+        "docTesting": "Validazione...",
+        "docTest": "Testa documento",
+        "docTestOk": "Documento valido: ",
+        "bridgeDocTargetInvalid": "Link documento non riconosciuto: atteso formato …/docx/xxx oppure un token di 20-40 caratteri.",
+        "bridgeDocTargetAppendHint": "Ogni risposta viene accodata alla fine di questo documento (separatore e titolo della domanda aggiunti automaticamente).",
+        "bridgeDocTargetHint": "Attenzione: ogni risposta sostituisce integralmente il contenuto del documento (incluse le modifiche manuali) — usa un documento dedicato.",
+        "bridgeChecking": "Lettura stato...",
+        "bridgeReady": "✓ Connesso, in ascolto dei messaggi Feishu",
+        "bridgeWaiting": "… Connessione alla long connection di Feishu in corso",
+        "bridgeHandled": "Risposte inviate: {{count}} · Progetto {{project}}",
+        "bridgeBusy": "⟳ In elaborazione: {{msg}} ({{secs}}s)",
+        "bridgePending": "In coda: {{count}}",
+        "bridgeLast": "Ultimo ricevuto: ",
+        "recipient": "ID destinatario",
+        "getMyIdHint": "Legge l'identità registrata in lark-cli locale e la compila (inserisci l'ID di chi deve ricevere; qui sei tu)",
+        "getMyIdLoading": "Ricerca...",
+        "getMyId": "Ottieni il mio ID",
+        "recipientHint": "Inserisci l'ID del destinatario: open_id (inizia per ou_) per un messaggio privato; chat_id (inizia per oc_) per un gruppo. \"Ottieni il mio ID\" = invio a te stesso.",
+        "recipientInvalid": "ID destinatario non valido: deve iniziare per ou_ oppure oc_. Se hai appena incollato una chat, tieni solo l'ID.",
+        "getMyIdOk": "Il tuo open_id è stato compilato",
+        "noIdentityHint": "lark-cli locale non ha un utente registrato. Accedi prima a Feishu in Trae (o esegui lark-cli auth login), poi riprova; puoi anche incollare manualmente l'ID destinatario.",
+        "sending": "Invio...",
+        "sendTest": "Invia messaggio di test",
+        "testDisabledHint": "Inserisci prima un ID destinatario che inizia per ou_/oc_ (oppure premi \"Ottieni il mio ID\") per inviare il messaggio di test.",
+        "testSent": "Inviato, controlla i messaggi Feishu",
+        "testMessage": "[LLM Wiki] Test notifiche Feishu riuscito",
+        "crossAppHint": "Questo ID non corrisponde alle credenziali correnti di lark-cli (l'open_id è legato all'app). Premi \"Ottieni il mio ID\" per recuperare quello giusto."
+      },
+      "imeExport": {
+        "title": "Esportazione dizionario IME",
+        "description": "Trasforma nomi di pagine wiki, alias e wikilink in un dizionario pinyin per il metodo di input Qingjian.",
+        "enable": "Esporta automaticamente i termini del wiki nel dizionario utente di Qingjian",
+        "target": "Posizione del file dizionario",
+        "targetHelp": "I termini vengono scritti in wiki.tsv in questa cartella. Qingjian lo carica automaticamente in circa un secondo.",
+        "targetUnavailable": "Non disponibile su questa piattaforma",
+        "openFolder": "Apri cartella",
+        "exportNow": "Esporta ora",
+        "exporting": "Esportazione...",
+        "exported": "Esportati {{count}} termini",
+        "downloadQingjian": "Non hai Qingjian? Scarica il programma di installazione da:",
+        "downloadInternal": "Drive aziendale (intranet)",
+        "downloadGithub": "GitHub Releases (v0.1.4)"
+      },
       "apiServer": {
         "title": "API + MCP",
         "description": "Esponi LLM Wiki ai tuoi strumenti tramite l'API HTTP locale e, se vuoi, tramite il server MCP incluso per i client agent.",
@@ -903,7 +1125,16 @@
         "zoom": "Zoom dell'interfaccia",
         "zoomHint": "Scala il testo e le spaziature basate su rem in tutta l'app. Alcuni pannelli a pixel fissi mantengono i loro limiti pratici di dimensione.",
         "zoomIn": "Aumenta lo zoom",
-        "zoomOut": "Riduci lo zoom"
+        "zoomOut": "Riduci lo zoom",
+        "background": "Sfondo",
+        "backgroundHint": "Scegli un'immagine e regola l'opacità per ammorbidire lo sfondo dell'app. L'immagine appare attraverso i pannelli semi-trasparenti. Salva per applicare.",
+        "backgroundEmpty": "Nessuna immagine di sfondo",
+        "backgroundImport": "Importa immagine",
+        "backgroundRemove": "Rimuovi",
+        "backgroundOpacity": "Opacità",
+        "backgroundBrightness": "Luminosità",
+        "backgroundSizeError": "L'immagine è troppo grande. Scegli un'immagine sotto i 5 MB.",
+        "backgroundImportError": "Impossibile importare l'immagine."
       },
       "maintenance": {
         "title": "Manutenzione",
@@ -919,6 +1150,16 @@
           "rebuilt": "Indice ricostruito con {{pages}} pagine in {{groups}} gruppi.",
           "exported": "Progetto esportato in {{path}}",
           "imported": "{{name}} importato. Cambia progetto per aprirlo."
+        },
+        "indexSchedule": {
+          "title": "Ricostruzione indicizzata programmata",
+          "enabled": "Ricostruisci l'indice automaticamente a intervalli",
+          "interval": "Intervallo",
+          "minutes": "minuti",
+          "lastRun": "Ultima ricostruzione",
+          "hint": "Ricostruisce wiki/index.md con la stessa modalità deterministica del pulsante sopra. Imposta 60 per l'orario, 1440 per il giornaliero.",
+          "save": "Salva pianificazione",
+          "saving": "Salvataggio..."
         },
         "history": {
           "title": "Cronologia delle versioni dei file",
@@ -1025,10 +1266,42 @@
         "testing": "Test in corso...",
         "testSuccess": "Connessione riuscita",
         "testFailed": "Test non riuscito"
+      },
+      "jira": {
+        "title": "Integrazione Jira",
+        "description": "Connetti un’istanza Jira Server / Data Center per cercare issue ed esportarle nel progetto come documenti Markdown.",
+        "baseUrl": "Indirizzo del server",
+        "baseUrlHint": "La radice dell’istanza, es. https://jira.example.com. Le credenziali usano HTTP Basic, quindi un accesso solo SSO non funziona.",
+        "username": "Nome utente",
+        "password": "Password",
+        "showPassword": "Mostra password",
+        "hidePassword": "Nascondi password",
+        "testConnection": "Prova connessione",
+        "testRunning": "Verifica…",
+        "testOk": "Connesso a {{title}} (Jira {{version}})",
+        "passwordWarningTitle": "La password è memorizzata in chiaro",
+        "passwordWarning": "Come le altre chiavi API di questa applicazione, viene scritta senza cifratura nel file di stato dell’applicazione. Chi può leggere quel file può leggere la password.",
+        "acceptInvalidCerts": "Ignora la verifica del certificato TLS",
+        "acceptInvalidCertsHint": "Necessario per un’istanza intranet il cui certificato non è nell’archivio attendibile di sistema. Rende però la connessione intercettabile da un man in the middle: attivalo solo se il problema è davvero il certificato.",
+        "userAgent": "User-Agent",
+        "userAgentHint": "Alcuni gateway aziendali lasciano passare solo client noti. Mantieni il valore predefinito salvo rifiuto da parte di un proxy.",
+        "exportTitle": "Esportazione",
+        "exportDir": "Cartella di esportazione",
+        "exportDirHint": "I percorsi relativi sono risolti rispetto alla radice del progetto. Attualmente:",
+        "maxAttachmentMb": "Allegato massimo da scaricare (MB)",
+        "maxAttachmentMbHint": "Gli allegati più grandi sono comunque elencati nel documento con il loro nome, ma non vengono scaricati.",
+        "processFieldId": "Id del campo 「Task process description」",
+        "processFieldIdHint": "Il campo personalizzato mostrato come 任务过程描述. Lo trovi nella vista XML/JSON della issue; lascia vuoto se l’istanza non ha questo campo.",
+        "searchTitle": "Ricerca",
+        "scopeJql": "Ambito JQL",
+        "scopeJqlHint": "Aggiunto in AND a ogni ricerca. Vuoto significa tutta l’istanza; un ambito come project = AERDM o updated >= -365d rende utile la scansione delle issue recenti."
       }
     }
   },
   "preview": {
+    "closeTab": "Chiudi scheda",
+    "closeOtherTabs": "Chiudi le altre schede",
+    "closeAllTabs": "Chiudi tutte le schede",
     "selectFile": "Seleziona un file da visualizzare",
     "notAvailable": "Anteprima non disponibile per questo tipo di file",
     "viewAsText": "Visualizza come testo",
@@ -1072,6 +1345,9 @@
     "selectedCount": "{{count}} selezionate",
     "restartSelected": "Riavvia",
     "cancelSelected": "Annulla",
+    "removeSelected": "Rimuovi",
+    "removeSelectedTitle": "Rimuovi le attività annullate selezionate dalla coda",
+    "removeOnlyCancelled": "Possono essere rimosse solo le attività annullate (salta {{count}}).",
     "selectTask": "Seleziona {{name}}",
     "moveUp": "Sposta prima",
     "moveDown": "Sposta dopo",
@@ -1079,18 +1355,33 @@
     "fileSync": "Sincronizzazione file",
     "rescan": "Riesamina",
     "rescanTitle": "Cerca modifiche esterne nei file del progetto",
-    "changeKinds": { "created": "Creato", "modified": "Modificato", "deleted": "Eliminato" },
+    "changeKinds": {
+      "created": "Creato",
+      "modified": "Modificato",
+      "deleted": "Eliminato"
+    },
     "fileTypes": {
-      "entity": "Entità", "concept": "Concetto", "source": "Fonte", "query": "Query",
-      "synthesis": "Sintesi", "comparison": "Confronto", "finding": "Risultato",
-      "thesis": "Tesi", "methodology": "Metodologia", "overview": "Panoramica",
-      "index": "Indice", "log": "Log", "file": "File"
+      "entity": "Entità",
+      "concept": "Concetto",
+      "source": "Fonte",
+      "query": "Query",
+      "synthesis": "Sintesi",
+      "comparison": "Confronto",
+      "finding": "Risultato",
+      "thesis": "Tesi",
+      "methodology": "Metodologia",
+      "overview": "Panoramica",
+      "index": "Indice",
+      "log": "Log",
+      "file": "File"
     }
   },
   "fileTree": {
     "noProject": "Nessun progetto aperto",
     "openProjectFolder": "Apri la cartella del progetto",
-    "openProjectFolderFailed": "Impossibile aprire la cartella del progetto."
+    "openProjectFolderFailed": "Impossibile aprire la cartella del progetto.",
+    "revealInExplorer": "Apri nella gestione file",
+    "revealInExplorerFailed": "Impossibile aprire nella gestione file: {{error}}"
   },
   "graph": {
     "openProject": "Apri un progetto per vedere il grafo",
@@ -1169,5 +1460,71 @@
     "minutesAgo": "{{count}} min fa",
     "hoursAgo": "{{count}} h fa",
     "daysAgo": "{{count}} g fa"
+  },
+  "jira": {
+    "search": {
+      "submit": "Cerca",
+      "limit": "{{count}} risultati",
+      "limitHint": "Numero massimo di issue per ricerca",
+      "dimTitle": "Titolo",
+      "dimKeyword": "Parola chiave",
+      "dimIssueKey": "Chiave issue",
+      "dimsHint": "Scegli dove cercare: titolo, testo completo o chiave issue (più chiavi separate da virgole). Le modifiche rilanciano subito la ricerca.",
+      "searching": "Ricerca…",
+      "empty": "Digita una parola chiave e cerca, oppure premi semplicemente Cerca per sfogliare le issue aggiornate di recente.",
+      "noMatch": "Nessuna issue corrisponde al filtro attuale.",
+      "found": "{{count}} issue corrispondenti",
+      "swept": "Sono state scansionate anche le {{count}} issue aggiornate più di recente",
+      "limitReached": "limite di scansione raggiunto ({{count}})",
+      "loadMore": "Scansiona issue più vecchie",
+      "unconfigured": "Jira non è ancora configurato. Inserisci indirizzo del server, nome utente e password in Impostazioni → Jira."
+    },
+    "error": {
+      "title": "La richiesta a Jira non è riuscita",
+      "config": "Jira non è configurato",
+      "auth": "Autenticazione non riuscita: controlla nome utente e password.",
+      "notFound": "Issue non trovata.",
+      "network": "Impossibile raggiungere Jira."
+    },
+    "export": {
+      "export": "Esporta",
+      "exporting": "Esportazione…",
+      "exportingAttachments": "allegati {{completed}}/{{total}}",
+      "reExport": "Esporta di nuovo",
+      "retry": "Riprova",
+      "done": "Esportato in {{path}}",
+      "overwriteMessage": "{{path}} esiste già. Sostituirlo?",
+      "overwriteConfirm": "Sostituisci"
+    },
+    "exported": {
+      "loading": "Caricamento…",
+      "empty": "Nessuna issue è stata ancora esportata.",
+      "open": "Apri",
+      "reveal": "Mostra nella cartella",
+      "reExport": "Esporta di nuovo",
+      "history": "{{count}} esportazioni precedenti di questa issue sono ancora su disco",
+      "openFailed": "Impossibile aprire il file esportato: {{error}}"
+    },
+    "searchPlaceholder": "Cerca issue per titolo o etichetta…",
+    "filter": {
+      "project": "Progetto",
+      "issuetype": "Tipo",
+      "status": "Stato",
+      "assignee": "Assegnatario",
+      "reporter": "Autore",
+      "all": "Tutti",
+      "searchPlaceholder": "Digita per filtrare, es. Wang",
+      "loading": "Caricamento opzioni filtro…",
+      "unassigned": "Non assegnato",
+      "clear": "Cancella filtri"
+    },
+    "matchCase": "Maiuscole/minuscole",
+    "matchCaseHint": "Corrispondenza sensibile alle maiuscole. Filtra i risultati già ottenuti, senza inviare nuove richieste.",
+    "mode": {
+      "search": "Cerca",
+      "exported": "Esportati"
+    },
+    "refresh": "Aggiorna",
+    "openJira": "Apri in Jira"
   }
 }

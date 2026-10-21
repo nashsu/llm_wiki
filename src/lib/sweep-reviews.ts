@@ -50,7 +50,10 @@ function flattenMdFiles(nodes: FileNode[]): FileNode[] {
 }
 
 /** Build an index of wiki pages: id (filename without .md) + title → normalized */
-export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
+export async function buildWikiIndex(
+  projectPath: string,
+  signal?: AbortSignal,
+): Promise<WikiIndex> {
   const pp = normalizePath(projectPath)
   const byId = new Set<string>()
   const byTitle = new Set<string>()
@@ -58,9 +61,11 @@ export async function buildWikiIndex(projectPath: string): Promise<WikiIndex> {
 
   try {
     const tree = await listDirectory(`${pp}/wiki`)
+    if (signal?.aborted) return { byId, byTitle, pages }
     const files = flattenMdFiles(tree)
 
     for (const file of files) {
+      if (signal?.aborted) return { byId, byTitle, pages }
       const id = file.name.replace(/\.md$/, "").toLowerCase()
       byId.add(id)
 
@@ -288,23 +293,30 @@ async function judgeBatch(
  * - Caps at MAX_JUDGE_BATCHES to avoid unbounded LLM calls per drain.
  * - Breaks early if a batch resolves nothing (likely nothing else will either).
  * - Stops immediately on abort.
+ * - Reports per-batch progress via `onProgress` so a multi-batch judgment
+ *   (each LLM call can take many seconds) doesn't look frozen.
  */
 async function llmJudgeReviews(
   pending: ReviewItem[],
   index: WikiIndex,
   signal?: AbortSignal,
+  onProgress?: (detail: string) => void,
 ): Promise<Set<string>> {
   const resolved = new Set<string>()
   if (pending.length === 0) return resolved
 
   const remaining = [...pending]
+  const totalBatches = Math.min(Math.ceil(pending.length / JUDGE_BATCH_SIZE), MAX_JUDGE_BATCHES)
   let batches = 0
 
   while (remaining.length > 0 && batches < MAX_JUDGE_BATCHES) {
     if (signal?.aborted) break
     const batch = remaining.splice(0, JUDGE_BATCH_SIZE)
-    const batchResolved = await judgeBatch(batch, index, signal)
     batches++
+    if (totalBatches > 1) {
+      onProgress?.(`Judging reviews (batch ${batches}/${totalBatches})…`)
+    }
+    const batchResolved = await judgeBatch(batch, index, signal)
 
     if (batchResolved.size === 0) {
       // Nothing resolved in this batch — further batches likely same result.
@@ -351,11 +363,35 @@ export async function sweepResolvedReviews(
 
   if (pending.length === 0) return 0
 
-  const index = await buildWikiIndex(projectPath)
+  const activity = useActivityStore.getState()
+  // Surface a running indicator from the very start. Without this, a slow
+  // wiki index build or rule pass shows nothing while it works, and the
+  // toolbar's "Analyzing…" button looks frozen with no progress text.
+  const activityId = activity.addItem({
+    type: "query",
+    title: "Review cleanup",
+    status: "running",
+    detail: `Scanning ${pending.length} pending review${pending.length > 1 ? "s" : ""}…`,
+    filesWritten: [],
+  })
+
+  // Every bail path (abort or project switch) must flip the running item
+  // so the toolbar stops showing a live sweep.
+  const bail = (resolvedSoFar: number): number => {
+    activity.updateItem(activityId, {
+      status: "error",
+      detail: "Review cleanup cancelled",
+    })
+    return resolvedSoFar
+  }
+  const stillActive = (): boolean =>
+    !signal?.aborted && matchesCurrentProject(projectPath)
+
+  const index = await buildWikiIndex(projectPath, signal)
 
   // Re-check after async I/O: user may have switched projects while we
   // were reading the wiki directory.
-  if (signal?.aborted || !matchesCurrentProject(projectPath)) return 0
+  if (!stillActive()) return bail(0)
 
   let ruleResolved = 0
   const stillPending: ReviewItem[] = []
@@ -364,7 +400,7 @@ export async function sweepResolvedReviews(
   for (const item of pending) {
     // Bail mid-loop on project switch / abort — applying rules to new
     // project's reviews with old project's wiki index would corrupt state.
-    if (signal?.aborted || !matchesCurrentProject(projectPath)) return ruleResolved
+    if (!stillActive()) return bail(ruleResolved)
 
     let resolvedByRule = false
 
@@ -399,25 +435,19 @@ export async function sweepResolvedReviews(
 
   // Stage 2: LLM semantic judgment on what's left
   let llmResolved = 0
-  const activity = useActivityStore.getState()
-  let activityId: string | null = null
 
-  if (stillPending.length > 0 && !signal?.aborted && matchesCurrentProject(projectPath)) {
-    // Surface a running indicator so a multi-second LLM judgment doesn't
-    // feel like the app froze.
-    activityId = activity.addItem({
-      type: "query",
-      title: "Review cleanup",
-      status: "running",
+  if (stillPending.length > 0 && stillActive()) {
+    activity.updateItem(activityId, {
       detail: `Judging ${stillPending.length} pending review${stillPending.length > 1 ? "s" : ""}…`,
-      filesWritten: [],
     })
 
     try {
-      const resolvedIds = await llmJudgeReviews(stillPending, index, signal)
+      const resolvedIds = await llmJudgeReviews(stillPending, index, signal, (detail) => {
+        activity.updateItem(activityId, { detail })
+      })
       // Final guard: do not write results if the user switched projects
       // or aborted between the LLM call starting and finishing.
-      if (!signal?.aborted && matchesCurrentProject(projectPath)) {
+      if (stillActive()) {
         for (const id of resolvedIds) {
           store.resolveItem(id, "llm-judged")
           llmResolved++
@@ -428,7 +458,7 @@ export async function sweepResolvedReviews(
         status: "error",
         detail: `Review cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
       })
-      activityId = null
+      return ruleResolved + llmResolved
     }
   }
 
@@ -440,21 +470,10 @@ export async function sweepResolvedReviews(
     ? `Auto-resolved ${total} stale review item${total > 1 ? "s" : ""} (${parts.join(", ")})`
     : "No stale review items to clean up"
 
-  if (activityId !== null) {
-    activity.updateItem(activityId, {
-      status: signal?.aborted ? "error" : "done",
-      detail: signal?.aborted ? "Review cleanup cancelled" : detail,
-    })
-  } else if (total > 0) {
-    // Rule-only path: no in-progress indicator was shown, add a done item.
-    activity.addItem({
-      type: "query",
-      title: "Review cleanup",
-      status: "done",
-      detail,
-      filesWritten: [],
-    })
-  }
+  activity.updateItem(activityId, {
+    status: stillActive() ? "done" : "error",
+    detail: stillActive() ? detail : "Review cleanup cancelled",
+  })
 
   if (total > 0) console.log(`[Sweep Reviews] ${detail}`)
 

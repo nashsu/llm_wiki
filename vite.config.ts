@@ -48,7 +48,10 @@ export default defineConfig(async () => ({
     environment: "node",
     // Loads .env.test.local into process.env for real-LLM tests.
     // The loader itself is a no-op if the file is absent, so this is
-    // safe to keep on for every test run.
+    // safe to keep on every test run.
     setupFiles: ["./src/test-helpers/load-test-env.ts"],
+    // git worktree 检出目录里是整份源码副本，其测试会解析到根项目的
+    // 别名并跑旧断言；从根项目跑测试时排除，各 worktree 自己跑自己的。
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/worktrees/**"],
   },
 }))

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { FileNode } from "@/types/wiki"
-import { filterSourceTreeByQuery, summarizeImportOutcome } from "./sources-view"
+import {
+  filterSourceTreeByIngestStatus,
+  filterSourceTreeByQuery,
+  summarizeImportOutcome,
+} from "./sources-view"
 
 const TREE: FileNode[] = [
   {
@@ -15,6 +19,51 @@ const TREE: FileNode[] = [
   { name: "notes.txt", path: "/project/raw/sources/notes.txt", is_dir: false },
 ]
 
+describe("filterSourceTreeByIngestStatus", () => {
+  const STATUSES = new Map<string, "ingested" | "not-ingested" | "processing">([
+    ["/project/raw/sources/Books/BookA.md", "ingested"],
+    ["/project/raw/sources/notes.txt", "ingested"],
+    ["/project/raw/sources/Books/三阶段治疗模型.pdf", "processing"],
+  ])
+
+  it("returns every node for the 'all' mode", () => {
+    expect(filterSourceTreeByIngestStatus(TREE, STATUSES, "all")).toEqual(TREE)
+  })
+
+  it("keeps ingested files and their parent folders", () => {
+    const result = filterSourceTreeByIngestStatus(TREE, STATUSES, "ingested")
+    expect(result.map((node) => node.name)).toEqual(["Books", "notes.txt"])
+    expect(result[0].children?.map((node) => node.name)).toEqual(["BookA.md"])
+  })
+
+  it("keeps in-progress files ('processing' counts as not ingested)", () => {
+    const result = filterSourceTreeByIngestStatus(TREE, STATUSES, "not-ingested")
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe("Books")
+    expect(result[0].children?.map((node) => node.name)).toEqual(["三阶段治疗模型.pdf"])
+  })
+
+  it("drops folders whose descendants all miss the filter", () => {
+    const onlyBookIngested = new Map<string, "ingested" | "not-ingested" | "processing">([
+      ["/project/raw/sources/Books/BookA.md", "ingested"],
+    ])
+    const result = filterSourceTreeByIngestStatus(TREE, onlyBookIngested, "ingested")
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe("Books")
+    expect(result[0].children?.map((node) => node.name)).toEqual(["BookA.md"])
+  })
+
+  it("treats a missing status as not-ingested", () => {
+    const result = filterSourceTreeByIngestStatus(TREE, new Map(), "not-ingested")
+    expect(result).toEqual(TREE)
+    expect(result).not.toBe(TREE)
+  })
+
+  it("returns an empty tree when nothing is ingested", () => {
+    expect(filterSourceTreeByIngestStatus(TREE, new Map(), "ingested")).toEqual([])
+  })
+})
+
 describe("filterSourceTreeByQuery", () => {
   it("keeps parent folders while removing non-matching siblings", () => {
     const result = filterSourceTreeByQuery(TREE, "booka")
@@ -27,6 +76,15 @@ describe("filterSourceTreeByQuery", () => {
     expect(filterSourceTreeByQuery(TREE, "治疗模型")[0].children?.[0].name)
       .toBe("三阶段治疗模型.pdf")
     expect(filterSourceTreeByQuery(TREE, "BOOKS")).toEqual([TREE[0]])
+  })
+
+  it("matches a full Windows-style path with backslashes", () => {
+    // list_directory returns forward-slash paths, but a user pasting a
+    // Windows path types backslashes. The filter folds \ to / so both match.
+    const result = filterSourceTreeByQuery(TREE, "\\project\\raw\\sources\\Books\\BookA.md")
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe("Books")
+    expect(result[0].children?.map((node) => node.name)).toEqual(["BookA.md"])
   })
 
   it("returns a new top-level array for an empty query without mutating nodes", () => {

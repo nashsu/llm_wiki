@@ -34,7 +34,7 @@ import {
   stripDeletedWikilinks,
 } from "@/lib/wiki-cleanup"
 import { collectAllFilesIncludingDot } from "@/lib/sources-tree-delete"
-import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig } from "@/lib/source-watch-config"
+import { isPathAllowedBySourceWatch, normalizeSourceWatchConfig, sourceRelativeKey } from "@/lib/source-watch-config"
 import { isSensitiveConfigSourceFile } from "@/lib/source-filter"
 import { naturalCompare } from "@/lib/natural-sort"
 import type { SourceWatchConfig } from "@/stores/wiki-store"
@@ -255,6 +255,23 @@ export function folderContextForSourcePath(sourcePath: string, sourcesRoot = "ra
   return parts.join(" > ")
 }
 
+export type IngestBlockReason = "unsupported-type" | "sensitive-config" | "no-llm"
+
+/**
+ * Why a manual "ingest" click cannot proceed. Mirrors the filters inside
+ * `enqueueSourceIngest` so the Sources view can surface a real message
+ * instead of silently doing nothing. Returns null when ingest would run.
+ */
+export function getIngestBlockReason(
+  sourcePath: string,
+  llmConfig: LlmConfig,
+): IngestBlockReason | null {
+  if (!isIngestableSourcePath(sourcePath)) return "unsupported-type"
+  if (isSensitiveConfigSourceFile(sourcePath)) return "sensitive-config"
+  if (!hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))) return "no-llm"
+  return null
+}
+
 export async function enqueueSourceIngest(
   project: WikiProject,
   sourcePaths: string[],
@@ -266,11 +283,16 @@ export async function enqueueSourceIngest(
   // model is configured. Imported source files remain on disk and can be
   // queued after the user configures a provider.
   if (!hasUsableLlm(getTaskLlmConfig("ingest", llmConfig))) return []
+  const excludedPaths = normalizeSourceWatchConfig(useWikiStore.getState().sourceWatchConfig).excludedPaths
   const files = sourcePaths
-    .filter((sourcePath) =>
-      isIngestableSourcePath(sourcePath) &&
-      !isSensitiveConfigSourceFile(sourcePath)
-    )
+    .filter((sourcePath) => {
+      if (!isIngestableSourcePath(sourcePath)) return false
+      if (isSensitiveConfigSourceFile(sourcePath)) return false
+      // Respect per-path exclusions set in the Sources view, so a "禁止摄取"
+      // file cannot be manually re-ingested.
+      const key = sourceRelativeKey(sourcePath)
+      return !excludedPaths.some((ex) => key === ex || key.startsWith(`${ex}/`))
+    })
     .map((sourcePath) => ({
       sourcePath,
       folderContext: withRootContext(
@@ -283,6 +305,20 @@ export async function enqueueSourceIngest(
     ?? normalizeSourceWatchConfig(useWikiStore.getState().sourceWatchConfig).parsingConcurrency
   await preprocessSourceFiles(files.map((file) => file.sourcePath), parsingConcurrency)
   return enqueueBatch(project.id, files)
+}
+
+/** Mark sources as excluded from ingest and cascade-clean the wiki content
+ *  they generated, WITHOUT deleting the source files themselves. Reuses the
+ *  delete cascade with fileAlreadyDeleted: true (skips deleteFile) and a
+ *  "excluded from ingest" log reason. */
+export async function excludeSourceFromIngest(
+  projectPath: string,
+  sourcePaths: string[],
+): Promise<DeleteSourcesResult> {
+  return deleteSourceFiles(projectPath, sourcePaths, {
+    fileAlreadyDeleted: true,
+    logReason: "excluded from ingest",
+  })
 }
 
 export type SourceImportSkipReason =

@@ -27,6 +27,7 @@ import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { messageImageToDataUrl } from "@/lib/chat-image-utils"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { transformImageEmbeds } from "@/lib/wikilink-transform"
+import { linkifyCitedPaths } from "@/lib/citation-linker"
 import { findRawSourceForImage, imageUrlToAbsolute } from "@/lib/raw-source-resolver"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
@@ -180,12 +181,17 @@ function ChatMessageImpl({
           </div>
         )}
         {isAssistant && (
-          <CitedReferencesPanel
-            content={message.content}
-            savedReferences={message.references}
-            onOpenReferencePreview={onOpenReferencePreview}
-            onOpenContextDetails={onOpenContextDetails}
-          />
+          <>
+            {Array.isArray(message.references) && !message.references.some((r) => r.kind === "wiki") && (
+              <NoWikiMatchNotice />
+            )}
+            <CitedReferencesPanel
+              content={message.content}
+              savedReferences={message.references}
+              onOpenReferencePreview={onOpenReferencePreview}
+              onOpenContextDetails={onOpenContextDetails}
+            />
+          </>
         )}
         {isAssistant && message.userInputRequest && (
           <UserInputRequestPanel
@@ -1449,6 +1455,10 @@ function MarkdownContent({ content }: { content: string }) {
           rehypePlugins={[rehypeKatex]}
           components={{
             a: ({ href, children }) => {
+              if (href?.startsWith("cite:")) {
+                const index = parseInt(href.slice("cite:".length), 10)
+                return <CitationRef index={index} />
+              }
               if (href?.startsWith("wikilink:")) {
                 const pageName = href.slice("wikilink:".length)
                 return <WikiLink pageName={pageName}>{children}</WikiLink>
@@ -1629,6 +1639,15 @@ function processContent(text: string): string {
   // Fix malformed wikilinks like [[name] (missing closing bracket)
   result = result.replace(/\[\[([^\]]+)\](?!\])/g, "[[$1]]")
 
+  // Linkify plain-text source paths the model wrote (e.g. "来源：entities/usb")
+  // against the last query's cited pages, so they are clickable even when the
+  // model did not wrap them in [[wikilinks]]. Runs before the [[wikilink]]
+  // conversion below so it never rewrites an existing [x](...) link's URL.
+  result = linkifyCitedPaths(
+    result,
+    lastQueryPages.map((p) => p.path),
+  )
+
   // Convert [[wikilinks]] to markdown links
   result = result.replace(
     /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
@@ -1638,7 +1657,44 @@ function processContent(text: string): string {
     }
   )
 
+  // Convert citation markers [n] into clickable reference links. Only
+  // numbers inside the last query's reference range are converted, so an
+  // incidental "[1]" that is not a citation stays as plain text. The
+  // `(?!\()` guard skips numbers already followed by a link paren so a
+  // real inline link's text is never rewritten.
+  result = result.replace(
+    /\[(\d{1,2})\](?!\()/g,
+    (match, num: string) => {
+      const n = parseInt(num, 10)
+      if (n >= 1 && n <= lastQueryPages.length) return `[${n}](cite:${n})`
+      return match
+    }
+  )
+
   return result
+}
+
+/**
+ * Candidate absolute paths for a wiki page referenced by name. The LLM often
+ * cites sources with a path rather than a bare slug (e.g. `entities/usb` or
+ * `wiki/entities/usb.md`), so normalize away a `wiki/` prefix and `.md`
+ * extension, then probe the standard wiki subdirectories plus a literal
+ * wiki-relative path.
+ */
+function wikiPageCandidates(pp: string, ref: string): string[] {
+  const name = ref.trim().replace(/\.md$/i, "").replace(/^wiki\//, "")
+  if (name.includes("/")) {
+    return [`${pp}/wiki/${name}.md`, `${pp}/${name}.md`]
+  }
+  return [
+    `${pp}/wiki/entities/${name}.md`,
+    `${pp}/wiki/concepts/${name}.md`,
+    `${pp}/wiki/sources/${name}.md`,
+    `${pp}/wiki/queries/${name}.md`,
+    `${pp}/wiki/comparisons/${name}.md`,
+    `${pp}/wiki/synthesis/${name}.md`,
+    `${pp}/wiki/${name}.md`,
+  ]
 }
 
 function WikiLink({ pageName, children }: { pageName: string; children: React.ReactNode }) {
@@ -1650,15 +1706,7 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
   useEffect(() => {
     if (!project) return
     const pp = normalizePath(project.path)
-    const candidates = [
-      `${pp}/wiki/entities/${pageName}.md`,
-      `${pp}/wiki/concepts/${pageName}.md`,
-      `${pp}/wiki/sources/${pageName}.md`,
-      `${pp}/wiki/queries/${pageName}.md`,
-      `${pp}/wiki/comparisons/${pageName}.md`,
-      `${pp}/wiki/synthesis/${pageName}.md`,
-      `${pp}/wiki/${pageName}.md`,
-    ]
+    const candidates = wikiPageCandidates(pp, pageName)
 
     let cancelled = false
     async function check() {
@@ -1708,5 +1756,98 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
       <FileText className="inline h-3 w-3" />
       {children}
     </button>
+  )
+}
+
+/**
+ * Clickable inline citation superscript rendered from `[n]` markers the LLM
+ * emits in the answer body. Resolves against the same module-level
+ * `lastQueryPages` mapping the references panel uses, so an inline [n] and
+ * the panel's nth entry open the same page.
+ */
+function CitationRef({ index }: { index: number }) {
+  const project = useWikiStore((s) => s.project)
+  const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
+  const page = index >= 1 && index <= lastQueryPages.length ? lastQueryPages[index - 1] : null
+  const [exists, setExists] = useState<boolean | null>(null)
+  const resolvedPath = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!project || !page) {
+      setExists(null)
+      return
+    }
+    const pp = normalizePath(project.path)
+    const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
+    const candidates = [
+      projectAbsolutePath(pp, page.path),
+      `${pp}/wiki/entities/${id}.md`,
+      `${pp}/wiki/concepts/${id}.md`,
+      `${pp}/wiki/sources/${id}.md`,
+      `${pp}/wiki/queries/${id}.md`,
+      `${pp}/wiki/synthesis/${id}.md`,
+      `${pp}/wiki/comparisons/${id}.md`,
+      `${pp}/wiki/${id}.md`,
+    ]
+    let cancelled = false
+    async function check() {
+      for (const path of candidates) {
+        try {
+          await readFile(path)
+          if (!cancelled) {
+            resolvedPath.current = path
+            setExists(true)
+          }
+          return
+        } catch {
+          // try next
+        }
+      }
+      if (!cancelled) setExists(false)
+    }
+    check()
+    return () => {
+      cancelled = true
+    }
+  }, [project, page])
+
+  const handleClick = useCallback(async () => {
+    if (!resolvedPath.current) return
+    try {
+      const content = await readFile(resolvedPath.current)
+      openFileInPreview(resolvedPath.current, content)
+    } catch {
+      // ignore
+    }
+  }, [openFileInPreview])
+
+  if (!page) return <sup>[{index}]</sup>
+
+  return (
+    <sup>
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={exists === false}
+        className={`inline-flex items-center rounded px-0.5 leading-none text-[0.75em] transition-colors ${
+          exists === false
+            ? "cursor-default text-muted-foreground/60"
+            : "cursor-pointer text-primary underline decoration-primary/40 hover:bg-primary/10 hover:decoration-primary"
+        }`}
+        title={page.title}
+      >
+        [{index}]
+      </button>
+    </sup>
+  )
+}
+
+/** Honesty notice shown when the retrieval found no wiki page to ground the answer on. */
+function NoWikiMatchNotice() {
+  const { t } = useTranslation()
+  return (
+    <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300/90">
+      {t("chat.noWikiMatch")}
+    </div>
   )
 }

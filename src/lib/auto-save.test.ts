@@ -143,6 +143,7 @@ describe("auto-save project-switch guard", () => {
     expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
       useWebSearch: false,
       useAnyTxtSearch: false,
+      notifyFeishu: false,
       agentMode: "standard",
       retrievalMode: "standard",
       selectedSkills: [],
@@ -167,6 +168,7 @@ describe("auto-save project-switch guard", () => {
     expect(saveChatPreferences).toHaveBeenCalledWith("/proj/A", {
       useWebSearch: true,
       useAnyTxtSearch: true,
+      notifyFeishu: false,
       agentMode: "local_first",
       retrievalMode: "smart",
       selectedSkills: ["reviewer"],

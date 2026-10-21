@@ -5,6 +5,22 @@ import sourceWatchDefaults from "@/lib/source-watch-defaults.json"
 
 export const DEFAULT_SOURCE_WATCH_CONFIG: SourceWatchConfig = sourceWatchDefaults
 
+/** Normalize any path (absolute or project-relative) to a stable key relative
+ *  to the project's raw/sources root, so exclusions match regardless of the
+ *  path form a call site passes in. */
+export function sourceRelativeKey(path: string): string {
+  const normalized = normalizePath(path).replace(/\/+$/, "")
+  const marker = "/raw/sources/"
+  const idx = normalized.indexOf(marker)
+  if (idx >= 0) return normalized.slice(idx + marker.length).replace(/^\/+/, "")
+  if (normalized.startsWith("raw/sources/")) return normalized.slice("raw/sources/".length)
+  return normalized.replace(/^\/+/, "")
+}
+
+function normalizeExcludedPaths(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => sourceRelativeKey(value)).filter(Boolean))]
+}
+
 export const SOURCE_WATCH_FILE_TYPE_GROUPS = [
   {
     id: "documents",
@@ -80,6 +96,7 @@ export function normalizeSourceWatchConfig(config?: Partial<SourceWatchConfig> |
     excludeExtensions: normalizeExtensions(config?.excludeExtensions ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeExtensions),
     excludeDirs: normalizeList(config?.excludeDirs ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeDirs),
     excludeGlobs: normalizeList(config?.excludeGlobs ?? DEFAULT_SOURCE_WATCH_CONFIG.excludeGlobs),
+    excludedPaths: normalizeExcludedPaths(config?.excludedPaths ?? DEFAULT_SOURCE_WATCH_CONFIG.excludedPaths),
     maxFileSizeMb: Math.max(1, Math.min(4096, config?.maxFileSizeMb ?? DEFAULT_SOURCE_WATCH_CONFIG.maxFileSizeMb)),
   }
 }
@@ -121,6 +138,8 @@ export function isPathAllowedBySourceWatch(path: string, config: SourceWatchConf
   const parts = normalized.split("/").filter(Boolean)
   if (cfg.excludeDirs.some((dir) => pathMatchesExcludedDir(normalized, dir))) return false
   if (cfg.excludeGlobs.some((pattern) => matchesGlob(normalized, pattern))) return false
+  const key = sourceRelativeKey(normalized)
+  if (cfg.excludedPaths.some((ex) => key === ex || key.startsWith(`${ex}/`))) return false
   const name = parts[parts.length - 1] ?? ""
   if (!name || name.startsWith(".")) return false
   const ext = getSourceWatchExtension(normalized)

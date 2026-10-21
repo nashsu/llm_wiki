@@ -1,8 +1,11 @@
 import { readFile, listDirectory } from "@/commands/fs"
 import { streamChat } from "@/lib/llm-client"
 import type { LlmConfig } from "@/stores/wiki-store"
-import type { FileNode } from "@/types/wiki"
+import type { FileNode, WikiProject } from "@/types/wiki"
 import { useActivityStore } from "@/stores/activity-store"
+import { useLintStore } from "@/stores/lint-store"
+import { useWikiStore } from "@/stores/wiki-store"
+import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import { buildLanguageDirective } from "@/lib/output-language"
 import { normalizeReviewTitle } from "@/lib/review-utils"
@@ -353,4 +356,47 @@ export async function runSemanticLint(
   })
 
   return results
+}
+
+// ══ Shared lint runner (manual button + scheduled runner) ═══════════════════
+
+let lintRunInFlight: symbol | null = null
+
+/**
+ * Run structural lint (and semantic if the config enables it and an LLM is
+ * configured), replacing the lint store's items with the results. Used by both
+ * the "Run Lint" button and the scheduled runner so they share one execution
+ * path and cannot overlap. Returns null when skipped because a run was already
+ * in flight; otherwise the resulting findings (possibly empty).
+ */
+export async function runProjectLint(
+  project: WikiProject,
+  config: LintConfig,
+  opts: {
+    signal?: AbortSignal
+    onProgress?: (completed: number, total: number) => void
+  } = {},
+): Promise<LintResult[] | null> {
+  if (lintRunInFlight) return null
+  const pp = normalizePath(project.path)
+  const token = Symbol("lint-run")
+  lintRunInFlight = token
+  try {
+    const structural = await runStructuralLint(pp, {
+      signal: opts.signal,
+      config,
+      onProgress: opts.onProgress,
+    })
+    let all = structural
+    const llmConfig = useWikiStore.getState().llmConfig
+    if (config.includeSemantic && hasUsableLlm(llmConfig)) {
+      const semantic = await runSemanticLint(pp, llmConfig, opts.signal)
+      all = [...structural, ...semantic]
+    }
+    useLintStore.getState().clearItems()
+    useLintStore.getState().addItems(all)
+    return all
+  } finally {
+    if (lintRunInFlight === token) lintRunInFlight = null
+  }
 }

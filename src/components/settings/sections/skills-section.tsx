@@ -23,6 +23,7 @@ export function SkillsSection() {
   const project = useWikiStore((s) => s.project)
   const useWebSearch = useChatStore((s) => s.useWebSearch)
   const useAnyTxtSearch = useChatStore((s) => s.useAnyTxtSearch)
+  const notifyFeishu = useChatStore((s) => s.notifyFeishu)
   const agentMode = useChatStore((s) => s.agentMode)
   const retrievalMode = useChatStore((s) => s.retrievalMode)
   const selectedSkills = useChatStore((s) => s.selectedSkills)
@@ -57,12 +58,13 @@ export function SkillsSection() {
     await saveChatPreferences(project.path, {
       useWebSearch,
       useAnyTxtSearch,
+      notifyFeishu,
       agentMode,
       retrievalMode,
       selectedSkills: nextSelected,
       disabledSkills: nextDisabled,
     })
-  }, [agentMode, project?.path, retrievalMode, useAnyTxtSearch, useWebSearch])
+  }, [agentMode, notifyFeishu, project?.path, retrievalMode, useAnyTxtSearch, useWebSearch])
 
   const scan = useCallback(async () => {
     if (!project?.path) {

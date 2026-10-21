@@ -329,6 +329,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await saveChatPreferences(tmp.path, {
       useWebSearch: true,
       useAnyTxtSearch: false,
+      notifyFeishu: true,
       agentMode: "deep",
       retrievalMode: "smart",
       selectedSkills: ["reviewer", "illustrator"],
@@ -337,6 +338,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: true,
       useAnyTxtSearch: false,
+      notifyFeishu: true,
       agentMode: "deep",
       retrievalMode: "smart",
       selectedSkills: ["reviewer", "illustrator"],
@@ -352,6 +354,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await saveChatPreferences(tmp.path, {
       useWebSearch: false,
       useAnyTxtSearch: false,
+      notifyFeishu: false,
       agentMode: "standard",
       retrievalMode: "faithful",
       selectedSkills: [],
@@ -366,6 +369,7 @@ describe("chat persistence — round-trip (new format)", () => {
     await expect(loadChatPreferences(tmp.path)).resolves.toEqual({
       useWebSearch: false,
       useAnyTxtSearch: false,
+      notifyFeishu: false,
       agentMode: "standard",
       retrievalMode: "standard",
       selectedSkills: [],

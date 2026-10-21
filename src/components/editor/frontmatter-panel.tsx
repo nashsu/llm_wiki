@@ -26,6 +26,7 @@ import {
 import { useWikiStore } from "@/stores/wiki-store"
 import { normalizePath } from "@/lib/path-utils"
 import { useTranslation } from "react-i18next"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface FrontmatterPanelProps {
   data: Record<string, FrontmatterValue>
@@ -249,31 +250,42 @@ function SourceCard({
   externalUrl?: string
   onClick?: () => void
 }) {
+  const { t } = useTranslation()
   const isMissing = status === "missing"
   const Icon = status === "external" ? ArrowUpRight : iconForSource(name)
-  const title = status === "external"
-    ? `Open external source: ${externalUrl}`
+  const label = status === "external"
+    ? t("editor.frontmatter.sourceExternal", { url: externalUrl })
     : status === "local"
-      ? `Open ${name}`
-      : `Source not found in raw/sources/: ${name}`
+      ? t("editor.frontmatter.sourceLocal", { name })
+      : t("editor.frontmatter.sourceMissing", { name })
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-label={title}
-      className={`group flex min-w-0 max-w-[200px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${
-        isMissing
-          ? "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
-          : "border-border/60 bg-background hover:border-primary/40 hover:bg-primary/5 cursor-pointer"
-      }`}
-    >
-      <Icon className={`h-4 w-4 shrink-0 ${
-        isMissing ? "text-muted-foreground/60" : "text-foreground/70"
-      }`} />
-      <span className="truncate">{name}</span>
-      {isMissing && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />}
-    </button>
+    <TooltipProvider delay={300}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={onClick}
+              aria-label={label}
+              className={`group flex min-w-0 max-w-[200px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${
+                isMissing
+                  ? "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
+                  : "border-border/60 bg-background hover:border-primary/40 hover:bg-primary/5 cursor-pointer"
+              }`}
+            />
+          }
+        >
+          <Icon className={`h-4 w-4 shrink-0 ${
+            isMissing ? "text-muted-foreground/60" : "text-foreground/70"
+          }`} />
+          <span className="truncate">{name}</span>
+          {isMissing && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />}
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-80 whitespace-normal leading-relaxed break-all">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -286,24 +298,39 @@ function RelatedChip({
   resolved: boolean
   onClick: () => void
 }) {
+  const { t } = useTranslation()
+  const label = resolved
+    ? t("editor.frontmatter.relatedOpen", { slug })
+    : t("editor.frontmatter.relatedMissing", { slug })
   return (
-    <button
-      type="button"
-      onClick={resolved ? onClick : undefined}
-      title={resolved ? `Open ${slug}` : `Related page not found: ${slug}`}
-      className={`group inline-flex max-w-[260px] items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-        resolved
-          ? "border-border/60 bg-background hover:border-primary/50 hover:bg-primary/10 cursor-pointer"
-          : "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
-      }`}
-    >
-      <span className="truncate">{slug}</span>
-      {resolved ? (
-        <ArrowUpRight className="h-3 w-3 shrink-0 opacity-60 group-hover:opacity-100" />
-      ) : (
-        <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />
-      )}
-    </button>
+    <TooltipProvider delay={300}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={resolved ? onClick : undefined}
+              aria-label={label}
+              className={`group inline-flex max-w-[260px] items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+                resolved
+                  ? "border-border/60 bg-background hover:border-primary/50 hover:bg-primary/10 cursor-pointer"
+                  : "border-dashed border-border/50 bg-muted/20 text-muted-foreground/70 cursor-default"
+              }`}
+            />
+          }
+        >
+          <span className="truncate">{slug}</span>
+          {resolved ? (
+            <ArrowUpRight className="h-3 w-3 shrink-0 opacity-60 group-hover:opacity-100" />
+          ) : (
+            <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500/70" />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-80 whitespace-normal leading-relaxed break-all">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

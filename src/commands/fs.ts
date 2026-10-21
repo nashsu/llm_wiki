@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { revealItemInDir } from "@tauri-apps/plugin-opener"
 import type { FileNode, WikiProject } from "@/types/wiki"
 import { ensureProjectId, upsertProjectInfo } from "@/lib/project-identity"
 import { isAbsolutePath } from "@/lib/path-utils"
@@ -268,6 +269,11 @@ export async function openProjectFolder(path: string): Promise<void> {
 
 export async function openPathInProject(projectPath: string, targetPath: string): Promise<void> {
   return invoke<void>("open_path_in_project", { projectPath, targetPath })
+}
+
+/** Reveal a file/folder in the OS file manager (Explorer/Finder) and select it. */
+export async function revealInFileManager(path: string): Promise<void> {
+  await revealItemInDir(path)
 }
 
 export async function clipServerStatus(): Promise<string> {

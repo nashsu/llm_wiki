@@ -43,6 +43,12 @@ import {
   type FileHistoryStats,
 } from "@/commands/fs"
 import { addToRecentProjects } from "@/lib/project-store"
+import {
+  loadMaintenanceConfig,
+  saveMaintenanceConfig,
+  DEFAULT_MAINTENANCE_CONFIG,
+  type MaintenanceConfig,
+} from "@/lib/maintenance-config"
 
 interface GroupUiEntry {
   group: DuplicateGroup
@@ -62,7 +68,7 @@ function findTaskForGroup(
 }
 
 export function MaintenanceSection() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const appDialog = useAppDialog()
   const llmConfig = useWikiStore((s) => s.llmConfig)
   const project = useWikiStore((s) => s.project)
@@ -77,6 +83,24 @@ export function MaintenanceSection() {
   const [historySettings, setHistorySettingsState] = useState<FileHistorySettings | null>(null)
   const [historyBusy, setHistoryBusy] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [maintenanceConfig, setMaintenanceConfig] = useState<MaintenanceConfig>(DEFAULT_MAINTENANCE_CONFIG)
+  const [savingIndexSchedule, setSavingIndexSchedule] = useState(false)
+
+  const lastIndexRunText = useMemo(() => {
+    if (!maintenanceConfig.lastScheduledIndexRun) return null
+    const rtf = new Intl.RelativeTimeFormat(i18n.language ?? "en", { numeric: "auto" })
+    const diff = maintenanceConfig.lastScheduledIndexRun - Date.now()
+    const abs = Math.abs(diff)
+    const units = [
+      ["day", 86_400_000],
+      ["hour", 3_600_000],
+      ["minute", 60_000],
+    ] as const
+    for (const [unit, ms] of units) {
+      if (abs >= ms) return rtf.format(Math.round(diff / ms), unit)
+    }
+    return rtf.format(Math.round(diff / 1000), "second")
+  }, [maintenanceConfig.lastScheduledIndexRun, i18n.language])
 
   const refreshHistoryStats = useCallback(async () => {
     if (!project) {
@@ -101,6 +125,35 @@ export function MaintenanceSection() {
   useEffect(() => {
     void refreshHistoryStats()
   }, [refreshHistoryStats])
+
+  useEffect(() => {
+    let active = true
+    setMaintenanceConfig(DEFAULT_MAINTENANCE_CONFIG)
+    if (!project) {
+      return () => { active = false }
+    }
+    const projectPath = project.path
+    void loadMaintenanceConfig(projectPath).then((config) => {
+      if (!active || useWikiStore.getState().project?.path !== projectPath) return
+      setMaintenanceConfig(config)
+    })
+    return () => { active = false }
+  }, [project])
+
+  const handleSaveIndexSchedule = useCallback(async () => {
+    if (!project || savingIndexSchedule) return
+    const projectPath = project.path
+    setSavingIndexSchedule(true)
+    try {
+      const saved = await saveMaintenanceConfig(projectPath, maintenanceConfig)
+      if (useWikiStore.getState().project?.path !== projectPath) return
+      setMaintenanceConfig(saved)
+    } catch (error) {
+      console.warn("[Maintenance] failed to save index schedule:", error)
+    } finally {
+      if (useWikiStore.getState().project?.path === projectPath) setSavingIndexSchedule(false)
+    }
+  }, [maintenanceConfig, project, savingIndexSchedule])
 
   useEffect(() => {
     let active = true
@@ -406,6 +459,47 @@ export function MaintenanceSection() {
           <Button variant="outline" onClick={() => void handleImportProject()} disabled={projectToolBusy}>{t("settings.sections.maintenance.projectData.import")}</Button>
         </div>
         {projectToolStatus && <p className="text-xs text-muted-foreground">{projectToolStatus}</p>}
+        <div className="space-y-2 border-t pt-3">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={maintenanceConfig.indexScheduleEnabled}
+              onChange={(e) => setMaintenanceConfig((c) => ({ ...c, indexScheduleEnabled: e.target.checked }))}
+            />
+            {t("settings.sections.maintenance.indexSchedule.enabled")}
+          </label>
+          {maintenanceConfig.indexScheduleEnabled && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{t("settings.sections.maintenance.indexSchedule.interval")}</span>
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                value={maintenanceConfig.indexScheduleIntervalMinutes}
+                onChange={(e) => {
+                  const value = Number(e.target.value)
+                  setMaintenanceConfig((c) => ({
+                    ...c,
+                    indexScheduleIntervalMinutes: Number.isFinite(value) && value > 0 ? value : 1,
+                  }))
+                }}
+                className="w-20 rounded border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+              />
+              <span>{t("settings.sections.maintenance.indexSchedule.minutes")}</span>
+            </label>
+          )}
+          {lastIndexRunText && (
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.maintenance.indexSchedule.lastRun")}: {lastIndexRunText}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">{t("settings.sections.maintenance.indexSchedule.hint")}</p>
+          <Button size="sm" onClick={handleSaveIndexSchedule} disabled={savingIndexSchedule}>
+            {savingIndexSchedule
+              ? t("settings.sections.maintenance.indexSchedule.saving")
+              : t("settings.sections.maintenance.indexSchedule.save")}
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">

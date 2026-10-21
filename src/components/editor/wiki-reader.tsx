@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -11,6 +11,7 @@ import { normalizePath } from "@/lib/path-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useTranslation } from "react-i18next"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 
 interface WikiReaderProps {
@@ -42,9 +43,16 @@ interface WikiReaderProps {
  * giving the user single-click navigation between pages.
  */
 export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: WikiReaderProps) {
+  const { t } = useTranslation()
   const project = useWikiStore((s) => s.project)
   const projectPathIndex = useWikiStore((s) => s.projectPathIndex)
   const openPathInPreview = useWikiStore((s) => s.openPathInPreview)
+  // 最近一次跳转失败的 wikilink（在链接后面显示红色小提示，几秒后自动消失）
+  const [brokenLinkSlug, setBrokenLinkSlug] = useState<string | null>(null)
+  const brokenLinkTimerRef = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (brokenLinkTimerRef.current !== null) window.clearTimeout(brokenLinkTimerRef.current)
+  }, [])
 
   // Image embeds (`![[…]]`) must be rewritten BEFORE the generic
   // wikilink pass, otherwise the embed target gets mangled into a
@@ -99,7 +107,14 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
       }
     })()
     const path = resolveRelatedSlug(projectPathIndex, slug, wikiRoot)
-    if (path) openPathInPreview(path)
+    if (path) {
+      openPathInPreview(path)
+    } else {
+      // 跳转失败：在链接后面显示红色小字提示，几秒后自动消失
+      setBrokenLinkSlug(slug)
+      if (brokenLinkTimerRef.current !== null) window.clearTimeout(brokenLinkTimerRef.current)
+      brokenLinkTimerRef.current = window.setTimeout(() => setBrokenLinkSlug(null), 4000)
+    }
   }
 
   return (
@@ -119,19 +134,36 @@ export function WikiReader({ body, sourceBody, sourceOffset = 0, filePath }: Wik
           a: ({ href, children, ...props }) => {
             const h = typeof href === "string" ? href : ""
             const isWikilink = h.startsWith("#")
+            // 解码后的目标名，与当前失败提示匹配则在该链接后显示红色小字
+            let slugForLink: string | null = null
+            if (isWikilink && brokenLinkSlug) {
+              try {
+                slugForLink = decodeURIComponent(h.slice(1))
+              } catch {
+                slugForLink = h.slice(1)
+              }
+            }
+            const showBrokenHint = slugForLink !== null && slugForLink === brokenLinkSlug
             return (
-              <a
-                href={h || undefined}
-                onClick={(e) => isWikilink && handleAnchorClick(e, h)}
-                className={
-                  isWikilink
-                    ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
-                    : "text-primary underline underline-offset-2"
-                }
-                {...props}
-              >
-                {children}
-              </a>
+              <>
+                <a
+                  href={h || undefined}
+                  onClick={(e) => isWikilink && handleAnchorClick(e, h)}
+                  className={
+                    isWikilink
+                      ? "cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary"
+                      : "text-primary underline underline-offset-2"
+                  }
+                  {...props}
+                >
+                  {children}
+                </a>
+                {showBrokenHint && (
+                  <span className="ml-1 align-middle text-[11px] text-destructive">
+                    {t("editor.reader.linkNotFound", { target: slugForLink })}
+                  </span>
+                )}
+              </>
             )
           },
           h1: ({ node, children, ...props }) => (
