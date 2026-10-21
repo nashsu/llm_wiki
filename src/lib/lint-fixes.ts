@@ -2,6 +2,7 @@ import { createDirectory, fileExists, writeFile } from "@/commands/fs"
 import { getFileName, normalizePath } from "@/lib/path-utils"
 import { makeQuerySlug } from "@/lib/wiki-filename"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { loadProjectWikiSchemaRouting, type WikiSchemaRouting } from "@/lib/wiki-schema"
 
 export function lintLinkTarget(target: string): string {
   return normalizePath(target)
@@ -60,6 +61,36 @@ export function stubRelativePathFromBrokenTarget(brokenTarget: string): string {
   return `${rel}.md`
 }
 
+/**
+ * The `type` a stub should carry, given where it is being written.
+ *
+ * A stub keeps the directory of the link it replaces, but the type used
+ * to be hard-coded to `query`. That is only correct for `wiki/queries/`:
+ * everywhere else it hid the new page from the graph (`wiki-graph.ts`
+ * drops every `query` node) and made the next ingest reject the file,
+ * since `validateWikiPageRouting` insists a page under `wiki/concepts/`
+ * carries `type: concept`. The app was refusing content it wrote itself.
+ *
+ * The project's own `schema.md` wins over the built-in map because that
+ * is what routing actually validates against — and because the built-in
+ * map does not know custom directories, so it would answer `playbooks`
+ * where the schema declares `playbook`. With no schema to consult the
+ * built-in map is still better than `query`, and `query` remains the
+ * last resort for a path neither recognizes. (#733)
+ */
+export function inferStubType(
+  relativePath: string,
+  routing: WikiSchemaRouting | null,
+): string {
+  const dir = relativePath.replace(/\\/g, "/").split("/").slice(0, -1).join("/")
+  if (routing) {
+    for (const [type, typeDir] of Object.entries(routing.typeDirs)) {
+      if (typeDir.replace(/^wiki\//i, "") === dir) return type
+    }
+  }
+  return inferWikiTypeFromPath(`wiki/${relativePath}`) ?? "query"
+}
+
 function stubTitleFromBrokenTarget(brokenTarget: string): string {
   return getFileName(lintLinkTarget(brokenTarget))
     .replace(/[-_]+/g, " ")
@@ -80,10 +111,10 @@ export async function ensureBrokenLinkStub(
   await createDirectory(parent)
   const title = stubTitleFromBrokenTarget(brokenTarget)
   const date = new Date().toISOString().slice(0, 10)
-  const pageType = inferWikiTypeFromPath(`wiki/${relativePath}`) ?? "query"
+  const routing = await loadProjectWikiSchemaRouting(projectPath)
   const content = [
     "---",
-    `type: ${pageType}`,
+    `type: ${inferStubType(relativePath, routing)}`,
     `title: "${title.replace(/"/g, '\\"')}"`,
     `created: ${date}`,
     `updated: ${date}`,
