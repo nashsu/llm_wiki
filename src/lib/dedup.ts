@@ -211,12 +211,14 @@ Rules:
 export async function detectDuplicateGroups(
   summaries: EntitySummary[],
   llmCall: DedupLlmCall,
-  options: { signal?: AbortSignal; notDuplicates?: string[][] } = {},
+  options: { signal?: AbortSignal; notDuplicates?: string[][]; systemPrompt?: string } = {},
 ): Promise<DuplicateGroup[]> {
   if (summaries.length < 2) return []
 
   const userMessage = buildDetectorUserMessage(summaries)
-  const response = await llmCall(DETECTOR_SYSTEM_PROMPT, userMessage, options.signal)
+  // Callers can override the system prompt (e.g. the embedding lane uses a
+  // stricter "same entity, not merely related" prompt to cut false groups).
+  const response = await llmCall(options.systemPrompt ?? DETECTOR_SYSTEM_PROMPT, userMessage, options.signal)
   const parsed = parseDetectorResponse(response)
 
   const validSlugs = new Set(summaries.map((s) => s.slug))
