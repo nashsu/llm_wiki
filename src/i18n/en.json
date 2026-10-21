@@ -100,6 +100,10 @@
   "research": {
     "title": "Deep Research",
     "notConfigured": "Deep Research sources are not configured. Go to Settings → External Information Sources to configure Web Search or AnyTXT.",
+    "noWebProvider": "No Web Search provider is active. Activate a configured provider in Settings → External Information Sources.",
+    "providerMissingApiKey": "{{provider}} is selected, but its API key is missing. Configure it or activate another configured Web Search provider.",
+    "providerMissingUrl": "{{provider}} is selected, but its instance URL is missing. Configure it or activate another configured Web Search provider.",
+    "anyTxtNotConfigured": "AnyTXT is selected for Deep Research, but it is disabled or its endpoint is missing. Configure it in Settings → External Information Sources.",
     "activeBadge": "{{running}} active{{queued, plural, =0 {} other {, {{queued}} queued}}}",
     "inputPlaceholder": "Enter a research topic...",
     "emptyTitle": "No research tasks yet",
@@ -726,6 +730,7 @@
         "deactivate": "Deactivate",
         "configuredBadge": "Configured",
         "activeBadge": "Active",
+        "incompleteBadge": "Needs configuration",
         "savedBadge": "Saved",
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
@@ -746,7 +751,8 @@
         "firecrawlIpBlocked": "Firecrawl anonymous search is blocked for this IP. Choose another Web Search provider or try a different network.",
         "firecrawlNetworkError": "Could not reach Firecrawl Search. Check your network or choose another Web Search provider.",
         "firecrawlInvalidJson": "Firecrawl returned an invalid response. Try again later or choose another Web Search provider.",
-        "configureBeforeTesting": "Configure first"
+        "configureBeforeTesting": "Configure first",
+        "configureBeforeActivating": "Configure this provider before activating it."
       },
       "network": {
         "title": "Network",

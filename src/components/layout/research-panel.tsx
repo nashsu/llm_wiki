@@ -14,7 +14,7 @@ import { useWikiStore } from "@/stores/wiki-store"
 import { readFile } from "@/commands/fs"
 import { queueResearch, queueResearchBatch } from "@/lib/deep-research"
 import { normalizePath } from "@/lib/path-utils"
-import { hasConfiguredDeepResearchSources } from "@/lib/web-search"
+import { getDeepResearchConfigurationMessage } from "@/lib/research-source-feedback"
 import { isImeComposing } from "@/lib/keyboard-utils"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
@@ -40,8 +40,9 @@ export function ResearchPanel() {
   async function handleStartResearch() {
     const topic = inputValue.trim()
     if (!topic || !project) return
-    if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
-      await appDialog.alert({ message: t("research.notConfigured") })
+    const configurationMessage = getDeepResearchConfigurationMessage(searchApiConfig, t)
+    if (configurationMessage) {
+      await appDialog.alert({ message: configurationMessage })
       return
     }
     queueResearch(normalizePath(project.path), topic, llmConfig, searchApiConfig)
@@ -51,8 +52,9 @@ export function ResearchPanel() {
   async function handleRetryResearch(task: ResearchTask) {
     if (!project) return
     if (hasActiveResearchRerun(useResearchStore.getState().tasks, task.id)) return
-    if (!hasConfiguredDeepResearchSources(searchApiConfig)) {
-      await appDialog.alert({ message: t("research.notConfigured") })
+    const configurationMessage = getDeepResearchConfigurationMessage(searchApiConfig, t)
+    if (configurationMessage) {
+      await appDialog.alert({ message: configurationMessage })
       return
     }
     queueResearchBatch(

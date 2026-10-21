@@ -100,6 +100,10 @@
   "research": {
     "title": "Deep Research",
     "notConfigured": "Le fonti per la Deep Research non sono configurate. Vai in Impostazioni → Fonti di informazione esterne per configurare la ricerca web o AnyTXT.",
+    "noWebProvider": "Nessun provider di ricerca web è attivo. Attiva un provider configurato in Impostazioni → Fonti di informazione esterne.",
+    "providerMissingApiKey": "{{provider}} è selezionato, ma manca la chiave API. Configuralo o attiva un altro provider di ricerca web già configurato.",
+    "providerMissingUrl": "{{provider}} è selezionato, ma manca l'URL dell'istanza. Configuralo o attiva un altro provider di ricerca web già configurato.",
+    "anyTxtNotConfigured": "AnyTXT è selezionato per la Deep Research, ma è disattivato o manca l'endpoint. Configuralo in Impostazioni → Fonti di informazione esterne.",
     "activeBadge": "{{running}} attive{{queued, plural, =0 {} other {, {{queued}} in coda}}}",
     "inputPlaceholder": "Inserisci un argomento di ricerca...",
     "emptyTitle": "Ancora nessuna ricerca",
@@ -726,6 +730,7 @@
         "deactivate": "Disattiva",
         "configuredBadge": "Configurato",
         "activeBadge": "Attivo",
+        "incompleteBadge": "Configurazione incompleta",
         "savedBadge": "Salvato",
         "instanceUrl": "URL dell'istanza",
         "ollamaHint": "Usa l'API ufficiale Ollama Web Search (`https://ollama.com/api/web_search`). È necessaria una chiave API Ollama.",
@@ -746,7 +751,8 @@
         "firecrawlIpBlocked": "La ricerca anonima di Firecrawl è bloccata per questo IP. Scegli un altro provider di ricerca web o prova con un'altra rete.",
         "firecrawlNetworkError": "Impossibile raggiungere Firecrawl Search. Controlla la rete o scegli un altro provider di ricerca web.",
         "firecrawlInvalidJson": "Firecrawl ha restituito una risposta non valida. Riprova più tardi o scegli un altro provider di ricerca web.",
-        "configureBeforeTesting": "Configura prima"
+        "configureBeforeTesting": "Configura prima",
+        "configureBeforeActivating": "Configura questo provider prima di attivarlo."
       },
       "network": {
         "title": "Rete",

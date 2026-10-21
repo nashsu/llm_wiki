@@ -112,12 +112,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Candidate builds triggered with workflow_dispatch are intentionally
+          # unsigned. They are used to prove that a branch compiles and bundles,
+          # and should not fail because release-only signing credentials are
+          # unavailable or being rotated. Tag builds keep the existing signed /
+          # notarized release path.
+          APPLE_CERTIFICATE: ${{ github.event_name == 'push' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ github.event_name == 'push' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ github.event_name == 'push' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ github.event_name == 'push' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ github.event_name == 'push' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}
         with:
           # Tag-triggered runs publish a real GitHub Release.
           # Manual (workflow_dispatch) runs leave tagName/releaseName
