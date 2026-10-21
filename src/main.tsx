@@ -5,6 +5,7 @@ import "./index.css";
 import "@/i18n";
 import { loadAndApplyTheme, watchSystemTheme } from "@/lib/theme";
 import { AppDialogHost } from "@/components/app-dialog-host";
+import { refreshCopilotSession } from "@/lib/copilot-session";
 
 function applyPlatformClass() {
   const isTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
@@ -19,6 +20,8 @@ async function initApp() {
     applyPlatformClass();
     await loadAndApplyTheme();
     watchSystemTheme();
+    // Discover process auth only; never start a device flow at launch.
+    if ("__TAURI_INTERNALS__" in window) void refreshCopilotSession();
 
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>

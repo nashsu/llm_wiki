@@ -3,6 +3,7 @@ import { autoIngest } from "./ingest"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
+import { useCopilotSession } from "./copilot-session"
 import { getTaskLlmConfig } from "@/lib/llm-task-routing"
 import { IngestCommitCoordinator } from "@/lib/ingest-commit-coordinator"
 import { clampUserConcurrency } from "@/lib/concurrency-limits"
@@ -797,6 +798,13 @@ export function resumeProcessing(): void {
 }
 
 /** Whether queue processing is currently paused by the user. */
+// Auth is session-scoped, so settings persistence cannot notify this queue.
+// On sign-out stop active Copilot work as well as blocking new reservations.
+useCopilotSession.subscribe((state, previous) => {
+  if (previous.authenticated && !state.authenticated && getTaskLlmConfig("ingest").provider === "copilot") pauseProcessing()
+})
+
+/** Whether queue processing is currently paused by the user or auth loss. */
 export function isQueuePaused(): boolean {
   return paused
 }

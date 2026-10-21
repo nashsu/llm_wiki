@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label"
 import { useWikiStore, type LlmConfig, type ProviderOverride, type ReasoningConfig, type ReasoningMode } from "@/stores/wiki-store"
 import { availableLlmPresets, findLlmPreset, type LlmPreset } from "../llm-presets"
 import { ContextSizeSelector } from "../context-size-selector"
+import { CopilotAuth, CopilotModelSelect } from "../copilot-auth"
+import { useCopilotSession } from "@/lib/copilot-session"
 import { disabledLlmConfig, resolveConfig } from "../preset-resolver"
 import { normalizeEndpoint } from "@/lib/endpoint-normalizer"
 import { AZURE_OPENAI_API_VERSION } from "@/lib/azure-openai"
@@ -102,6 +104,11 @@ export function LlmProviderSection() {
   function updateOverride(id: string, patch: ProviderOverride) {
     const currentConfigs = useWikiStore.getState().providerConfigs
     const merged: ProviderOverride = { ...(currentConfigs[id] ?? {}), ...patch }
+    if (id === "github-copilot") {
+      delete merged.apiKey
+      delete merged.customHeaders
+      delete merged.baseUrl
+    }
     const next = { ...currentConfigs, [id]: merged }
     setProviderConfigs(next)
     persist(next, activePresetId).catch(() => {})
@@ -238,15 +245,18 @@ export function LlmProviderSection() {
                 presets={presets}
               />
               <div className="space-y-1.5">
-                <Label htmlFor="project-llm-model">{t("settings.sections.llm.projectOverride.model")}</Label>
-                <Input
+                {projectLlmOverride.presetId !== "github-copilot" && <Label htmlFor="project-llm-model">{t("settings.sections.llm.projectOverride.model")}</Label>}
+                {projectLlmOverride.presetId === "github-copilot" ? (
+                  <CopilotModelSelect value={projectLlmOverride.model} allowDefault
+                    onChange={(model) => void updateProjectOverride({ model }).catch(console.error)} />
+                ) : <Input
                   id="project-llm-model"
                   value={projectLlmOverride.model}
                   placeholder={t("settings.sections.llm.projectOverride.modelPlaceholder")}
                   onChange={(event) => void updateProjectOverride({ model: event.target.value }).catch((error) => {
                     console.error("Failed to save project model:", error)
                   })}
-                />
+                />}
               </div>
             </div>
           )}
@@ -402,6 +412,8 @@ function PresetRow({
   )
   const [extraBodyError, setExtraBodyError] = useState(false)
   const isLocalCliProvider = preset.provider === "claude-code" || preset.provider === "codex-cli"
+  const isCopilot = preset.provider === "copilot"
+  const copilotAuthenticated = useCopilotSession(s => s.authenticated)
   const [testState, setTestState] = useState<ProviderTestState>({ kind: "idle" })
   const hasConfig = !!apiKey || !!ov.baseUrl || !!ov.model || !!ov.azureApiVersion || !!ov.azureModelFamily
     || Object.keys(ov.customHeaders ?? {}).length > 0
@@ -413,7 +425,8 @@ function PresetRow({
   const needsApiKey =
     preset.provider !== "ollama" &&
     preset.provider !== "claude-code" &&
-    preset.provider !== "codex-cli"
+    preset.provider !== "codex-cli" &&
+    preset.provider !== "copilot"
 
   const resolvedConfig = useMemo(
     () => resolveConfig(preset, ov, useWikiStore.getState().globalLlmConfig),
@@ -715,7 +728,7 @@ function PresetRow({
             </div>
           )}
 
-          <div className="space-y-2">
+          {isCopilot ? <CopilotAuth model={model} onModelChange={model => onChange({ model })} /> : <div className="space-y-2">
             <Label>
               {preset.provider === "azure"
                 ? t("settings.sections.llm.deploymentName", "Deployment name")
@@ -727,7 +740,7 @@ function PresetRow({
               placeholder={preset.defaultModel ?? "e.g. gpt-4o"}
               onChange={(v) => onChange({ model: v })}
             />
-          </div>
+          </div>}
 
           <div className="space-y-2">
             <Label>{t("settings.sections.llm.contextWindow")}</Label>
@@ -737,7 +750,7 @@ function PresetRow({
             />
           </div>
 
-          <div className="space-y-2 rounded-md border p-3">
+          {!isCopilot && <div className="space-y-2 rounded-md border p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-medium">
@@ -774,9 +787,9 @@ function PresetRow({
                 ? t("settings.sections.llm.streamingOutputOn")
                 : t("settings.sections.llm.streamingOutputOff")}
             </div>
-          </div>
+          </div>}
 
-          {!isLocalCliProvider && (
+          {!isLocalCliProvider && !isCopilot && (
             <>
             <div className="space-y-2">
               <Label>{t("settings.sections.llm.customHeaders")}</Label>
@@ -811,6 +824,7 @@ function PresetRow({
             </>
           )}
 
+          {!isCopilot && <>
           <ReasoningControls
             value={reasoning}
             config={resolvedConfig}
@@ -824,6 +838,7 @@ function PresetRow({
             title={t("settings.sections.llm.reasoning.ingestTitle")}
             hint={t("settings.sections.llm.reasoning.ingestHint")}
           />
+          </>}
 
           <div className="space-y-2 rounded-md border p-3">
             <div>
@@ -838,7 +853,7 @@ function PresetRow({
               <button
                 type="button"
                 onClick={() => void runProviderTest("connection")}
-                disabled={testState.kind === "running"}
+                disabled={testState.kind === "running" || (isCopilot && !copilotAuthenticated)}
                 className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {t("settings.sections.llm.testConnection")}
@@ -846,7 +861,7 @@ function PresetRow({
               <button
                 type="button"
                 onClick={() => void runProviderTest("function")}
-                disabled={testState.kind === "running"}
+                disabled={testState.kind === "running" || (isCopilot && !copilotAuthenticated)}
                 className="rounded-md border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {t("settings.sections.llm.testFunction")}

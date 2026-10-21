@@ -147,6 +147,12 @@ function mockDetectorGroup(slugs: string[] = ["foo", "bar"]) {
 }
 
 describe("buildDedupLlmCall", () => {
+  it("settles when an aborted transport returns without callbacks", async () => {
+    mockStreamChat.mockResolvedValue(undefined)
+    const controller = new AbortController()
+    controller.abort()
+    await expect(buildDedupLlmCall({ ...cfg, provider: "copilot" }, 128)("s", "u", controller.signal)).resolves.toBe("")
+  })
   it("disables thinking and caps output so reasoning models answer instead of streaming chain-of-thought to the backstop", async () => {
     mockStreamChat.mockImplementation(async (_c, _m, cb) => {
       cb.onToken('{"groups": []}')

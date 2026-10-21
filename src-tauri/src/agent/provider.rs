@@ -72,6 +72,7 @@ impl LlmConfig {
                 has_model && !self.api_key.trim().is_empty()
             }
             "ollama" => has_model && !self.ollama_url.trim().is_empty(),
+            "copilot" => true,
             "custom" => has_model && !self.custom_endpoint.trim().is_empty(),
             // CLI transports need subprocess/session wiring and are handled in
             // a later Agent transport layer, not by this HTTP provider.
@@ -141,7 +142,12 @@ impl AgentLlmProvider for LlmClient {
 
 impl LlmClient {
     pub fn new(config: LlmConfig) -> Result<Self, String> {
-        let client = crate::proxy::configure_http_client(reqwest::Client::builder())
+        let builder = if config.provider == "copilot" {
+            reqwest::Client::builder().https_only(true).redirect(reqwest::redirect::Policy::none())
+        } else {
+            crate::proxy::configure_http_client(reqwest::Client::builder())
+        };
+        let client = builder
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .map_err(|err| format!("Failed to build LLM HTTP client: {err}"))?;
@@ -155,6 +161,16 @@ impl LlmClient {
         images: &[AgentImage],
     ) -> Result<String, String> {
         match self.config.provider.as_str() {
+            "copilot" => {
+                if !images.is_empty() {
+                    return Err("Copilot is text-only; image input is unsupported".into());
+                }
+                crate::copilot::copilot_complete(
+                    self.config.model.clone(),
+                    vec![json!({"role":"system","content":system}), json!({"role":"user","content":user})],
+                    self.config.max_tokens,
+                ).await.map(|result| result.content)
+            }
             "openai" => {
                 self.generate_openai_like(
                     "https://api.openai.com/v1/chat/completions",
@@ -224,7 +240,8 @@ impl LlmClient {
     where
         F: FnMut(&str) + Send,
     {
-        if self.config.streaming_enabled == Some(false) {
+        // Copilot emits one buffered delta.
+        if self.config.provider == "copilot" || self.config.streaming_enabled == Some(false) {
             let text = self.generate_text(system, user, images).await?;
             on_delta(&text);
             return Ok(text);
@@ -1342,6 +1359,25 @@ mod tests {
             build_azure_url(&cfg).unwrap(),
             "https://resource.openai.azure.com/openai/deployments/my%20deployment/chat/completions?api-version=2024-10-21"
         );
+    }
+
+    #[test]
+    fn copilot_requires_no_key_or_arbitrary_endpoint() {
+        let mut cfg = config("copilot");
+        cfg.api_key.clear();
+        cfg.model.clear();
+        cfg.custom_endpoint.clear();
+        assert!(cfg.is_usable_for_backend_http());
+    }
+
+    #[tokio::test]
+    async fn copilot_dispatch_rejects_images_before_network() {
+        let client = LlmClient::new(config("copilot")).unwrap();
+        let images = [AgentImage { media_type: "image/png".into(), data_base64: "mock".into() }];
+        assert!(client.generate_text("s", "u", &images).await.unwrap_err().contains("text-only"));
+        let mut deltas = Vec::new();
+        assert!(client.generate_text_stream("s", "u", &images, |delta| deltas.push(delta.to_string())).await.unwrap_err().contains("text-only"));
+        assert!(deltas.is_empty());
     }
 
     #[test]

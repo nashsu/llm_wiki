@@ -20,6 +20,7 @@ export type Provider =
   | "minimax"
   | "claude-code"
   | "codex-cli"
+  | "copilot"
 
 export interface LlmPreset {
   /** Stable id used as the dropdown value. */
@@ -60,6 +61,15 @@ export interface LlmPreset {
 }
 
 export const LLM_PRESETS: LlmPreset[] = [
+  {
+    id: "github-copilot",
+    label: "GitHub Copilot (device sign-in)",
+    hint: "Native credentials; buffered text-only responses",
+    provider: "copilot",
+    defaultModel: "gpt-4.1-mini",
+    suggestedModels: ["gpt-4.1-mini"],
+    suggestedContextSize: 32768,
+  },
   {
     id: "anthropic",
     label: "Anthropic (Claude)",

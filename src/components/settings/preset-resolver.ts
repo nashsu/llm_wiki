@@ -55,6 +55,14 @@ export function resolveConfig(
   const streamingEnabled = ov.streamingEnabled
   const streamingConfig = streamingEnabled === undefined ? {} : { streamingEnabled }
 
+  if (preset.provider === "copilot") {
+    return {
+      provider: "copilot", apiKey: "", model, ollamaUrl: "", customEndpoint: "",
+      maxContextSize, streamingEnabled: false,
+      reasoning: { mode: "off" }, ingestReasoning: { mode: "off" },
+    }
+  }
+
   if (preset.provider === "custom") {
     return {
       provider: "custom",

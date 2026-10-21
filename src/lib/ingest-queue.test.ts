@@ -81,6 +81,7 @@ import { autoIngest } from "./ingest"
 import { deleteFile, readFile, writeFile } from "@/commands/fs"
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
+import { useCopilotSession } from "./copilot-session"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
@@ -126,6 +127,30 @@ beforeEach(async () => {
   })
 
   await activateProject()
+})
+
+describe("Copilot ingest auth gating", () => {
+  it("keeps queued ingest pending when Copilot is not authenticated", async () => {
+    useCopilotSession.setState({ authenticated: false })
+    useWikiStore.getState().setLlmConfig({ provider: "copilot", apiKey: "", model: "gpt-4.1-mini", ollamaUrl: "", customEndpoint: "", maxContextSize: 32768 })
+    await enqueueIngest(TEST_ID, "/project/raw/copilot.md")
+    await flushMicrotasks()
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(getQueue()[0]?.status).toBe("pending")
+  })
+  it("pauses running Copilot ingest on sign-out", async () => {
+    useCopilotSession.setState({ authenticated: true })
+    useWikiStore.getState().setLlmConfig({ provider: "copilot", apiKey: "", model: "gpt-4.1-mini", ollamaUrl: "", customEndpoint: "", maxContextSize: 32768 })
+    const work = createDeferred<Awaited<ReturnType<typeof autoIngest>>>()
+    mockAutoIngest.mockReturnValue(work.promise)
+    await enqueueIngest(TEST_ID, "/project/raw/copilot.md")
+    await waitFor(() => mockAutoIngest.mock.calls.length === 1)
+    useCopilotSession.setState({ authenticated: false })
+    expect(isQueuePaused()).toBe(true)
+    expect(getQueue()[0]?.status).toBe("pending")
+    work.reject(new Error("cancelled"))
+    await flushMicrotasks()
+  })
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {

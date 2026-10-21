@@ -775,7 +775,7 @@ function assertBigModelImageSupport(config: LlmConfig, messages: ChatMessage[]):
 }
 
 export function supportsImageInput(config: LlmConfig): boolean {
-  if (config.provider === "codex-cli") return false
+  if (config.provider === "codex-cli" || config.provider === "copilot") return false
   if (config.provider === "minimax") return isMiniMaxM3Model(config.model)
   if (isBigModelEndpoint(config)) return isGlmVisionModel(config.model)
   if ((config.provider === "custom") && (config.apiMode ?? "chat_completions") === "anthropic_messages") {
@@ -1065,6 +1065,9 @@ export function getProviderConfig(config: LlmConfig): ProviderConfig {
         streaming,
       }
     }
+
+    case "copilot":
+      throw new Error("Copilot uses native IPC transport; getProviderConfig must not be called")
 
     case "claude-code":
     case "codex-cli":

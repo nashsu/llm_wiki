@@ -3439,7 +3439,9 @@ function buildPageMerger(llmConfig: LlmConfig): MergeFn {
         },
         signal,
         { temperature: 0.1 },
-      ).catch((err) => {
+      ).then(resolve).catch((err) => {
+        // Completion also settles cancellation for transports that intentionally
+        // emit no callbacks after abort (Copilot).
         // Defensive: streamChat returns a Promise<void>; if it rejects
         // (instead of going through onError), surface that too.
         streamError = err instanceof Error ? err : new Error(String(err))

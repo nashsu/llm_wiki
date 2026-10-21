@@ -243,6 +243,11 @@ export async function streamChat(
     )
   }
 
+  if (config.provider === "copilot") {
+    const { streamCopilot } = await import("./copilot-transport")
+    return streamCopilot(config, messages, callbacks, signal, requestOverrides)
+  }
+
   const providerConfig = getProviderConfig(config)
 
   // Combined abort: (a) user cancel, (b) our long-horizon timeout.

@@ -113,6 +113,7 @@ describe("hasUsableLlm", () => {
       "minimax",
       "claude-code",
       "codex-cli",
+      "copilot",
     ]
     for (const p of allProviders) {
       const inNoKey = PROVIDERS_WITHOUT_KEY.has(p)

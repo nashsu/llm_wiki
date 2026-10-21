@@ -2,6 +2,7 @@ mod agent;
 mod api_server;
 mod clip_server;
 mod commands;
+mod copilot;
 mod cors;
 mod panic_guard;
 mod proxy;
@@ -622,6 +623,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            copilot::copilot_auth_start,
+            copilot::copilot_auth_poll,
+            copilot::copilot_auth_status,
+            copilot::copilot_logout,
+            copilot::copilot_models,
+            copilot::copilot_complete,
             commands::fs::read_file,
             commands::fs::write_file,
             commands::fs::write_file_base64,

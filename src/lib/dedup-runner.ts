@@ -102,7 +102,7 @@ export function buildDedupLlmCall(
         // reasoning defaults off but remains configurable for models that
         // require it.
         { temperature: 0.1, reasoning: resolveIngestReasoning(llmConfig), max_tokens: maxTokens },
-      ).catch((err) => {
+      ).then(resolve).catch((err) => {
         streamError = err instanceof Error ? err : new Error(String(err))
         resolve()
       })
