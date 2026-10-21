@@ -204,6 +204,16 @@ describe("buildDedupLlmCall", () => {
 })
 
 describe("runDuplicateDetection embedding prefilter", () => {
+  it("uses a buffered response for the structured detector", async () => {
+    setupThreePageProject()
+    mockLoadNotDuplicates.mockResolvedValue([])
+    mockDetectorGroup()
+
+    await runDuplicateDetection("/project", cfg)
+
+    expect(mockStreamChat.mock.calls[0][0]).toMatchObject({ streamingEnabled: false })
+  })
+
   it("sends only embedding candidate summaries to the LLM detector", async () => {
     setupThreePageProject()
     mockLoadNotDuplicates.mockResolvedValue([])
