@@ -242,6 +242,7 @@ export const __projectStoreTest = {
   normalizeMineruConfig,
   normalizeZoomLevel,
   normalizeCustomLlmPresets,
+  normalizeGeneralConfig,
 }
 
 export async function saveMineruConfig(config: MineruConfig): Promise<void> {
@@ -306,6 +307,7 @@ const GENERAL_CONFIG_KEY = "generalConfig"
 
 export const DEFAULT_GENERAL_CONFIG: GeneralConfig = {
   autostart: false,
+  startMinimized: false,
   closeBehavior: "minimize",
 }
 
@@ -313,6 +315,10 @@ export function normalizeGeneralConfig(config?: Partial<GeneralConfig> | null): 
   const closeBehavior = config?.closeBehavior
   return {
     autostart: typeof config?.autostart === "boolean" ? config.autostart : DEFAULT_GENERAL_CONFIG.autostart,
+    startMinimized:
+      typeof config?.startMinimized === "boolean"
+        ? config.startMinimized
+        : DEFAULT_GENERAL_CONFIG.startMinimized,
     closeBehavior:
       closeBehavior === "ask" || closeBehavior === "minimize" || closeBehavior === "exit"
         ? closeBehavior

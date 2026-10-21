@@ -500,6 +500,8 @@
         "description": "桌面应用的启动和窗口关闭行为。",
         "autostart": "登录系统后自动启动",
         "autostartHint": "登录这台电脑后自动启动 LLM Wiki。",
+        "startMinimized": "启动时最小化",
+        "startMinimizedHint": "启动时尽可能隐藏到系统托盘。环境变量 LLM_WIKI_START_MINIMIZED=1 始终会启用此行为。",
         "closeBehavior": "关闭窗口时",
         "closeBehaviorHint": "点击标题栏关闭按钮时使用这个设置。托盘菜单仍可直接退出应用。",
         "closeAsk": "每次询问",

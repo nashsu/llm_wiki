@@ -61,6 +61,25 @@ export function GeneralSection({ draft, setDraft }: Props) {
         </div>
       </label>
 
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={draft.startMinimized}
+          onChange={(e) => setDraft("startMinimized", e.target.checked)}
+          className="mt-0.5 h-4 w-4"
+        />
+        <div className="space-y-1">
+          <span className="text-sm">
+            {t("settings.sections.general.startMinimized", { defaultValue: "Start minimized" })}
+          </span>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.sections.general.startMinimizedHint", {
+              defaultValue: "Starts in the system tray when available. The LLM_WIKI_START_MINIMIZED=1 environment variable always enables this behavior.",
+            })}
+          </p>
+        </div>
+      </label>
+
       <div className="space-y-2">
         <Label>{t("settings.sections.general.closeBehavior", { defaultValue: "When closing the window" })}</Label>
         <div className="grid gap-2">

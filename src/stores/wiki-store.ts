@@ -262,6 +262,7 @@ export function createDefaultGraphUiState(): GraphUiState {
 
 export interface GeneralConfig {
   autostart: boolean
+  startMinimized: boolean
   closeBehavior: CloseBehavior
 }
 
@@ -665,6 +666,7 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   generalConfig: {
     autostart: false,
+    startMinimized: false,
     closeBehavior: "minimize",
   },
 
