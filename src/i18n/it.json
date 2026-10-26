@@ -541,6 +541,22 @@
           "modelPlaceholder": "Usa il modello configurato nel provider",
           "hint": "Se attivo, questo progetto usa il provider e il modello selezionati sia per la Chat sia per l'elaborazione. Le credenziali restano nelle impostazioni globali del provider."
         },
+        "profileImport": {
+          "title": "Importa profilo modello",
+          "hint": "Aggiunge solo un preset locale, senza credenziali o attivazione. Configura l'autenticazione e verifica la connessione prima di selezionarlo.",
+          "file": "Profilo modello JSON",
+          "reading": "Lettura e verifica…",
+          "preview": "Controlla endpoint e modello prima di aggiungere il preset.",
+          "saving": "Salvataggio del preset locale…",
+          "saved": "Preset salvato. Modello e routing attuali invariati. Configura l'autenticazione, verifica la connessione, poi selezionalo.",
+          "failed": "Importazione non completata; modello e routing attuali invariati.",
+          "cancelled": "Anteprima cancellata; preset salvati invariati.",
+          "model": "Modello",
+          "endpoint": "Endpoint",
+          "revision": "Profilo / revisione",
+          "apply": "Aggiungi preset",
+          "cancel": "Cancella anteprima"
+        },
         "customProfiles": {
           "add": "Aggiungi un provider personalizzato",
           "defaultName": "Provider personalizzato {{number}}",

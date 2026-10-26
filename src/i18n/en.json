@@ -541,6 +541,22 @@
           "modelPlaceholder": "Use the provider's configured model",
           "hint": "When enabled, this project uses the selected provider and model for both Chat and Ingest. Credentials remain in the global provider settings."
         },
+        "profileImport": {
+          "title": "Import model profile",
+          "hint": "Registers a local preset only. No credentials, activation, task routing or runtime policies are imported. Configure authentication and test the connection below before selecting it.",
+          "file": "Model profile JSON",
+          "reading": "Reading and validating…",
+          "preview": "Check the endpoint and model before adding this preset.",
+          "saving": "Saving the local preset…",
+          "saved": "Preset saved. Existing model and task routing are unchanged. Configure local authentication, test the connection, then select it if needed.",
+          "failed": "Not imported; existing configuration is unchanged.",
+          "cancelled": "Preview cleared; saved presets are unchanged.",
+          "model": "Model",
+          "endpoint": "Endpoint",
+          "revision": "Profile / revision",
+          "apply": "Add preset",
+          "cancel": "Clear preview"
+        },
         "customProfiles": {
           "add": "Add custom provider",
           "defaultName": "Custom provider {{number}}",

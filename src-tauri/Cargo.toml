@@ -74,6 +74,16 @@ html2text = { version = "0.17.1", default-features = false, features = ["xml"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
+# Keep line-level backtraces, but avoid full dependency symbols and accumulating
+# multi-GB incremental caches during local development. Release is unchanged.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false
+
 [profile.release]
 codegen-units = 1
 lto = true

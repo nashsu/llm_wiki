@@ -49,6 +49,7 @@ const PROJECT_LLM_OVERRIDES_KEY = "projectLlmOverrides"
 const CUSTOM_LLM_PRESETS_KEY = "customLlmPresets"
 let projectLlmOverrideWrite = Promise.resolve()
 let customLlmPresetWrite = Promise.resolve()
+let providerConfigWrite = Promise.resolve()
 
 export async function saveLlmConfig(config: LlmConfig): Promise<void> {
   const store = await getStore()
@@ -61,8 +62,20 @@ export async function loadLlmConfig(): Promise<LlmConfig | null> {
 }
 
 export async function saveProviderConfigs(configs: ProviderConfigs): Promise<void> {
+  const write = providerConfigWrite.then(async () => {
+    const store = await getStore()
+    await store.set(PROVIDER_CONFIGS_KEY, configs)
+  })
+  providerConfigWrite = write.catch(() => {})
+  await write
+}
+
+/** Register a profile only. Global/project/task activation remains an explicit existing action. */
+export async function saveImportedModelProfile(presets: CustomLlmPreset[], configs: ProviderConfigs): Promise<void> {
   const store = await getStore()
-  await store.set(PROVIDER_CONFIGS_KEY, configs)
+  await saveProviderConfigs(configs)
+  await saveCustomLlmPresets(presets)
+  await store.save()
 }
 
 export async function loadProviderConfigs(): Promise<ProviderConfigs | null> {
