@@ -20,6 +20,9 @@ const TITLE_TOKEN_WEIGHT: f64 = 5.0;
 const CONTENT_TOKEN_WEIGHT: f64 = 1.0;
 const SNIPPET_CONTEXT: usize = 80;
 const SEARCH_EMBEDDING_TIMEOUT_SECS: u64 = 8;
+// Batch requests embed up to 64 page chunks at once; local models on modest
+// GPUs need far longer than a single query embedding.
+const BATCH_EMBEDDING_TIMEOUT_SECS: u64 = 120;
 const MAX_SEARCH_FILES: usize = 10_000;
 const MIN_GRAPH_RESULT_RATIO: f64 = 0.15;
 const MAX_GRAPH_RESULT_RATIO: f64 = 0.30;
@@ -1223,7 +1226,7 @@ pub(crate) async fn fetch_embedding_batch(
     let endpoint = volcengine_embedding_endpoint(cfg);
     let mut req = crate::proxy::configure_http_client(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(
-            SEARCH_EMBEDDING_TIMEOUT_SECS,
+            BATCH_EMBEDDING_TIMEOUT_SECS,
         ))
         .build()
         .map_err(|e| format!("Embedding HTTP client error: {e}"))?
