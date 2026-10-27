@@ -12,6 +12,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { randomUUID } from "node:crypto"
 import type { FileNode } from "@/types/wiki"
 
 async function buildTree(dir: string): Promise<FileNode[]> {
@@ -55,6 +56,16 @@ export const realFs = {
   writeFile: async (p: string, contents: string): Promise<void> => {
     await fs.mkdir(path.dirname(p), { recursive: true })
     await fs.writeFile(p, contents, "utf-8")
+  },
+  writeFileAtomic: async (p: string, contents: string): Promise<void> => {
+    await fs.mkdir(path.dirname(p), { recursive: true })
+    const temporary = `${p}.${randomUUID()}.tmp`
+    try {
+      await fs.writeFile(temporary, contents, { encoding: "utf-8", flag: "wx" })
+      await fs.rename(temporary, p)
+    } finally {
+      await fs.unlink(temporary).catch(() => {})
+    }
   },
   listDirectory: async (p: string): Promise<FileNode[]> => {
     return buildTree(p)

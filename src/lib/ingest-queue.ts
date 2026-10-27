@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "@/commands/fs"
+import { readFile, writeFileAtomic } from "@/commands/fs"
 import { autoIngest } from "./ingest"
 import { normalizePath, isAbsolutePath } from "@/lib/path-utils"
 import { getProjectPathById } from "@/lib/project-identity"
@@ -94,10 +94,17 @@ let processedSinceDrain = false
 // cancels a long-running judgment instead of burning tokens.
 let sweepAbortController: AbortController | null = null
 let inactiveQueueWrite: Promise<void> = Promise.resolve()
+let queueLoadError: Error | null = null
+let persistenceError: string | null = null
+
+class QueuePersistenceError extends Error {}
+
 interface QueueWriteRequest {
   path: string
   snapshot: string
+  completedTaskIds: string[]
   resolve: () => void
+  reject: (error: Error) => void
 }
 const pendingActiveQueueWrites: QueueWriteRequest[] = []
 let activeQueueWriteRunning = false
@@ -123,16 +130,20 @@ function queueFilePath(projectPath: string): string {
 }
 
 async function saveQueue(projectPath: string): Promise<void> {
+  // A failed restore must not turn an unreadable queue into a new empty file.
+  if (queueLoadError) throw queueLoadError
   // Capture the snapshot now, then serialize writes so an older async write
   // can never land after a newer queue state.
   const toSave = queue.filter((t) => t.status !== "done")
   notifyQueueListeners()
   const snapshot = JSON.stringify(toSave, null, 2)
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     pendingActiveQueueWrites.push({
       path: queueFilePath(projectPath),
       snapshot,
+      completedTaskIds: queue.filter((task) => task.status === "done").map((task) => task.id),
       resolve,
+      reject,
     })
     void drainActiveQueueWrites()
   })
@@ -145,11 +156,28 @@ async function drainActiveQueueWrites(): Promise<void> {
   const epoch = activeQueueWriteEpoch
   activeQueueWriteRunning = true
   try {
-    await writeFile(request.path, request.snapshot)
-  } catch {
-    // Queue persistence is best-effort; the in-memory queue remains authoritative.
-  } finally {
+    await writeFileAtomic(request.path, request.snapshot)
+    if (epoch === activeQueueWriteEpoch && request.path === queueFilePath(currentProjectPath)) {
+      const completed = new Set(request.completedTaskIds)
+      const before = queue.length
+      queue = queue.filter((task) => task.status !== "done" || !completed.has(task.id))
+      const removed = before - queue.length
+      completedSinceIdle += removed
+      processedSinceDrain ||= removed > 0
+      persistenceError = null
+      notifyQueueListeners()
+    }
     request.resolve()
+  } catch (error) {
+    const failure = queuePersistenceError("save", request.path, error)
+    if (epoch === activeQueueWriteEpoch && request.path === queueFilePath(currentProjectPath)) {
+      paused = true
+      clearUsageLimitAutoResume()
+      persistenceError = failure.message
+      notifyQueueListeners()
+    }
+    request.reject(failure)
+  } finally {
     if (epoch === activeQueueWriteEpoch) {
       activeQueueWriteRunning = false
       void drainActiveQueueWrites()
@@ -157,10 +185,54 @@ async function drainActiveQueueWrites(): Promise<void> {
   }
 }
 
-async function loadQueue(projectPath: string, projectId: string): Promise<IngestTask[]> {
+function queuePersistenceError(action: string, path: string, error: unknown): QueuePersistenceError {
+  const detail = error instanceof Error ? error.message : String(error)
+  return new QueuePersistenceError(`Failed to ${action} ingest queue "${path}": ${detail}`)
+}
+
+async function writeQueueSnapshot(path: string, snapshot: string): Promise<void> {
   try {
-    const raw = await readFile(queueFilePath(projectPath))
-    const tasks = JSON.parse(raw) as IngestTask[]
+    await writeFileAtomic(path, snapshot)
+  } catch (error) {
+    throw queuePersistenceError("save", path, error)
+  }
+}
+
+type PersistedIngestTask = Omit<IngestTask, "projectId"> & { projectId?: string | null }
+
+function isPersistedTask(value: unknown): value is PersistedIngestTask {
+  if (!value || typeof value !== "object") return false
+  const task = value as Record<string, unknown>
+  return typeof task.id === "string" && task.id.length > 0
+    && typeof task.sourcePath === "string" && task.sourcePath.length > 0
+    && (task.projectId == null || typeof task.projectId === "string")
+    && typeof task.folderContext === "string"
+    && ["pending", "processing", "done", "failed", "cancelled"].includes(String(task.status))
+    && typeof task.addedAt === "number" && Number.isFinite(task.addedAt)
+    && (task.error === null || typeof task.error === "string")
+    && typeof task.retryCount === "number" && Number.isInteger(task.retryCount) && task.retryCount >= 0
+}
+
+async function loadQueue(projectPath: string, projectId: string): Promise<IngestTask[]> {
+  const path = queueFilePath(projectPath)
+  let raw: string
+  try {
+    raw = await readFile(path)
+  } catch (error) {
+    // Tauri returns strings; the real-FS test adapter returns Node errors.
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.startsWith("File does not exist: '")
+      || (error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+      return []
+    }
+    throw queuePersistenceError("read", path, error)
+  }
+  try {
+    const tasks: unknown = JSON.parse(raw)
+    if (!Array.isArray(tasks) || !tasks.every(isPersistedTask)
+      || new Set(tasks.map((task) => task.id)).size !== tasks.length) {
+      throw new Error("Invalid queue task data")
+    }
     // Backfill projectId for tasks persisted before the field existed.
     // Files live inside a specific project, so every task in this file
     // belongs to `projectId` regardless of what's on disk.
@@ -168,8 +240,8 @@ async function loadQueue(projectPath: string, projectId: string): Promise<Ingest
       ...t,
       projectId: t.projectId ?? projectId,
     }))
-  } catch {
-    return []
+  } catch (error) {
+    throw queuePersistenceError("parse", path, error)
   }
 }
 
@@ -298,6 +370,7 @@ export async function enqueueIngest(
   sourcePath: string,
   folderContext: string = "",
 ): Promise<string> {
+  if (queueLoadError) throw queueLoadError
   if (!currentProjectId || currentProjectId !== projectId) {
     throw new Error(
       `enqueueIngest: project ${projectId} is not the active project (current: ${currentProjectId || "<none>"})`,
@@ -320,6 +393,7 @@ export async function enqueueBatch(
   projectId: string,
   files: Array<{ sourcePath: string; folderContext: string }>,
 ): Promise<string[]> {
+  if (queueLoadError) throw queueLoadError
   if (!currentProjectId || currentProjectId !== projectId) {
     throw new Error(
       `enqueueBatch: project ${projectId} is not the active project (current: ${currentProjectId || "<none>"})`,
@@ -393,7 +467,7 @@ export async function enqueueInactiveProjectBatch(
       persisted.push(task)
       ids.push(task.id)
     }
-    await writeFile(queueFilePath(pp), JSON.stringify(persisted, null, 2))
+    await writeQueueSnapshot(queueFilePath(pp), JSON.stringify(persisted, null, 2))
     written = true
   })
   // Keep the serialization chain usable after an I/O failure while still
@@ -442,7 +516,7 @@ export async function discardInactiveProjectTasksForSources(
       return !matches
     })
     if (removed > 0) {
-      await writeFile(queueFilePath(pp), JSON.stringify(retained, null, 2))
+      await writeQueueSnapshot(queueFilePath(pp), JSON.stringify(retained, null, 2))
     }
   })
   inactiveQueueWrite = operation.catch((err) => {
@@ -789,11 +863,31 @@ export function pauseProcessing(): void {
  * Existing active workers keep their slots until they observe cancellation.
  */
 export function resumeProcessing(): void {
+  if (queueLoadError) return
+  if (persistenceError) {
+    void retryQueuePersistence().catch((error) => console.error("[Ingest Queue] Resume failed:", error))
+    return
+  }
   clearUsageLimitAutoResume()
   paused = false
   blockedOnLlmConfig = false
   console.log("[Ingest Queue] Resumed")
   if (currentProjectId) processNext(currentProjectId)
+}
+
+/** Retry a failed restore or save before allowing model work to resume. */
+export async function retryQueuePersistence(): Promise<void> {
+  const projectId = currentProjectId
+  const projectPath = currentProjectPath
+  const epoch = queueEpoch
+  if (!projectId || !projectPath) return
+  if (queueLoadError) {
+    await restoreQueue(projectId, projectPath)
+    return
+  }
+  await saveQueue(projectPath)
+  if (currentProjectId !== projectId || queueEpoch !== epoch) return
+  resumeProcessing()
 }
 
 /** Whether queue processing is currently paused by the user. */
@@ -821,6 +915,7 @@ export function getQueueSummary(): {
   paused: boolean
   userPaused: boolean
   blockedOnLlmConfig: boolean
+  persistenceError: string | null
 } {
   const pending = queue.filter((t) => t.status === "pending").length
   const processingCount = queue.filter((t) => t.status === "processing").length
@@ -837,6 +932,7 @@ export function getQueueSummary(): {
     paused,
     userPaused: paused,
     blockedOnLlmConfig,
+    persistenceError,
   }
 }
 
@@ -862,6 +958,8 @@ export function clearQueueState(): void {
   scheduling = false
   paused = false
   blockedOnLlmConfig = false
+  queueLoadError = null
+  persistenceError = null
   currentProjectId = ""
   currentProjectPath = ""
   sweepAbortController = null
@@ -956,7 +1054,7 @@ export async function restoreQueue(
   projectId: string,
   projectPath: string,
 ): Promise<void> {
-  queueEpoch += 1
+  const epoch = ++queueEpoch
   const pp = normalizePath(projectPath)
   // Defensive: reset in-memory state (should already be empty via
   // pauseQueue, but clearing again costs nothing).
@@ -972,10 +1070,25 @@ export async function restoreQueue(
   resetQueueAccounting()
   currentProjectId = projectId
   currentProjectPath = pp
+  queueLoadError = new QueuePersistenceError(`Cannot update ingest queue "${queueFilePath(pp)}" while it is loading`)
+  persistenceError = null
 
   await inactiveQueueWrite
 
-  const saved = await loadQueue(pp, projectId)
+  let saved: IngestTask[]
+  try {
+    saved = await loadQueue(pp, projectId)
+  } catch (error) {
+    if (currentProjectId === projectId && queueEpoch === epoch) {
+      queueLoadError = error as Error
+      persistenceError = queueLoadError.message
+      paused = true
+      notifyQueueListeners()
+    }
+    throw error
+  }
+  if (currentProjectId !== projectId || queueEpoch !== epoch) return
+  queueLoadError = null
 
   if (saved.length === 0) {
     notifyQueueListeners()
@@ -1114,13 +1227,18 @@ async function runTask(
     if (writtenFiles.length === 0) throw new Error("Ingest produced no output files")
 
     cancelledInFlightTaskIds.delete(task.id)
-    queue = queue.filter((candidate) => candidate.id !== task.id)
-    completedSinceIdle++
-    processedSinceDrain = true
+    // Keep the completed task in memory until its removal is durable. A disk
+    // failure must not trigger another paid model call for already-written pages.
+    task.status = "done"
     await saveQueue(projectPath)
     console.log(`[Ingest Queue] Done: ${task.sourcePath}`)
   } catch (err) {
     if (currentProjectId !== projectId || run.epoch !== queueEpoch) return
+    if (err instanceof QueuePersistenceError) {
+      task.error = err.message
+      notifyQueueListeners()
+      return
+    }
     const currentTask = queue.find((candidate) => candidate.id === task.id)
     if (cancelledInFlightTaskIds.delete(task.id) || currentTask?.status === "cancelled") {
       await saveQueue(projectPath)
@@ -1214,8 +1332,16 @@ async function startTask(projectId: string, task: IngestTask): Promise<boolean> 
   }
   task.status = "processing"
   activeRuns.set(task.id, run)
-  await saveQueue(projectPath)
-  if (currentProjectId !== projectId || run.epoch !== queueEpoch) {
+  try {
+    await saveQueue(projectPath)
+  } catch (error) {
+    task.status = "pending"
+    task.error = error instanceof Error ? error.message : String(error)
+    reservation.release()
+    activeRuns.delete(task.id)
+    throw error
+  }
+  if (currentProjectId !== projectId || run.epoch !== queueEpoch || run.controller.signal.aborted) {
     run.controller.abort()
     reservation.release()
     activeRuns.delete(task.id)
@@ -1233,12 +1359,13 @@ async function startTask(projectId: string, task: IngestTask): Promise<boolean> 
       }
     })
   run.completion = runTask(projectId, projectPath, task, run, orderedCommit)
+    .catch((error) => console.error("[Ingest Queue] Task failed to persist:", error))
   return true
 }
 
 async function processNext(projectId: string): Promise<void> {
   if (scheduling || currentProjectId !== projectId) return
-  if (paused) return
+  if (paused || queueLoadError) return
   if (blockedOnLlmConfig) {
     if (!hasUsableLlm(getTaskLlmConfig("ingest"))) return
     blockedOnLlmConfig = false
@@ -1267,6 +1394,14 @@ async function processNext(projectId: string): Promise<void> {
         console.error("[Ingest Queue] sweep failed:", err)
       )
     }
+  } catch (error) {
+    // Leave pending work recoverable instead of spinning the scheduler after
+    // a registry or persistence failure during task startup.
+    if (currentProjectId === projectId && queueEpoch === epoch) {
+      paused = true
+      notifyQueueListeners()
+    }
+    console.error("[Ingest Queue] Scheduling failed:", error)
   } finally {
     scheduling = false
     const hasRunnable = queue.some((task) =>

@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { realFs, createTempProject, readFileRaw, writeFileRaw, fileExists } from "@/test-helpers/fs-temp"
 import { waitFor, flushIO } from "@/test-helpers/deferred"
+import fs from "node:fs/promises"
 
 vi.mock("@/commands/fs", () => realFs)
 
@@ -100,6 +101,24 @@ async function waitForQueueSnapshot<T>(predicate: (parsed: T) => boolean): Promi
 }
 
 describe("ingest-queue persistence — write", () => {
+  it("preserves the last saved queue when atomic replacement fails", async () => {
+    await writeFileRaw(`${tmp.path}/.llm-wiki/ingest-queue.json`, JSON.stringify([{
+      id: "ingest-existing", sourcePath: "old.md", folderContext: "", status: "failed",
+      addedAt: 0, error: "previous model error", retryCount: 3,
+    }]))
+    await restoreQueue(TEST_ID_A, tmp.path)
+    const previous = await readQueueFile()
+    const replace = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("replacement denied"))
+    try {
+      await expect(enqueueIngest(TEST_ID_A, "new.md")).rejects.toThrow("replacement denied")
+      expect(await readQueueFile()).toBe(previous)
+      expect(mockAutoIngest).not.toHaveBeenCalled()
+      expect((await fs.readdir(`${tmp.path}/.llm-wiki`)).filter((name) => name.endsWith(".tmp"))).toEqual([])
+    } finally {
+      replace.mockRestore()
+    }
+  })
+
   it("writes .llm-wiki/ingest-queue.json after enqueue", async () => {
     await enqueueIngest(TEST_ID_A, "raw/sources/a.md")
     const parsed = await waitForQueueSnapshot<Array<{ sourcePath: string }>>((items) => items.length === 1)
@@ -230,13 +249,16 @@ describe("ingest-queue persistence — restore round-trip", () => {
     expect(getQueue()).toEqual([])
   })
 
-  it("returns empty queue when the file is corrupted JSON", async () => {
+  it("reports corrupt JSON and preserves it across later queue operations", async () => {
+    const path = `${tmp.path}/.llm-wiki/ingest-queue.json`
+    const corrupt = "{not valid json at all"
     await writeFileRaw(
-      `${tmp.path}/.llm-wiki/ingest-queue.json`,
-      "{not valid json at all",
+      path,
+      corrupt,
     )
-    await restoreQueue(TEST_ID_A, tmp.path)
-    expect(getQueue()).toEqual([])
+    await expect(restoreQueue(TEST_ID_A, tmp.path)).rejects.toThrow("ingest queue")
+    await expect(enqueueIngest(TEST_ID_A, "new.md")).rejects.toThrow("ingest queue")
+    expect(await readFileRaw(path)).toBe(corrupt)
   })
 
   it("round-trips Unicode + folder context correctly", async () => {

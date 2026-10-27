@@ -93,40 +93,50 @@ pub async fn read_file(path: String, extract_images: Option<bool>) -> Result<Str
                 "pdf" => extract_pdf_text(&path, include_images),
                 "org" => extract_org_text(&path),
                 e if OFFICE_EXTS.contains(&e) => extract_office_text(&path, e),
-                e if EBOOK_EXTS.contains(&e) => crate::commands::ebook::extract_ebook_text(&path, e),
+                e if EBOOK_EXTS.contains(&e) => {
+                    crate::commands::ebook::extract_ebook_text(&path, e)
+                }
                 e if IMAGE_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    Ok(format!("[Image: {} ({:.1} KB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1024.0))
+                    Ok(format!(
+                        "[Image: {} ({:.1} KB)]",
+                        p.file_name().unwrap_or_default().to_string_lossy(),
+                        size as f64 / 1024.0
+                    ))
                 }
                 e if MEDIA_EXTS.contains(&e) => {
                     let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    Ok(format!("[Media: {} ({:.1} MB)]", p.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1048576.0))
+                    Ok(format!(
+                        "[Media: {} ({:.1} MB)]",
+                        p.file_name().unwrap_or_default().to_string_lossy(),
+                        size as f64 / 1048576.0
+                    ))
                 }
-                e if LEGACY_DOC_EXTS.contains(&e) => {
-                    Ok(format!("[Document: {} — text extraction not supported for .{} format]",
-                        p.file_name().unwrap_or_default().to_string_lossy(), e))
-                }
-                _ => {
-                    match fs::read_to_string(&path) {
-                        Ok(content) => Ok(content),
-                        Err(e) => {
-                            let exists = p.exists();
-                            if !exists {
-                                Err(format!("File does not exist: '{}'", path))
-                            } else {
-                                Err(format!(
-                                    "Failed to read file '{}' as text: {} (likely binary, locked, or non-UTF-8)",
-                                    path, e,
-                                ))
-                            }
-                        }
-                    }
-                }
+                e if LEGACY_DOC_EXTS.contains(&e) => Ok(format!(
+                    "[Document: {} — text extraction not supported for .{} format]",
+                    p.file_name().unwrap_or_default().to_string_lossy(),
+                    e
+                )),
+                _ => match fs::read_to_string(&path) {
+                    Ok(content) => Ok(content),
+                    Err(e) => Err(text_read_error(&path, &e)),
+                },
             }
         })
     })
     .await
     .map_err(|e| format!("read_file blocking task join error: {e}"))?
+}
+
+fn text_read_error(path: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!("File does not exist: '{}'", path)
+    } else {
+        format!(
+            "Failed to read file '{}' as text: {} (likely binary, locked, or non-UTF-8)",
+            path, error,
+        )
+    }
 }
 
 /// Pre-process a file and cache the extracted text.
@@ -2410,6 +2420,26 @@ mod tests {
         )
         .await;
         assert!(result.is_err() || result.is_ok()); // must at least return
+    }
+
+    #[test]
+    fn text_read_errors_only_classify_not_found_as_missing() {
+        use std::io::{Error, ErrorKind};
+
+        let path = "/unreadable/ingest-queue.json";
+        assert_eq!(
+            text_read_error(path, &Error::from(ErrorKind::NotFound)),
+            format!("File does not exist: '{}'", path)
+        );
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::InvalidData,
+            ErrorKind::Other,
+        ] {
+            let message = text_read_error(path, &Error::from(kind));
+            assert!(message.starts_with("Failed to read file"));
+            assert!(message.contains(path));
+        }
     }
 
     #[test]

@@ -10,6 +10,7 @@ vi.mock("./ingest", () => ({
 vi.mock("@/commands/fs", () => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  writeFileAtomic: vi.fn(),
   listDirectory: vi.fn(),
   deleteFile: vi.fn(),
 }))
@@ -72,19 +73,22 @@ import {
   restoreQueue,
   pauseProcessing,
   resumeProcessing,
+  retryQueuePersistence,
   isQueuePaused,
   setIngestWorkerLimit,
   getIngestWorkerLimit,
   subscribeIngestQueue,
+  type IngestTask,
 } from "./ingest-queue"
 import { autoIngest } from "./ingest"
-import { deleteFile, readFile, writeFile } from "@/commands/fs"
+import { deleteFile, readFile, writeFile, writeFileAtomic } from "@/commands/fs"
 import { sweepResolvedReviews } from "./sweep-reviews"
 import { useWikiStore } from "@/stores/wiki-store"
+import { getProjectPathById } from "@/lib/project-identity"
 
 const mockAutoIngest = vi.mocked(autoIngest)
 const mockReadFile = vi.mocked(readFile)
-const mockWriteFile = vi.mocked(writeFile)
+const mockWriteFileAtomic = vi.mocked(writeFileAtomic)
 const mockDeleteFile = vi.mocked(deleteFile)
 const mockSweep = vi.mocked(sweepResolvedReviews)
 
@@ -100,7 +104,7 @@ beforeEach(async () => {
   clearQueueState()
   mockAutoIngest.mockReset()
   mockReadFile.mockReset()
-  mockWriteFile.mockReset()
+  mockWriteFileAtomic.mockReset()
   mockDeleteFile.mockReset()
   mockDeleteFile.mockResolvedValue(undefined as unknown as void)
   mockSweep.mockReset()
@@ -112,8 +116,8 @@ beforeEach(async () => {
   })
 
   // Default: persisted queue file doesn't exist
-  mockReadFile.mockRejectedValue(new Error("ENOENT"))
-  mockWriteFile.mockResolvedValue(undefined as unknown as void)
+  mockReadFile.mockRejectedValue("File does not exist: '/project/.llm-wiki/ingest-queue.json'")
+  mockWriteFileAtomic.mockResolvedValue(undefined as unknown as void)
 
   // Default: a valid LLM config so processNext doesn't reject.
   useWikiStore.getState().setLlmConfig({
@@ -126,6 +130,134 @@ beforeEach(async () => {
   })
 
   await activateProject()
+})
+
+describe("ingest-queue — persistence failures", () => {
+  it("atomically persists active and inactive project queues", async () => {
+    mockAutoIngest.mockReturnValue(new Promise(() => {}))
+    await enqueueIngest(TEST_ID, "raw/sources/active.md")
+    await enqueueInactiveProjectBatch(TEST_ID_B, TEST_PATH_B, [
+      { sourcePath: "raw/sources/inactive.md", folderContext: "" },
+    ])
+    expect(mockWriteFileAtomic).toHaveBeenCalledWith(
+      `${TEST_PATH}/.llm-wiki/ingest-queue.json`, expect.any(String),
+    )
+    expect(mockWriteFileAtomic).toHaveBeenCalledWith(
+      `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`, expect.any(String),
+    )
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it("rejects failed saves without starting model work and allows a later retry", async () => {
+    mockWriteFileAtomic.mockRejectedValueOnce(new Error("disk full"))
+    await expect(enqueueIngest(TEST_ID, "raw/sources/report.md")).rejects.toThrow("disk full")
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueueSummary()).toMatchObject({ paused: true, persistenceError: expect.stringContaining("disk full") })
+
+    mockAutoIngest.mockReturnValue(new Promise(() => {}))
+    await enqueueIngest(TEST_ID, "raw/sources/report.md")
+    resumeProcessing()
+    await waitFor(() => mockAutoIngest.mock.calls.length === 1)
+    expect(getQueue()).toHaveLength(1)
+    expect(getQueueSummary().persistenceError).toBeNull()
+  })
+
+  it("settles serialized writes individually after a failed replacement", async () => {
+    const firstWrite = createDeferred<void>()
+    mockWriteFileAtomic.mockImplementationOnce(() => firstWrite.promise)
+    const first = enqueueIngest(TEST_ID, "raw/sources/first.md")
+    const rejected = expect(first).rejects.toThrow("disk full")
+    const second = enqueueIngest(TEST_ID, "raw/sources/second.md")
+    firstWrite.reject(new Error("disk full"))
+    await rejected
+    await expect(second).resolves.toBeTypeOf("string")
+    const calls = mockWriteFileAtomic.mock.calls
+    const persisted = JSON.parse(calls[calls.length - 1][1]) as IngestTask[]
+    expect(persisted.map((task) => task.sourcePath)).toEqual(["raw/sources/first.md", "raw/sources/second.md"])
+  })
+
+  it.each(["{broken", "null", "{}", '[{"id":"incomplete"}]'])(
+    "preserves an invalid queue (%s) and blocks writes until restore succeeds", async (raw) => {
+      mockReadFile.mockResolvedValue(raw)
+      mockWriteFileAtomic.mockClear()
+      await expect(restoreQueue(TEST_ID, TEST_PATH)).rejects.toThrow("ingest queue")
+      expect(getQueueSummary().persistenceError).toContain("ingest queue")
+      await expect(enqueueIngest(TEST_ID, "raw/sources/new.md")).rejects.toThrow("ingest queue")
+      await expect(pauseQueue()).rejects.toThrow("ingest queue")
+      resumeProcessing()
+      setIngestWorkerLimit(2)
+      await flushMicrotasks()
+      expect(mockWriteFileAtomic).not.toHaveBeenCalled()
+      expect(mockAutoIngest).not.toHaveBeenCalled()
+      expect(getQueue()).toEqual([])
+
+      mockReadFile.mockResolvedValue("[]")
+      await expect(retryQueuePersistence()).resolves.toBeUndefined()
+      expect(getQueueSummary().persistenceError).toBeNull()
+    },
+  )
+
+  it.each([new Error("permission denied"), "Failed to read file as text: permission denied"])(
+    "reports read failures rather than treating them as an empty queue", async (error) => {
+      mockReadFile.mockRejectedValue(error)
+      mockWriteFileAtomic.mockClear()
+      await expect(restoreQueue(TEST_ID, TEST_PATH)).rejects.toThrow("permission denied")
+      await expect(enqueueInactiveProjectBatch(TEST_ID_B, TEST_PATH_B, [
+        { sourcePath: "raw/sources/new.md", folderContext: "" },
+      ])).rejects.toThrow("permission denied")
+      expect(mockWriteFileAtomic).not.toHaveBeenCalled()
+    },
+  )
+
+  it("releases the worker slot when the processing snapshot cannot be saved", async () => {
+    mockWriteFileAtomic.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("disk full"))
+    const id = await enqueueIngest(TEST_ID, "raw/sources/report.md")
+    await waitFor(() => getQueueSummary().paused)
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(hasActiveRun(id)).toBe(false)
+    expect(getQueue()[0]).toMatchObject({ status: "pending", retryCount: 0 })
+  })
+
+  it("does not retry completed model work when saving completion fails", async () => {
+    const run = createDeferred<string[]>()
+    mockAutoIngest.mockReturnValue(run.promise)
+    await enqueueIngest(TEST_ID, "raw/sources/report.md")
+    await waitFor(() => mockAutoIngest.mock.calls.length === 1)
+    mockWriteFileAtomic.mockRejectedValueOnce(new Error("disk full"))
+    run.resolve(["wiki/sources/report.md"])
+    await waitFor(() => getQueueSummary().paused)
+    expect(getQueue()[0]).toMatchObject({ status: "done", retryCount: 0 })
+    expect(getQueueSummary().persistenceError).toContain("disk full")
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    await retryQueuePersistence()
+    expect(getQueue()).toEqual([])
+    expect(getQueueSummary()).toMatchObject({ completed: 1, paused: false, persistenceError: null })
+    expect(mockAutoIngest).toHaveBeenCalledTimes(1)
+    const calls = mockWriteFileAtomic.mock.calls
+    expect(JSON.parse(calls[calls.length - 1][1])).toEqual([])
+  })
+
+  it("blocks writes while a restore is still reading the persisted queue", async () => {
+    const read = createDeferred<string>()
+    mockReadFile.mockReturnValue(read.promise)
+    mockWriteFileAtomic.mockClear()
+    const restoring = restoreQueue(TEST_ID, TEST_PATH)
+    await expect(enqueueIngest(TEST_ID, "raw/sources/new.md")).rejects.toThrow("loading")
+    expect(mockWriteFileAtomic).not.toHaveBeenCalled()
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    read.resolve("[]")
+    await restoring
+    expect(getQueue()).toEqual([])
+  })
+
+  it("pauses after a task-start lookup failure instead of rescheduling in a loop", async () => {
+    vi.mocked(getProjectPathById).mockRejectedValueOnce(new Error("registry unavailable"))
+    await enqueueIngest(TEST_ID, "raw/sources/report.md")
+    await waitFor(() => getQueueSummary().paused)
+    expect(mockAutoIngest).not.toHaveBeenCalled()
+    expect(getQueue()[0]).toMatchObject({ status: "pending", retryCount: 0 })
+  })
 })
 
 describe("ingest-queue — enqueue & basic processing", () => {
@@ -154,7 +286,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     })
 
     await expect(enqueueIngest(TEST_ID, "raw/sources/report.pdf")).resolves.toBeTypeOf("string")
-    expect(mockWriteFile).toHaveBeenCalled()
+    expect(mockWriteFileAtomic).toHaveBeenCalled()
     unsubscribe()
   })
 
@@ -176,7 +308,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     ])
 
     expect(ids).toHaveLength(1)
-    const inactiveWrite = mockWriteFile.mock.calls.find(
+    const inactiveWrite = mockWriteFileAtomic.mock.calls.find(
       ([path]) => path === `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`,
     )
     expect(inactiveWrite).toBeDefined()
@@ -195,7 +327,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
       if (path === `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`) {
         return String(inactiveWrite?.[1])
       }
-      throw new Error("ENOENT")
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" })
     })
     mockAutoIngest.mockResolvedValue(["wiki/sources/report.md"])
 
@@ -215,7 +347,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
   })
 
   it("recovers the inactive-project write chain after a persistence failure", async () => {
-    mockWriteFile
+    mockWriteFileAtomic
       .mockRejectedValueOnce(new Error("disk temporarily unavailable"))
       .mockResolvedValue(undefined as unknown as void)
 
@@ -226,7 +358,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     await expect(enqueueInactiveProjectBatch(TEST_ID_B, TEST_PATH_B, [
       { sourcePath: `${TEST_PATH_B}/raw/sources/second.pdf`, folderContext: "" },
     ])).resolves.toHaveLength(1)
-    expect(mockWriteFile).toHaveBeenLastCalledWith(
+    expect(mockWriteFileAtomic).toHaveBeenLastCalledWith(
       `${TEST_PATH_B}/.llm-wiki/ingest-queue.json`,
       expect.stringContaining("raw/sources/second.pdf"),
     )
@@ -258,7 +390,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
           },
         ])
       }
-      throw new Error("ENOENT")
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" })
     })
 
     await expect(discardInactiveProjectTasksForSources(
@@ -267,7 +399,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
       ["raw/sources/old.pdf"],
     )).resolves.toBe(1)
 
-    const lastWrite = mockWriteFile.mock.calls[mockWriteFile.mock.calls.length - 1]
+    const lastWrite = mockWriteFileAtomic.mock.calls[mockWriteFileAtomic.mock.calls.length - 1]
     const persisted = JSON.parse(String(lastWrite?.[1])) as Array<{
       id: string
     }>
@@ -295,7 +427,7 @@ describe("ingest-queue — enqueue & basic processing", () => {
     await flushMicrotasks(2)
 
     // writeFile should have been called to save the queue
-    const calls = mockWriteFile.mock.calls
+    const calls = mockWriteFileAtomic.mock.calls
     expect(calls.length).toBeGreaterThan(0)
     const queuePath = calls[0][0]
     expect(queuePath).toContain(".llm-wiki/ingest-queue.json")
@@ -555,7 +687,7 @@ describe("ingest-queue — retry & failure", () => {
     mockAutoIngest.mockImplementation(() => new Promise(() => {}))
 
     await restoreQueue(TEST_ID, TEST_PATH)
-    mockWriteFile.mockClear()
+    mockWriteFileAtomic.mockClear()
 
     const requeued = await retryAllFailedTasks()
     await flushMicrotasks(2)
@@ -565,7 +697,7 @@ describe("ingest-queue — retry & failure", () => {
     expect(getQueue().map((task) => task.error)).toEqual([null, null])
     expect(getQueue().map((task) => task.retryCount)).toEqual([0, 0])
     expect(getQueue().map((task) => task.status)).toEqual(["processing", "pending"])
-    expect(mockWriteFile).toHaveBeenCalled()
+    expect(mockWriteFileAtomic).toHaveBeenCalled()
   })
 
   it("retryAllFailedTasks returns 0 when there are no failed tasks", async () => {
@@ -638,11 +770,11 @@ describe("ingest-queue — cancel", () => {
       { id: "ingest-failed-b", sourcePath: "b.md", folderContext: "", status: "failed", addedAt: 2, error: "boom", retryCount: 3 },
     ]))
     await restoreQueue(TEST_ID, TEST_PATH)
-    mockWriteFile.mockClear()
+    mockWriteFileAtomic.mockClear()
 
     expect(await removeTask("ingest-failed-a")).toBe(true)
     expect(getQueue().map((t) => t.id)).toEqual(["ingest-failed-b"])
-    const calls = mockWriteFile.mock.calls
+    const calls = mockWriteFileAtomic.mock.calls
     const [path, snapshot] = calls[calls.length - 1]
     expect(path).toBe(`${TEST_PATH}/.llm-wiki/ingest-queue.json`)
     // Not just "the removed ID is gone" — a snapshot of `[]` would satisfy that
@@ -959,7 +1091,7 @@ describe("ingest-queue — restoreQueue", () => {
     expect(getQueue().length).toBeGreaterThan(0)
 
     // Now restore project B — should reset and load B's saved queue (empty)
-    mockReadFile.mockRejectedValue(new Error("ENOENT"))
+    mockReadFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }))
     await restoreQueue(TEST_ID_B, TEST_PATH_B)
     expect(getQueue()).toHaveLength(0)
   })
@@ -1236,13 +1368,13 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
       { sourcePath: "b.md", folderContext: "" },
     ])
     await flushMicrotasks(2)
-    mockWriteFile.mockClear()
+    mockWriteFileAtomic.mockClear()
 
     await pauseQueue()
 
     // The last write call should contain BOTH tasks, with the processing
     // one demoted back to pending for resume-on-return.
-    const writes = mockWriteFile.mock.calls
+    const writes = mockWriteFileAtomic.mock.calls
     expect(writes.length).toBeGreaterThan(0)
     const [pathArg, contentArg] = writes[writes.length - 1]
     expect(String(pathArg)).toContain("/project/.llm-wiki/ingest-queue.json")
@@ -1258,7 +1390,7 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
 
     // Capture what pauseQueue writes so restore can read it back.
     let lastWrittenContent = ""
-    mockWriteFile.mockImplementation(async (_path: string, content: string) => {
+    mockWriteFileAtomic.mockImplementation(async (_path: string, content: string) => {
       lastWrittenContent = content
     })
     await pauseQueue()
@@ -1286,7 +1418,7 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
     expect(getQueue().find((t) => t.status === "processing")).toBeTruthy()
 
     // Switch projects: pause then restore a different one.
-    mockWriteFile.mockClear()
+    mockWriteFileAtomic.mockClear()
     await pauseQueue()
     await restoreQueue(TEST_ID_B, TEST_PATH_B)
 
@@ -1297,7 +1429,7 @@ describe("ingest-queue — pauseQueue & switch-project survival", () => {
     // The orphan must not have written to the ACTIVE (B) project's file.
     // Inspect every post-pause write — the path should never contain the
     // project-B queue file getting mutated by the orphan's filter result.
-    const writes = mockWriteFile.mock.calls
+    const writes = mockWriteFileAtomic.mock.calls
     // Confirm no write touched project B's queue from orphan completion.
     // (The only writes should be pauseQueue's flush to /project and
     // restoreQueue's initial save of B's empty queue.)
@@ -1450,7 +1582,7 @@ describe("ingest-queue — pause/resume processing", () => {
     pauseProcessing()
     expect(isQueuePaused()).toBe(true)
 
-    mockReadFile.mockRejectedValue(new Error("ENOENT"))
+    mockReadFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }))
     await restoreQueue(TEST_ID, TEST_PATH)
     expect(isQueuePaused()).toBe(false)
   })
@@ -1535,7 +1667,7 @@ describe("cleanupWrittenFiles — page cascade", () => {
     mockDeleteFile.mockReset()
     // First file fails (e.g. already gone), second succeeds.
     mockDeleteFile
-      .mockRejectedValueOnce(new Error("ENOENT"))
+      .mockRejectedValueOnce(Object.assign(new Error("ENOENT"), { code: "ENOENT" }))
       .mockResolvedValueOnce(undefined)
 
     await cleanupWrittenFiles("/proj", [

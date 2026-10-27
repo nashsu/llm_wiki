@@ -27,6 +27,7 @@ import {
   movePendingTask,
   pauseProcessing,
   resumeProcessing,
+  retryQueuePersistence,
   subscribeIngestQueue,
   type IngestTask,
 } from "@/lib/ingest-queue"
@@ -65,6 +66,10 @@ const WIKI_TYPE_ICON_KEYS: Record<string, keyof typeof FILE_TYPE_ICONS> = {
 }
 
 const MAX_VISIBLE_QUEUE_TASKS = 300
+
+function reportQueueActionError(error: unknown): void {
+  console.error("[activity-panel] Ingest queue action failed:", error)
+}
 
 function getFileTypeInfo(path: string): { icon: typeof FileText; typeKey: string } {
   const inferred = inferWikiTypeFromPath(path)
@@ -114,7 +119,7 @@ export function ActivityPanel() {
   }, [queueTasks])
 
   const queueSummary = getQueueSummary()
-  const hasQueue = queueSummary.total > 0
+  const hasQueue = queueSummary.total > 0 || Boolean(queueSummary.persistenceError)
   const shouldResumeQueue = queueSummary.userPaused || queueSummary.blockedOnLlmConfig
   const hasFileSync = fileSyncTasks.length > 0 || Boolean(fileSyncError)
   const fileSyncPending = fileSyncTasks.filter((t) => t.status === "pending").length
@@ -129,7 +134,7 @@ export function ActivityPanel() {
   // every failed task. Keep this minimal.
   const handleIngestRetry = useCallback((taskId: string) => {
     if (!project) return
-    retryTask(taskId)
+    void retryTask(taskId).catch(reportQueueActionError)
   }, [project])
 
   const handleRetryAllFailed = useCallback(() => {
@@ -146,7 +151,7 @@ export function ActivityPanel() {
     void retryTasks([...selectedTaskIds]).then(() => {
       setSelectedTaskIds(new Set())
       setQueueTasks([...getQueue()])
-    })
+    }).catch(reportQueueActionError)
   }, [project, selectedTaskIds])
 
   const handleCancelSelected = useCallback(() => {
@@ -154,7 +159,7 @@ export function ActivityPanel() {
     void cancelTasks([...selectedTaskIds]).then(() => {
       setSelectedTaskIds(new Set())
       setQueueTasks([...getQueue()])
-    })
+    }).catch(reportQueueActionError)
   }, [project, selectedTaskIds])
 
   const syncAfterRemoval = useCallback(() => {
@@ -173,12 +178,12 @@ export function ActivityPanel() {
       message: t("activity.removeSelectedConfirm", { count: removable.length }),
       variant: "destructive",
     }))) return
-    await removeTasks(removable.map((task) => task.id))
+    await removeTasks(removable.map((task) => task.id)).catch(reportQueueActionError)
     syncAfterRemoval()
   }, [appDialog, project, queueTasks, selectedTaskIds, syncAfterRemoval, t])
 
   const handleMoveTask = useCallback((taskId: string, direction: "up" | "down") => {
-    void movePendingTask(taskId, direction).then(() => setQueueTasks([...getQueue()]))
+    void movePendingTask(taskId, direction).then(() => setQueueTasks([...getQueue()])).catch(reportQueueActionError)
   }, [])
 
   const toggleTaskSelection = useCallback((taskId: string) => {
@@ -192,12 +197,12 @@ export function ActivityPanel() {
 
   const handleIngestCancel = useCallback((taskId: string) => {
     if (!project) return
-    cancelTask(taskId)
+    void cancelTask(taskId).catch(reportQueueActionError)
   }, [project])
 
   const handleIngestRemove = useCallback((taskId: string) => {
     if (!project) return
-    void removeTask(taskId).then(syncAfterRemoval)
+    void removeTask(taskId).then(syncAfterRemoval).catch(reportQueueActionError)
   }, [project, syncAfterRemoval])
 
   const handleCancelAll = useCallback(async () => {
@@ -208,7 +213,7 @@ export function ActivityPanel() {
       message: t("activity.cancelAllConfirm", { count: activeCount }),
       variant: "destructive",
     }))) return
-    cancelAllTasks()
+    void cancelAllTasks().catch(reportQueueActionError)
   }, [appDialog, project, queueSummary.pending, queueSummary.processing, t])
 
   const handleTogglePause = useCallback(() => {
@@ -267,7 +272,9 @@ export function ActivityPanel() {
 
   // Build status text
   let statusText = ""
-  if (queueSummary.processing > 0 || queueSummary.pending > 0) {
+  if (queueSummary.persistenceError) {
+    statusText = queueSummary.persistenceError
+  } else if (queueSummary.processing > 0 || queueSummary.pending > 0) {
     const done = queueSummary.completed + queueSummary.failed + queueSummary.cancelled
     statusText = `Queue: ${done}/${queueSummary.total}`
     if (queueSummary.failed > 0) statusText += ` (${queueSummary.failed} failed)`
@@ -303,7 +310,9 @@ export function ActivityPanel() {
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent/50"
       >
-        {isActive ? (
+        {queueSummary.persistenceError ? (
+          <AlertCircle className="h-3 w-3 shrink-0 text-destructive" />
+        ) : isActive ? (
           <Loader2 className="h-3 w-3 animate-spin shrink-0" />
         ) : queueSummary.failed > 0 || fileSyncFailed > 0 || fileSyncError ? (
           <AlertCircle className="h-3 w-3 shrink-0 text-destructive" />
@@ -320,6 +329,17 @@ export function ActivityPanel() {
 
       {expanded && (
         <div className="max-h-64 overflow-y-auto border-t">
+          {queueSummary.persistenceError && (
+            <div role="alert" className="flex items-start gap-2 border-b border-border/50 px-3 py-1.5 text-[10px] text-destructive">
+              <span className="min-w-0 flex-1 break-words">{queueSummary.persistenceError}</span>
+              <button
+                className="shrink-0 rounded px-1.5 py-0.5 hover:bg-destructive/10"
+                onClick={() => void retryQueuePersistence().catch(reportQueueActionError)}
+              >
+                {t("common.retry")}
+              </button>
+            </div>
+          )}
           {hasFileSync && (
             <div className="border-b border-border/50 px-3 py-1.5">
               <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
