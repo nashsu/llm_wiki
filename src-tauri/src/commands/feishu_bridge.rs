@@ -63,6 +63,12 @@ pub struct BridgeStatus {
     pub current_elapsed_secs: u64,
     /// 排队等待处理的消息条数。
     pub pending: usize,
+    /// 本轮请求注入的 skill id（空表示本模式不用 skill）。
+    pub skill_id: String,
+    /// 本轮该 skill 是否真的注入成功（id 找不到时为 false）。
+    pub skill_applied: bool,
+    /// 本轮实际注入的 skill 条数（0 表示没注入）。
+    pub skill_count: usize,
 }
 
 /// 桥接共享状态。全部字段是 Arc，可自由 clone 进各 task。
@@ -367,6 +373,13 @@ async fn worker(
         state.busy.store(true, Ordering::SeqCst);
         *state.current_message.lock().await = truncate_reply(&msg.content);
         *state.started_at.lock().await = Some(Instant::now());
+        {
+            // 上一轮的 skill 结论不能留给本轮，先清空。
+            let mut status = state.status.lock().await;
+            status.skill_id.clear();
+            status.skill_applied = false;
+            status.skill_count = 0;
+        }
 
         // 每条消息实时读取文档回复配置（保存设置即生效，无需重启桥接）。
         let feishu_cfg = crate::api_server::load_app_state(&app)
@@ -379,10 +392,21 @@ async fn worker(
                 .unwrap_or("")
                 .to_string()
         };
-        let reply_as_doc = feishu_cfg
-            .get("bridgeReplyAsDoc")
-            .and_then(|b| b.as_bool())
-            .unwrap_or(true);
+        // 回复形式：优先读 replyFormat（doc/html/text），缺失时从废弃字段
+        // bridgeReplyAsDoc 推导（true→doc，false→text），兜底 doc。
+        let reply_format = feishu_cfg
+            .get("replyFormat")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let legacy = feishu_cfg
+                    .get("bridgeReplyAsDoc")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(true);
+                if legacy { "doc".to_string() } else { "text".to_string() }
+            });
+        let reply_as_doc = reply_format == "doc";
+        let reply_as_html = reply_format == "html";
         let doc_mode = feishu_cfg
             .get("bridgeDocMode")
             .and_then(|v| v.as_str())
@@ -397,16 +421,60 @@ async fn worker(
         let fixed_mode =
             (doc_mode == "fixed" || doc_mode == "append") && !doc_target.fixed_doc.is_empty();
 
-        let reply = match run_agent(&app, &project_id, &msg, reply_as_doc).await {
-            Ok(text) => text,
+        let reply = match run_agent(&app, &project_id, &msg, &reply_format, &cfg_str("htmlSkillId")).await {
+            Ok(result) => {
+                state.status.lock().await.skill_id = result.skill_id;
+                state.status.lock().await.skill_count = result.skill_count;
+                state.status.lock().await.skill_applied = result.skill_count > 0;
+                result.text
+            }
             Err(err) => {
                 state.status.lock().await.last_error = err.clone();
                 format!("[LLM Wiki] 处理失败: {err}")
             }
         };
 
-        // 文档模式：非错误回复导入为飞书文档，回发标题 + 链接；失败降级纯文本。
-        let sent = if reply_as_doc && !reply.trim().is_empty() && !reply.starts_with("[LLM Wiki]") {
+        // HTML 模式：Agent 已按 skill 直接产出单文件 HTML，这里只发文件；
+        // 失败或 Agent 没给出 HTML 时降级文档 → 纯文本。
+        let sent = if reply_as_html
+            && !reply.trim().is_empty()
+            && !reply.starts_with("[LLM Wiki]")
+            && looks_like_html(&reply)
+        {
+            let title = doc_title(&msg.content);
+            let html = super::feishu::strip_html_fences(&reply);
+            let file_name = format!(
+                "{}.html",
+                title.chars().take(30).collect::<String>().replace(|c: char| {
+                    !c.is_alphanumeric() && c != '.' && c != '_' && c != '-'
+                }, "_")
+            );
+            match super::feishu::feishu_send_file(msg.chat_id.clone(), file_name, html).await {
+                Ok(f) if f.ok => {
+                    // 文件消息不带头，补一条文本说明
+                    send_feishu_text(&msg.chat_id, &format!("📄 {title}（HTML 报告）")).await
+                }
+                Ok(f) => {
+                    eprintln!("[feishu-html] send file FAILED: {}", f.error);
+                    state.status.lock().await.last_error =
+                        format!("html file send failed: {}（已降级）", f.error);
+                    fallback_doc_or_text(&msg, &reply, &title, &doc_target, &doc_mode, fixed_mode).await
+                }
+                Err(err) => {
+                    eprintln!("[feishu-html] send file error: {err}");
+                    state.status.lock().await.last_error =
+                        format!("html file send error: {err}（已降级）");
+                    fallback_doc_or_text(&msg, &reply, &title, &doc_target, &doc_mode, fixed_mode).await
+                }
+            }
+        } else if reply_as_html && !reply.trim().is_empty() && !reply.starts_with("[LLM Wiki]") {
+            // Agent 没按格式输出 HTML：退回文档/文本，避免发出扩展名错误的假 HTML。
+            eprintln!("[feishu-html] reply is not HTML, falling back");
+            state.status.lock().await.last_error =
+                "Agent 未返回 HTML，已降级为文档/文本回复".to_string();
+            let title = doc_title(&msg.content);
+            fallback_doc_or_text(&msg, &reply, &title, &doc_target, &doc_mode, fixed_mode).await
+        } else if reply_as_doc && !reply.trim().is_empty() && !reply.starts_with("[LLM Wiki]") {
             let title = doc_title(&msg.content);
             let target = if fixed_mode {
                 doc_target
@@ -470,31 +538,138 @@ fn doc_title(question: &str) -> String {
     format!("{title}｜LLM Wiki")
 }
 
+/// 粗判 Agent 返回的是不是 HTML：剥掉可能的围栏后，必须以 <!DOCTYPE 或 <html 开头。
+///
+/// Agent 偶尔会先讲一句话再给源码，这种情况判为否，走文档/文本降级，
+/// 避免把 Markdown 存成 .html 发出去。
+fn looks_like_html(reply: &str) -> bool {
+    let stripped = super::feishu::strip_html_fences(reply);
+    let head = stripped.trim_start().to_ascii_lowercase();
+    head.starts_with("<!doctype") || head.starts_with("<html")
+}
+
+/// HTML 生成/发送失败时的降级：先尝试发布飞书文档，再不行发纯文本。
+async fn fallback_doc_or_text(
+    msg: &FeishuInbound,
+    reply: &str,
+    title: &str,
+    doc_target: &super::feishu::FeishuDocTarget,
+    doc_mode: &str,
+    fixed_mode: bool,
+) -> super::feishu::FeishuSendResult {
+    let target = if fixed_mode {
+        doc_target.clone()
+    } else {
+        super::feishu::FeishuDocTarget { fixed_doc: String::new(), ..doc_target.clone() }
+    };
+    match super::feishu::publish_feishu_doc(title, reply, &target).await {
+        Ok(url) => {
+            let mode_note = if doc_mode == "append" {
+                "已追加到固定文档"
+            } else if fixed_mode {
+                "已更新固定文档"
+            } else {
+                ""
+            };
+            eprintln!("[feishu-fallback] doc ok: {title} -> {url}");
+            let text = if fixed_mode {
+                format!("📄 {mode_note}（{title}）\n{url}")
+            } else {
+                format!("📄 {title}\n{url}")
+            };
+            send_feishu_text(&msg.chat_id, &text).await
+        }
+        Err(err) => {
+            eprintln!("[feishu-fallback] doc FAILED: {err}");
+            let text = if reply.trim().is_empty() {
+                "[LLM Wiki] 本轮没有产生文本回复".to_string()
+            } else {
+                truncate_reply(reply)
+            };
+            send_feishu_text(&msg.chat_id, &text).await
+        }
+    }
+}
+
+/// 一轮 Agent 调用的结果，附带 skill 注入的实际情况，供设置页展示。
+struct AgentRunOutput {
+    text: String,
+    /// 请求注入的 skill id（未使用 skill 时为空）。
+    skill_id: String,
+    /// 实际注入成功的 skill 条数：id 不存在时为 0。
+    skill_count: usize,
+}
+
 /// 进程内复用前端聊天的同一个入口。AI 链路零改动。
+///
+/// HTML 模式与文档/文本模式的区别只有两处：
+/// 1. 显式指定设置里选中的 skill（与聊天界面同一套 `.llm-wiki/skills` 扫描，
+///    因此 Agent 可 `skill.read_file` 读取 references/、diagrams/ 等支撑文档）；
+/// 2. 追加 HTML 输出要求，让 Agent 直接产出单文件 HTML，
+///    省掉原先「先出 Markdown 再二次 LLM 转 HTML」的额外调用。
+/// HTML 模式使用独立 sessionId，避免几十 KB 的 HTML 灌进普通对话历史。
 async fn run_agent(
     app: &tauri::AppHandle,
     project_id: &str,
     msg: &FeishuInbound,
-    reply_as_doc: bool,
-) -> Result<String, String> {
-    // 借 serde 默认值构造请求，字段取值与前端一致（wiki 工具开、标准模式）。
-    // 文档模式下追加输出格式要求：内容会导入飞书文档，表格/mermaid 才有承载。
-    let message = if reply_as_doc {
+    reply_format: &str,
+    html_skill_id: &str,
+) -> Result<AgentRunOutput, String> {
+    let is_html = reply_format == "html";
+
+    let message = if is_html {
         format!(
-            "{}\n\n[输出格式要求：用 Markdown 回答；信息优先用表格与 mermaid 代码块呈现，正文文字尽量精简，不要输出与问题无关的寒暄。]",
+            "{}\n\n{}",
+            msg.content,
+            super::feishu::FEISHU_HTML_OUTPUT_RULE
+        )
+    } else if reply_format == "doc" {
+        // 文档模式下追加输出格式要求：内容会导入飞书文档，表格/mermaid 才有承载。
+        format!(
+            "{}\n\n[输出格式要求：用 Markdown 回答；信息优先用表格与 mermaid 代码块呈现，正文文字尽量精简，不要输出与问题无关的寒暄。\n引用要求：每一条来自 wiki 检索结果的事实性结论，必须在该句末尾紧跟 [n]（n 为被引用资料的序号，多来源写 [1][3]）；不使用检索证据的句子标注「（通用知识，无项目来源）」。]",
             msg.content
         )
     } else {
         msg.content.clone()
     };
+
+    // 没选 skill 就不注入，Agent 只按上面的输出要求生成。
+    let skills: Vec<String> = if is_html && !html_skill_id.trim().is_empty() {
+        vec![html_skill_id.trim().to_string()]
+    } else {
+        Vec::new()
+    };
+    let session_id = if is_html {
+        format!("feishu_html_{}", msg.chat_id)
+    } else {
+        format!("feishu_{}", msg.chat_id)
+    };
+    let requested_skill_id = skills.first().cloned().unwrap_or_default();
+
     let request: crate::agent::AgentChatRequest = serde_json::from_value(serde_json::json!({
         "message": message,
-        "sessionId": format!("feishu_{}", msg.chat_id),
+        "sessionId": session_id,
         "persistSession": true,
+        "skills": skills,
+        "skillMode": "explicit",
     }))
     .map_err(|err| format!("build request failed: {err}"))?;
     let response = crate::agent_start_turn(app.clone(), project_id.to_string(), request, None).await?;
-    Ok(response.message)
+    // runtime 在注入 skill 后会发 `skills.load`，detail 形如 "1 skill(s) selected"。
+    // 直接读这个事件，比事后重新扫盘更准（读到的是本轮真正加载到的条数）。
+    let skill_count = response
+        .tool_events
+        .iter()
+        .find(|event| event.tool == "skills.load")
+        .and_then(|event| event.detail.as_deref())
+        .and_then(|detail| detail.split_whitespace().next())
+        .and_then(|count| count.parse::<usize>().ok())
+        .unwrap_or(0);
+    Ok(AgentRunOutput {
+        text: response.message,
+        skill_id: requested_skill_id,
+        skill_count,
+    })
 }
 
 #[tauri::command]

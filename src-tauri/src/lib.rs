@@ -709,6 +709,8 @@ pub fn run() {
             commands::feishu::feishu_auth_begin,
             commands::feishu::feishu_auth_complete,
             commands::feishu::feishu_publish_chat_reply,
+            commands::feishu::feishu_generate_html,
+            commands::feishu::feishu_send_file,
             commands::feishu_bridge::feishu_bridge_start,
             commands::feishu_bridge::feishu_bridge_stop,
             commands::feishu_bridge::feishu_bridge_status,

@@ -1046,6 +1046,13 @@ function CitedReferencesPanel({
   const hasMore = citedPages.length > MAX_COLLAPSED
   const hasMoreOutputs = generatedOutputs.length > MAX_COLLAPSED
 
+  // 正文里的 `[n]` 使用 lastQueryPages 的整体顺序，面板必须显示同一个 n，
+  // 否则「正文 [3] / 面板 [1]」会指向同一页却编号不同。
+  const citationNumber = (page: CitedPage): number => {
+    const at = lastQueryPages.findIndex((entry) => entry.path === page.path)
+    return at >= 0 ? at + 1 : 0
+  }
+
   return (
     <div className="space-y-1">
       {generatedOutputs.length > 0 && (
@@ -1170,7 +1177,7 @@ function CitedReferencesPanel({
               className="flex w-full items-center gap-1.5 rounded text-left"
               title={page.kind === "external" ? `${referenceSourceLabel(page)}: ${referenceLocator(page)}` : page.path}
             >
-              <span className="text-[10px] text-muted-foreground/60 w-4 shrink-0 text-right">[{i + 1}]</span>
+              <span className="text-[10px] text-muted-foreground/60 w-4 shrink-0 text-right">[{citationNumber(page) || i + 1}]</span>
               {/*
                * Image badge — clickable, separately from the page
                * row. Click → resolve the FIRST image's raw source
@@ -1769,11 +1776,14 @@ function CitationRef({ index }: { index: number }) {
   const project = useWikiStore((s) => s.project)
   const openFileInPreview = useWikiStore((s) => s.openFileInPreview)
   const page = index >= 1 && index <= lastQueryPages.length ? lastQueryPages[index - 1] : null
+  // 非 wiki 来源（web / source / anytxt / graph）没有本地 Markdown 文件，
+  // 只能按其 locator（URL 或路径）打开，不能走 wiki 候选路径探测。
+  const externalUrl = page?.url ?? (page?.kind === "external" ? page.path : undefined)
   const [exists, setExists] = useState<boolean | null>(null)
   const resolvedPath = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!project || !page) {
+    if (!project || !page || externalUrl) {
       setExists(null)
       return
     }
@@ -1809,9 +1819,15 @@ function CitationRef({ index }: { index: number }) {
     return () => {
       cancelled = true
     }
-  }, [project, page])
+  }, [project, page, externalUrl])
 
   const handleClick = useCallback(async () => {
+    if (externalUrl) {
+      await openUrl(externalUrl).catch((err) => {
+        console.warn("[chat citation] failed to open external citation:", err)
+      })
+      return
+    }
     if (!resolvedPath.current) return
     try {
       const content = await readFile(resolvedPath.current)
@@ -1819,18 +1835,20 @@ function CitationRef({ index }: { index: number }) {
     } catch {
       // ignore
     }
-  }, [openFileInPreview])
+  }, [openFileInPreview, externalUrl])
 
   if (!page) return <sup>[{index}]</sup>
+
+  const disabled = !externalUrl && exists === false
 
   return (
     <sup>
       <button
         type="button"
         onClick={handleClick}
-        disabled={exists === false}
+        disabled={disabled}
         className={`inline-flex items-center rounded px-0.5 leading-none text-[0.75em] transition-colors ${
-          exists === false
+          disabled
             ? "cursor-default text-muted-foreground/60"
             : "cursor-pointer text-primary underline decoration-primary/40 hover:bg-primary/10 hover:decoration-primary"
         }`}

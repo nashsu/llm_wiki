@@ -22,30 +22,41 @@ export interface FeishuMyIdResult {
   error: string
 }
 
+/** 飞书回复形式：
+ * - "doc"：发布为飞书文档并回发链接
+ * - "html"：用 AI（HTML 报告 Skill）生成单文件 HTML，作为文件消息发送
+ * - "text"：纯文本消息（仅剔除推理块）
+ */
+export type FeishuReplyFormat = "doc" | "html" | "text"
+
 export interface FeishuNotifyConfig {
   enabled: boolean
   /** open_id (ou_...) 私聊 或 chat_id (oc_...) 群聊 */
   recipientId: string
   /** 飞书遥控对话：常驻监听飞书消息并自动回复。 */
   bridgeEnabled: boolean
-  /** 回复形式：true=发布为飞书文档并回发链接（机器人回复与聊天通知都生效）；false=纯文本消息（聊天通知发完整原文）。 */
-  bridgeReplyAsDoc: boolean
+  /** 回复形式（机器人回复与聊天通知都生效）。
+   *  旧字段 bridgeReplyAsDoc 已废弃：true→doc，false→text。 */
+  replyFormat: FeishuReplyFormat
   /** 文档生成目录：飞书文件夹 token（我的空间根目录为空串）。 */
   bridgeDocFolder: string
   /** 文档模式：new=每次新建文档；fixed=覆盖固定文档；append=追加到固定文档。 */
   bridgeDocMode: "new" | "fixed" | "append"
   /** fixed/append 模式的目标文档 token（docx token）。 */
   bridgeDocTarget: string
+  /** HTML 模式使用的 skill id（来自 `.llm-wiki/skills` 等扫描结果；空=不用 skill）。 */
+  htmlSkillId: string
 }
 
 export const DEFAULT_FEISHU_CONFIG: FeishuNotifyConfig = {
   enabled: false,
   recipientId: "",
   bridgeEnabled: false,
-  bridgeReplyAsDoc: true,
+  replyFormat: "doc",
   bridgeDocFolder: "",
   bridgeDocMode: "new",
   bridgeDocTarget: "",
+  htmlSkillId: "",
 }
 
 /** 从任意文本里提取第一个合法的收件人 ID（open_id 或 chat_id）。 */
@@ -82,12 +93,18 @@ export function normalizeFeishuConfig(config?: Partial<FeishuNotifyConfig> | nul
   const recipientId = rawRecipient
     ? (extractRecipientId(rawRecipient) ?? "")
     : ""
+  // 回复形式：优先用新字段 replyFormat；缺失时从废弃字段 bridgeReplyAsDoc 推导。
+  let replyFormat: FeishuReplyFormat = "doc"
+  if (config?.replyFormat === "doc" || config?.replyFormat === "html" || config?.replyFormat === "text") {
+    replyFormat = config.replyFormat
+  } else if (config && "bridgeReplyAsDoc" in config && config.bridgeReplyAsDoc === false) {
+    replyFormat = "text"
+  }
   return {
     enabled: config?.enabled === true,
     recipientId,
     bridgeEnabled: config?.bridgeEnabled === true,
-    // 缺省视为开启（旧配置无此字段时保持文档回复默认体验）
-    bridgeReplyAsDoc: config?.bridgeReplyAsDoc !== false,
+    replyFormat,
     bridgeDocFolder:
       typeof config?.bridgeDocFolder === "string"
         ? (extractFeishuFolderToken(config.bridgeDocFolder) ?? "")
@@ -100,6 +117,8 @@ export function normalizeFeishuConfig(config?: Partial<FeishuNotifyConfig> | nul
       typeof config?.bridgeDocTarget === "string"
         ? (extractFeishuDocToken(config.bridgeDocTarget) ?? "")
         : "",
+    htmlSkillId:
+      typeof config?.htmlSkillId === "string" ? config.htmlSkillId.trim() : "",
   }
 }
 
@@ -202,6 +221,12 @@ export interface FeishuBridgeStatus {
   currentElapsedSecs: number
   /** 排队等待处理的消息条数。 */
   pending: number
+  /** 本轮请求注入的 skill id（空表示本模式不用 skill）。 */
+  skillId: string
+  /** 本轮该 skill 是否真的注入成功。 */
+  skillApplied: boolean
+  /** 本轮实际注入的 skill 条数。 */
+  skillCount: number
 }
 
 /** 启动飞书遥控对话桥接；projectId 省略时用当前项目。 */
@@ -215,4 +240,45 @@ export function stopFeishuBridge(): Promise<FeishuBridgeStatus> {
 
 export function getFeishuBridgeStatus(): Promise<FeishuBridgeStatus> {
   return invoke<FeishuBridgeStatus>("feishu_bridge_status")
+}
+
+/** HTML 文件发送结果。 */
+export interface FeishuFileSendResult {
+  ok: boolean
+  messageId: string
+  error: string
+}
+
+/**
+ * 把一段内容作为文件发送到飞书（bot 身份）。
+ * lark-cli 的 --file 只接受 cwd 相对路径，绝对路径被拒，
+ * 所以后端会把内容写到临时目录并以临时目录为 cwd 调用 lark-cli。
+ */
+export function sendFeishuFile(
+  recipientId: string,
+  fileName: string,
+  fileContent: string,
+): Promise<FeishuFileSendResult> {
+  return invoke<FeishuFileSendResult>("feishu_send_file", { recipientId, fileName, fileContent })
+}
+
+/** AI 生成 HTML 结果。 */
+export interface FeishuHtmlGenerateResult {
+  ok: boolean
+  html: string
+  error: string
+}
+
+/**
+ * 用当前项目的 LLM 配置 + 设置里选中的 skill，
+ * 把 markdown 回复转成单文件 HTML（可直接在浏览器打开）。
+ * 失败时 ok=false，调用方应降级为文本/文档发送。
+ */
+export function generateFeishuHtml(
+  projectPath: string,
+  title: string,
+  markdown: string,
+  llmConfig: unknown,
+): Promise<FeishuHtmlGenerateResult> {
+  return invoke<FeishuHtmlGenerateResult>("feishu_generate_html", { projectPath, title, markdown, llmConfig })
 }

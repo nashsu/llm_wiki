@@ -15,7 +15,7 @@ import { executeIngestWrites } from "@/lib/ingest"
 import { deleteFile, openPathInProject, readFile } from "@/commands/fs"
 import { getFileName, isAbsolutePath, normalizePath } from "@/lib/path-utils"
 import { hasConfiguredAnyTxt } from "@/lib/anytxt-search"
-import { publishFeishuChatReply, sendFeishuMessage, stripThinkBlocks } from "@/lib/feishu"
+import { generateFeishuHtml, publishFeishuChatReply, sendFeishuFile, sendFeishuMessage, stripThinkBlocks } from "@/lib/feishu"
 import type { ChatAgentEvent, ChatAgentFileChange, ChatAgentStep, ChatUserInputRequest } from "@/lib/chat-agent-types"
 import type { ChatMessage as LlmChatMessage, ContentBlock } from "@/lib/llm-client"
 import { FilePreview } from "@/components/editor/file-preview"
@@ -105,8 +105,15 @@ function contextDetailCategory(reference: MessageReference): ContextDetailCatego
   return "external"
 }
 
-// Store the page mapping from the last query so SourceFilesBar can show which pages were cited
-export let lastQueryPages: { title: string; path: string }[] = []
+// Store the page mapping from the last query so SourceFilesBar can show which pages were cited.
+// 顺序必须与后端 build_user_context 渲染的 1..N 编号完全一致（不筛选 kind），
+// 否则正文 `[n]` 会指向错误的页面。
+export let lastQueryPages: {
+  title: string
+  path: string
+  kind?: MessageReference["kind"]
+  url?: string
+}[] = []
 
 const AGENT_STREAM_IDLE_TIMEOUT_MS = 8 * 60 * 1000
 const AGENT_SKILL_STREAM_IDLE_TIMEOUT_MS = 15 * 60 * 1000
@@ -661,12 +668,14 @@ export function ChatPanel() {
   const [feishuError, setFeishuError] = useState<string | null>(null)
 
   // 铃铛开着时，每条 AI 回复完成后推送飞书：
-  // - 「回复为飞书文档」开启 → 与机器人一致：发布全文文档 + 回发链接，失败降级完整原文
-  // - 关闭 → 发送完整原文（仅剔除推理块，不再截断摘要）
+  // - replyFormat="doc"  → 发布全文飞书文档 + 回发链接，失败降级完整原文
+  // - replyFormat="html" → 用 AI 生成单文件 HTML 报告并作为文件消息发送，失败降级文档/原文
+  // - replyFormat="text" → 发送完整原文（仅剔除推理块）
   // 失败只提示，绝不影响回复本身（不抛错、不重试）。
   const pushFeishuSummary = useCallback(async (conversationId: string, content: string) => {
     const { notifyFeishu: enabled, conversations } = useChatStore.getState()
     const config = useWikiStore.getState().feishuConfig
+    const projectPath = useWikiStore.getState().project?.path
     if (!enabled || !config.enabled) return
     if (!config.recipientId.startsWith("ou_") && !config.recipientId.startsWith("oc_")) return
     const title = conversations.find((c) => c.id === conversationId)?.title ?? ""
@@ -681,7 +690,36 @@ export function ChatPanel() {
       setTimeout(() => setFeishuError(null), 6000)
     }
     try {
-      if (config.bridgeReplyAsDoc) {
+      if (config.replyFormat === "html") {
+        const docTitle = `${(title || "AI 回复").slice(0, 24)}｜LLM Wiki`
+        const gen = await generateFeishuHtml(projectPath ?? "", docTitle, content, llmConfig)
+        if (gen.ok && gen.html.trim().length > 0) {
+          const fileName = `${(title || "ai-reply").slice(0, 30).replace(/[\\/:*?"<>|]/g, "_")}.html`
+          const sent = await sendFeishuFile(config.recipientId, fileName, gen.html)
+          if (sent.ok) {
+            // 文件消息不带头，补一条文本说明
+            await sendFeishuMessage(config.recipientId, `📄 ${docTitle}（HTML 报告）`)
+          } else {
+            // 文件发送失败：降级文档，再不行降级原文
+            const pub = await publishFeishuChatReply(docTitle, content)
+            if (pub.ok) {
+              await sendFeishuMessage(config.recipientId, `📄 ${docTitle}\n${pub.url}`)
+            } else if (fullText) {
+              await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+            }
+            showError(`HTML 文件发送失败已降级：${sent.error}`)
+          }
+        } else {
+          // HTML 生成失败：降级文档，再不行降级原文
+          const pub = await publishFeishuChatReply(docTitle, content)
+          if (pub.ok) {
+            await sendFeishuMessage(config.recipientId, `📄 ${docTitle}\n${pub.url}`)
+          } else if (fullText) {
+            await sendFeishuMessage(config.recipientId, `${header}\n${fullText}`)
+          }
+          showError(`HTML 生成失败已降级：${gen.error}`)
+        }
+      } else if (config.replyFormat === "doc") {
         const docTitle = `${(title || "AI 回复").slice(0, 24)}｜LLM Wiki`
         const pub = await publishFeishuChatReply(docTitle, content)
         if (pub.ok) {
@@ -702,7 +740,7 @@ export function ChatPanel() {
       setFeishuError(err instanceof Error ? err.message : String(err))
       setTimeout(() => setFeishuError(null), 6000)
     }
-  }, [])
+  }, [llmConfig])
   const [referencePreview, setReferencePreview] = useState<ChatReferencePreview | null>(null)
   const [contextDetailReferences, setContextDetailReferences] = useState<MessageReference[] | null>(null)
   const [generatedOutputPreviews, setGeneratedOutputPreviews] = useState<ChatReferencePreview[]>([])
@@ -1215,8 +1253,13 @@ export function ChatPanel() {
           }
           if (!isCurrentRun()) return
           lastQueryPages = references
-            .filter((ref) => ref.kind === "wiki")
-            .map((ref) => ({ title: ref.title, path: ref.path }))
+            .filter((ref) => ref.kind !== "workspace")
+            .map((ref) => ({
+              title: ref.title,
+              path: ref.path,
+              kind: ref.kind,
+              url: ref.url,
+            }))
           const steps = backendEvents.map(backendToolToAgentStep)
           finalized = true
           finalizeStreamForConversation(
@@ -1291,8 +1334,13 @@ export function ChatPanel() {
         const backendEvents = (backendResponse.toolEvents ?? []).map(backendToolToAgentEvent)
         setAgentEvents(backendEvents.slice(-6))
         lastQueryPages = backendReferences
-          .filter((ref) => ref.kind === "wiki")
-          .map((ref) => ({ title: ref.title, path: ref.path }))
+          .filter((ref) => ref.kind !== "workspace")
+          .map((ref) => ({
+            title: ref.title,
+            path: ref.path,
+            kind: ref.kind,
+            url: ref.url,
+          }))
 
         if (backendResponse.userInputRequest) {
           finalized = true
@@ -1315,13 +1363,16 @@ export function ChatPanel() {
 
         const responseContext = backendResponseText(backendResponse).trim()
         const retrievedContext = responseContext || backendReferences
-          .map((reference) => `${reference.title} (${reference.path})`)
+          .filter((reference) => reference.kind !== "workspace")
+          .map((reference, index) => `${index + 1}. ${reference.title} (${reference.path})`)
           .join("\n")
         const contextText = retrievedContext
           ? [
               "You have access to the current LLM Wiki project context below. Use it as retrieved evidence when it is relevant.",
               "",
               retrievedContext,
+              "",
+              "Citation contract (mandatory): the evidence above is numbered 1..N. End every factual sentence with the number(s) it rests on as [n]; sentences without retrieved evidence must be marked as general knowledge; do not append a separate reference list.",
               "",
               `User request: ${text}`,
             ].join("\n")
@@ -1344,7 +1395,7 @@ export function ChatPanel() {
         const finalMessages: LlmChatMessage[] = [
           {
             role: "system",
-            content: "Answer using the provided LLM Wiki context and references. If the context is insufficient, say what is missing instead of inventing details.",
+            content: "Answer using the provided LLM Wiki context and references. If the context is insufficient, say what is missing instead of inventing details. End every factual sentence taken from the provided evidence with its [n] marker; mark unsourced sentences as general knowledge.",
           },
           ...(sendOptions.historyOverride ?? chatMessagesToLLM(priorMessages)),
           { role: "user", content: userContent },

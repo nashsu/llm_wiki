@@ -2956,8 +2956,11 @@ fn build_agent_final_system(base_system: &str, retrieval_mode: AgentRetrievalMod
     } else {
         ""
     };
+    // 最终回合仍复用 base_system，但 loop 里靠 tool observation 拿到的证据
+    // 编号容易被模型忽略，这里再显式重申一次，保证正文带 `[n]` 角标。
+    let citation_reminder = " The citation contract still applies: every factual sentence must end with the `[n]` marker of the evidence it rests on, and sentences without retrieved evidence must be marked as general knowledge.";
     format!(
-        "{base_system}\n\nThe retrieval phase is complete. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided.{faithful_retrieval} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
+        "{base_system}\n\nThe retrieval phase is complete. No tools are available now. Answer the user's latest request directly using the permitted context and tool observations already provided.{faithful_retrieval}{citation_reminder} Return only compact JSON in the form {{\"action\":\"final\",\"answer\":\"...\"}}. Do not request, announce, or simulate another search or file read."
     )
 }
 

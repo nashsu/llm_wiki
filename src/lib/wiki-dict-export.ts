@@ -74,16 +74,16 @@ export async function exportWikiDict(projectPath: string): Promise<WikiDictExpor
   return { entries: rows.length, targetPath }
 }
 
-type PinyinFn = (
-  text: string,
-  options?: Record<string, unknown>,
-) => string[]
+type PinyinFn = typeof import("pinyin-pro")["pinyin"]
 
 function toPinyin(pinyin: PinyinFn, text: string): string {
-  return pinyin(text, {
+  // pinyin 是三重重载（string / string[] / AllData[]），options 里
+  // type:"array" 命中 string[] 分支；静态类型上统一断言后 join。
+  const syllables = pinyin(text, {
     toneType: "none",
     type: "array",
     v: true,
     nonZh: "consecutive",
-  }).join(" ")
+  }) as unknown as string[]
+  return syllables.join(" ")
 }

@@ -1000,6 +1000,253 @@ fn extract_json_string_field(json: &str, field: &str) -> Option<String> {
     None
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// HTML 文件回复：AI 生成单文件 HTML 并作为文件消息发送到飞书
+// ──────────────────────────────────────────────────────────────────────────
+
+/// 飞书投递硬约束：优先级高于 SKILL.md 里的任何步骤。
+///
+/// 内置的 html-report skill 是「目录 + 相对资源」模式（_shared/js、assets/、
+/// canvas-fonts/），而飞书只能收**单个 .html 文件**，接收方没有同目录资源。
+/// 所以每次生成都在 skill 正文前压一段硬约束，把产物压平成自包含单文件。
+const FEISHU_SINGLE_FILE_OVERRIDE: &str = r#"【飞书投递硬约束｜优先级高于下文任何步骤】
+本次产物会作为**单个 .html 文件**发送到飞书，接收方直接打开，没有同目录资源可用。
+1. 只输出一个自包含单文件 HTML：从 <!DOCTYPE html> 到 </html>，不要任何解释文字或 markdown 围栏。
+2. 禁止引用相对路径资源（_shared/、assets/、diagrams/、canvas-fonts/ 一律不可用）。
+3. ECharts / Mermaid / PlantUML 等外部库不得用 <script src> 或外链 CDN 引入；图表改用内联静态 SVG + CSS 实现，无法内联就不要画。
+4. 字体只用系统字体栈（-apple-system, "Segoe UI", "Microsoft YaHei", sans-serif），禁止 @font-face 指向本地文件。
+5. 图片只用内联 SVG 或 data: URI。
+6. 引用要求：正文中每一条来自 wiki 检索结果的事实性结论，必须在该句末尾紧跟 <sup class="cite">[n]</sup>，n 为文末来源列表中的编号；一句依赖多处来源时写 <sup class="cite">[1][3]</sup>。
+7. 文末必须有 <section class="sources"> 逐条列出 `<li>[n] 标题 — wiki 路径</li>`，编号与正文角标一一对应；该区块只用于让读者定位角标，不要写成正文总结。
+8. 不依赖检索证据的句子必须标注「（通用知识，无项目来源）」，不得伪装成有出处。
+9. 忽略下文里「执行命令 / 运行脚手架脚本 / 写 plan.md 落盘 / 交付目录」类步骤，直接在回复中给出最终 HTML 源码。
+"#;
+
+/// HTML 模式下给 Agent 的输出要求（走完整 Agent 链路时使用）。
+///
+/// 与 `FEISHU_SINGLE_FILE_OVERRIDE` 目的一致，但这里是发给 Agent 的最终
+/// 交付要求：Agent 有工具循环，可以让它自己 `skill.read_file` 读支撑文档。
+pub(crate) const FEISHU_HTML_OUTPUT_RULE: &str = r#"[输出格式要求]
+本轮回复会被原样作为**单个 .html 文件**发送到飞书，接收方直接打开，没有同目录资源。
+1. 最终回复只能是从 <!DOCTYPE html> 到 </html> 的完整源码，不要解释文字，不要 markdown 代码围栏。
+2. 必须自包含：所有 CSS 写在 <style> 内；禁止引用相对路径资源（_shared/、assets/、diagrams/、canvas-fonts/ 一律不可用）。
+3. ECharts / Mermaid / PlantUML 等外部库不得用 <script src> 或外链 CDN；图表改用内联静态 SVG + CSS 实现。
+4. 字体只用系统字体栈（-apple-system, "Segoe UI", "Microsoft YaHei", sans-serif），禁止 @font-face 指向本地文件；图片只用内联 SVG 或 data: URI。
+5. 引用要求：正文中每一条来自 wiki 检索结果的事实性结论，必须在该句末尾紧跟 <sup class="cite">[n]</sup>（n 为文末来源编号，多来源写 [1][3]）；文末用 <section class="sources"> 逐条列出 `<li>[n] 标题 — wiki 路径</li>` 与之对应；无检索证据的句子标注「（通用知识，无项目来源）」。
+6. 需要更多排版规范时，用 skill.read_file 读取当前 skill 目录下的 references/ 与 diagrams/ 文档。
+"#;
+
+/// 读取用户在设置里选中的 skill（与聊天界面完全同一套扫描规则）。
+///
+/// 直接走 `load_project_skills`：项目 `.llm-wiki/skills` 优先，其次
+/// `~/.claude/skills` 等。不复制、不安装、不依赖安装包资源。
+/// 未选或找不到时返回 None，调用方只保留飞书单文件输出约束。
+pub(crate) fn load_html_skill_prompt(project_path: &str, skill_id: &str) -> Option<String> {
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        return None;
+    }
+    let skill = crate::agent::skills::load_project_skills(project_path, &[skill_id.to_string()])
+        .into_iter()
+        .next()?;
+    Some(format!(
+        "{FEISHU_SINGLE_FILE_OVERRIDE}\n\n---\n\n{}",
+        skill.instructions
+    ))
+}
+
+/// 剥掉 AI 偶尔包上的 markdown 代码围栏，只留 HTML 源码。
+pub(crate) fn strip_html_fences(raw: &str) -> String {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix("```html")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|s| s.trim().trim_end_matches("```").trim().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuHtmlGenerateResult {
+    pub ok: bool,
+    pub html: String,
+    pub error: String,
+}
+
+/// 用项目 LLM 配置 + HTML Skill，把 markdown 回复转成单文件 HTML。
+/// 失败返回 ok=false，前端应降级为文本/文档发送。
+#[tauri::command]
+pub async fn feishu_generate_html(
+    app: tauri::AppHandle,
+    project_path: String,
+    title: String,
+    markdown: String,
+    llm_config: Option<crate::agent::provider::LlmConfig>,
+) -> Result<FeishuHtmlGenerateResult, String> {
+    let Some(cfg) = llm_config else {
+        return Ok(FeishuHtmlGenerateResult {
+            ok: false,
+            html: String::new(),
+            error: "no LLM config provided".to_string(),
+        });
+    };
+    let provider = match crate::agent::provider::LlmClient::new(cfg) {
+        Ok(p) => p,
+        Err(err) => {
+            return Ok(FeishuHtmlGenerateResult {
+                ok: false,
+                html: String::new(),
+                error: format!("LLM provider init failed: {err}"),
+            });
+        }
+    };
+    let skill_id = crate::api_server::load_app_state(&app)
+        .and_then(|v| v.get("feishuConfig").cloned())
+        .and_then(|cfg| cfg.get("htmlSkillId").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    let system = load_html_skill_prompt(&project_path, &skill_id)
+        .unwrap_or_else(|| FEISHU_SINGLE_FILE_OVERRIDE.to_string());
+    let user = format!("标题：{title}\n\nMarkdown 内容：\n{markdown}");
+    match provider.generate_text(&system, &user, &[]).await {
+        Ok(html) => {
+            // 容错：AI 可能在前后加 markdown 围栏，剥掉。
+            let cleaned = strip_html_fences(&html);
+            Ok(FeishuHtmlGenerateResult {
+                ok: true,
+                html: cleaned,
+                error: String::new(),
+            })
+        }
+        Err(err) => Ok(FeishuHtmlGenerateResult {
+            ok: false,
+            html: String::new(),
+            error: format!("LLM generation failed: {err}"),
+        }),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeishuFileSendResult {
+    pub ok: bool,
+    pub message_id: String,
+    pub error: String,
+}
+
+/// 把一段内容作为文件发送到飞书（bot 身份）。
+/// lark-cli 的 --file 拒绝绝对路径与 `..`，所以把内容写到临时目录，
+/// 并以临时目录为 cwd 调用 lark-cli，文件名用相对路径。
+#[tauri::command]
+pub async fn feishu_send_file(
+    recipient_id: String,
+    file_name: String,
+    file_content: String,
+) -> Result<FeishuFileSendResult, String> {
+    let recipient = recipient_id.trim().to_string();
+    if recipient.is_empty() {
+        return Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: "recipient is empty".to_string(),
+        });
+    }
+    if !recipient.starts_with("ou_") && !recipient.starts_with("oc_") {
+        return Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: "recipient must be an open_id (ou_...) or chat_id (oc_...)".to_string(),
+        });
+    }
+    // 文件名做安全处理：只保留安全字符，防止路径穿越。
+    let safe_name: String = file_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    let safe_name = if safe_name.is_empty() {
+        "report.html".to_string()
+    } else {
+        safe_name
+    };
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "llm-wiki-feishu-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    if let Err(err) = std::fs::create_dir_all(&temp_dir) {
+        return Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: format!("create temp dir failed: {err}"),
+        });
+    }
+    let file_path = temp_dir.join(&safe_name);
+    if let Err(err) = std::fs::write(&file_path, &file_content) {
+        return Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: format!("write temp file failed: {err}"),
+        });
+    }
+
+    let Some(cli) = find_lark_cli() else {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: "lark-cli.exe not found".to_string(),
+        });
+    };
+
+    let recipient_arg = recipient.clone();
+    let name_arg = safe_name.clone();
+    let cwd_arg = temp_dir.clone();
+    let run = match run_lark_as_bot(&cli, |cmd| {
+        cmd.current_dir(&cwd_arg);
+        cmd.arg("im").arg("+messages-send").arg("--json").arg("--as").arg("bot");
+        if recipient_arg.starts_with("ou_") {
+            cmd.arg("--user-id").arg(&recipient_arg);
+        } else {
+            cmd.arg("--chat-id").arg(&recipient_arg);
+        }
+        cmd.arg("--file").arg(&name_arg);
+    })
+    .await
+    {
+        Ok(run) => run,
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Ok(FeishuFileSendResult {
+                ok: false,
+                message_id: String::new(),
+                error: err,
+            });
+        }
+    };
+
+    // 清理临时目录（尽力而为）
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let message_id = extract_json_string_field(&run.stdout, "message_id")
+        .or_else(|| extract_json_string_field(&run.combined, "message_id"))
+        .unwrap_or_default();
+    if run.ok {
+        Ok(FeishuFileSendResult {
+            ok: true,
+            message_id,
+            error: String::new(),
+        })
+    } else {
+        Ok(FeishuFileSendResult {
+            ok: false,
+            message_id: String::new(),
+            error: run.error_message(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

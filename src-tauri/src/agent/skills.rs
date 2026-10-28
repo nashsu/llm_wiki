@@ -150,18 +150,40 @@ struct SkillCandidate {
 
 fn discover_skill_candidates(root: &Path) -> Vec<SkillCandidate> {
     let mut out = Vec::new();
-    discover_skill_candidates_inner(root, 0, &mut out);
+    let mut visited = BTreeSet::new();
+    discover_skill_candidates_inner(root, 0, &mut out, &mut visited);
     out
 }
 
-fn discover_skill_candidates_inner(dir: &Path, depth: usize, out: &mut Vec<SkillCandidate>) {
+fn discover_skill_candidates_inner(
+    dir: &Path,
+    depth: usize,
+    out: &mut Vec<SkillCandidate>,
+    visited: &mut BTreeSet<PathBuf>,
+) {
     if depth > MAX_SKILL_SCAN_DEPTH {
         return;
     }
-    let Ok(meta) = fs::symlink_metadata(dir) else {
+    let Ok(link_meta) = fs::symlink_metadata(dir) else {
         return;
     };
-    if meta.file_type().is_symlink() || !meta.is_dir() {
+    // Skill libraries are frequently exposed through a directory junction
+    // (e.g. `~/.claude/skills` -> `~/.trae-cn/skills`), so directory links are
+    // followed. `visited` tracks canonical paths to stop link cycles from
+    // making the scan unbounded. File links are still rejected below.
+    let meta = if link_meta.file_type().is_symlink() {
+        match fs::metadata(dir) {
+            Ok(meta) => meta,
+            Err(_) => return,
+        }
+    } else {
+        link_meta
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    let canonical = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(canonical) {
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else {
@@ -171,13 +193,24 @@ fn discover_skill_candidates_inner(dir: &Path, depth: usize, out: &mut Vec<Skill
     entries.sort_by_key(|entry| entry.path());
     for entry in entries {
         let path = entry.path();
-        let Ok(meta) = fs::symlink_metadata(&path) else {
+        let Ok(link_meta) = fs::symlink_metadata(&path) else {
             continue;
         };
-        if meta.file_type().is_symlink() {
-            continue;
-        }
+        let is_symlink = link_meta.file_type().is_symlink();
+        let meta = if is_symlink {
+            match fs::metadata(&path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            }
+        } else {
+            link_meta
+        };
         if meta.is_file() {
+            // A linked skill file could point anywhere; only real files are
+            // accepted so a skill cannot be smuggled in from outside the root.
+            if is_symlink {
+                continue;
+            }
             if path
                 .file_name()
                 .and_then(|s| s.to_str())
@@ -212,7 +245,7 @@ fn discover_skill_candidates_inner(dir: &Path, depth: usize, out: &mut Vec<Skill
             if is_hidden_or_unsafe_skill_dir(&path) {
                 continue;
             }
-            discover_skill_candidates_inner(&path, depth + 1, out);
+            discover_skill_candidates_inner(&path, depth + 1, out, visited);
         }
     }
 }
@@ -222,6 +255,11 @@ fn is_hidden_or_unsafe_skill_dir(path: &Path) -> bool {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or_default();
+    // Codex (and some other agents) keep their built-in skills in a `.system`
+    // folder. That is the documented layout, not a hidden directory.
+    if name == ".system" {
+        return false;
+    }
     name.starts_with('.') || name == "node_modules" || normalize_skill_name(name).is_none()
 }
 
@@ -236,11 +274,15 @@ fn load_skill_path(path: &Path, fallback_name: &str) -> Result<AgentSkill, Strin
 }
 
 fn load_skill_file(path: &PathBuf, fallback_name: &str) -> Result<AgentSkill, String> {
-    let meta = fs::symlink_metadata(path).map_err(|err| format!("Skill not found: {err}"))?;
-    if meta.file_type().is_symlink()
-        || !meta.is_file()
-        || meta.len() as usize > MAX_SKILL_FILE_BYTES
-    {
+    let link_meta = fs::symlink_metadata(path).map_err(|err| format!("Skill not found: {err}"))?;
+    // The final path component must be a real file, so a skill file cannot be
+    // aliased from outside the scanned roots. Parent directories may be
+    // junctions, which is why `fs::metadata` is used for the size/type check.
+    if link_meta.file_type().is_symlink() {
+        return Err("Skill file is not readable or is too large".to_string());
+    }
+    let meta = fs::metadata(path).map_err(|err| format!("Skill not found: {err}"))?;
+    if !meta.is_file() || meta.len() as usize > MAX_SKILL_FILE_BYTES {
         return Err("Skill file is not readable or is too large".to_string());
     }
     let raw = fs::read_to_string(path).map_err(|err| format!("Failed to read skill: {err}"))?;
@@ -272,8 +314,10 @@ fn load_skill_file(path: &PathBuf, fallback_name: &str) -> Result<AgentSkill, St
 }
 
 fn load_skill_directory(dir: &Path, fallback_name: &str) -> Result<AgentSkill, String> {
-    let meta = fs::symlink_metadata(dir).map_err(|err| format!("Skill folder not found: {err}"))?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
+    // Parent directories may be junctions; only the resolved entry has to be a
+    // real directory.
+    let meta = fs::metadata(dir).map_err(|err| format!("Skill folder not found: {err}"))?;
+    if !meta.is_dir() {
         return Err("Skill folder is not readable".to_string());
     }
     let main_path = find_skill_main_file(dir).unwrap_or_else(|| dir.join("SKILL.md"));
@@ -694,6 +738,22 @@ mod tests {
         assert_eq!(article.name, "Article Illustrator");
         let loaded = load_project_skills(root.to_str().unwrap(), &[article.id.clone()]);
         assert_eq!(loaded[0].name, "Article Illustrator");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_folder_holding_builtin_skills_is_scanned() {
+        let root = std::env::temp_dir().join(format!("llm-wiki-skills-{}", Uuid::new_v4()));
+        let skill_dir = root.join(".llm-wiki").join("skills").join(".system").join("builtin");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: builtin\ndescription: Shipped with the agent\n---\nUse built-in tools.",
+        )
+        .unwrap();
+
+        let listed = list_available_skills(root.to_str().unwrap());
+        assert!(listed.iter().any(|skill| skill.id == "builtin"));
         let _ = fs::remove_dir_all(root);
     }
 }

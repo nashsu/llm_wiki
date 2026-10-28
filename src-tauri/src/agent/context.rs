@@ -10,7 +10,10 @@ const MAX_OVERVIEW_CHARS: usize = 8_000;
 const MAX_SCHEMA_CHARS: usize = 6_000;
 const MAX_HISTORY_CHARS: usize = 12_000;
 const MAX_REFERENCE_CHARS: usize = 24_000;
-const MAX_SKILL_CHARS: usize = 18_000;
+// Explicit skills are injected in full up to this budget. html-report's
+// SKILL.md is ~32k chars; a lower cap silently truncates it mid-document and
+// drops the styling/chart rules that come after "Step 4: Build HTML".
+const MAX_SKILL_CHARS: usize = 40_000;
 const MAX_AUTO_SKILL_INDEX_CHARS: usize = 12_000;
 const MAX_AUTO_SKILLS: usize = 48;
 const MAX_EXPLICIT_CONTEXT_FILES: usize = 8;
@@ -71,10 +74,22 @@ fn build_system_context(
         "You are the LLM Wiki backend Agent.",
         "Answer using the current project context, available tools, and cited references.",
         "If evidence is insufficient, say what is missing instead of inventing facts.",
-        "When using references, mention the relevant page paths naturally.",
         "Do not claim that internet or local-source search is unavailable when those tools are enabled; use the provided tool context and tool hints.",
     ]
     .join("\n");
+
+    // 行内引用契约：前端把正文里的 `[n]` 渲染成可点击上标（cite: 协议），
+    // 编号来自下方 "Retrieved project context" 的有序列表。提示词不写这条，
+    // 模型就不会输出 `[n]`，整条渲染链等于失效。
+    out.push_str(
+        "\n\nCitation contract (mandatory):\n\
+- The \"Retrieved project context\" section lists evidence items numbered 1..N.\n\
+- End every factual sentence with the number(s) of the evidence it rests on, written as `[n]`; multiple sources use `[1][3]`.\n\
+- Never state a fact taken from the retrieved context without a `[n]` marker on the same sentence.\n\
+- A sentence that does not rest on retrieved evidence must be marked as general knowledge (for example \"(general knowledge, no project source)\"); never present it as sourced.\n\
+- Only use numbers that exist in that list. Never invent, skip, or renumber sources.\n\
+- Do not append a trailing reference list; the UI renders sources from your `[n]` markers.\n",
+    );
 
     out.push_str("\n\nTool policy:\n");
     out.push_str("- wiki.search retrieves pages for factual or topical questions.\n");
@@ -216,11 +231,18 @@ fn build_user_context(input: AgentContextInput<'_>) -> String {
     }
 
     out.push_str("Retrieved project context:\n");
-    if input.references.is_empty() {
+    // 编号只覆盖可引用的证据条目，跳过 workspace 产物（生成的文件不是证据）。
+    // 前端 lastQueryPages 用同一规则过滤，保证正文 `[n]` 与引用面板逐条对齐。
+    let evidence: Vec<&AgentReference> = input
+        .references
+        .iter()
+        .filter(|reference| reference.kind != "workspace")
+        .collect();
+    if evidence.is_empty() {
         out.push_str("No matching wiki references were found.\n\n");
     } else {
         let mut rendered = String::new();
-        for (idx, reference) in input.references.iter().enumerate() {
+        for (idx, reference) in evidence.iter().enumerate() {
             rendered.push_str(&format!(
                 "{}. [{}] {} ({})\n",
                 idx + 1,
@@ -641,5 +663,79 @@ mod tests {
     #[test]
     fn trim_chars_is_utf8_safe() {
         assert_eq!(trim_chars("煤矿安全治理", 5), "煤矿...");
+    }
+
+    #[test]
+    fn system_prompt_requires_inline_citation_markers() {
+        let project = ProjectContext {
+            overview: None,
+            schema: None,
+            agent_workspace: "/tmp/project/agent-workspace".to_string(),
+        };
+        let router = route_query("alpha", AgentMode::Standard, &AgentToolOptions::default());
+        let ctx = build_agent_context(AgentContextInput {
+            query: "alpha",
+            project: &project,
+            router: &router,
+            history: &[],
+            skills: &[],
+            skill_mode: AgentSkillMode::Auto,
+            references: &[],
+            retrieval_summary: "",
+            explicit_files: &[],
+        });
+        assert!(ctx.system.contains("Citation contract (mandatory)"));
+        assert!(ctx.system.contains("[n]"));
+    }
+
+    #[test]
+    fn reference_numbering_skips_workspace_outputs() {
+        let project = ProjectContext {
+            overview: None,
+            schema: None,
+            agent_workspace: "/tmp/project/agent-workspace".to_string(),
+        };
+        let router = route_query("alpha", AgentMode::Standard, &AgentToolOptions::default());
+        let references = vec![
+            AgentReference {
+                title: "USB 音频失真".to_string(),
+                path: "硬件/USB音频失真.md".to_string(),
+                kind: "wiki".to_string(),
+                snippet: None,
+                score: None,
+                knowledge_context: None,
+            },
+            AgentReference {
+                title: "report.html".to_string(),
+                path: "agent-workspace/report.html".to_string(),
+                kind: "workspace".to_string(),
+                snippet: None,
+                score: None,
+                knowledge_context: None,
+            },
+            AgentReference {
+                title: "USB Audio Class".to_string(),
+                path: "https://example.com/usb-audio".to_string(),
+                kind: "web".to_string(),
+                snippet: None,
+                score: None,
+                knowledge_context: None,
+            },
+        ];
+        let rendered = build_user_context(AgentContextInput {
+            query: "alpha",
+            project: &project,
+            router: &router,
+            history: &[],
+            skills: &[],
+            skill_mode: AgentSkillMode::Auto,
+            references: &references,
+            retrieval_summary: "",
+            explicit_files: &[],
+        });
+        // 编号只覆盖证据：wiki=1、web=2，workspace 产物不占号。
+        assert!(rendered.contains("1. [wiki] USB 音频失真 (硬件/USB音频失真.md)"));
+        assert!(rendered.contains("2. [web] USB Audio Class (https://example.com/usb-audio)"));
+        assert!(!rendered.contains("report.html"));
     }
 }

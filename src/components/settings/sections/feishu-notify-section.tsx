@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Bell, MessageCircle, RefreshCw, Send, UserRound } from "lucide-react"
+import { invoke } from "@tauri-apps/api/core"
+import { Bell, FileCode2, MessageCircle, RefreshCw, Send, UserRound } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import type { SettingsDraft, DraftSetter } from "../settings-types"
@@ -19,10 +20,19 @@ import {
   type FeishuBridgeStatus,
   type FeishuDetectResult,
 } from "@/lib/feishu"
+import { useWikiStore } from "@/stores/wiki-store"
 
 interface Props {
   draft: SettingsDraft
   setDraft: DraftSetter
+}
+
+/** 与 skills-section 同一套扫描结果结构。 */
+interface AvailableAgentSkill {
+  id: string
+  name: string
+  description?: string
+  source: string
 }
 
 export function FeishuNotifySection({ draft, setDraft }: Props) {
@@ -44,6 +54,30 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
   const [authLink, setAuthLink] = useState<{ url: string; userCode: string; deviceCode: string } | null>(null)
   const [authState, setAuthState] = useState<"idle" | "linking" | "waiting" | "completing" | "ok" | "fail">("idle")
   const [authError, setAuthError] = useState("")
+  // HTML 模式：从 `.llm-wiki/skills` 等目录扫描出的可选 skill（与聊天界面同一套）
+  const [skills, setSkills] = useState<AvailableAgentSkill[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState("")
+  const project = useWikiStore((s) => s.project)
+
+  const scanSkills = useCallback(async () => {
+    if (!project?.path) {
+      setSkills([])
+      return
+    }
+    setScanning(true)
+    setScanError("")
+    try {
+      const found = await invoke<AvailableAgentSkill[]>("agent_list_skills", {
+        projectPath: project.path,
+      })
+      setSkills(found)
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setScanning(false)
+    }
+  }, [project?.path])
 
   const genAuthLink = useCallback(async () => {
     setAuthState("linking")
@@ -175,6 +209,12 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
   useEffect(() => {
     void runDetect()
   }, [runDetect])
+
+  // 切到 HTML 模式时扫描一次可选 skill；项目切换也重扫。
+  useEffect(() => {
+    if (draft.feishuConfig.replyFormat !== "html") return
+    void scanSkills()
+  }, [draft.feishuConfig.replyFormat, scanSkills])
 
   const recipientValid =
     draft.feishuConfig.recipientId.startsWith("ou_") || draft.feishuConfig.recipientId.startsWith("oc_")
@@ -324,28 +364,112 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
         </label>
         {draft.feishuConfig.bridgeEnabled && (
           <>
-          <label className="flex items-start gap-2 pl-1">
-            <input
-              type="checkbox"
-              checked={draft.feishuConfig.bridgeReplyAsDoc}
-              onChange={(e) =>
-                setDraft("feishuConfig", { ...draft.feishuConfig, bridgeReplyAsDoc: e.target.checked })
-              }
-              className="mt-0.5 h-4 w-4"
-            />
-            <div className="space-y-1">
-              <span className="text-sm">
-                {t("settings.sections.feishu.bridgeReplyDoc", { defaultValue: "回复为飞书文档" })}
-              </span>
-              <p className="text-xs text-muted-foreground">
-                {t("settings.sections.feishu.bridgeReplyDocHint", {
+          {/* 回复形式：飞书文档 / HTML 文件 / 纯文本 */}
+          <div className="space-y-2 pl-1">
+            <Label className="text-xs">
+              {t("settings.sections.feishu.replyFormat", { defaultValue: "回复形式" })}
+            </Label>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="radio"
+                  name="feishu-reply-format"
+                  checked={draft.feishuConfig.replyFormat === "doc"}
+                  onChange={() =>
+                    setDraft("feishuConfig", { ...draft.feishuConfig, replyFormat: "doc" })
+                  }
+                  className="h-3.5 w-3.5"
+                />
+                {t("settings.sections.feishu.replyFormatDoc", { defaultValue: "飞书文档" })}
+              </label>
+              <label className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="radio"
+                  name="feishu-reply-format"
+                  checked={draft.feishuConfig.replyFormat === "html"}
+                  onChange={() =>
+                    setDraft("feishuConfig", { ...draft.feishuConfig, replyFormat: "html" })
+                  }
+                  className="h-3.5 w-3.5"
+                />
+                <FileCode2 className="h-3 w-3" />
+                {t("settings.sections.feishu.replyFormatHtml", { defaultValue: "HTML 文件" })}
+              </label>
+              <label className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="radio"
+                  name="feishu-reply-format"
+                  checked={draft.feishuConfig.replyFormat === "text"}
+                  onChange={() =>
+                    setDraft("feishuConfig", { ...draft.feishuConfig, replyFormat: "text" })
+                  }
+                  className="h-3.5 w-3.5"
+                />
+                {t("settings.sections.feishu.replyFormatText", { defaultValue: "纯文本" })}
+              </label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {t("settings.sections.feishu.replyFormatHint", {
+                defaultValue:
+                  "飞书文档=发布全文文档并回发链接（表格/mermaid 可用，需用户凭证）；HTML 文件=用 AI 生成单文件 HTML 报告作为文件消息发送（可在下方选择 Skill）；纯文本=发完整原文（仅剔除推理块）。",
+              })}
+            </p>
+          </div>
+          {draft.feishuConfig.replyFormat === "html" && (
+            <div className="space-y-1.5 rounded border border-border/60 bg-background/50 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium">
+                  {t("settings.sections.feishu.htmlSkillTitle", { defaultValue: "HTML 报告 Skill" })}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void scanSkills()}
+                  disabled={scanning || !project?.path}
+                  className="h-7 gap-1 whitespace-nowrap text-xs"
+                >
+                  <RefreshCw className={`h-3 w-3 ${scanning ? "animate-spin" : ""}`} />
+                  {t("settings.sections.feishu.htmlSkillRefresh", { defaultValue: "重新扫描" })}
+                </Button>
+              </div>
+              <select
+                value={draft.feishuConfig.htmlSkillId}
+                onChange={(e) =>
+                  setDraft("feishuConfig", { ...draft.feishuConfig, htmlSkillId: e.target.value })
+                }
+                disabled={!project?.path}
+                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="">
+                  {t("settings.sections.feishu.htmlSkillNone", { defaultValue: "不使用 Skill" })}
+                </option>
+                {skills.map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.name}（{skill.id} · {skill.source}）
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                {t("settings.sections.feishu.htmlSkillHint", {
                   defaultValue:
-                    "开启后，机器人回复和聊天界面的飞书通知都改为「发布全文飞书文档 + 回发链接」（表格/mermaid 可用，走下方目录/模式设置）；关闭后发纯文本——机器人发全文，聊天通知也发完整原文（仅剔除推理块）。依赖本机 lark-cli 用户凭证，发布失败自动降级为纯文本。",
+                    "从项目 .llm-wiki/skills（以及 ~/.claude/skills 等）里选一个 skill，AI 生成 HTML 时会读取它的 SKILL.md。不选则只按飞书单文件规则生成。",
                 })}
               </p>
+              {draft.feishuConfig.htmlSkillId &&
+                skills.length > 0 &&
+                !skills.some((s) => s.id === draft.feishuConfig.htmlSkillId) && (
+                  <p className="break-all text-[11px] text-amber-600 dark:text-amber-400">
+                    {t("settings.sections.feishu.htmlSkillMissing", {
+                      defaultValue: "当前选择的 skill 未找到（id={{id}}），本轮将不使用 Skill。",
+                      id: draft.feishuConfig.htmlSkillId,
+                    })}
+                  </p>
+                )}
+              {scanError && <p className="break-all text-[11px] text-destructive">✗ {scanError}</p>}
             </div>
-          </label>
-          {draft.feishuConfig.bridgeReplyAsDoc && (
+          )}
+          {draft.feishuConfig.replyFormat === "doc" && (
             <div className="space-y-3 rounded border border-border bg-muted/20 p-2 pl-3">
               {/* 用户凭证授权（Device Flow） */}
               <div className="space-y-1.5 rounded border border-border/60 bg-background/50 p-2">
@@ -619,6 +743,25 @@ export function FeishuNotifySection({ draft, setDraft }: Props) {
                       defaultValue: "排队等待 {{count}} 条",
                       count: bridgeStatus.pending,
                     })}
+                  </p>
+                )}
+                {bridgeStatus.skillId && (
+                  <p
+                    className={
+                      bridgeStatus.skillApplied
+                        ? "break-all text-emerald-600 dark:text-emerald-400"
+                        : "break-all text-amber-600 dark:text-amber-400"
+                    }
+                  >
+                    {bridgeStatus.skillApplied
+                      ? t("settings.sections.feishu.bridgeSkillUsed", {
+                          defaultValue: "✓ 已注入 Skill：{{id}}",
+                          id: bridgeStatus.skillId,
+                        })
+                      : t("settings.sections.feishu.bridgeSkillMissing", {
+                          defaultValue: "✗ 未注入 Skill：{{id}}（id 未找到，本轮按无 skill 处理）",
+                          id: bridgeStatus.skillId,
+                        })}
                   </p>
                 )}
                 {bridgeStatus.lastMessage && (
