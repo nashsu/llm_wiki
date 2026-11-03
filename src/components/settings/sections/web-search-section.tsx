@@ -63,6 +63,13 @@ const SEARCH_PROVIDERS = [
     configKind: "key",
   },
   {
+    id: "keenable",
+    label: "Keenable",
+    hint: "Independent web index for AI agents; works key-free, add a key for higher limits",
+    keyPlaceholder: "Optional: Keenable API key (keenable.ai). Leave blank for key-free search",
+    configKind: "key",
+  },
+  {
     id: "bocha",
     label: "Bocha Search",
     hint: "Chinese and global web search via Bocha AI",

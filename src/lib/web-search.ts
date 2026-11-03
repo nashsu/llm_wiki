@@ -113,6 +113,7 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "searxng") return Boolean(resolved.searXngUrl?.trim())
   if (resolved.provider === "ollama") return Boolean(resolved.apiKey?.trim())
   if (resolved.provider === "firecrawl") return true
+  if (resolved.provider === "keenable") return true
   return Boolean(resolved.apiKey?.trim())
 }
 
@@ -145,7 +146,7 @@ export async function webSearch(
     ) &&
     !resolved.apiKey
   ) {
-    throw new Error("Web search not configured. Add an API key for the selected search provider in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
+    throw new Error("Web search not configured. Add an API key for the selected search provider in Settings, or select a key-free provider such as Firecrawl, Keenable or SearXNG.")
   }
   if (resolved.provider === "searxng" && !resolved.searXngUrl?.trim()) {
     throw new Error("Web search not configured. Add a SearXNG instance URL in Settings.")

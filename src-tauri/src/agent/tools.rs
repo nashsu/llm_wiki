@@ -1309,6 +1309,7 @@ pub async fn run_web_search(
         "ollama" => ollama_search(&client, query, &config, max_results).await?,
         "brave" => brave_search(&client, query, &config, max_results).await?,
         "bocha" => bocha_search(&client, query, &config, max_results).await?,
+        "keenable" => keenable_search(&client, query, &config, max_results).await?,
         "serpapi" => serpapi_search(&client, query, &config, max_results).await?,
         other => {
             return Err(format!(
@@ -1918,6 +1919,53 @@ async fn brave_search(
         value
             .get("web")
             .and_then(|web| web.get("results"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(normalize_web_result)
+            .collect()
+    })
+    .await
+}
+
+/// Keenable works without an API key on its rate-limited public endpoint;
+/// a key in Settings switches to the authenticated endpoint.
+fn keenable_request(
+    client: &reqwest::Client,
+    query: &str,
+    config: &WebSearchConfig,
+    max_results: usize,
+) -> reqwest::RequestBuilder {
+    let key = config.api_key.trim();
+    let request = if key.is_empty() {
+        client
+            .post("https://api.keenable.ai/v1/search/public")
+            .header("X-Keenable-Title", "LLM Wiki")
+    } else {
+        client
+            .post("https://api.keenable.ai/v1/search")
+            .header("X-API-Key", key)
+    };
+    request.header("Accept", "application/json").json(&json!({
+        "query": query,
+        "max_results": max_results
+    }))
+}
+
+async fn keenable_search(
+    client: &reqwest::Client,
+    query: &str,
+    config: &WebSearchConfig,
+    max_results: usize,
+) -> Result<Vec<WebSearchItem>, String> {
+    let response = keenable_request(client, query, config, max_results)
+        .send()
+        .await
+        .map_err(|err| format!("Network error reaching Keenable Search: {err}"))?;
+    parse_web_json_response(response, "Keenable Search", |value| {
+        value
+            .get("results")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default()
@@ -3814,6 +3862,38 @@ mod tests {
             cfg.sear_xng_url.as_deref(),
             Some("https://search.example.com")
         );
+    }
+
+    #[test]
+    fn keenable_request_is_key_free_by_default_and_keyed_when_configured() {
+        let client = reqwest::Client::new();
+        let key_free = WebSearchConfig {
+            provider: "keenable".to_string(),
+            ..Default::default()
+        };
+        let req = keenable_request(&client, "rust", &key_free, 5)
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.url().as_str(),
+            "https://api.keenable.ai/v1/search/public"
+        );
+        assert_eq!(req.headers().get("X-Keenable-Title").unwrap(), "LLM Wiki");
+        assert!(req.headers().get("X-API-Key").is_none());
+
+        let keyed = WebSearchConfig {
+            provider: "keenable".to_string(),
+            api_key: " kn-test ".to_string(),
+            ..Default::default()
+        };
+        let req = keenable_request(&client, "rust", &keyed, 5)
+            .build()
+            .unwrap();
+        assert_eq!(req.url().as_str(), "https://api.keenable.ai/v1/search");
+        assert_eq!(req.headers().get("X-API-Key").unwrap(), "kn-test");
+        let body: Value = serde_json::from_slice(req.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["query"], "rust");
+        assert_eq!(body["max_results"], 5);
     }
 
     #[test]

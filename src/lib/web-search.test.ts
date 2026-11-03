@@ -97,6 +97,7 @@ describe("webSearch", () => {
   it("treats key-free providers as configured", () => {
     expect(hasConfiguredSearchProvider({ provider: "searxng", apiKey: "", searXngUrl: "http://localhost:8080" })).toBe(true)
     expect(hasConfiguredSearchProvider({ provider: "firecrawl", apiKey: "" })).toBe(true)
+    expect(hasConfiguredSearchProvider({ provider: "keenable", apiKey: "" })).toBe(true)
   })
 
   it("does not leak a stale top-level Ollama URL into non-Ollama providers", () => {
