@@ -7,6 +7,7 @@
 
 pub mod cancel;
 pub mod context;
+pub(crate) mod deepseek;
 pub mod events;
 pub mod permissions;
 pub mod provider;

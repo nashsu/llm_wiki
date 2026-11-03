@@ -391,7 +391,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 | i18n | react-i18next |
 | State | Zustand |
 | LLM | Streaming fetch (OpenAI, Anthropic, Google, Ollama, Custom) |
-| Web Search | Tavily, SerpApi, SearXNG JSON API |
+| Web Search | Tavily, SerpApi, SearXNG, Ollama, Firecrawl, Brave, Bocha, DeepSeek Search & Fetch |
 
 ## Installation
 
@@ -436,6 +436,34 @@ npm run tauri build    # Production build
 7. Browse the **Knowledge Graph** to see connections
 8. Check **Review** for items needing your attention
 9. Run **Lint** periodically to maintain wiki health
+
+### DeepSeek Search & Fetch
+
+In **Settings → Web Search → DeepSeek**, paste your official DeepSeek API key
+(the same key used for its model API) and activate the provider. Web Search saves
+this key separately; it does not copy credentials from your LLM configuration.
+Existing providers and their saved settings remain available.
+
+Search uses the [official Search API](https://api-docs.deepseek.com/api/search/)
+in desktop Deep Research and backend Agent chat (including local API / MCP chat).
+It supports 1–128 Unicode characters per query and up to 50 results, preserves
+query operators, and prefers model-oriented summaries over display snippets.
+Overlong queries are rejected with guidance to shorten them.
+
+Deep Research also uses the [Fetch API](https://api-docs.deepseek.com/api/fetch/)
+to read accepted web pages as Markdown after deduplication and relevance filtering.
+It fetches at most three pages concurrently and uses up to 12,000 characters per
+page within a 60,000-character total page-content budget. Longer pages are marked
+as truncated. Unreadable pages (including Fetch 404) retain their search summaries.
+Fetch is currently a desktop research page reader, not a standalone Agent / MCP
+tool or a replacement for URL source import. Search requests use
+`need_content: false` so rejected candidates do not add full page bodies to the response.
+
+Both endpoints use the official DeepSeek service and are billed separately from
+model tokens; see [DeepSeek's billing and limits](https://api-docs.deepseek.com/guides/search/).
+Requests time out after 30 seconds and responses are limited to 8 MiB. Errors
+explain authentication, balance, rate limits, and transient failures without
+exposing request headers or provider response bodies. Retries are user initiated.
 
 ## Local HTTP API + MCP Server + AI Agent Skill
 

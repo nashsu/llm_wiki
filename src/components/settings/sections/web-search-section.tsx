@@ -22,6 +22,13 @@ import {
 
 const SEARCH_PROVIDERS = [
   {
+    id: "deepseek",
+    label: "DeepSeek",
+    hint: "DeepSeek Search & Fetch (use the same key as the official DeepSeek API)",
+    keyPlaceholder: "Enter your DeepSeek API key (platform.deepseek.com)",
+    configKind: "key",
+  },
+  {
     id: "ollama",
     label: "Ollama",
     hint: "Ollama Web Search API",
@@ -111,13 +118,21 @@ export function WebSearchSection() {
 
   function toggleActive(id: Exclude<SearchProvider, "none">) {
     const nextProvider = resolvedConfig.provider === id ? "none" : id
-    persist(resolveSearchConfig({ ...resolvedConfig, provider: nextProvider })).catch(() => {})
+    persist(resolveSearchConfig({
+      ...resolvedConfig,
+      provider: nextProvider,
+      apiKey: resolvedConfig.providerConfigs?.[id]?.apiKey ?? "",
+    })).catch(() => {})
   }
 
   async function testProvider(id: Exclude<SearchProvider, "none">) {
     const runId = (testRunRef.current[id] ?? 0) + 1
     testRunRef.current[id] = runId
-    const testConfig = resolveSearchConfig({ ...resolvedConfig, provider: id })
+    const testConfig = resolveSearchConfig({
+      ...resolvedConfig,
+      provider: id,
+      apiKey: resolvedConfig.providerConfigs?.[id]?.apiKey ?? "",
+    })
     setTestStatus((prev) => ({
       ...prev,
       [id]: { state: "testing", message: t("settings.sections.webSearch.testRunning") },
@@ -416,6 +431,11 @@ export function WebSearchSection() {
                       {provider.id === "bocha" && (
                         <p className="text-xs text-muted-foreground">
                           {t("settings.sections.webSearch.bochaHint")}
+                        </p>
+                      )}
+                      {provider.id === "deepseek" && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.sections.webSearch.deepseekHint")}
                         </p>
                       )}
                     </div>
