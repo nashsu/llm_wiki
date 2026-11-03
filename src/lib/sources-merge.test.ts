@@ -19,11 +19,63 @@ import {
   mergeSourcesIntoContent,
   mergeArrayFieldsIntoContent,
   parseFrontmatterArray,
+  writeFrontmatterArray,
 } from "./sources-merge"
+import { parseFrontmatter } from "./frontmatter"
 
 const WRAP = (fm: string, body = "body\n") => `---\n${fm}\n---\n${body}`
 
 // ── parseSources ────────────────────────────────────────────────────
+
+describe("inline arrays whose items contain `]`", () => {
+  const NAME = "raw/Book [2nd ed] - scan.pdf"
+
+  it("parses the full double-quoted name", () => {
+    expect(parseSources(WRAP(`sources: ["${NAME}"]`))).toEqual([NAME])
+  })
+
+  it("parses the full single-quoted name", () => {
+    expect(parseSources(WRAP(`sources: ['${NAME}']`))).toEqual([NAME])
+  })
+
+  it("keeps commas inside quotes and later items", () => {
+    const comma = "raw/Money, Banking [Vol. 1].pdf"
+    expect(parseSources(WRAP(`sources: ["${comma}", "b.pdf"]`))).toEqual([comma, "b.pdf"])
+  })
+
+  it("writes over the whole array, leaving valid frontmatter", () => {
+    const out = writeSources(WRAP(`type: source\nsources: ["${NAME}"]`), [NAME, "b.pdf"])
+    expect(parseFrontmatter(out).frontmatter).toEqual({ type: "source", sources: [NAME, "b.pdf"] })
+  })
+
+  it("keeps the page parseable when a merge adds a bracketed source", () => {
+    const out = mergeSourcesIntoContent(
+      WRAP(`type: source\nsources: ["${NAME}"]`),
+      WRAP('type: source\nsources: ["a.pdf"]'),
+    )
+    expect(parseFrontmatter(out).frontmatter?.type).toBe("source")
+    expect(parseSources(out)).toEqual(["a.pdf", NAME])
+  })
+
+  it("still finds the end of an unquoted item containing an apostrophe", () => {
+    const out = writeFrontmatterArray(WRAP("related: [koo's-view, foo]\ntype: concept"), "related", ["bar"])
+    expect(out).toBe(WRAP('related: ["bar"]\ntype: concept'))
+  })
+
+  it("does not read past the line for an unterminated quote", () => {
+    const out = writeSources(WRAP('sources: ["a.pdf]\ntitle: "T"'), ["b.pdf"])
+    expect(out).toBe(WRAP('sources: ["b.pdf"]\ntitle: "T"'))
+  })
+
+  it("still handles an inline array spanning lines", () => {
+    expect(parseSources(WRAP('sources: ["a [1].pdf",\n  "b.pdf"]\ntype: x'))).toEqual(["a [1].pdf", "b.pdf"])
+  })
+
+  it("writes `$` patterns in a name literally", () => {
+    const name = "raw/Book $& more.pdf"
+    expect(parseSources(writeSources(WRAP('sources: ["a.pdf"]'), [name]))).toEqual([name])
+  })
+})
 
 describe("parseSources — inline `sources: [...]`", () => {
   it("extracts a single-entry array", () => {

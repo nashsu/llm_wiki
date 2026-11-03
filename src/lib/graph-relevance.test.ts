@@ -72,6 +72,15 @@ describe("buildRetrievalGraph", () => {
     expect(graph.nodes.get("page-1")?.inLinks).toContain("page-0")
   })
 
+  it("reads full source names containing brackets and commas", async () => {
+    listDirectory.mockResolvedValue(files("/project", 1))
+    readFile.mockResolvedValue('---\nsources: ["Money, Banking [Vol. 1].pdf", "b.pdf"]\n---\n# Page')
+
+    const graph = await buildRetrievalGraph("/project", 4)
+
+    expect(graph.nodes.get("page-0")?.sources).toEqual(["Money, Banking [Vol. 1].pdf", "b.pdf"])
+  })
+
   it("resolves case and whitespace aliases through the prebuilt index", async () => {
     listDirectory.mockResolvedValue([
       { name: "source.md", path: "/project/wiki/source.md", is_dir: false },

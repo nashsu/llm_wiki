@@ -733,6 +733,12 @@ describe("canonicalizeSourcesField", () => {
     expect(result).not.toContain("../escape.md")
   })
 
+  it("keeps a single intact entry when the source filename contains brackets", () => {
+    const name = ".temp/Book [2nd ed] - scan.pdf"
+    const content = `---\ntitle: Book\nsources: ["${name}"]\n---\n# Book`
+    expect(canonicalizeSourcesField(content, name)).toBe(content)
+  })
+
   it("preserves a legitimate source identity under a wiki-named raw subfolder", () => {
     const content = '---\ntitle: Notes\nsources: ["raw/sources/wiki/notes.md"]\n---\n# Notes'
     expect(canonicalizeSourcesField(content, "wiki/notes.md")).toContain(
