@@ -70,6 +70,7 @@ export type SearchProvider =
   | "brave"
   | "bocha"
   | "firecrawl"
+  | "keenable"
   | "none"
 export type DeepResearchSource = "web" | "anytxt" | "both"
 export type SerpApiEngine =
