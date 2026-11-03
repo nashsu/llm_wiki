@@ -23,6 +23,7 @@
  * the previous (Array-merged-frontmatter + new body) behavior, with
  * an optional backup of the existing content for user recovery.
  */
+import yaml from "js-yaml"
 import { parseFrontmatter } from "./frontmatter"
 import { mergeArrayFieldsIntoContent } from "./sources-merge"
 import { normalizeMalformedWikilinks } from "./ingest-sanitize"
@@ -485,11 +486,9 @@ function defaultToday(): string {
  * Keeps the rest of the document unchanged. Returns content
  * unchanged if it has no frontmatter at all.
  *
- * Quoting: the value is written verbatim; the caller is
- * responsible for quoting if the value contains characters that
- * would otherwise break YAML parsing (`:` etc). Today's callers
- * pass plain identifiers and ISO dates so this hasn't been an
- * issue.
+ * Quoting: the value is double-quoted when it wouldn't read back
+ * as the same string (a locked `title` can contain `:` or ` #`).
+ * Plain identifiers and ISO dates stay unquoted.
  */
 function setFrontmatterScalar(
   content: string,
@@ -500,16 +499,26 @@ function setFrontmatterScalar(
   if (!fmMatch) return content
   const [, openDelim, fmBody, closeDelim] = fmMatch
   const escapedName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const newLine = `${fieldName}: ${value}`
+  const newLine = `${fieldName}: ${yamlScalar(value)}`
 
   // Only match scalar form (no `[`, no `\n  -`). Array-form fields
   // are handled by sources-merge.
   const lineRe = new RegExp(`^${escapedName}:\\s*(?!\\[)([^\\n]*)`, "m")
   if (lineRe.test(fmBody)) {
-    const rewritten = fmBody.replace(lineRe, newLine)
+    // Replacer function: a `$1` in the value must stay literal.
+    const rewritten = fmBody.replace(lineRe, () => newLine)
     return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
   }
   // Field absent — append.
   const rewritten = `${fmBody}\n${newLine}`
   return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
+}
+
+function yamlScalar(value: string): string {
+  try {
+    if (yaml.load(value, { schema: yaml.JSON_SCHEMA }) === value) return value
+  } catch {
+    // Not valid as a bare scalar, so it needs quoting.
+  }
+  return JSON.stringify(value)
 }
