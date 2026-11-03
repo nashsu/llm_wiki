@@ -7,7 +7,7 @@ vi.mock("@/commands/fs", () => ({
   fileExists: vi.fn(),
 }))
 
-import { checkIngestCache, saveIngestCache } from "./ingest-cache"
+import { checkIngestCache, hasSourceChanged, saveIngestCache } from "./ingest-cache"
 import { readFile, writeFile, fileExists } from "@/commands/fs"
 
 const mockReadFile = vi.mocked(readFile)
@@ -92,5 +92,31 @@ describe("ingest-cache — checkIngestCache", () => {
 
     const result = await checkIngestCache("/project", "foo.pdf", "hello")
     expect(result).toBeNull()
+  })
+})
+
+describe("ingest-cache \u2014 hasSourceChanged", () => {
+  const seed = async () => {
+    let persisted = ""
+    mockReadFile.mockImplementation(async () => persisted || JSON.stringify({ entries: {} }))
+    mockWriteFile.mockImplementation(async (_p: string, c: string) => {
+      persisted = c
+    })
+    await saveIngestCache("/project", "foo.pdf", "hello", [])
+  }
+
+  it("is false when the source has no recorded ingest", async () => {
+    mockReadFile.mockResolvedValue(JSON.stringify({ entries: {} }))
+    expect(await hasSourceChanged("/project", "foo.pdf", "hello")).toBe(false)
+  })
+
+  it("is false when the recorded hash matches", async () => {
+    await seed()
+    expect(await hasSourceChanged("/project", "foo.pdf", "hello")).toBe(false)
+  })
+
+  it("is true when the recorded hash differs", async () => {
+    await seed()
+    expect(await hasSourceChanged("/project", "foo.pdf", "corrected")).toBe(true)
   })
 })

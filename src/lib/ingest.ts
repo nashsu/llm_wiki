@@ -24,7 +24,7 @@ import {
   sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
 import { parseSources, writeSources } from "@/lib/sources-merge"
-import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import { checkIngestCache, hasSourceChanged, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -814,6 +814,8 @@ async function autoIngestImpl(
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
   const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent)
+  // Read now: saveIngestCache overwrites the recorded hash when this run ends.
+  const sourceChanged = await hasSourceChanged(pp, sourceIdentity, sourceContent)
   console.log(`[ingest:diag] cache check for "${sourceIdentity}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
     return runCommit(async () => {
@@ -1269,6 +1271,7 @@ async function autoIngestImpl(
     activityId,
     onFileWritten,
     previouslyCompletedPaths.includes(sourceSummaryPath),
+    sourceChanged,
   )
   throwIfIngestAborted(signal, activityId)
   const writtenPaths = uniqueNormalizedPaths([
@@ -1348,6 +1351,7 @@ async function autoIngestImpl(
           activityId,
           onFileWritten,
           writtenPaths.includes(sourceSummaryPath),
+          sourceChanged,
         )
         // Match successful writes against the paths requested from the model,
         // not the final on-disk paths. writeFileBlocks may legitimately rewrite
@@ -2102,6 +2106,7 @@ async function writeFileBlocks(
   activityId?: string,
   onFileWritten?: (relativePath: string) => void,
   summaryAlreadyWritten = false,
+  sourceChanged = false,
 ): Promise<{
   writtenPaths: string[]
   completedInputPaths: string[]
@@ -2268,8 +2273,10 @@ async function writeFileBlocks(
         // that source. Merging the old body back into the new generation kept
         // retracted wording alive indefinitely. Multi-source pages still use
         // the merger because their other sources' contributions must survive.
+        // So does an unchanged source: nothing was corrected, and a fresh
+        // generation is often shorter, so replacing would only lose content.
         const replaceExistingBody = Boolean(
-          existing && isOwnedOnlyBySource(existing, sourceFileName),
+          sourceChanged && existing && isOwnedOnlyBySource(existing, sourceFileName),
         )
         const merged = await mergePageContent(
           content,
