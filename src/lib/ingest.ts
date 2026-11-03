@@ -1596,6 +1596,8 @@ async function autoIngestImpl(
   })
 }
 
+const MAX_CJK_SHARE_IN_LATIN_PAGE = 0.2
+
 /**
  * Per-file language guard. Strips frontmatter + code/math blocks, runs
  * detectLanguage on the remainder, and returns whether the content is in
@@ -1603,7 +1605,7 @@ async function autoIngestImpl(
  * the LLM follows the format spec but writes a single page in a wrong
  * language (observed ~once in 5 real-LLM runs on MiniMax-M2.7-highspeed).
  */
-function contentMatchesTargetLanguage(content: string, target: string): boolean {
+export function contentMatchesTargetLanguage(content: string, target: string): boolean {
   // Strip frontmatter
   const fmEnd = content.indexOf("\n---\n", 3)
   let body = fmEnd > 0 ? content.slice(fmEnd + 5) : content
@@ -1627,7 +1629,12 @@ function contentMatchesTargetLanguage(content: string, target: string): boolean 
   if (targetIsCjk) return detectedIsCjk
   if (distinctNonLatin.has(target)) return detected === target
   if (distinctNonLatin.has(detected)) return sameScriptFamily(target, detected)
-  return !detectedIsCjk
+  if (!detectedIsCjk) return true
+  // detectLanguage ignores ASCII, so two glossed terms in an English page
+  // read as Chinese. Judge by share of letters instead.
+  const letters = sample.match(/\p{L}/gu)?.length ?? 0
+  const cjkLetters = sample.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0
+  return cjkLetters / Math.max(1, letters) < MAX_CJK_SHARE_IN_LATIN_PAGE
 }
 
 function isLogPath(relativePath: string): boolean {
