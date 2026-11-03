@@ -2237,7 +2237,9 @@ async function writeFileBlocks(
     try {
       if (isLogPath(relativePath)) {
         const existing = await tryReadFile(fullPath)
-        const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
+        // Models copy page frontmatter into log blocks, and it would pile up mid-file.
+        const entry = content.slice(parseFrontmatter(content).rawBlock.length).trim()
+        const appended = existing ? `${existing}\n\n${entry}` : entry
         await writeFile(fullPath, appended)
       } else if (
         isListingPath(relativePath)
