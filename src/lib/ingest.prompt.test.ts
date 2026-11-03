@@ -376,3 +376,10 @@ describe("overview maintenance", () => {
     expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
   })
 })
+
+describe("buildGenerationPrompt source page link", () => {
+  it("gives the exact wikilink for the source summary", () => {
+    const prompt = buildGenerationPrompt("", "", "", "a.pdf", undefined, "", "wiki/sources/my-book--x1.md")
+    expect(prompt).toContain("link to this page as [[my-book--x1]]")
+  })
+})
