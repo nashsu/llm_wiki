@@ -449,6 +449,25 @@ describe("autoIngest source summary paths", () => {
     expect(mergeRequestCount).toBe(0)
   })
 
+  it("drops frontmatter from generated log entries", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    sourceMarkers = ["project-a config"]
+    generationSuffix = [
+      "---FILE: wiki/log.md---",
+      "---",
+      "type: log",
+      'title: "Log: entry"',
+      "---",
+      "## [2026-01-01] ingest | config",
+      "---END FILE---",
+    ].join("\n")
+    await autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, useWikiStore.getState().llmConfig)
+
+    const log = await fs.readFile(`${tmp.path}/wiki/log.md`, "utf8")
+    expect(log).toContain("ingest | config")
+    expect(log).not.toContain("type: log")
+  })
+
   it("moves the canonical source summary and its source reference", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["movable summary"]

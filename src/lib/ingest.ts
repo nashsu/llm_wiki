@@ -2237,7 +2237,8 @@ async function writeFileBlocks(
     try {
       if (isLogPath(relativePath)) {
         const existing = await tryReadFile(fullPath)
-        const appended = existing ? `${existing}\n\n${content.trim()}` : content.trim()
+        const entry = stripLogEntryFrontmatter(content)
+        const appended = existing ? `${existing}\n\n${entry}` : entry
         await writeFile(fullPath, appended)
       } else if (
         isListingPath(relativePath)
@@ -2312,6 +2313,17 @@ async function writeFileBlocks(
     hardFailures,
     truncatedPaths: repairableTruncatedPaths,
   }
+}
+
+/**
+ * Models copy page frontmatter into log blocks, and appended verbatim it
+ * piles up mid-file. Only a leading block that parses as YAML fields is
+ * removed, so an entry wrapped in `---` rules keeps its text.
+ */
+export function stripLogEntryFrontmatter(content: string): string {
+  const { frontmatter, rawBlock } = parseFrontmatter(content)
+  const leading = frontmatter !== null && rawBlock !== "" && content.startsWith(rawBlock)
+  return (leading ? content.slice(rawBlock.length) : content).trim()
 }
 
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {

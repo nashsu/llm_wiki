@@ -5,6 +5,7 @@ import {
   boundWikiIndexForPrompt,
   buildChunkAnalysisSystemPrompt,
   buildGenerationPrompt,
+  stripLogEntryFrontmatter,
   buildPageMergeSystemPrompt,
   computeIngestGenerationMaxTokens,
   computeIngestAnalysisMaxTokens,
@@ -374,5 +375,22 @@ describe("overview maintenance", () => {
     const twice = updateBoundedOverviewRecentSection(once, [additions[0]])
     expect(twice).toBe(once)
     expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
+  })
+})
+
+describe("stripLogEntryFrontmatter", () => {
+  it("removes leading frontmatter", () => {
+    expect(stripLogEntryFrontmatter('---\ntype: log\ntitle: "Log: x"\n---\n## [2026-01-01] ingest | x\n'))
+      .toBe("## [2026-01-01] ingest | x")
+  })
+
+  it("keeps an entry wrapped in horizontal rules", () => {
+    const entry = "---\n## [2026-01-01] ingest | x\n\n- did a thing\n---"
+    expect(stripLogEntryFrontmatter(entry)).toBe(entry)
+  })
+
+  it("keeps text that comes before a frontmatter block", () => {
+    const entry = "## [2026-01-01] ingest | x\n---\ntype: log\n---\n- did a thing"
+    expect(stripLogEntryFrontmatter(entry)).toContain("## [2026-01-01] ingest | x")
   })
 })
