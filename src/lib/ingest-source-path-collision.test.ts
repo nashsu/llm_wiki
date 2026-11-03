@@ -172,6 +172,7 @@ import {
   executeIngestWrites,
   groupChunksIntoSections,
   hasMineruImageRefs,
+  withSourcePageList,
 } from "./ingest"
 import { streamChat } from "./llm-client"
 import { parseWithMineruResult } from "./mineru"
@@ -820,7 +821,9 @@ describe("autoIngest source summary paths", () => {
       const log = await fs.readFile(`${tmp!.path}/wiki/log.md`, "utf8").catch(() => "")
       expect(log).not.toContain("section log")
       const summaryPath = `${tmp!.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/sections.md")}.md`
-      expect(await fs.readFile(summaryPath, "utf8")).toContain("final summary")
+      const summary = await fs.readFile(summaryPath, "utf8")
+      expect(summary).toContain("final summary")
+      expect(summary).toContain("## Pages From This Source\n\n### concepts\n\n- [[first-topic]]\n- [[second-topic]]")
     })
 
     it("continues a section after its output limit without repeating finished pages", async () => {
@@ -869,6 +872,29 @@ describe("autoIngest source summary paths", () => {
       const page = await fs.readFile(`${tmp!.path}/wiki/concepts/first-topic.md`, "utf8")
       expect(page).toContain("Body of first-topic")
       expect(page).toContain("Text from the final pass")
+    })
+
+    it("lists unlinked pages on the summary by folder and rebuilds an earlier list", () => {
+      const summary = "# Book\n\nSee [[already-linked]].\n"
+      const paths = [
+        "wiki/concepts/b-topic.md",
+        "wiki/methods/a-method.md",
+        "wiki/concepts/already-linked.md",
+        "wiki/sources/book.md",
+        "wiki/log.md",
+      ]
+      const once = withSourcePageList(summary, paths)
+      expect(once).toBe(
+        "# Book\n\nSee [[already-linked]].\n\n## Pages From This Source\n\n### concepts\n\n- [[b-topic]]\n\n### methods\n\n- [[a-method]]\n",
+      )
+      expect(withSourcePageList(once, paths)).toBe(once)
+      // A merge may have moved the list up; it goes back to the end and keeps its entries.
+      const moved = once + "\n## Notes\n\nLater text.\n"
+      const rebuilt = withSourcePageList(moved, ["wiki/concepts/c-topic.md"])
+      expect(rebuilt).toContain("## Notes\n\nLater text.\n\n## Pages From This Source")
+      expect(rebuilt).toContain("- [[b-topic]]\n- [[c-topic]]")
+      expect(rebuilt).toContain("### methods\n\n- [[a-method]]")
+      expect(withSourcePageList(summary, ["wiki/concepts/already-linked.md"])).toBe(summary)
     })
 
     it("groups chunks up to the limit and keeps an oversized chunk alone", () => {

@@ -1564,6 +1564,18 @@ async function autoIngestImpl(
     }
   }
 
+  // The model often links only a few of a long source's pages from its
+  // summary, which leaves most of them unattached to the source in the graph.
+  if (!signal?.aborted && writtenPaths.some((p) => normalizePath(p) === sourceSummaryPath)) {
+    try {
+      const summary = await tryReadFile(sourceSummaryFullPath)
+      const listed = summary ? withSourcePageList(summary, writtenPaths) : summary
+      if (listed !== summary) await writeFile(sourceSummaryFullPath, listed)
+    } catch (err) {
+      console.warn(`[ingest] Could not list pages on the source summary for "${sourceIdentity}":`, err)
+    }
+  }
+
   // ── Step 3.5: Append extracted images to the source-summary page ─
   // Skipped when the master toggle is off — see Step 0.6 above for
   // the full rationale. With captioning disabled we also don't
@@ -2132,6 +2144,49 @@ export function currentWikiDate(now: Date = new Date()): string {
   const month = String(now.getMonth() + 1).padStart(2, "0")
   const day = String(now.getDate()).padStart(2, "0")
   return `${year}-${month}-${day}`
+}
+
+const SOURCE_PAGE_LIST_HEADING = "## Pages From This Source"
+const WIKILINK_TARGET = /\[\[([^\]|#]+)/g
+
+/**
+ * Puts a list of this source's pages, grouped by folder, at the end of its
+ * summary, leaving out pages the summary already links. Rebuilds any earlier
+ * list, so running it again keeps the entries and adds new ones.
+ */
+export function withSourcePageList(summary: string, pagePaths: readonly string[]): string {
+  const folders = new Map<string, Set<string>>()
+  const add = (folder: string, slug: string) => {
+    if (!folders.has(folder)) folders.set(folder, new Set())
+    folders.get(folder)!.add(slug)
+  }
+  let body = summary
+  const start = summary.indexOf(`\n${SOURCE_PAGE_LIST_HEADING}\n`)
+  if (start !== -1) {
+    const next = summary.indexOf("\n## ", start + 1)
+    const end = next === -1 ? summary.length : next
+    let folder = "pages"
+    for (const line of summary.slice(start, end).split("\n")) {
+      const heading = line.match(/^### (.+)$/)
+      if (heading) folder = heading[1].trim()
+      for (const m of line.matchAll(WIKILINK_TARGET)) add(folder, m[1].trim())
+    }
+    body = summary.slice(0, start) + summary.slice(end)
+  }
+  for (const path of pagePaths) {
+    const parts = normalizePath(path).split("/")
+    if (parts.length < 3 || parts[0] !== "wiki" || parts[1] === "sources" || parts[1] === "media" || !path.endsWith(".md")) continue
+    add(parts[1], parts[parts.length - 1].replace(/\.md$/, ""))
+  }
+  const linked = new Set(
+    [...body.matchAll(WIKILINK_TARGET)].map((m) => getFileName(m[1].trim()).toLowerCase()),
+  )
+  const sections = [...folders.keys()].sort().flatMap((folder) => {
+    const slugs = [...folders.get(folder)!].filter((s) => !linked.has(s.toLowerCase())).sort()
+    return slugs.length > 0 ? [`### ${folder}`, "", ...slugs.map((s) => `- [[${s}]]`), ""] : []
+  })
+  if (sections.length === 0) return body
+  return `${body.trimEnd()}\n\n${SOURCE_PAGE_LIST_HEADING}\n\n${sections.join("\n").trimEnd()}\n`
 }
 
 export function buildFallbackSourceSummary(
