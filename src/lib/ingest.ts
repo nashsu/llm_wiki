@@ -2298,6 +2298,30 @@ async function writeFileBlocks(
   // instead of replaying the partial result forever.
   const hardFailures: string[] = []
   const projectSchemaRouting = await loadProjectWikiSchemaRouting(projectPath)
+  // Wikilinks resolve by file name, so one name in two folders is ambiguous and
+  // usually the same topic filed under two types. Loaded on first use.
+  const pageNames: { byName?: Map<string, string> } = {}
+  const existingPageNamed = async (path: string): Promise<string | undefined> => {
+    if (!pageNames.byName) {
+      const byName = new Map<string, string>()
+      const walk = (nodes: readonly FileNode[]) => {
+        for (const node of nodes) {
+          if (node.is_dir) walk(node.children ?? [])
+          else if (node.name.endsWith(".md")) {
+            const rel = getRelativePath(node.path, projectPath)
+            if (!rel.startsWith("wiki/sources/")) byName.set(node.name.toLowerCase(), rel)
+          }
+        }
+      }
+      try {
+        walk(await listDirectory(`${projectPath}/wiki`))
+      } catch (err) {
+        console.warn("[ingest] Could not list pages for the same-name check:", err)
+      }
+      pageNames.byName = byName
+    }
+    return pageNames.byName.get(getFileName(path).toLowerCase())
+  }
 
   const targetLang = useWikiStore.getState().outputLanguage
   const today = currentWikiDate()
@@ -2376,6 +2400,14 @@ async function writeFileBlocks(
     if (routedSummaryWarning) {
       warnings.push(routedSummaryWarning)
       continue
+    }
+
+    if (!isLogPath(relativePath) && !isListingPath(relativePath) && !relativePath.startsWith("wiki/sources/")) {
+      const sameName = await existingPageNamed(relativePath)
+      if (sameName && sameName !== relativePath && !(await fileExists(`${projectPath}/${relativePath}`))) {
+        warnings.push(`Merged "${relativePath}" into existing "${sameName}", which has the same file name.`)
+        relativePath = sameName
+      }
     }
 
     // Language guard: reject individual FILE blocks whose body contradicts
@@ -2464,6 +2496,7 @@ async function writeFileBlocks(
       }
       writtenPaths.push(relativePath)
       if (relativePath === sourceSummaryPath) summaryWritten = true
+      pageNames.byName?.set(getFileName(relativePath).toLowerCase(), relativePath)
       completedInputPaths.push(rawRelativePath)
       onFileWritten?.(relativePath)
     } catch (err) {

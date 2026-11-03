@@ -897,6 +897,34 @@ describe("autoIngest source summary paths", () => {
       expect(withSourcePageList(summary, ["wiki/concepts/already-linked.md"])).toBe(summary)
     })
 
+    it("merges a page into an existing page with the same name in another folder", async () => {
+      await writeSource()
+      sectionResponses = [
+        sectionPage("first-topic"),
+        [
+          "---FILE: wiki/entities/first-topic.md---",
+          "---",
+          "type: entity",
+          "title: first-topic",
+          'sources: ["project-a/sections.md"]',
+          "---",
+          "",
+          "# first-topic",
+          "",
+          "Second section's view.",
+          "---END FILE---",
+        ].join("\n"),
+        "",
+      ]
+
+      await ingest()
+
+      await expect(fs.access(`${tmp!.path}/wiki/entities/first-topic.md`)).rejects.toThrow()
+      const page = await fs.readFile(`${tmp!.path}/wiki/concepts/first-topic.md`, "utf8")
+      expect(page).toContain("Body of first-topic.")
+      expect(page).toContain("Second section's view.")
+    })
+
     it("groups chunks up to the limit and keeps an oversized chunk alone", () => {
       const sections = groupChunksIntoSections(
         [{ main: "a".repeat(40) }, { main: "b".repeat(40) }, { main: "c".repeat(200) }, { main: "d".repeat(10) }],
