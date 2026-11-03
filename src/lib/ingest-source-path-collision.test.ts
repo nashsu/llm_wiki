@@ -482,6 +482,52 @@ describe("autoIngest source summary paths", () => {
     expect(mergeRequestCount).toBe(1)
   })
 
+  it("tells the model which pages this source already has", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/known.md`,
+      '---\ntitle: "Known: Topic"\nsources: ["project-a/config.yaml"]\n---\n# Known\n',
+    )
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/unrelated.md`,
+      '---\ntitle: Unrelated\nsources: ["project-b/config.yaml"]\n---\n# Unrelated\n',
+    )
+    sourceMarkers = ["project-a config"]
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+    )
+
+    const generation = mockStreamChat.mock.calls
+      .map(([, messages]) => String(messages[0]?.content))
+      .find((prompt) => prompt.includes("source summary page at"))
+    expect(generation).toContain("## Pages Already Generated From This Source")
+    expect(generation).toContain("- wiki/concepts/known.md — Known: Topic")
+    expect(generation).not.toContain("wiki/concepts/unrelated.md")
+  })
+
+  it("shows the model pages from other sources that the analysis mentions", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/configuration-source.md`,
+      '---\ntitle: Configuration Source\nsources: ["other.pdf"]\n---\n# Body\n',
+    )
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/unmentioned.md`,
+      '---\ntitle: Quantum Gravity\nsources: ["other.pdf"]\n---\n# Body\n',
+    )
+    sourceMarkers = ["project-a config"]
+    await autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, useWikiStore.getState().llmConfig)
+
+    const generation = mockStreamChat.mock.calls
+      .map(([, messages]) => String(messages[0]?.content))
+      .find((prompt) => prompt.includes("source summary page at"))
+    expect(generation).toContain("## Existing Pages This Source May Overlap With")
+    expect(generation).toContain("- wiki/concepts/configuration-source.md \u2014 Configuration Source")
+    expect(generation).not.toContain("wiki/concepts/unmentioned.md")
+  })
+
   it("moves the canonical source summary and its source reference", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["movable summary"]

@@ -5,6 +5,7 @@ import {
   boundWikiIndexForPrompt,
   buildChunkAnalysisSystemPrompt,
   buildGenerationPrompt,
+  rankPagesMentioned,
   buildPageMergeSystemPrompt,
   computeIngestGenerationMaxTokens,
   computeIngestAnalysisMaxTokens,
@@ -374,5 +375,55 @@ describe("overview maintenance", () => {
     const twice = updateBoundedOverviewRecentSection(once, [additions[0]])
     expect(twice).toBe(once)
     expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
+  })
+})
+
+describe("buildGenerationPrompt existing source pages", () => {
+  const build = (pages?: string[]) =>
+    buildGenerationPrompt("", "", "", "source.pdf", undefined, "", undefined, pages)
+
+  it("lists the pages this source already has", () => {
+    const prompt = build(["- wiki/concepts/a.md — A"])
+    expect(prompt).toContain("## Pages Already Generated From This Source")
+    expect(prompt).toContain("- wiki/concepts/a.md — A")
+  })
+
+  it("omits the section when there are none", () => {
+    expect(build()).not.toContain("Pages Already Generated")
+    expect(build([])).not.toContain("Pages Already Generated")
+  })
+
+  it("bounds a very long list", () => {
+    const pages = Array.from({ length: 5_000 }, (_, i) => `- wiki/concepts/page-${i}.md — Page ${i}`)
+    expect(build(pages).length).toBeLessThan(pages.join("\n").length)
+  })
+})
+
+describe("rankPagesMentioned", () => {
+  const page = (slug: string, title: string, aliases: string[] = []) => ({ line: `- ${slug}`, slug, title, aliases })
+
+  it("matches by title, title before a colon, parenthesised title, slug and alias", () => {
+    const pages = [
+      page("a", "Value at Risk"),
+      page("b", "Duration: A Primer"),
+      page("c", "Robust Errors (HC0-HC3)"),
+      page("term-premium", "Unrelated Words"),
+      page("e", "Other", ["yield curve"]),
+    ]
+    const text = "Value-at-risk, duration, robust errors, the term premium and the yield curve."
+    expect(rankPagesMentioned(text, pages).sort()).toEqual(["- a", "- b", "- c", "- e", "- term-premium"])
+  })
+
+  it("needs whole words, and exact capitals for short names", () => {
+    const pages = [page("imf", "IMF"), page("sec", "SEC"), page("beta", "Beta")]
+    expect(rankPagesMentioned("The IMF, a second alphabetical sector.", pages)).toEqual(["- imf"])
+  })
+
+  it("puts the most mentioned pages first and caps the list", () => {
+    const pages = [page("a", "Alpha Topic"), page("b", "Bravo Topic")]
+    expect(rankPagesMentioned("Bravo Topic, Bravo Topic, Alpha Topic.", pages)).toEqual(["- b", "- a"])
+    const many = Array.from({ length: 400 }, (_, i) => page(`p${i}`, `Named Thing ${i}`))
+    const text = many.map((p) => p.title).join(", ")
+    expect(rankPagesMentioned(text, many)).toHaveLength(300)
   })
 })
