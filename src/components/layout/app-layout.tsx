@@ -28,7 +28,7 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const project = useWikiStore((s) => s.project)
   const activeView = useWikiStore((s) => s.activeView)
   const researchPanelOpen = useResearchStore((s) => s.panelOpen)
-  const [leftWidth, setLeftWidth] = useState(220)
+  const [leftWidth, setLeftWidth] = useState(280)
   const [rightWidth, setRightWidth] = useState(400)
   const [leftCollapsed, setLeftCollapsed] = useState(
     () => localStorage.getItem(LEFT_PANEL_COLLAPSED_KEY) === "true",
