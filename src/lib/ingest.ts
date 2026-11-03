@@ -1133,7 +1133,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity)) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity), await listPagesMentioned(pp, sourceIdentity, analysis)) },
         {
           role: "user",
           content: [
@@ -2344,6 +2344,89 @@ async function listPagesFromSource(projectPath: string, sourceIdentity: string):
   return lines
 }
 
+const MAX_MENTIONED_PAGES = 300
+
+const namesRoughly = (s: string) => s.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+
+function countPhrase(text: string, phrase: string): number {
+  let count = 0
+  // Step back over the closing space, because neighbouring mentions share it.
+  for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + phrase.length - 1)) count++
+  return count
+}
+
+/**
+ * Ranks pages by how often the analysis names them, by title, slug or alias.
+ * Wrong matches only add a prompt line, and the model decides whether to reuse
+ * a page, so this can be loose. Short names must be exact all-caps acronyms,
+ * so "IMF" counts but "sec" inside ordinary text doesn't.
+ */
+export function rankPagesMentioned(
+  analysis: string,
+  pages: ReadonlyArray<{ line: string; slug: string; title?: string; aliases: string[] }>,
+): string[] {
+  const text = ` ${namesRoughly(analysis)} `
+  const words = new Set(analysis.match(/[\p{L}\p{N}]+/gu) ?? [])
+  const scored = pages.map((page) => {
+    const title = page.title ?? ""
+    const candidates = new Set(
+      [title, title.split(":")[0], title.replace(/\([^)]*\)/g, " "), page.slug, ...page.aliases]
+        .filter(Boolean),
+    )
+    let score = 0
+    for (const candidate of candidates) {
+      const name = namesRoughly(candidate)
+      if (name.length >= 4) score += countPhrase(text, ` ${name} `)
+      else if (/^[A-Z0-9]{2,3}$/.test(candidate) && words.has(candidate)) score += 1
+    }
+    return { line: page.line, score }
+  })
+  return scored
+    .filter((page) => page.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_MENTIONED_PAGES)
+    .map((page) => page.line)
+}
+
+/** Existing pages from other sources that the analysis names, as prompt lines. */
+async function listPagesMentioned(
+  projectPath: string,
+  sourceIdentity: string,
+  analysis: string,
+): Promise<string[]> {
+  const expected = sourceReferenceIdentity(sourceIdentity).toLowerCase()
+  const pages: Array<{ line: string; slug: string; title?: string; aliases: string[] }> = []
+  const walk = async (nodes: readonly FileNode[]): Promise<void> => {
+    for (const node of nodes) {
+      if (node.is_dir) {
+        await walk(node.children ?? [])
+        continue
+      }
+      if (!node.name.endsWith(".md")) continue
+      const relative = getRelativePath(node.path, projectPath)
+      if (relative.startsWith("wiki/sources/") || relative.startsWith("wiki/media/") || AGGREGATE_WIKI_PATHS.includes(relative as (typeof AGGREGATE_WIKI_PATHS)[number])) continue
+      const content = await tryReadFile(node.path)
+      if (parseSources(content).some((s) => sourceReferenceIdentity(s).toLowerCase() === expected)) continue
+      const frontmatter = parseFrontmatter(content).frontmatter
+      const title = typeof frontmatter?.title === "string" ? frontmatter.title : undefined
+      const aliases = Array.isArray(frontmatter?.aliases) ? frontmatter.aliases.map(String) : []
+      pages.push({
+        line: title ? `- ${relative} \u2014 ${title}` : `- ${relative}`,
+        slug: node.name.replace(/\.md$/, ""),
+        title,
+        aliases,
+      })
+    }
+  }
+  try {
+    await walk(await listDirectory(`${projectPath}/wiki`))
+  } catch (err) {
+    // The list only improves the prompt, so it must not fail the ingest.
+    console.warn("[ingest] Could not list mentioned pages:", err)
+  }
+  return rankPagesMentioned(analysis, pages)
+}
+
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
   const sources = parseSources(content)
   if (sources.length === 0) return false
@@ -2534,6 +2617,7 @@ export function buildGenerationPrompt(
   sourceContent: string = "",
   sourceSummaryPath?: string,
   existingSourcePages: string[] = [],
+  mentionedPages: string[] = [],
 ): string {
   // Use original filename (without extension) as the source summary page name
   const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
@@ -2663,6 +2747,14 @@ export function buildGenerationPrompt(
           "When you cover one of these topics, emit its FILE block at this exact path with the same title. Do not create the same topic under a new path.",
           "Pages you do not emit are left unchanged.",
           boundWikiIndexForPrompt(existingSourcePages.join("\n")),
+        ].join("\n")
+      : "",
+    mentionedPages.length > 0
+      ? [
+          "## Existing Pages This Source May Overlap With",
+          "These pages already exist, and the analysis mentions their topics. They may be missing from the index above.",
+          "When you write about one of these same topics, emit its FILE block at this exact path with the same title, and the application merges your text into it. Do not create the same topic under a new path. Only reuse a page if it really is the same topic.",
+          ...mentionedPages,
         ].join("\n")
       : "",
     overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
