@@ -29,10 +29,10 @@ vi.mock("./llm-client", () => ({
     const systemPrompt = String(messages?.[0]?.content ?? "")
     const userPrompt = String(messages?.[1]?.content ?? "")
 
-    if (systemPrompt.startsWith("You are merging two versions")) {
+    if (systemPrompt.startsWith("You are merging source-backed material")) {
       mergeRequestCount++
-      const incoming = userPrompt.split("## Newly generated version")[1]?.split("---")[2]
-      cb.onToken(incoming?.trim() || "---\ntitle: merged\n---\n\n# merged")
+      // A real merge keeps material from both inputs, so echo them.
+      cb.onToken(`---\ntitle: merged\n---\n\n# merged wording\n\n${userPrompt}`)
       cb.onDone()
       return
     }
@@ -447,6 +447,39 @@ describe("autoIngest source summary paths", () => {
     expect(content).toContain("corrected wording")
     expect(content).not.toContain("obsolete wording")
     expect(mergeRequestCount).toBe(0)
+  })
+
+  it("merges instead of replacing when an unchanged source is ingested again", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["first wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+
+    // A page from the first run is gone, so the same source misses the cache.
+    const cachePath = `${tmp.path}/.llm-wiki/ingest-cache.json`
+    const cache = JSON.parse(await fs.readFile(cachePath, "utf8"))
+    cache.entries["project-a/config.yaml"].filesWritten.push("wiki/concepts/gone.md")
+    await fs.writeFile(cachePath, JSON.stringify(cache))
+
+    sourceMarkers = ["second wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    expect(await fs.readFile(summaryPath, "utf8")).toContain("merged wording")
+    expect(mergeRequestCount).toBe(1)
+  })
+
+  it("merges instead of replacing when the source has no recorded ingest", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["first wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    await fs.rm(`${tmp.path}/.llm-wiki/ingest-cache.json`)
+
+    sourceMarkers = ["second wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    expect(await fs.readFile(summaryPath, "utf8")).toContain("merged wording")
+    expect(mergeRequestCount).toBe(1)
   })
 
   it("moves the canonical source summary and its source reference", async () => {

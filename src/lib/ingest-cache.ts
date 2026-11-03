@@ -99,6 +99,22 @@ export async function checkIngestCache(
 }
 
 /**
+ * True only when a previous ingest of this source is on record with
+ * different content. Unknown history returns false: callers use this to
+ * decide whether old pages may be discarded, and that needs evidence.
+ */
+export async function hasSourceChanged(
+  projectPath: string,
+  sourceFileName: string,
+  sourceContent: string,
+): Promise<boolean> {
+  const cache = await loadCache(projectPath)
+  const entry = cache.entries[sourceFileName]
+  if (!entry) return false
+  return entry.hash !== (await sha256(sourceContent))
+}
+
+/**
  * Save ingest result to cache after successful ingest.
  */
 export async function saveIngestCache(
