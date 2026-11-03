@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useWikiStore } from "@/stores/wiki-store"
 import { refreshProjectFileTree } from "@/lib/project-file-tree-refresh"
 import { IconSidebar } from "./icon-sidebar"
@@ -10,10 +10,14 @@ import { ActivityPanel } from "./activity-panel"
 import { useResearchStore } from "@/stores/research-store"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { getAppLayoutVisibility } from "./app-layout-visibility"
+import { PanelResizeHandle, panelMaxWidth, panelOuterWidth, panelReserve } from "./panel-resize-handle"
 import { PanelLeftOpen } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 const LEFT_PANEL_COLLAPSED_KEY = "llm-wiki:left-panel-collapsed"
+const COLLAPSED_LEFT_PANEL_WIDTH = 36
+const MIN_LEFT_WIDTH = 150
+const MIN_RIGHT_WIDTH = 250
 
 interface AppLayoutProps {
   onSwitchProject: () => void
@@ -29,9 +33,6 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
   const [leftCollapsed, setLeftCollapsed] = useState(
     () => localStorage.getItem(LEFT_PANEL_COLLAPSED_KEY) === "true",
   )
-  const isDraggingLeft = useRef(false)
-  const isDraggingRight = useRef(false)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const loadFileTree = useCallback(async () => {
     if (!project) return
@@ -45,51 +46,15 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
     loadFileTree()
   }, [loadFileTree])
 
-  const startDrag = useCallback(
-    (side: "left" | "right") => (e: React.MouseEvent) => {
-      e.preventDefault()
-      if (side === "left") isDraggingLeft.current = true
-      else isDraggingRight.current = true
-      document.body.style.cursor = "col-resize"
-      document.body.style.userSelect = "none"
-      document.body.dataset.panelResizing = "true"
-
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!containerRef.current) return
-        const rect = containerRef.current.getBoundingClientRect()
-
-        if (isDraggingLeft.current) {
-          const newWidth = e.clientX - rect.left
-          // Hard cap: 150 to 400px
-          setLeftWidth(Math.max(150, Math.min(400, newWidth)))
-        }
-        if (isDraggingRight.current) {
-          const newWidth = rect.right - e.clientX
-          // Hard cap: 250 to 50% of container
-          setRightWidth(Math.max(250, Math.min(rect.width * 0.5, newWidth)))
-        }
-      }
-
-      const handleMouseUp = () => {
-        isDraggingLeft.current = false
-        isDraggingRight.current = false
-        document.body.style.cursor = ""
-        document.body.style.userSelect = ""
-        delete document.body.dataset.panelResizing
-        document.removeEventListener("mousemove", handleMouseMove)
-        document.removeEventListener("mouseup", handleMouseUp)
-      }
-
-      document.addEventListener("mousemove", handleMouseMove)
-      document.addEventListener("mouseup", handleMouseUp)
-    },
-    []
-  )
-
   // Settings and Chat are standalone views. Hide the project file tree,
   // activity strip, and optional right research panel there so those
   // screens use the whole work area.
   const { showLeftPanel, hasRightPanel } = getAppLayoutVisibility(activeView, researchPanelOpen)
+  const leftPanelSpace = !showLeftPanel
+    ? 0
+    : leftCollapsed ? COLLAPSED_LEFT_PANEL_WIDTH : panelOuterWidth(leftWidth)
+  const leftReserve = panelReserve(hasRightPanel ? panelOuterWidth(rightWidth) : 0)
+  const rightReserve = panelReserve(leftPanelSpace)
   const toggleLeftPanel = () => {
     setLeftCollapsed((value) => {
       const next = !value
@@ -108,22 +73,26 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
       <UpdateBanner />
       <div className="flex min-h-0 flex-1">
         <IconSidebar onSwitchProject={onSwitchProject} />
-        <div ref={containerRef} className="relative flex min-w-0 flex-1 overflow-hidden">
+        <div className="relative flex min-w-0 flex-1 overflow-hidden">
           {showLeftPanel && !leftCollapsed && (
             <>
               {/* Left: File tree + Activity */}
               <div
                 className="flex shrink-0 flex-col overflow-hidden border-r"
-                style={{ width: leftWidth }}
+                style={{ width: leftWidth, maxWidth: panelMaxWidth(leftReserve) }}
               >
                 <div className="flex-1 overflow-hidden">
                   <SidebarPanel onCollapse={toggleLeftPanel} />
                 </div>
                 <ActivityPanel />
               </div>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("left")}
+              <PanelResizeHandle
+                side="left"
+                width={leftWidth}
+                min={MIN_LEFT_WIDTH}
+                reserve={leftReserve}
+                label={t("layout.resizePanel")}
+                onResize={setLeftWidth}
               />
             </>
           )}
@@ -152,13 +121,17 @@ export function AppLayout({ onSwitchProject }: AppLayoutProps) {
           {/* Right panels */}
           {hasRightPanel && (
             <>
-              <div
-                className="w-1.5 shrink-0 cursor-col-resize bg-border/40 transition-colors hover:bg-primary/30 active:bg-primary/40"
-                onMouseDown={startDrag("right")}
+              <PanelResizeHandle
+                side="right"
+                width={rightWidth}
+                min={MIN_RIGHT_WIDTH}
+                reserve={rightReserve}
+                label={t("layout.resizePanel")}
+                onResize={setRightWidth}
               />
               <div
                 className="flex shrink-0 flex-col overflow-hidden border-l"
-                style={{ width: rightWidth }}
+                style={{ width: rightWidth, maxWidth: panelMaxWidth(rightReserve) }}
               >
                 <ErrorBoundary>
                   <ResearchPanel />

@@ -7,7 +7,7 @@
     "retry": "Попробовать снова", "cancel": "Отмена", "ignore": "Игнорировать", "close": "Закрыть", "ok": "ОК", "confirm": "Подтверждение", "notice": "Уведомление",
     "dismiss": "Скрыть", "remove": "Удалить", "loading": "Загрузка...", "optional": "необязательно"
   },
-  "layout": { "showSidebar": "Показать боковую панель", "hideSidebar": "Скрыть боковую панель" },
+  "layout": { "resizePanel": "Изменить ширину панели", "showSidebar": "Показать боковую панель", "hideSidebar": "Скрыть боковую панель" },
   "errors": { "generic": "Что-то пошло не так" },
   "mermaid": {
     "renderFailed": "Не удалось отобразить диаграмму Mermaid",
