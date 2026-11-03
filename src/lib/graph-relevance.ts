@@ -2,6 +2,7 @@ import { readFile, listDirectory } from "@/commands/fs"
 import type { FileNode } from "@/types/wiki"
 import { normalizePath } from "@/lib/path-utils"
 import { parseFrontmatter } from "@/lib/frontmatter"
+import { parseFrontmatterArray } from "@/lib/sources-merge"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,14 +110,7 @@ function extractFrontmatter(content: string): { title: string; type: string; sou
     }
   } else {
     // Single-line: sources: ["a.pdf", "b.pdf"] or sources: [a.pdf]
-    const inlineMatch = fm.match(/^sources:\s*\[([^\]]*)\]/m)
-    if (inlineMatch) {
-      const items = inlineMatch[1].split(",")
-      for (const item of items) {
-        const trimmed = item.trim().replace(/^["']|["']$/g, "")
-        if (trimmed) sources.push(trimmed)
-      }
-    }
+    sources.push(...parseFrontmatterArray(content, "sources"))
   }
 
   const parsedRelated = parseFrontmatter(content).frontmatter?.related

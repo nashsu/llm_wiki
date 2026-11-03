@@ -54,12 +54,66 @@ export function parseFrontmatterArray(content: string, fieldName: string): strin
     return out
   }
 
-  const inlineRe = new RegExp(`^${escapedName}:\\s*\\[([^\\]]*)\\]`, "m")
-  const inline = fm.match(inlineRe)
+  const inline = findInlineArray(fm, escapedName)
   if (!inline) return []
-  const body = inline[1].trim()
+  const body = inline.body.trim()
   if (body === "") return []
   return splitInlineArray(body)
+}
+
+/**
+ * Locate an inline `name: [...]` array. The closing bracket is found by
+ * scanning because a quoted item may contain `]`, as in a source file
+ * named `Book [2nd ed].pdf`.
+ */
+function findInlineArray(
+  fm: string,
+  escapedName: string,
+): { start: number; end: number; body: string } | null {
+  const open = new RegExp(`^${escapedName}:\\s*\\[`, "m").exec(fm)
+  if (!open) return null
+  const bodyStart = open.index + open[0].length
+  const close = findInlineArrayClose(fm, bodyStart)
+  if (close === -1) return null
+  return { start: open.index, end: close + 1, body: fm.slice(bodyStart, close) }
+}
+
+function findInlineArrayClose(text: string, from: number): number {
+  // As in YAML, a quote only opens a string at the start of an item, so an
+  // unquoted `koo's-view` is plain text.
+  let atItemStart = true
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "]") return i
+    if (atItemStart && (ch === "\"" || ch === "'")) {
+      const closingQuote = findClosingQuote(text, i)
+      // Unterminated quote: fall back to the first `]`.
+      if (closingQuote === -1) return text.indexOf("]", i)
+      i = closingQuote
+      atItemStart = false
+    } else if (ch === ",") {
+      atItemStart = true
+    } else if (!/\s/.test(ch)) {
+      atItemStart = false
+    }
+  }
+  return -1
+}
+
+/** Index of the quote closing the one at `open`, or -1 if none on that line. */
+function findClosingQuote(text: string, open: number): number {
+  const quote = text[open]
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "\n") return -1
+    if (quote === "\"" && ch === "\\") {
+      i++
+    } else if (ch === quote) {
+      if (quote === "'" && text[i + 1] === "'") i++
+      else return i
+    }
+  }
+  return -1
 }
 
 function splitInlineArray(body: string): string[] {
@@ -126,9 +180,9 @@ export function writeFrontmatterArray(
   const newLine = `${fieldName}: [${serialized}]`
 
   // Replace inline form in place — preserves field ordering.
-  const inlineRe = new RegExp(`^${escapedName}:\\s*\\[[^\\]]*\\]`, "m")
-  if (inlineRe.test(fmBody)) {
-    const rewritten = fmBody.replace(inlineRe, newLine)
+  const inline = findInlineArray(fmBody, escapedName)
+  if (inline) {
+    const rewritten = `${fmBody.slice(0, inline.start)}${newLine}${fmBody.slice(inline.end)}`
     return `${openDelim}${rewritten}${closeDelim}${content.slice(fmMatch[0].length)}`
   }
 
