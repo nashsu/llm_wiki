@@ -1,5 +1,5 @@
 import { anyTxtSearchSmart, hasConfiguredAnyTxt } from "./anytxt-search"
-import { hasConfiguredSearchProvider, resolveSearchConfig, webSearch } from "./web-search"
+import { hasConfiguredSearchProvider, resolveSearchConfig, webFetch, webSearch, type WebSearchResult } from "./web-search"
 import { streamChat } from "./llm-client"
 import { currentWikiDate } from "./ingest"
 import { fileExists, writeFile, readFile } from "@/commands/fs"
@@ -16,6 +16,43 @@ import { normalizeMalformedWikilinks } from "./ingest-sanitize"
 const MAX_RESEARCH_SOURCES = 20
 const MIN_RESEARCH_CONTENT_CHARS = 120
 const MIN_RESEARCH_BLOCK_CHARS = 40
+
+/** Fetch only accepted web candidates, after deduplication and relevance filtering.
+ * Keep the model context bounded and retain search summaries on per-page errors.
+ */
+async function readResearchPages(
+  results: WebSearchResult[],
+  config: SearchApiConfig,
+): Promise<WebSearchResult[]> {
+  if (config.provider !== "deepseek") return results
+  const webResults = results.filter((result) => /^https?:\/\//i.test(result.url))
+  if (webResults.length === 0) return results
+  const charsPerPage = Math.min(12_000, Math.floor(60_000 / webResults.length))
+  const pages = new Map<string, string>()
+  // Bound parallel Fetch calls independently from the multi-query search fanout.
+  for (let offset = 0; offset < webResults.length; offset += 3) {
+    await Promise.all(webResults.slice(offset, offset + 3).map(async (result) => {
+      try {
+        const page = await webFetch(result.url, config)
+        let excerpt = ""
+        let chars = 0
+        for (const char of page.content) {
+          if (chars++ === charsPerPage) {
+            excerpt += "\n\n[Page content truncated for research context.]"
+            break
+          }
+          excerpt += char
+        }
+        pages.set(result.url, excerpt)
+      } catch (error) {
+        // Includes Fetch 404: one unreadable page must not discard the other
+        // sources or prevent synthesis from using this source's search summary.
+        console.warn("[DeepResearch] page read failed; keeping search summary:", error instanceof Error ? error.message : String(error))
+      }
+    }))
+  }
+  return results.map((result) => ({ ...result, snippet: pages.get(result.url) ?? result.snippet }))
+}
 
 export interface ResearchSynthesisValidation {
   valid: boolean
@@ -569,7 +606,9 @@ async function executeResearch(
     // Step 2: LLM synthesis
     if (!updateTaskIfActive(pp, taskId, { status: "synthesizing" })) return
 
-    const searchContext = webResults
+    const researchResults = await readResearchPages(webResults, searchConfig)
+    if (!isActiveProjectPath(pp)) return
+    const searchContext = researchResults
       .map((r, i) => `[${i + 1}] **${r.title}** (${r.source})\n${r.snippet}`)
       .join("\n\n")
 

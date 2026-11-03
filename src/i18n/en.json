@@ -733,6 +733,7 @@
         "instanceUrl": "Instance URL",
         "ollamaHint": "Uses the official Ollama Web Search API (`https://ollama.com/api/web_search`). An Ollama API key is required.",
         "bochaHint": "Uses the official Bocha Web Search API. Create and manage API keys at open.bocha.cn.",
+        "deepseekHint": "Paste the same key you use for the official DeepSeek API; it is saved separately for Web Search. Search works in Deep Research and Agent chat. Deep Research also reads accepted pages as Markdown via Fetch, keeping search summaries if a page cannot be read. Both APIs are billed by DeepSeek.",
         "firecrawlHint": "Leave API key blank for anonymous search, or add a Firecrawl API key for authenticated quota. Base URL supports compatible self-hosted endpoints.",
         "searxngJsonHint": "The instance must allow JSON search responses (`format=json`).",
         "searchCategories": "Search categories",

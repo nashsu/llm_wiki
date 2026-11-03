@@ -733,6 +733,7 @@
         "instanceUrl": "URL dell'istanza",
         "ollamaHint": "Usa l'API ufficiale Ollama Web Search (`https://ollama.com/api/web_search`). È necessaria una chiave API Ollama.",
         "bochaHint": "Usa l'API ufficiale Bocha Web Search. Crea e gestisci le chiavi API su open.bocha.cn.",
+        "deepseekHint": "Incolla la stessa chiave usata per l'API ufficiale DeepSeek; viene salvata separatamente per la ricerca web. Search funziona in Deep Research e nella chat Agent. Deep Research legge anche le pagine selezionate in Markdown tramite Fetch e mantiene i riepiloghi se una pagina non è leggibile. Entrambe le API sono fatturate da DeepSeek.",
         "firecrawlHint": "Lascia vuota la chiave API per la ricerca anonima, oppure aggiungi una chiave Firecrawl per una quota autenticata. L'URL di base supporta endpoint self-hosted compatibili.",
         "searxngJsonHint": "L'istanza deve consentire risposte di ricerca in JSON (`format=json`).",
         "searchCategories": "Categorie di ricerca",

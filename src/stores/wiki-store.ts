@@ -69,6 +69,7 @@ export type SearchProvider =
   | "ollama"
   | "brave"
   | "bocha"
+  | "deepseek"
   | "firecrawl"
   | "none"
 export type DeepResearchSource = "web" | "anytxt" | "both"

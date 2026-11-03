@@ -15,6 +15,20 @@ export interface WebSearchResult {
   source: string
 }
 
+export interface WebFetchResult {
+  title: string
+  content: string
+}
+
+/** Read Markdown using the active DeepSeek search provider's own credentials. */
+export async function webFetch(url: string, config: SearchApiConfig): Promise<WebFetchResult> {
+  const resolved = resolveSearchConfig(config)
+  if (resolved.provider !== "deepseek" || !resolved.apiKey?.trim()) {
+    throw new Error("DeepSeek Fetch requires the DeepSeek Web Search provider and its API key in Settings.")
+  }
+  return invoke<WebFetchResult>("web_fetch", { url, config: resolved })
+}
+
 export const DEFAULT_FIRECRAWL_URL = "https://api.firecrawl.dev"
 
 export const SERPAPI_ENGINE_OPTIONS: { value: SerpApiEngine; label: string; hint: string }[] = [
@@ -141,9 +155,10 @@ export async function webSearch(
       resolved.provider === "tavily" ||
       resolved.provider === "serpapi" ||
       resolved.provider === "brave" ||
-      resolved.provider === "bocha"
+      resolved.provider === "bocha" ||
+      resolved.provider === "deepseek"
     ) &&
-    !resolved.apiKey
+    !resolved.apiKey?.trim()
   ) {
     throw new Error("Web search not configured. Add an API key for the selected search provider in Settings, or select a key-free provider such as Firecrawl or SearXNG.")
   }

@@ -733,6 +733,7 @@
         "instanceUrl": "URL экземпляра",
         "ollamaHint": "Использует официальный API веб-поиска Ollama (`https://ollama.com/api/web_search`). Требуется API-ключ Ollama.",
         "bochaHint": "Использует официальный API веб-поиска Bocha. Создавайте и управляйте API-ключами на open.bocha.cn.",
+        "deepseekHint": "Вставьте тот же ключ, что и для официального API DeepSeek; для веб-поиска он сохраняется отдельно. Search работает в Deep Research и чате Agent. Deep Research также читает отобранные страницы в Markdown через Fetch, сохраняя поисковые описания при ошибке чтения. Оба API оплачиваются в DeepSeek.",
         "firecrawlHint": "Оставьте API-ключ пустым для анонимного поиска или добавьте ключ Firecrawl для авторизованной квоты. Базовый URL поддерживает совместимые self-hosted эндпоинты.",
         "searxngJsonHint": "Экземпляр должен разрешать ответы в JSON (`format=json`).",
         "searchCategories": "Категории поиска",

@@ -391,7 +391,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 | 国际化 | react-i18next |
 | 状态管理 | Zustand |
 | LLM | 流式 fetch（OpenAI、Anthropic、Google、Ollama、自定义） |
-| 网络搜索 | Tavily、SerpApi、SearXNG JSON API |
+| 网络搜索 | Tavily、SerpApi、SearXNG、Ollama、Firecrawl、Brave、Bocha、DeepSeek Search & Fetch |
 
 ## 安装
 
@@ -436,6 +436,16 @@ npm run tauri build    # 生产构建
 7. 浏览 **知识图谱** 查看关联
 8. 查看 **审核** 处理需要你关注的项目
 9. 定期运行 **Lint** 维护 Wiki 健康度
+
+### DeepSeek Search & Fetch
+
+在 **设置 → 网页搜索 → DeepSeek** 粘贴官方 DeepSeek API Key 并启用。可使用与模型接口相同的 Key，但网页搜索会独立保存，不会从 LLM 配置中自动复制凭据。
+
+[Search](https://api-docs.deepseek.com/api/search/) 支持桌面深度研究及后端 Agent 对话（含本地 API / MCP 对话），每条查询限 1–128 个 Unicode 字符，最多返回 50 条结果；保留搜索操作符，优先使用面向模型的长摘要。超长查询会提示缩短，不会静默截断。
+
+深度研究还会在去重和相关性筛选后用 [Fetch](https://api-docs.deepseek.com/api/fetch/) 读取网页 Markdown：最多并发 3 页，每页最多使用 12,000 字符，页面正文总预算为 60,000 字符，超限会标记截断。单页失败（包括 Fetch 404）保留该页的搜索摘要。Fetch 当前用于桌面深度研究，不是独立的 Agent / MCP 工具，也不替换 URL 资料导入。Search 使用 `need_content: false`，避免下载被筛除候选的整页正文。
+
+两个接口均由 DeepSeek 单独计费，详见[官方费用和限制](https://api-docs.deepseek.com/guides/search/)。请求超时为 30 秒，响应上限为 8 MiB；鉴权、余额、限流及临时故障会给出对应提示，不展示响应原文或鉴权头，重试由用户发起。
 
 ## 本地 HTTP API + MCP Server + AI Agent Skill
 

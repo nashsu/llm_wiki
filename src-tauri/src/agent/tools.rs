@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
 use walkdir::WalkDir;
 
-use crate::commands::external_search::file_url_for_path;
+use crate::commands::external_search::{file_url_for_path, hostname_label, ExternalSearchResult};
 use crate::commands::search::{self, SearchEmbeddingConfig};
 
 use super::types::{AgentKnowledgeContext, AgentReference, AgentVersionSummary};
@@ -1283,8 +1283,36 @@ pub async fn run_web_search(
     config: Option<WebSearchConfig>,
     top_k: usize,
 ) -> Result<Vec<AgentReference>, String> {
+    let results = run_web_search_results(query, config, top_k).await?;
+    let count = results.len();
+    Ok(web_items_to_references(
+        results
+            .into_iter()
+            .map(|item| WebSearchItem {
+                title: item.title,
+                url: item.url,
+                snippet: item.snippet,
+            })
+            .collect(),
+        count,
+    ))
+}
+
+/// Preserve provider source labels for the desktop, while Agent references
+/// continue to use their existing wire shape.
+pub(crate) async fn run_web_search_results(
+    query: &str,
+    config: Option<WebSearchConfig>,
+    top_k: usize,
+) -> Result<Vec<ExternalSearchResult>, String> {
     let query = query.trim();
     if query.is_empty() {
+        if config
+            .as_ref()
+            .is_some_and(|config| config.provider.trim().eq_ignore_ascii_case("deepseek"))
+        {
+            return Err("DeepSeek Search query cannot be blank.".to_string());
+        }
         return Ok(Vec::new());
     }
     let Some(config) = config else {
@@ -1298,6 +1326,10 @@ pub async fn run_web_search(
         return Err("Web search provider is not configured.".to_string());
     }
     let max_results = web_search_result_limit(&provider, top_k);
+    if provider == "deepseek" {
+        return super::deepseek::search(query, required_api_key(&config, "DeepSeek")?, max_results)
+            .await;
+    }
     let client = crate::proxy::configure_http_client(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(WEB_SEARCH_TIMEOUT_SECS))
         .build()
@@ -1316,14 +1348,43 @@ pub async fn run_web_search(
             ))
         }
     };
-    Ok(web_items_to_references(raw, max_results))
+    Ok(raw
+        .into_iter()
+        .take(max_results)
+        .filter(|item| !item.url.trim().is_empty())
+        .map(|item| ExternalSearchResult {
+            title: item.title,
+            source: hostname_label(&item.url).unwrap_or_else(|| "web".to_string()),
+            url: item.url,
+            snippet: if item.snippet.trim().is_empty() {
+                String::new()
+            } else {
+                item.snippet
+            },
+        })
+        .collect())
 }
 
 fn web_search_result_limit(provider: &str, requested: usize) -> usize {
-    // Bocha documents a 1-50 range. Existing providers retain the historical
-    // 20-result ceiling so adding Bocha cannot increase their request cost.
-    let provider_max = if provider == "bocha" { 50 } else { 20 };
+    // Bocha and DeepSeek document a 1-50 range. Other providers retain the
+    // historical 20-result ceiling.
+    let provider_max = if matches!(provider, "bocha" | "deepseek") {
+        50
+    } else {
+        20
+    };
     requested.clamp(1, provider_max)
+}
+
+pub(crate) async fn run_web_fetch(
+    url: &str,
+    config: WebSearchConfig,
+) -> Result<super::deepseek::FetchResult, String> {
+    let config = config.resolved();
+    if !config.provider.trim().eq_ignore_ascii_case("deepseek") {
+        return Err("Web Fetch currently requires the DeepSeek Web Search provider.".to_string());
+    }
+    super::deepseek::fetch(url, required_api_key(&config, "DeepSeek")?).await
 }
 
 pub async fn run_anytxt_search(
