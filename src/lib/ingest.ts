@@ -16,7 +16,7 @@ import { parseWithMineruResult } from "@/lib/mineru"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
-import { getFileName, normalizePath } from "@/lib/path-utils"
+import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
@@ -1133,7 +1133,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity)) },
         {
           role: "user",
           content: [
@@ -2314,6 +2314,36 @@ async function writeFileBlocks(
   }
 }
 
+/**
+ * Pages on disk that cite this source, as prompt lines. The wiki index only
+ * holds recent pages, so without this a re-ingest can't see what it wrote
+ * before and recreates those topics under new slugs.
+ */
+async function listPagesFromSource(projectPath: string, sourceIdentity: string): Promise<string[]> {
+  const expected = sourceReferenceIdentity(sourceIdentity).toLowerCase()
+  const lines: string[] = []
+  const walk = async (nodes: readonly FileNode[]): Promise<void> => {
+    for (const node of nodes) {
+      if (node.is_dir) {
+        await walk(node.children ?? [])
+      } else if (node.name.endsWith(".md")) {
+        const content = await tryReadFile(node.path)
+        if (!parseSources(content).some((s) => sourceReferenceIdentity(s).toLowerCase() === expected)) continue
+        const title = parseFrontmatter(content).frontmatter?.title
+        const relative = getRelativePath(node.path, projectPath)
+        lines.push(typeof title === "string" ? `- ${relative} — ${title}` : `- ${relative}`)
+      }
+    }
+  }
+  try {
+    await walk(await listDirectory(`${projectPath}/wiki`))
+  } catch (err) {
+    // The list only improves the prompt, so it must not fail the ingest.
+    console.warn("[ingest] Could not list existing source pages:", err)
+  }
+  return lines
+}
+
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
   const sources = parseSources(content)
   if (sources.length === 0) return false
@@ -2503,6 +2533,7 @@ export function buildGenerationPrompt(
   overview?: string,
   sourceContent: string = "",
   sourceSummaryPath?: string,
+  existingSourcePages: string[] = [],
 ): string {
   // Use original filename (without extension) as the source summary page name
   const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
@@ -2625,6 +2656,15 @@ export function buildGenerationPrompt(
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     index ? `## Current Wiki Index (preserve all existing entries, add new ones)\n${boundWikiIndexForPrompt(index)}` : "",
+    existingSourcePages.length > 0
+      ? [
+          "## Pages Already Generated From This Source",
+          "An earlier ingest of this source created the pages below. They may be missing from the index above.",
+          "When you cover one of these topics, emit its FILE block at this exact path with the same title. Do not create the same topic under a new path.",
+          "Pages you do not emit are left unchanged.",
+          boundWikiIndexForPrompt(existingSourcePages.join("\n")),
+        ].join("\n")
+      : "",
     overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──

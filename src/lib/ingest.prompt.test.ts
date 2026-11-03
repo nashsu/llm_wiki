@@ -376,3 +376,24 @@ describe("overview maintenance", () => {
     expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
   })
 })
+
+describe("buildGenerationPrompt existing source pages", () => {
+  const build = (pages?: string[]) =>
+    buildGenerationPrompt("", "", "", "source.pdf", undefined, "", undefined, pages)
+
+  it("lists the pages this source already has", () => {
+    const prompt = build(["- wiki/concepts/a.md — A"])
+    expect(prompt).toContain("## Pages Already Generated From This Source")
+    expect(prompt).toContain("- wiki/concepts/a.md — A")
+  })
+
+  it("omits the section when there are none", () => {
+    expect(build()).not.toContain("Pages Already Generated")
+    expect(build([])).not.toContain("Pages Already Generated")
+  })
+
+  it("bounds a very long list", () => {
+    const pages = Array.from({ length: 5_000 }, (_, i) => `- wiki/concepts/page-${i}.md — Page ${i}`)
+    expect(build(pages).length).toBeLessThan(pages.join("\n").length)
+  })
+})

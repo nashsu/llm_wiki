@@ -449,6 +449,31 @@ describe("autoIngest source summary paths", () => {
     expect(mergeRequestCount).toBe(0)
   })
 
+  it("tells the model which pages this source already has", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/known.md`,
+      '---\ntitle: "Known: Topic"\nsources: ["project-a/config.yaml"]\n---\n# Known\n',
+    )
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/unrelated.md`,
+      '---\ntitle: Unrelated\nsources: ["project-b/config.yaml"]\n---\n# Unrelated\n',
+    )
+    sourceMarkers = ["project-a config"]
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+    )
+
+    const generation = mockStreamChat.mock.calls
+      .map(([, messages]) => String(messages[0]?.content))
+      .find((prompt) => prompt.includes("source summary page at"))
+    expect(generation).toContain("## Pages Already Generated From This Source")
+    expect(generation).toContain("- wiki/concepts/known.md — Known: Topic")
+    expect(generation).not.toContain("wiki/concepts/unrelated.md")
+  })
+
   it("moves the canonical source summary and its source reference", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["movable summary"]
