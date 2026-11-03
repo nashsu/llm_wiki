@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi } from "vitest"
 import { mergePageContent, stripMergeScaffolding } from "./page-merge"
+import { parseFrontmatter } from "./frontmatter"
 
 const PAGE = (fm: string, body: string) => `---\n${fm}\n---\n\n${body}`
 
@@ -489,5 +490,47 @@ describe("mergePageContent — LLM failure fallback", () => {
       backup,
     })
     expect(out).toContain("new body content")
+  })
+})
+
+describe("mergePageContent — locked title survives as valid YAML", () => {
+  const existing = (title: string) =>
+    PAGE(`type: source\ntitle: ${title}\nsources: ["doc-B.pdf"]\ncreated: 2026-01-01`, "old body")
+  const incoming = PAGE(
+    `type: source\ntitle: Other\nsources: ["doc-B.pdf"]\ncreated: 2026-04-30`,
+    "new body",
+  )
+  const titles = [
+    ["a colon", '"Comomentum: Inferring Arbitrage"', "Comomentum: Inferring Arbitrage"],
+    ["a dollar pattern", '"Effect Is $121 at the 15th Percentile"', "Effect Is $121 at the 15th Percentile"],
+    ["a comment marker", '"Rule #1 # Not a comment"', "Rule #1 # Not a comment"],
+    ["a boolean look-alike", '"true"', "true"],
+  ] as const
+
+  it.each(titles)("keeps a title with %s when replacing the body", async (_name, raw, expected) => {
+    const merged = await mergePageContent(incoming, existing(raw), vi.fn(), {
+      ...baseOpts,
+      replaceExistingBody: true,
+    })
+    const parsed = parseFrontmatter(merged)
+    expect(parsed.frontmatter?.type).toBe("source")
+    expect(parsed.frontmatter?.title).toBe(expected)
+  })
+
+  it.each(titles)("keeps a title with %s after an LLM merge", async (_name, raw, expected) => {
+    const merger = vi.fn().mockResolvedValue(incoming.replace("new body", "merged body"))
+    const merged = await mergePageContent(incoming, existing(raw), merger, baseOpts)
+    const parsed = parseFrontmatter(merged)
+    expect(merger).toHaveBeenCalled()
+    expect(parsed.frontmatter?.title).toBe(expected)
+    expect(parsed.body).toContain("merged body")
+  })
+
+  it("leaves plain titles unquoted", async () => {
+    const merged = await mergePageContent(incoming, existing("Plain Title"), vi.fn(), {
+      ...baseOpts,
+      replaceExistingBody: true,
+    })
+    expect(merged).toContain("title: Plain Title\n")
   })
 })
