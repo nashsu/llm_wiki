@@ -5,6 +5,7 @@ import {
   boundWikiIndexForPrompt,
   buildChunkAnalysisSystemPrompt,
   buildGenerationPrompt,
+  contentMatchesTargetLanguage,
   buildPageMergeSystemPrompt,
   computeIngestGenerationMaxTokens,
   computeIngestAnalysisMaxTokens,
@@ -374,5 +375,29 @@ describe("overview maintenance", () => {
     const twice = updateBoundedOverviewRecentSection(once, [additions[0]])
     expect(twice).toBe(once)
     expect(twice.match(/^- \[\[/gm)).toHaveLength(50)
+  })
+})
+
+describe("contentMatchesTargetLanguage", () => {
+  const page = (body: string) => `---\ntype: concept\n---\n${body}`
+  const english = "The **term premium (期限溢价)** is the extra yield for holding a long bond. ".repeat(3)
+    + "It is estimated from a model of the yield curve and changes through the cycle. ".repeat(8)
+  const chinese = "期限溢价是投资者持有长期债券而要求的额外收益，它随经济周期变化。".repeat(12)
+
+  it("keeps an English page that glosses terms in Chinese", () => {
+    expect(contentMatchesTargetLanguage(page(english), "English")).toBe(true)
+  })
+
+  it("rejects a Chinese page when the target is English", () => {
+    expect(contentMatchesTargetLanguage(page(chinese), "English")).toBe(false)
+  })
+
+  it("rejects a Chinese page that keeps some English terms", () => {
+    const mixed = "期限溢价 (term premium) 是投资者持有长期债券而要求的额外收益，它随周期变化。".repeat(12)
+    expect(contentMatchesTargetLanguage(page(mixed), "English")).toBe(false)
+  })
+
+  it("still rejects an English page when the target is Chinese", () => {
+    expect(contentMatchesTargetLanguage(page(english.split("(期限溢价)").join("")), "Chinese")).toBe(false)
   })
 })
