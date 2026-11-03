@@ -7,7 +7,7 @@
     "retry": "Retry", "cancel": "Cancel", "ignore": "Ignore", "close": "Close", "ok": "OK", "confirm": "Confirm", "notice": "Notice",
     "dismiss": "Dismiss", "remove": "Remove", "loading": "Loading...", "optional": "optional"
   },
-  "layout": { "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
+  "layout": { "resizePanel": "Resize panel", "showSidebar": "Show sidebar", "hideSidebar": "Hide sidebar" },
   "errors": { "generic": "Something went wrong" },
   "mermaid": {
     "renderFailed": "Mermaid diagram could not be rendered",

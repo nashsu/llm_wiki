@@ -7,7 +7,7 @@
     "retry": "Riprova", "cancel": "Annulla", "ignore": "Ignora", "close": "Chiudi", "ok": "OK", "confirm": "Conferma", "notice": "Avviso",
     "dismiss": "Nascondi", "remove": "Rimuovi", "loading": "Caricamento...", "optional": "opzionale"
   },
-  "layout": { "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
+  "layout": { "resizePanel": "Ridimensiona pannello", "showSidebar": "Mostra la barra laterale", "hideSidebar": "Nascondi la barra laterale" },
   "errors": { "generic": "Qualcosa è andato storto" },
   "mermaid": {
     "renderFailed": "Impossibile visualizzare il diagramma Mermaid",

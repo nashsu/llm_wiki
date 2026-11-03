@@ -7,6 +7,12 @@ import type { SigmaNodeEventPayload } from "sigma/types"
 import forceAtlas2 from "graphology-layout-forceatlas2"
 import { Network, RefreshCw, ZoomIn, ZoomOut, Maximize, Layers, Tag, Lightbulb, AlertTriangle, Link2, X, Search, Loader2, Filter, RotateCcw, EyeOff } from "lucide-react"
 import { ErrorBoundary } from "@/components/error-boundary"
+import {
+  PanelResizeHandle,
+  panelMaxWidth,
+  panelOuterWidth,
+  panelReserve,
+} from "@/components/layout/panel-resize-handle"
 import { useResearchStore } from "@/stores/research-store"
 import { Button } from "@/components/ui/button"
 import { useWikiStore, type GraphColorMode } from "@/stores/wiki-store"
@@ -82,6 +88,8 @@ const MAX_NODE_SIZE = 28
 const DEFAULT_GRAPH_SPACING = 1
 const GRAPH_SPACING_DEBOUNCE_MS = 180
 const WORKER_LAYOUT_NODE_THRESHOLD = 220
+const MIN_INSIGHTS_WIDTH = 240
+const MIN_GRAPH_PREVIEW_WIDTH = 320
 
 type HoverState = { node: string; neighbors: Set<string> } | null
 type GraphPreview = {
@@ -661,6 +669,8 @@ export function GraphView() {
   const [graphSearch, setGraphSearch] = useState("")
   const [graphSpacing, setGraphSpacing] = useState(graphSpacingDraft)
   const [graphPreview, setGraphPreview] = useState<GraphPreview | null>(null)
+  const [insightsWidth, setInsightsWidth] = useState(320)
+  const [graphPreviewWidth, setGraphPreviewWidth] = useState(420)
   const [nodeMenu, setNodeMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement>(null)
   const researchDialogTokenRef = useRef(0)
@@ -876,6 +886,9 @@ export function GraphView() {
   // 1. Detect panel open/close (local graph preview, researchPanel, insights)
   const researchPanelForLayout = useResearchStore((s) => s.panelOpen)
   const layoutKey = `${!!graphPreview}-${researchPanelForLayout}-${showInsights}`
+  // The graph's two side panels can be open together, so each leaves room for the other.
+  const insightsReserve = panelReserve(graphPreview ? panelOuterWidth(graphPreviewWidth) : 0)
+  const graphPreviewReserve = panelReserve(showInsights ? panelOuterWidth(insightsWidth) : 0)
   const prevLayoutKey = useRef(layoutKey)
 
   useEffect(() => {
@@ -1495,7 +1508,20 @@ export function GraphView() {
 
         {/* Insights Side Panel */}
         {showInsights && (
-          <div className="w-80 shrink-0 border-l bg-background overflow-y-auto">
+          <PanelResizeHandle
+            side="right"
+            width={insightsWidth}
+            min={MIN_INSIGHTS_WIDTH}
+            reserve={insightsReserve}
+            label={t("layout.resizePanel")}
+            onResize={setInsightsWidth}
+          />
+        )}
+        {showInsights && (
+          <div
+            className="shrink-0 border-l bg-background overflow-y-auto"
+            style={{ width: insightsWidth, maxWidth: panelMaxWidth(insightsReserve) }}
+          >
             <div className="px-4 py-3 border-b">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1616,7 +1642,19 @@ export function GraphView() {
           </div>
         )}
         {graphPreview && (
+          <PanelResizeHandle
+            side="right"
+            width={graphPreviewWidth}
+            min={MIN_GRAPH_PREVIEW_WIDTH}
+            reserve={graphPreviewReserve}
+            label={t("layout.resizePanel")}
+            onResize={setGraphPreviewWidth}
+          />
+        )}
+        {graphPreview && (
           <GraphPreviewPanel
+            width={graphPreviewWidth}
+            maxWidth={panelMaxWidth(graphPreviewReserve)}
             preview={graphPreview}
             onClose={() => setGraphPreview(null)}
             onContentChange={(content) => setGraphPreview((prev) => prev ? { ...prev, content } : prev)}
@@ -1717,10 +1755,14 @@ export function GraphView() {
 }
 
 function GraphPreviewPanel({
+  width,
+  maxWidth,
   preview,
   onClose,
   onContentChange,
 }: {
+  width: number
+  maxWidth: string
   preview: GraphPreview
   onClose: () => void
   onContentChange: (content: string) => void
@@ -1762,7 +1804,7 @@ function GraphPreviewPanel({
   }, [onContentChange, writeNow])
 
   return (
-    <div className="flex w-[420px] min-w-[320px] max-w-[50vw] shrink-0 flex-col border-l bg-background">
+    <div className="flex shrink-0 flex-col border-l bg-background" style={{ width, maxWidth }}>
       <div className="flex items-center justify-between border-b px-3 py-1.5">
         <span className="truncate text-xs text-muted-foreground" title={preview.path}>
           {preview.title}
