@@ -2534,7 +2534,7 @@ export function buildGenerationPrompt(
     "",
     "## What to generate",
     "",
-    `1. A source summary page at **${summaryPath}** (MUST use this exact path)`,
+    `1. A source summary page at **${summaryPath}** (MUST use this exact path). The application sets this path, so link to this page as [[${getFileName(summaryPath).replace(/\.md$/, "")}]] everywhere, and use that same name in any \`source:\` field, even if the schema describes source page names differently.`,
     "Emit exactly one source summary FILE block. Do not create additional wiki/sources/ pages for works merely cited by the source; keep those citations in the summary or link to existing pages.",
     "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
     "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
