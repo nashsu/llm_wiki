@@ -13,6 +13,8 @@ vi.mock("@/commands/fs", () => realFs)
 
 let sourceMarkers: string[] = []
 let failLongChunksOnce = new Set<number>()
+let sectionResponses: Array<string | Error> = []
+let sectionTruncatedOnce = false
 let extraReviewResponse = ""
 let generationPrefix = ""
 let generationSuffix = ""
@@ -98,6 +100,19 @@ vi.mock("./llm-client", () => ({
       return
     }
 
+    if (userPrompt.includes("## Section Text")) {
+      const next = sectionResponses.shift() ?? ""
+      if (next instanceof Error) {
+        cb.onError(next)
+        return
+      }
+      cb.onToken(next)
+      const truncated = sectionTruncatedOnce
+      sectionTruncatedOnce = false
+      cb.onDone({ finishReason: truncated ? "length" : "stop", truncated })
+      return
+    }
+
     const targetMatch = systemPrompt.match(
       /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
     )
@@ -155,6 +170,7 @@ import {
   autoIngest,
   buildFallbackSourceSummary,
   executeIngestWrites,
+  groupChunksIntoSections,
   hasMineruImageRefs,
 } from "./ingest"
 import { streamChat } from "./llm-client"
@@ -169,6 +185,8 @@ describe("autoIngest source summary paths", () => {
   beforeEach(async () => {
     sourceMarkers = []
     failLongChunksOnce = new Set()
+    sectionResponses = []
+    sectionTruncatedOnce = false
     extraReviewResponse = ""
     generationPrefix = ""
     generationSuffix = ""
@@ -730,11 +748,10 @@ describe("autoIngest source summary paths", () => {
     )
 
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
-      String(messages?.[0]?.content ?? "").includes("Based on the analysis provided, generate wiki files"),
+      String(messages?.[1]?.content ?? "").includes("Long Source Context"),
     )
     expect(generationCall).toBeTruthy()
     const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
-    expect(generationPrompt).toContain("Long Source Context")
     expect(generationPrompt).toContain(
       `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
     )
@@ -747,6 +764,122 @@ describe("autoIngest source summary paths", () => {
     expect(finalDigestSection).not.toContain(
       `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
     )
+  })
+
+  describe("long source section passes", () => {
+    const sectionPage = (name: string, extra = "") => [
+      `---FILE: wiki/concepts/${name}.md---`,
+      "---",
+      "type: concept",
+      `title: ${name}`,
+      'sources: ["project-a/sections.md"]',
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      `Body of ${name}.`,
+      "---END FILE---",
+      extra,
+    ].join("\n")
+    const llmConfig = () => ({ ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 })
+    const sectionCalls = () => mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[1]?.content ?? "").includes("## Section Text"),
+    )
+    const finalCall = () => mockStreamChat.mock.calls.find(([, messages]) =>
+      String(messages?.[1]?.content ?? "").includes("Long Source Context"),
+    )
+    const writeSource = () => writeFileRaw(
+      `${tmp!.path}/raw/sources/project-a/sections.md`,
+      ["# One", "", "A".repeat(9000), "", "## Two", "", "B".repeat(9000), "", "## Three", "", "C".repeat(9000)].join("\n"),
+    )
+    const ingest = () => autoIngest(tmp!.path, `${tmp!.path}/raw/sources/project-a/sections.md`, llmConfig(), undefined, "project-a")
+
+    it("writes each section's pages, then a final pass that sees them all", async () => {
+      await writeSource()
+      sourceMarkers = ["final summary"]
+      sectionResponses = [
+        sectionPage("first-topic", "---FILE: wiki/log.md---\n## section log\n---END FILE---"),
+        sectionPage("second-topic"),
+        "",
+      ]
+
+      const written = await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(3)
+      expect(String(calls[0][1]?.[1]?.content)).toContain("AAAA")
+      expect(String(calls[0][1]?.[1]?.content)).not.toContain("BBBB")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("BBBB")
+      // The second pass is told what the first one wrote, so it can extend it.
+      expect(String(calls[1][1]?.[0]?.content)).toContain("wiki/concepts/first-topic.md")
+
+      const final = String(finalCall()?.[1]?.[1]?.content)
+      expect(final).toContain("- wiki/concepts/first-topic.md")
+      expect(final).toContain("- wiki/concepts/second-topic.md")
+      expect(written).toEqual(expect.arrayContaining(["wiki/concepts/first-topic.md", "wiki/concepts/second-topic.md"]))
+      const log = await fs.readFile(`${tmp!.path}/wiki/log.md`, "utf8").catch(() => "")
+      expect(log).not.toContain("section log")
+      const summaryPath = `${tmp!.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/sections.md")}.md`
+      expect(await fs.readFile(summaryPath, "utf8")).toContain("final summary")
+    })
+
+    it("continues a section after its output limit without repeating finished pages", async () => {
+      await writeSource()
+      sectionTruncatedOnce = true
+      sectionResponses = [sectionPage("first-topic"), sectionPage("first-more"), "", ""]
+
+      await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(4)
+      expect(String(calls[1][1]?.[1]?.content)).toContain("AAAA")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("Already emitted for this section")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("- wiki/concepts/first-topic.md")
+      expect(String(calls[2][1]?.[1]?.content)).toContain("BBBB")
+      expect(String(calls[2][1]?.[1]?.content)).not.toContain("Already emitted")
+    })
+
+    it("resumes after a failed section and keeps the finished ones", async () => {
+      await writeSource()
+      sectionResponses = [sectionPage("first-topic"), new Error("boom")]
+      await expect(ingest()).rejects.toThrow("Generation failed for section 2/3: boom")
+      await expect(fs.access(`${tmp!.path}/wiki/concepts/first-topic.md`)).resolves.toBeUndefined()
+
+      mockStreamChat.mockClear()
+      sectionResponses = [sectionPage("second-topic"), ""]
+      const written = await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(2)
+      expect(String(calls[0][1]?.[1]?.content)).toContain("BBBB")
+      expect(written).toEqual(expect.arrayContaining(["wiki/concepts/first-topic.md", "wiki/concepts/second-topic.md"]))
+    })
+
+    it("does not let a changed source's final pass replace a section's page", async () => {
+      await writeSource()
+      sectionResponses = [sectionPage("first-topic"), "", ""]
+      await ingest()
+      generationSuffix = sectionPage("first-topic").replace("Body of first-topic.", "Text from the final pass.")
+      await fs.appendFile(`${tmp!.path}/raw/sources/project-a/sections.md`, "\n\nchanged")
+
+      mockStreamChat.mockClear()
+      sectionResponses = [sectionPage("first-topic"), "", ""]
+      await ingest()
+
+      const page = await fs.readFile(`${tmp!.path}/wiki/concepts/first-topic.md`, "utf8")
+      expect(page).toContain("Body of first-topic")
+      expect(page).toContain("Text from the final pass")
+    })
+
+    it("groups chunks up to the limit and keeps an oversized chunk alone", () => {
+      const sections = groupChunksIntoSections(
+        [{ main: "a".repeat(40) }, { main: "b".repeat(40) }, { main: "c".repeat(200) }, { main: "d".repeat(10) }],
+        ["na", "nb", "nc", "nd"],
+        100,
+      )
+      expect(sections.map((s) => s.notes)).toEqual(["na\n\nnb", "nc", "nd"])
+      expect(sections[0].text).toBe(`${"a".repeat(40)}\n\n${"b".repeat(40)}`)
+    })
   })
 
   it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {

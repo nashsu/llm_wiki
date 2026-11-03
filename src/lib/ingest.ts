@@ -54,6 +54,7 @@ const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
 const LONG_SOURCE_CHUNK_MIN = 12_000
 const LONG_SOURCE_CHUNK_MAX = 60_000
 const LONG_SOURCE_DIGEST_MAX = 15_000
+const LONG_SOURCE_SECTION_MAX_ROUNDS = 4
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
 const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
@@ -307,10 +308,17 @@ interface SourceChunk {
   main: string
 }
 
+export interface LongSourceSection {
+  notes: string
+  text: string
+}
+
 interface LongSourcePlan {
   chunked: boolean
   analysis: string
   sourceContext: string
+  digest?: string
+  sections?: LongSourceSection[]
   checkpointPath?: string
 }
 
@@ -334,6 +342,8 @@ interface GenerationCheckpoint {
   sourceIdentity: string
   sourceFingerprint: string
   completedPaths: string[]
+  completedSections?: number
+  sectionTotal?: number
   updatedAt: number
 }
 
@@ -1040,6 +1050,8 @@ async function autoIngestImpl(
   let sourceContext = enrichedSourceContent
   let precomputedAnalysis = ""
   let longSourceCheckpointPath: string | undefined
+  let longSourceDigest = ""
+  let longSourceSections: LongSourceSection[] = []
 
   if (enrichedSourceContent.length > sourceBudget) {
     const longSourcePlan = await analyzeLongSourceInChunks(
@@ -1060,6 +1072,8 @@ async function autoIngestImpl(
       sourceContext = longSourcePlan.sourceContext
       precomputedAnalysis = longSourcePlan.analysis
       longSourceCheckpointPath = longSourcePlan.checkpointPath
+      longSourceDigest = longSourcePlan.digest ?? ""
+      longSourceSections = longSourcePlan.sections ?? []
     }
   }
 
@@ -1126,7 +1140,98 @@ async function autoIngestImpl(
     generationFingerprint,
     pp,
   )
-  const previouslyCompletedPaths = generationCheckpoint?.completedPaths ?? []
+  let previouslyCompletedPaths = generationCheckpoint?.completedPaths ?? []
+  const sectionTotal = longSourceSections.length
+  // Grouping shifts if the context budget changed, and repeating a section only merges.
+  let completedSections = generationCheckpoint?.sectionTotal === sectionTotal
+    ? generationCheckpoint?.completedSections ?? 0
+    : 0
+  // A later pass must not replace what an earlier pass of this run just wrote.
+  // shortcut: a corrected long source keeps its old wording on merged pages, split out per-path tracking if that matters.
+  const replaceOwnedPages = sourceChanged && sectionTotal === 0
+
+  // Section passes run first, so the final pass can link the summary to their pages.
+  for (const [position, section] of longSourceSections.entries()) {
+    const sectionNumber = position + 1
+    if (sectionNumber <= completedSections) continue
+    activity.updateItem(activityId, {
+      detail: `Step 2/2: Generating wiki pages, section ${sectionNumber}/${sectionTotal}...`,
+    })
+    const emittedPaths: string[] = []
+    for (let round = 1; round <= LONG_SOURCE_SECTION_MAX_ROUNDS; round++) {
+      throwIfIngestAborted(signal, activityId)
+      let output = ""
+      let truncated = false
+      let streamError: string | null = null
+      try {
+      await streamChat(
+        llmConfig,
+        [
+          { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, section.text, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity), await listPagesMentioned(pp, sourceIdentity, section.notes)) },
+          { role: "user", content: buildLongSourceSectionPrompt(sourceIdentity, sectionNumber, sectionTotal, longSourceDigest, section, emittedPaths) },
+        ],
+        {
+          onToken: (token) => { output += token },
+          onDone: (completion) => { truncated = completion?.truncated === true },
+          onError: (err) => { streamError = err.message },
+        },
+        signal,
+        {
+          temperature: 0.1,
+          reasoning: resolveIngestReasoning(llmConfig),
+          max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+        },
+      )
+      } catch (err) {
+        throwIfIngestAborted(signal, activityId)
+        streamError = err instanceof Error ? err.message : String(err)
+      }
+      throwIfIngestAborted(signal, activityId)
+      // Pages are written as each pass finishes because the next pass needs to see
+      // them. The commit turn is single-use, so take the project lock directly.
+      const result = await withProjectLock(pp, () => writeFileBlocks(
+        pp,
+        output,
+        llmConfig,
+        sourceIdentity,
+        sourceSummaryPath,
+        signal,
+        activityId,
+        onFileWritten,
+        true,
+        false,
+        true,
+      ))
+      emittedPaths.push(...result.writtenPaths)
+      previouslyCompletedPaths = uniqueNormalizedPaths([...previouslyCompletedPaths, ...result.writtenPaths])
+      const stoppedShort = truncated || result.truncatedPaths.length > 0
+      if (!streamError && result.hardFailures.length === 0 && (!stoppedShort || round === LONG_SOURCE_SECTION_MAX_ROUNDS || result.writtenPaths.length === 0)) {
+        completedSections = sectionNumber
+      }
+      await saveGenerationCheckpoint(generationProgressPath, {
+        version: 1,
+        sourceIdentity,
+        sourceFingerprint: generationFingerprint,
+        completedPaths: previouslyCompletedPaths,
+        completedSections,
+        sectionTotal,
+        updatedAt: Date.now(),
+      })
+      const warnings = [...result.warnings]
+      if (completedSections === sectionNumber && stoppedShort) {
+        warnings.push(`Section ${sectionNumber}/${sectionTotal} stopped at its output limit; later material in that section may have no page.`)
+      }
+      if (warnings.length > 0) await appendIngestWarningLog(pp, sourceIdentity, warnings)
+      const failure = streamError ?? (result.hardFailures.length > 0 ? `${result.hardFailures.length} wiki file write failure(s)` : null)
+      if (failure) {
+        const message = `Generation failed for section ${sectionNumber}/${sectionTotal}: ${failure}`
+        activity.updateItem(activityId, { status: "error", detail: message })
+        throw new Error(message)
+      }
+      if (completedSections === sectionNumber) break
+    }
+  }
+
   let generation = ""
   let generationError: string | null = null
   let generationTruncated = false
@@ -1151,6 +1256,9 @@ async function autoIngestImpl(
                   "The following FILE paths were already written successfully in an earlier attempt.",
                   "Do not emit them again. Emit only the remaining pages required by the analysis:",
                   ...previouslyCompletedPaths.map((path) => `- ${path}`),
+                  ...(sectionTotal > 0
+                    ? ["Those pages came from earlier passes over this source's sections. You must still emit the source summary, linking to them, and the log entry."]
+                    : []),
                   "If every required page is already complete, return exactly `---RESUME COMPLETE---`.",
                 ].join("\n")
               : "",
@@ -1271,7 +1379,7 @@ async function autoIngestImpl(
     activityId,
     onFileWritten,
     previouslyCompletedPaths.includes(sourceSummaryPath),
-    sourceChanged,
+    replaceOwnedPages,
   )
   throwIfIngestAborted(signal, activityId)
   const writtenPaths = uniqueNormalizedPaths([
@@ -1351,7 +1459,7 @@ async function autoIngestImpl(
           activityId,
           onFileWritten,
           writtenPaths.includes(sourceSummaryPath),
-          sourceChanged,
+          replaceOwnedPages,
         )
         // Match successful writes against the paths requested from the model,
         // not the final on-disk paths. writeFileBlocks may legitimately rewrite
@@ -1497,6 +1605,8 @@ async function autoIngestImpl(
         sourceIdentity,
         sourceFingerprint: generationFingerprint,
         completedPaths: writtenPaths.filter((path) => !isAppManagedAggregatePath(path)),
+        completedSections,
+        sectionTotal,
         updatedAt: Date.now(),
       })
     } catch (err) {
@@ -2107,6 +2217,7 @@ async function writeFileBlocks(
   onFileWritten?: (relativePath: string) => void,
   summaryAlreadyWritten = false,
   sourceChanged = false,
+  skipLog = false,
 ): Promise<{
   writtenPaths: string[]
   completedInputPaths: string[]
@@ -2139,6 +2250,7 @@ async function writeFileBlocks(
   for (const { path: rawRelativePath, content: rawContent } of blocks) {
     throwIfIngestAborted(signal, activityId)
     let relativePath = normalizePath(rawRelativePath)
+    if (skipLog && isLogPath(relativePath)) continue
     const summaryWarning = sourceSummaryBlockWarning(relativePath, sourceSummaryPath, summaryWritten)
     if (summaryWarning) {
       warnings.push(summaryWarning)
@@ -3376,6 +3488,72 @@ function buildChunkAnalysisUserPrompt(
   ].filter(Boolean).join("\n")
 }
 
+/** Groups consecutive chunks so each section's text fits in one prompt. A larger chunk stays alone. */
+export function groupChunksIntoSections(
+  chunks: ReadonlyArray<{ main: string }>,
+  notes: readonly string[],
+  maxChars: number,
+): LongSourceSection[] {
+  const sections: LongSourceSection[] = []
+  chunks.forEach((chunk, i) => {
+    const last = sections[sections.length - 1]
+    if (last && last.text.length + chunk.main.length + 2 <= maxChars) {
+      last.text += `\n\n${chunk.main}`
+      last.notes += `\n\n${notes[i] ?? ""}`
+    } else {
+      sections.push({ text: chunk.main, notes: notes[i] ?? "" })
+    }
+  })
+  return sections
+}
+
+export function buildLongSourceSectionPrompt(
+  sourceIdentity: string,
+  sectionNumber: number,
+  sectionTotal: number,
+  digest: string,
+  section: LongSourceSection,
+  emittedPaths: readonly string[],
+): string {
+  return [
+    `Source document to process: **${sourceIdentity}**`,
+    "",
+    `This long source is processed one section at a time. This is section ${sectionNumber} of ${sectionTotal}.`,
+    "",
+    "## Instructions for this section (these override the What to generate list)",
+    "- Emit FILE blocks for every entity, concept and schema-defined page this section treats in substance, including specific methods, models, indicators and techniques. Cover the section's material fully, not only its headline topics.",
+    "- This section's text decides what deserves a page. A subject does not need to be marked `Page-worthy: yes`, and the digest is not a limit. Do not create pages for things only mentioned in passing.",
+    "- When a topic already has a page, use its exact path and title and write only what this section adds; the application merges it. Skip that page if this section adds nothing new.",
+    "- Do not emit the source summary, wiki/log.md or REVIEW blocks. They are written after the last section.",
+    "- If nothing here deserves a page (for example a bibliography or an index), return an empty response.",
+    emittedPaths.length > 0
+      ? [
+          "",
+          "## Already emitted for this section",
+          "Your previous response hit the output limit after these files. Do not emit them again. Continue with the remaining pages:",
+          ...emittedPaths.map((path) => `- ${path}`),
+        ].join("\n")
+      : "",
+    "",
+    "## Document Digest (for consistent names and context only)",
+    "",
+    digest,
+    "",
+    "## Section Analysis Notes",
+    "",
+    section.notes,
+    "",
+    "## Section Text",
+    "",
+    section.text,
+    "",
+    "---",
+    "",
+    "Your response MUST begin with `---FILE:` as the very first characters, unless it is empty.",
+    "No preamble. No analysis prose. Start immediately.",
+  ].filter(Boolean).join("\n")
+}
+
 async function analyzeLongSourceInChunks(
   projectPath: string,
   llmConfig: LlmConfig,
@@ -3512,7 +3690,14 @@ async function analyzeLongSourceInChunks(
     trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
   ].join("\n")
 
-  return { chunked: true, analysis, sourceContext, checkpointPath }
+  return {
+    chunked: true,
+    analysis,
+    sourceContext,
+    digest: globalDigest,
+    sections: groupChunksIntoSections(chunks, analyses, sourceBudget),
+    checkpointPath,
+  }
 }
 
 /**
