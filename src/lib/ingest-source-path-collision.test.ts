@@ -13,6 +13,8 @@ vi.mock("@/commands/fs", () => realFs)
 
 let sourceMarkers: string[] = []
 let failLongChunksOnce = new Set<number>()
+let sectionResponses: Array<string | Error> = []
+let sectionTruncatedOnce = false
 let extraReviewResponse = ""
 let generationPrefix = ""
 let generationSuffix = ""
@@ -29,10 +31,10 @@ vi.mock("./llm-client", () => ({
     const systemPrompt = String(messages?.[0]?.content ?? "")
     const userPrompt = String(messages?.[1]?.content ?? "")
 
-    if (systemPrompt.startsWith("You are merging two versions")) {
+    if (systemPrompt.startsWith("You are merging source-backed material")) {
       mergeRequestCount++
-      const incoming = userPrompt.split("## Newly generated version")[1]?.split("---")[2]
-      cb.onToken(incoming?.trim() || "---\ntitle: merged\n---\n\n# merged")
+      // A real merge keeps material from both inputs, so echo them.
+      cb.onToken(`---\ntitle: merged\n---\n\n# merged wording\n\n${userPrompt}`)
       cb.onDone()
       return
     }
@@ -98,6 +100,19 @@ vi.mock("./llm-client", () => ({
       return
     }
 
+    if (userPrompt.includes("## Section Text")) {
+      const next = sectionResponses.shift() ?? ""
+      if (next instanceof Error) {
+        cb.onError(next)
+        return
+      }
+      cb.onToken(next)
+      const truncated = sectionTruncatedOnce
+      sectionTruncatedOnce = false
+      cb.onDone({ finishReason: truncated ? "length" : "stop", truncated })
+      return
+    }
+
     const targetMatch = systemPrompt.match(
       /source summary page at \*\*(wiki\/sources\/[^*]+)\*\*/,
     )
@@ -155,7 +170,9 @@ import {
   autoIngest,
   buildFallbackSourceSummary,
   executeIngestWrites,
+  groupChunksIntoSections,
   hasMineruImageRefs,
+  withSourcePageList,
 } from "./ingest"
 import { streamChat } from "./llm-client"
 import { parseWithMineruResult } from "./mineru"
@@ -169,6 +186,8 @@ describe("autoIngest source summary paths", () => {
   beforeEach(async () => {
     sourceMarkers = []
     failLongChunksOnce = new Set()
+    sectionResponses = []
+    sectionTruncatedOnce = false
     extraReviewResponse = ""
     generationPrefix = ""
     generationSuffix = ""
@@ -449,6 +468,85 @@ describe("autoIngest source summary paths", () => {
     expect(mergeRequestCount).toBe(0)
   })
 
+  it("merges instead of replacing when an unchanged source is ingested again", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["first wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+
+    // A page from the first run is gone, so the same source misses the cache.
+    const cachePath = `${tmp.path}/.llm-wiki/ingest-cache.json`
+    const cache = JSON.parse(await fs.readFile(cachePath, "utf8"))
+    cache.entries["project-a/config.yaml"].filesWritten.push("wiki/concepts/gone.md")
+    await fs.writeFile(cachePath, JSON.stringify(cache))
+
+    sourceMarkers = ["second wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    expect(await fs.readFile(summaryPath, "utf8")).toContain("merged wording")
+    expect(mergeRequestCount).toBe(1)
+  })
+
+  it("merges instead of replacing when the source has no recorded ingest", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    const sourcePath = `${tmp.path}/raw/sources/project-a/config.yaml`
+    sourceMarkers = ["first wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    await fs.rm(`${tmp.path}/.llm-wiki/ingest-cache.json`)
+
+    sourceMarkers = ["second wording"]
+    await autoIngest(tmp.path, sourcePath, useWikiStore.getState().llmConfig)
+    const summaryPath = `${tmp.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/config.yaml")}.md`
+    expect(await fs.readFile(summaryPath, "utf8")).toContain("merged wording")
+    expect(mergeRequestCount).toBe(1)
+  })
+
+  it("tells the model which pages this source already has", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/known.md`,
+      '---\ntitle: "Known: Topic"\nsources: ["project-a/config.yaml"]\n---\n# Known\n',
+    )
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/unrelated.md`,
+      '---\ntitle: Unrelated\nsources: ["project-b/config.yaml"]\n---\n# Unrelated\n',
+    )
+    sourceMarkers = ["project-a config"]
+    await autoIngest(
+      tmp.path,
+      `${tmp.path}/raw/sources/project-a/config.yaml`,
+      useWikiStore.getState().llmConfig,
+    )
+
+    const generation = mockStreamChat.mock.calls
+      .map(([, messages]) => String(messages[0]?.content))
+      .find((prompt) => prompt.includes("source summary page at"))
+    expect(generation).toContain("## Pages Already Generated From This Source")
+    expect(generation).toContain("- wiki/concepts/known.md — Known: Topic")
+    expect(generation).not.toContain("wiki/concepts/unrelated.md")
+  })
+
+  it("shows the model pages from other sources that the analysis mentions", async () => {
+    if (!tmp) throw new Error("missing temp project")
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/configuration-source.md`,
+      '---\ntitle: Configuration Source\nsources: ["other.pdf"]\n---\n# Body\n',
+    )
+    await writeFileRaw(
+      `${tmp.path}/wiki/concepts/unmentioned.md`,
+      '---\ntitle: Quantum Gravity\nsources: ["other.pdf"]\n---\n# Body\n',
+    )
+    sourceMarkers = ["project-a config"]
+    await autoIngest(tmp.path, `${tmp.path}/raw/sources/project-a/config.yaml`, useWikiStore.getState().llmConfig)
+
+    const generation = mockStreamChat.mock.calls
+      .map(([, messages]) => String(messages[0]?.content))
+      .find((prompt) => prompt.includes("source summary page at"))
+    expect(generation).toContain("## Existing Pages This Source May Overlap With")
+    expect(generation).toContain("- wiki/concepts/configuration-source.md \u2014 Configuration Source")
+    expect(generation).not.toContain("wiki/concepts/unmentioned.md")
+  })
+
   it("moves the canonical source summary and its source reference", async () => {
     if (!tmp) throw new Error("missing temp project")
     sourceMarkers = ["movable summary"]
@@ -651,11 +749,10 @@ describe("autoIngest source summary paths", () => {
     )
 
     const generationCall = mockStreamChat.mock.calls.find(([, messages]) =>
-      String(messages?.[0]?.content ?? "").includes("Based on the analysis provided, generate wiki files"),
+      String(messages?.[1]?.content ?? "").includes("Long Source Context"),
     )
     expect(generationCall).toBeTruthy()
     const generationPrompt = String(generationCall?.[1]?.[1]?.content ?? "")
-    expect(generationPrompt).toContain("Long Source Context")
     expect(generationPrompt).toContain(
       `Digest after chunk ${chunkCalls.length}: stable context ${chunkCalls.length}.`,
     )
@@ -668,6 +765,175 @@ describe("autoIngest source summary paths", () => {
     expect(finalDigestSection).not.toContain(
       `Chunk ${chunkCalls.length} introduced topic ${chunkCalls.length}.`,
     )
+  })
+
+  describe("long source section passes", () => {
+    const sectionPage = (name: string, extra = "") => [
+      `---FILE: wiki/concepts/${name}.md---`,
+      "---",
+      "type: concept",
+      `title: ${name}`,
+      'sources: ["project-a/sections.md"]',
+      "---",
+      "",
+      `# ${name}`,
+      "",
+      `Body of ${name}.`,
+      "---END FILE---",
+      extra,
+    ].join("\n")
+    const llmConfig = () => ({ ...useWikiStore.getState().llmConfig, maxContextSize: 20_000 })
+    const sectionCalls = () => mockStreamChat.mock.calls.filter(([, messages]) =>
+      String(messages?.[1]?.content ?? "").includes("## Section Text"),
+    )
+    const finalCall = () => mockStreamChat.mock.calls.find(([, messages]) =>
+      String(messages?.[1]?.content ?? "").includes("Long Source Context"),
+    )
+    const writeSource = () => writeFileRaw(
+      `${tmp!.path}/raw/sources/project-a/sections.md`,
+      ["# One", "", "A".repeat(9000), "", "## Two", "", "B".repeat(9000), "", "## Three", "", "C".repeat(9000)].join("\n"),
+    )
+    const ingest = () => autoIngest(tmp!.path, `${tmp!.path}/raw/sources/project-a/sections.md`, llmConfig(), undefined, "project-a")
+
+    it("writes each section's pages, then a final pass that sees them all", async () => {
+      await writeSource()
+      sourceMarkers = ["final summary"]
+      sectionResponses = [
+        sectionPage("first-topic", "---FILE: wiki/log.md---\n## section log\n---END FILE---"),
+        sectionPage("second-topic"),
+        "",
+      ]
+
+      const written = await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(3)
+      expect(String(calls[0][1]?.[1]?.content)).toContain("AAAA")
+      expect(String(calls[0][1]?.[1]?.content)).not.toContain("BBBB")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("BBBB")
+      // The second pass is told what the first one wrote, so it can extend it.
+      expect(String(calls[1][1]?.[0]?.content)).toContain("wiki/concepts/first-topic.md")
+
+      const final = String(finalCall()?.[1]?.[1]?.content)
+      expect(final).toContain("- wiki/concepts/first-topic.md")
+      expect(final).toContain("- wiki/concepts/second-topic.md")
+      expect(written).toEqual(expect.arrayContaining(["wiki/concepts/first-topic.md", "wiki/concepts/second-topic.md"]))
+      const log = await fs.readFile(`${tmp!.path}/wiki/log.md`, "utf8").catch(() => "")
+      expect(log).not.toContain("section log")
+      const summaryPath = `${tmp!.path}/wiki/sources/${sourceSummarySlugFromIdentity("project-a/sections.md")}.md`
+      const summary = await fs.readFile(summaryPath, "utf8")
+      expect(summary).toContain("final summary")
+      expect(summary).toContain("## Pages From This Source\n\n### concepts\n\n- [[first-topic]]\n- [[second-topic]]")
+    })
+
+    it("continues a section after its output limit without repeating finished pages", async () => {
+      await writeSource()
+      sectionTruncatedOnce = true
+      sectionResponses = [sectionPage("first-topic"), sectionPage("first-more"), "", ""]
+
+      await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(4)
+      expect(String(calls[1][1]?.[1]?.content)).toContain("AAAA")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("Already emitted for this section")
+      expect(String(calls[1][1]?.[1]?.content)).toContain("- wiki/concepts/first-topic.md")
+      expect(String(calls[2][1]?.[1]?.content)).toContain("BBBB")
+      expect(String(calls[2][1]?.[1]?.content)).not.toContain("Already emitted")
+    })
+
+    it("resumes after a failed section and keeps the finished ones", async () => {
+      await writeSource()
+      sectionResponses = [sectionPage("first-topic"), new Error("boom")]
+      await expect(ingest()).rejects.toThrow("Generation failed for section 2/3: boom")
+      await expect(fs.access(`${tmp!.path}/wiki/concepts/first-topic.md`)).resolves.toBeUndefined()
+
+      mockStreamChat.mockClear()
+      sectionResponses = [sectionPage("second-topic"), ""]
+      const written = await ingest()
+
+      const calls = sectionCalls()
+      expect(calls).toHaveLength(2)
+      expect(String(calls[0][1]?.[1]?.content)).toContain("BBBB")
+      expect(written).toEqual(expect.arrayContaining(["wiki/concepts/first-topic.md", "wiki/concepts/second-topic.md"]))
+    })
+
+    it("does not let a changed source's final pass replace a section's page", async () => {
+      await writeSource()
+      sectionResponses = [sectionPage("first-topic"), "", ""]
+      await ingest()
+      generationSuffix = sectionPage("first-topic").replace("Body of first-topic.", "Text from the final pass.")
+      await fs.appendFile(`${tmp!.path}/raw/sources/project-a/sections.md`, "\n\nchanged")
+
+      mockStreamChat.mockClear()
+      sectionResponses = [sectionPage("first-topic"), "", ""]
+      await ingest()
+
+      const page = await fs.readFile(`${tmp!.path}/wiki/concepts/first-topic.md`, "utf8")
+      expect(page).toContain("Body of first-topic")
+      expect(page).toContain("Text from the final pass")
+    })
+
+    it("lists unlinked pages on the summary by folder and rebuilds an earlier list", () => {
+      const summary = "# Book\n\nSee [[already-linked]].\n"
+      const paths = [
+        "wiki/concepts/b-topic.md",
+        "wiki/methods/a-method.md",
+        "wiki/concepts/already-linked.md",
+        "wiki/sources/book.md",
+        "wiki/log.md",
+      ]
+      const once = withSourcePageList(summary, paths)
+      expect(once).toBe(
+        "# Book\n\nSee [[already-linked]].\n\n## Pages From This Source\n\n### concepts\n\n- [[b-topic]]\n\n### methods\n\n- [[a-method]]\n",
+      )
+      expect(withSourcePageList(once, paths)).toBe(once)
+      // A merge may have moved the list up; it goes back to the end and keeps its entries.
+      const moved = once + "\n## Notes\n\nLater text.\n"
+      const rebuilt = withSourcePageList(moved, ["wiki/concepts/c-topic.md"])
+      expect(rebuilt).toContain("## Notes\n\nLater text.\n\n## Pages From This Source")
+      expect(rebuilt).toContain("- [[b-topic]]\n- [[c-topic]]")
+      expect(rebuilt).toContain("### methods\n\n- [[a-method]]")
+      expect(withSourcePageList(summary, ["wiki/concepts/already-linked.md"])).toBe(summary)
+    })
+
+    it("merges a page into an existing page with the same name in another folder", async () => {
+      await writeSource()
+      sectionResponses = [
+        sectionPage("first-topic"),
+        [
+          "---FILE: wiki/entities/first-topic.md---",
+          "---",
+          "type: entity",
+          "title: first-topic",
+          'sources: ["project-a/sections.md"]',
+          "---",
+          "",
+          "# first-topic",
+          "",
+          "Second section's view.",
+          "---END FILE---",
+        ].join("\n"),
+        "",
+      ]
+
+      await ingest()
+
+      await expect(fs.access(`${tmp!.path}/wiki/entities/first-topic.md`)).rejects.toThrow()
+      const page = await fs.readFile(`${tmp!.path}/wiki/concepts/first-topic.md`, "utf8")
+      expect(page).toContain("Body of first-topic.")
+      expect(page).toContain("Second section's view.")
+    })
+
+    it("groups chunks up to the limit and keeps an oversized chunk alone", () => {
+      const sections = groupChunksIntoSections(
+        [{ main: "a".repeat(40) }, { main: "b".repeat(40) }, { main: "c".repeat(200) }, { main: "d".repeat(10) }],
+        ["na", "nb", "nc", "nd"],
+        100,
+      )
+      expect(sections.map((s) => s.notes)).toEqual(["na\n\nnb", "nc", "nd"])
+      expect(sections[0].text).toBe(`${"a".repeat(40)}\n\n${"b".repeat(40)}`)
+    })
   })
 
   it("resumes oversized source analysis from the persisted chunk checkpoint", async () => {

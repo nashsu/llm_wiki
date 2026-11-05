@@ -3,6 +3,7 @@ import {
   createDirectory,
   deleteFile,
   fileExists,
+  getFileMd5,
   getFileSize,
   listDirectory,
   readFile,
@@ -25,7 +26,7 @@ import {
   writeFrontmatterArray,
   writeSources,
 } from "@/lib/sources-merge"
-import { moveIngestCacheEntry, removeFromIngestCache } from "@/lib/ingest-cache"
+import { listIngestedSourceIdentities, moveIngestCacheEntry, removeFromIngestCache } from "@/lib/ingest-cache"
 import { removePageEmbedding, wikiPageIdFromPath } from "@/lib/embedding"
 import {
   buildDeletedKeys,
@@ -292,6 +293,7 @@ export type SourceImportSkipReason =
   | "unreadable"
   | "copy-failed"
   | "sensitive-config"
+  | "duplicate"
 
 export interface SkippedSourceImport {
   name: string
@@ -312,6 +314,75 @@ function errorDetail(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+/**
+ * Finds a file already in raw/sources with the same bytes. Ingest knows a source
+ * by its path, so a renamed copy, or a folder imported again, would otherwise be
+ * ingested a second time as a new source.
+ */
+function existingSourceFinder(projectPath: string) {
+  const root = `${projectPath}/raw/sources`
+  const pathsBySize = new Map<number, string[]>()
+  const hashes = new Map<string, Promise<string>>()
+  const add = (path: string, size: number) => {
+    pathsBySize.set(size, [...(pathsBySize.get(size) ?? []), path])
+  }
+  const md5 = (path: string) => {
+    let hash = hashes.get(path)
+    if (!hash) {
+      hash = getFileMd5(path)
+      hashes.set(path, hash)
+    }
+    return hash
+  }
+  let indexed: Promise<void> | undefined
+  const index = async () => {
+    let nodes: FileNode[] = []
+    try {
+      nodes = await listDirectory(root, true)
+    } catch {
+      return
+    }
+    for (const file of flattenFiles(nodes)) {
+      const path = normalizePath(file.path)
+      if (!path.startsWith(`${root}/`) || !isIngestableSourcePath(path)) continue
+      try {
+        add(path, await getFileSize(path))
+      } catch {
+        // An unreadable file can't be compared.
+      }
+    }
+  }
+  return {
+    /** Records a file this import has just written. */
+    add(path: string, size: number) {
+      hashes.delete(path)
+      add(path, size)
+    },
+    async find(sourcePath: string, size: number): Promise<string | undefined> {
+      indexed ??= index()
+      await indexed
+      const candidates = pathsBySize.get(size)
+      if (!candidates) return undefined
+      try {
+        const hash = await md5(sourcePath)
+        for (const candidate of candidates) {
+          if (await md5(candidate) === hash) return candidate
+        }
+      } catch (err) {
+        console.warn("[sources] Could not compare with existing sources:", err)
+      }
+      return undefined
+    },
+  }
+}
+
+/** Existing copies that have no recorded ingest yet, e.g. after a failed run. */
+async function notYetIngested(projectPath: string, paths: string[]): Promise<string[]> {
+  if (paths.length === 0) return []
+  const ingested = new Set(await listIngestedSourceIdentities(projectPath))
+  return [...new Set(paths)].filter((path) => !ingested.has(sourceIdentityForPath(projectPath, path)))
+}
+
 export async function importSourceFiles(
   project: WikiProject,
   sourcePaths: string[],
@@ -328,6 +399,8 @@ export async function importSourceFiles(
   // imports continue to honor includeExtensions to prevent surprise ingestion.
   const explicitImportConfig = { ...cfg, includeExtensions: [] }
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
+  const existingSources = existingSourceFinder(pp)
+  const duplicates: string[] = []
 
   for (const sourcePath of sourcePaths) {
     const originalName = getFileName(sourcePath) || "unknown"
@@ -345,8 +418,9 @@ export async function importSourceFiles(
       skipped.push({ name: originalName, reason: "unsupported-type" })
       continue
     }
+    let size: number
     try {
-      const size = await getFileSize(sourcePath)
+      size = await getFileSize(sourcePath)
       if (size > maxBytes) {
         skipped.push({ name: originalName, reason: "too-large", detail: formatMegabytes(size) })
         continue
@@ -355,10 +429,17 @@ export async function importSourceFiles(
       skipped.push({ name: originalName, reason: "unreadable", detail: errorDetail(err) })
       continue
     }
+    const existing = await existingSources.find(sourcePath, size)
+    if (existing) {
+      duplicates.push(existing)
+      skipped.push({ name: originalName, reason: "duplicate", detail: sourceIdentityForPath(pp, existing) })
+      continue
+    }
 
     const destPath = await getUniqueDestPath(`${pp}/raw/sources`, originalName)
     try {
       await copyFile(sourcePath, destPath)
+      existingSources.add(destPath, size)
       importedPaths.push(destPath)
     } catch (err) {
       console.error(`Failed to import ${originalName}:`, err)
@@ -366,7 +447,7 @@ export async function importSourceFiles(
     }
   }
 
-  await enqueueSourceIngest(project, importedPaths, llmConfig, {
+  await enqueueSourceIngest(project, [...importedPaths, ...await notYetIngested(pp, duplicates)], llmConfig, {
     parsingConcurrency: cfg.parsingConcurrency,
   })
 
@@ -390,6 +471,8 @@ export async function importSourceFolder(
   const maxBytes = cfg.maxFileSizeMb * 1024 * 1024
   const allowedFiles: string[] = []
   const skipped: SkippedSourceImport[] = []
+  const existingSources = existingSourceFinder(pp)
+  const duplicates: string[] = []
   // include hidden: a user importing a folder into raw/sources may
   // legitimately want dotfolder notes. Config-like files under known
   // agent/tool config folders are still filtered before copy so API
@@ -409,8 +492,9 @@ export async function importSourceFolder(
       skipped.push({ name: displayName, reason: "excluded" })
       continue
     }
+    let size: number
     try {
-      const size = await getFileSize(file.path)
+      size = await getFileSize(file.path)
       if (size > maxBytes) {
         skipped.push({ name: displayName, reason: "too-large", detail: formatMegabytes(size) })
         continue
@@ -419,10 +503,17 @@ export async function importSourceFolder(
       skipped.push({ name: displayName, reason: "unreadable", detail: errorDetail(err) })
       continue
     }
+    const existing = await existingSources.find(file.path, size)
+    if (existing) {
+      duplicates.push(existing)
+      skipped.push({ name: displayName, reason: "duplicate", detail: sourceIdentityForPath(pp, existing) })
+      continue
+    }
     try {
       const parent = parentPath(destPath)
       if (parent) await createDirectory(parent)
       await copyFile(file.path, destPath)
+      existingSources.add(destPath, size)
       allowedFiles.push(destPath)
     } catch (err) {
       console.error(`Failed to import ${displayName}:`, err)
@@ -438,6 +529,10 @@ export async function importSourceFolder(
     await enqueueSourceIngest(project, naturallyOrderedFiles, llmConfig, {
       sourceRoot: destDir,
       rootContext: folderName,
+      parsingConcurrency: cfg.parsingConcurrency,
+    })
+    // A requeued copy can live outside this folder, so its context comes from its own path.
+    await enqueueSourceIngest(project, await notYetIngested(pp, duplicates), llmConfig, {
       parsingConcurrency: cfg.parsingConcurrency,
     })
   }

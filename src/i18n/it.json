@@ -200,7 +200,8 @@
         "too-large": "Supera la dimensione massima del file",
         "unreadable": "Impossibile leggere il file",
         "copy-failed": "Impossibile copiare il file",
-        "sensitive-config": "Escluso in quanto file di configurazione"
+        "sensitive-config": "Escluso in quanto file di configurazione",
+        "duplicate": "Già presente nelle fonti"
       }
     },
     "openExternal": "Apri nell'app predefinita",

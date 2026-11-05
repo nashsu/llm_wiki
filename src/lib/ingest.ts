@@ -16,7 +16,7 @@ import { parseWithMineruResult } from "@/lib/mineru"
 import { useChatStore } from "@/stores/chat-store"
 import { useActivityStore } from "@/stores/activity-store"
 import { useReviewStore, type ReviewItem } from "@/stores/review-store"
-import { getFileName, normalizePath } from "@/lib/path-utils"
+import { getFileName, getRelativePath, normalizePath } from "@/lib/path-utils"
 import {
   sourceIdentityForPath,
   sourceReferenceIdentity,
@@ -24,7 +24,7 @@ import {
   sourceSummarySlugFromIdentity,
 } from "@/lib/source-identity"
 import { parseSources, writeSources } from "@/lib/sources-merge"
-import { checkIngestCache, saveIngestCache } from "@/lib/ingest-cache"
+import { checkIngestCache, hasSourceChanged, saveIngestCache } from "@/lib/ingest-cache"
 import { sanitizeIngestedFileContent } from "@/lib/ingest-sanitize"
 import { mergePageContent, type MergeFn } from "@/lib/page-merge"
 import { withProjectLock } from "@/lib/project-mutex"
@@ -54,6 +54,7 @@ const LONG_SOURCE_MAX_SINGLE_PASS_BUDGET = 300_000
 const LONG_SOURCE_CHUNK_MIN = 12_000
 const LONG_SOURCE_CHUNK_MAX = 60_000
 const LONG_SOURCE_DIGEST_MAX = 15_000
+const LONG_SOURCE_SECTION_MAX_ROUNDS = 4
 const LONG_SOURCE_CHUNK_ANALYSIS_MAX = 40_000
 const INGEST_GENERATION_TOKENS_DEFAULT = 8_192
 const INGEST_GENERATION_TOKENS_128K = 16_384
@@ -307,10 +308,17 @@ interface SourceChunk {
   main: string
 }
 
+export interface LongSourceSection {
+  notes: string
+  text: string
+}
+
 interface LongSourcePlan {
   chunked: boolean
   analysis: string
   sourceContext: string
+  digest?: string
+  sections?: LongSourceSection[]
   checkpointPath?: string
 }
 
@@ -334,6 +342,8 @@ interface GenerationCheckpoint {
   sourceIdentity: string
   sourceFingerprint: string
   completedPaths: string[]
+  completedSections?: number
+  sectionTotal?: number
   updatedAt: number
 }
 
@@ -814,6 +824,8 @@ async function autoIngestImpl(
   // source-summary page on the current pipeline's contract regardless
   // of when the file was first ingested.
   const cachedFiles = await checkIngestCache(pp, sourceIdentity, sourceContent)
+  // Read now: saveIngestCache overwrites the recorded hash when this run ends.
+  const sourceChanged = await hasSourceChanged(pp, sourceIdentity, sourceContent)
   console.log(`[ingest:diag] cache check for "${sourceIdentity}":`, cachedFiles === null ? "MISS (full pipeline)" : `HIT (${cachedFiles.length} cached files)`)
   if (cachedFiles !== null) {
     return runCommit(async () => {
@@ -1038,6 +1050,8 @@ async function autoIngestImpl(
   let sourceContext = enrichedSourceContent
   let precomputedAnalysis = ""
   let longSourceCheckpointPath: string | undefined
+  let longSourceDigest = ""
+  let longSourceSections: LongSourceSection[] = []
 
   if (enrichedSourceContent.length > sourceBudget) {
     const longSourcePlan = await analyzeLongSourceInChunks(
@@ -1058,6 +1072,8 @@ async function autoIngestImpl(
       sourceContext = longSourcePlan.sourceContext
       precomputedAnalysis = longSourcePlan.analysis
       longSourceCheckpointPath = longSourcePlan.checkpointPath
+      longSourceDigest = longSourcePlan.digest ?? ""
+      longSourceSections = longSourcePlan.sections ?? []
     }
   }
 
@@ -1124,7 +1140,98 @@ async function autoIngestImpl(
     generationFingerprint,
     pp,
   )
-  const previouslyCompletedPaths = generationCheckpoint?.completedPaths ?? []
+  let previouslyCompletedPaths = generationCheckpoint?.completedPaths ?? []
+  const sectionTotal = longSourceSections.length
+  // Grouping shifts if the context budget changed, and repeating a section only merges.
+  let completedSections = generationCheckpoint?.sectionTotal === sectionTotal
+    ? generationCheckpoint?.completedSections ?? 0
+    : 0
+  // A later pass must not replace what an earlier pass of this run just wrote.
+  // shortcut: a corrected long source keeps its old wording on merged pages, split out per-path tracking if that matters.
+  const replaceOwnedPages = sourceChanged && sectionTotal === 0
+
+  // Section passes run first, so the final pass can link the summary to their pages.
+  for (const [position, section] of longSourceSections.entries()) {
+    const sectionNumber = position + 1
+    if (sectionNumber <= completedSections) continue
+    activity.updateItem(activityId, {
+      detail: `Step 2/2: Generating wiki pages, section ${sectionNumber}/${sectionTotal}...`,
+    })
+    const emittedPaths: string[] = []
+    for (let round = 1; round <= LONG_SOURCE_SECTION_MAX_ROUNDS; round++) {
+      throwIfIngestAborted(signal, activityId)
+      let output = ""
+      let truncated = false
+      let streamError: string | null = null
+      try {
+      await streamChat(
+        llmConfig,
+        [
+          { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, section.text, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity), await listPagesMentioned(pp, sourceIdentity, section.notes)) },
+          { role: "user", content: buildLongSourceSectionPrompt(sourceIdentity, sectionNumber, sectionTotal, longSourceDigest, section, emittedPaths) },
+        ],
+        {
+          onToken: (token) => { output += token },
+          onDone: (completion) => { truncated = completion?.truncated === true },
+          onError: (err) => { streamError = err.message },
+        },
+        signal,
+        {
+          temperature: 0.1,
+          reasoning: resolveIngestReasoning(llmConfig),
+          max_tokens: computeIngestGenerationMaxTokens(llmConfig.maxContextSize),
+        },
+      )
+      } catch (err) {
+        throwIfIngestAborted(signal, activityId)
+        streamError = err instanceof Error ? err.message : String(err)
+      }
+      throwIfIngestAborted(signal, activityId)
+      // Pages are written as each pass finishes because the next pass needs to see
+      // them. The commit turn is single-use, so take the project lock directly.
+      const result = await withProjectLock(pp, () => writeFileBlocks(
+        pp,
+        output,
+        llmConfig,
+        sourceIdentity,
+        sourceSummaryPath,
+        signal,
+        activityId,
+        onFileWritten,
+        true,
+        false,
+        true,
+      ))
+      emittedPaths.push(...result.writtenPaths)
+      previouslyCompletedPaths = uniqueNormalizedPaths([...previouslyCompletedPaths, ...result.writtenPaths])
+      const stoppedShort = truncated || result.truncatedPaths.length > 0
+      if (!streamError && result.hardFailures.length === 0 && (!stoppedShort || round === LONG_SOURCE_SECTION_MAX_ROUNDS || result.writtenPaths.length === 0)) {
+        completedSections = sectionNumber
+      }
+      await saveGenerationCheckpoint(generationProgressPath, {
+        version: 1,
+        sourceIdentity,
+        sourceFingerprint: generationFingerprint,
+        completedPaths: previouslyCompletedPaths,
+        completedSections,
+        sectionTotal,
+        updatedAt: Date.now(),
+      })
+      const warnings = [...result.warnings]
+      if (completedSections === sectionNumber && stoppedShort) {
+        warnings.push(`Section ${sectionNumber}/${sectionTotal} stopped at its output limit; later material in that section may have no page.`)
+      }
+      if (warnings.length > 0) await appendIngestWarningLog(pp, sourceIdentity, warnings)
+      const failure = streamError ?? (result.hardFailures.length > 0 ? `${result.hardFailures.length} wiki file write failure(s)` : null)
+      if (failure) {
+        const message = `Generation failed for section ${sectionNumber}/${sectionTotal}: ${failure}`
+        activity.updateItem(activityId, { status: "error", detail: message })
+        throw new Error(message)
+      }
+      if (completedSections === sectionNumber) break
+    }
+  }
+
   let generation = ""
   let generationError: string | null = null
   let generationTruncated = false
@@ -1133,7 +1240,7 @@ async function autoIngestImpl(
     await streamChat(
       llmConfig,
       [
-        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath) },
+        { role: "system", content: buildGenerationPrompt(schema, purpose, index, sourceIdentity, overview, sourceContext, sourceSummaryPath, await listPagesFromSource(pp, sourceIdentity), await listPagesMentioned(pp, sourceIdentity, analysis)) },
         {
           role: "user",
           content: [
@@ -1149,6 +1256,9 @@ async function autoIngestImpl(
                   "The following FILE paths were already written successfully in an earlier attempt.",
                   "Do not emit them again. Emit only the remaining pages required by the analysis:",
                   ...previouslyCompletedPaths.map((path) => `- ${path}`),
+                  ...(sectionTotal > 0
+                    ? ["Those pages came from earlier passes over this source's sections. You must still emit the source summary, linking to them, and the log entry."]
+                    : []),
                   "If every required page is already complete, return exactly `---RESUME COMPLETE---`.",
                 ].join("\n")
               : "",
@@ -1269,6 +1379,7 @@ async function autoIngestImpl(
     activityId,
     onFileWritten,
     previouslyCompletedPaths.includes(sourceSummaryPath),
+    replaceOwnedPages,
   )
   throwIfIngestAborted(signal, activityId)
   const writtenPaths = uniqueNormalizedPaths([
@@ -1348,6 +1459,7 @@ async function autoIngestImpl(
           activityId,
           onFileWritten,
           writtenPaths.includes(sourceSummaryPath),
+          replaceOwnedPages,
         )
         // Match successful writes against the paths requested from the model,
         // not the final on-disk paths. writeFileBlocks may legitimately rewrite
@@ -1452,6 +1564,18 @@ async function autoIngestImpl(
     }
   }
 
+  // The model often links only a few of a long source's pages from its
+  // summary, which leaves most of them unattached to the source in the graph.
+  if (!signal?.aborted && writtenPaths.some((p) => normalizePath(p) === sourceSummaryPath)) {
+    try {
+      const summary = await tryReadFile(sourceSummaryFullPath)
+      const listed = summary ? withSourcePageList(summary, writtenPaths) : summary
+      if (listed !== summary) await writeFile(sourceSummaryFullPath, listed)
+    } catch (err) {
+      console.warn(`[ingest] Could not list pages on the source summary for "${sourceIdentity}":`, err)
+    }
+  }
+
   // ── Step 3.5: Append extracted images to the source-summary page ─
   // Skipped when the master toggle is off — see Step 0.6 above for
   // the full rationale. With captioning disabled we also don't
@@ -1493,6 +1617,8 @@ async function autoIngestImpl(
         sourceIdentity,
         sourceFingerprint: generationFingerprint,
         completedPaths: writtenPaths.filter((path) => !isAppManagedAggregatePath(path)),
+        completedSections,
+        sectionTotal,
         updatedAt: Date.now(),
       })
     } catch (err) {
@@ -2020,6 +2146,49 @@ export function currentWikiDate(now: Date = new Date()): string {
   return `${year}-${month}-${day}`
 }
 
+const SOURCE_PAGE_LIST_HEADING = "## Pages From This Source"
+const WIKILINK_TARGET = /\[\[([^\]|#]+)/g
+
+/**
+ * Puts a list of this source's pages, grouped by folder, at the end of its
+ * summary, leaving out pages the summary already links. Rebuilds any earlier
+ * list, so running it again keeps the entries and adds new ones.
+ */
+export function withSourcePageList(summary: string, pagePaths: readonly string[]): string {
+  const folders = new Map<string, Set<string>>()
+  const add = (folder: string, slug: string) => {
+    if (!folders.has(folder)) folders.set(folder, new Set())
+    folders.get(folder)!.add(slug)
+  }
+  let body = summary
+  const start = summary.indexOf(`\n${SOURCE_PAGE_LIST_HEADING}\n`)
+  if (start !== -1) {
+    const next = summary.indexOf("\n## ", start + 1)
+    const end = next === -1 ? summary.length : next
+    let folder = "pages"
+    for (const line of summary.slice(start, end).split("\n")) {
+      const heading = line.match(/^### (.+)$/)
+      if (heading) folder = heading[1].trim()
+      for (const m of line.matchAll(WIKILINK_TARGET)) add(folder, m[1].trim())
+    }
+    body = summary.slice(0, start) + summary.slice(end)
+  }
+  for (const path of pagePaths) {
+    const parts = normalizePath(path).split("/")
+    if (parts.length < 3 || parts[0] !== "wiki" || parts[1] === "sources" || parts[1] === "media" || !path.endsWith(".md")) continue
+    add(parts[1], parts[parts.length - 1].replace(/\.md$/, ""))
+  }
+  const linked = new Set(
+    [...body.matchAll(WIKILINK_TARGET)].map((m) => getFileName(m[1].trim()).toLowerCase()),
+  )
+  const sections = [...folders.keys()].sort().flatMap((folder) => {
+    const slugs = [...folders.get(folder)!].filter((s) => !linked.has(s.toLowerCase())).sort()
+    return slugs.length > 0 ? [`### ${folder}`, "", ...slugs.map((s) => `- [[${s}]]`), ""] : []
+  })
+  if (sections.length === 0) return body
+  return `${body.trimEnd()}\n\n${SOURCE_PAGE_LIST_HEADING}\n\n${sections.join("\n").trimEnd()}\n`
+}
+
 export function buildFallbackSourceSummary(
   sourceIdentity: string,
   analysis: string,
@@ -2102,6 +2271,8 @@ async function writeFileBlocks(
   activityId?: string,
   onFileWritten?: (relativePath: string) => void,
   summaryAlreadyWritten = false,
+  sourceChanged = false,
+  skipLog = false,
 ): Promise<{
   writtenPaths: string[]
   completedInputPaths: string[]
@@ -2127,6 +2298,30 @@ async function writeFileBlocks(
   // instead of replaying the partial result forever.
   const hardFailures: string[] = []
   const projectSchemaRouting = await loadProjectWikiSchemaRouting(projectPath)
+  // Wikilinks resolve by file name, so one name in two folders is ambiguous and
+  // usually the same topic filed under two types. Loaded on first use.
+  const pageNames: { byName?: Map<string, string> } = {}
+  const existingPageNamed = async (path: string): Promise<string | undefined> => {
+    if (!pageNames.byName) {
+      const byName = new Map<string, string>()
+      const walk = (nodes: readonly FileNode[]) => {
+        for (const node of nodes) {
+          if (node.is_dir) walk(node.children ?? [])
+          else if (node.name.endsWith(".md")) {
+            const rel = getRelativePath(node.path, projectPath)
+            if (!rel.startsWith("wiki/sources/")) byName.set(node.name.toLowerCase(), rel)
+          }
+        }
+      }
+      try {
+        walk(await listDirectory(`${projectPath}/wiki`))
+      } catch (err) {
+        console.warn("[ingest] Could not list pages for the same-name check:", err)
+      }
+      pageNames.byName = byName
+    }
+    return pageNames.byName.get(getFileName(path).toLowerCase())
+  }
 
   const targetLang = useWikiStore.getState().outputLanguage
   const today = currentWikiDate()
@@ -2134,6 +2329,7 @@ async function writeFileBlocks(
   for (const { path: rawRelativePath, content: rawContent } of blocks) {
     throwIfIngestAborted(signal, activityId)
     let relativePath = normalizePath(rawRelativePath)
+    if (skipLog && isLogPath(relativePath)) continue
     const summaryWarning = sourceSummaryBlockWarning(relativePath, sourceSummaryPath, summaryWritten)
     if (summaryWarning) {
       warnings.push(summaryWarning)
@@ -2206,6 +2402,14 @@ async function writeFileBlocks(
       continue
     }
 
+    if (!isLogPath(relativePath) && !isListingPath(relativePath) && !relativePath.startsWith("wiki/sources/")) {
+      const sameName = await existingPageNamed(relativePath)
+      if (sameName && sameName !== relativePath && !(await fileExists(`${projectPath}/${relativePath}`))) {
+        warnings.push(`Merged "${relativePath}" into existing "${sameName}", which has the same file name.`)
+        relativePath = sameName
+      }
+    }
+
     // Language guard: reject individual FILE blocks whose body contradicts
     // the user-set target language. Skip:
     // - log.md (structural, short)
@@ -2268,8 +2472,10 @@ async function writeFileBlocks(
         // that source. Merging the old body back into the new generation kept
         // retracted wording alive indefinitely. Multi-source pages still use
         // the merger because their other sources' contributions must survive.
+        // So does an unchanged source: nothing was corrected, and a fresh
+        // generation is often shorter, so replacing would only lose content.
         const replaceExistingBody = Boolean(
-          existing && isOwnedOnlyBySource(existing, sourceFileName),
+          sourceChanged && existing && isOwnedOnlyBySource(existing, sourceFileName),
         )
         const merged = await mergePageContent(
           content,
@@ -2290,6 +2496,7 @@ async function writeFileBlocks(
       }
       writtenPaths.push(relativePath)
       if (relativePath === sourceSummaryPath) summaryWritten = true
+      pageNames.byName?.set(getFileName(relativePath).toLowerCase(), relativePath)
       completedInputPaths.push(rawRelativePath)
       onFileWritten?.(relativePath)
     } catch (err) {
@@ -2312,6 +2519,119 @@ async function writeFileBlocks(
     hardFailures,
     truncatedPaths: repairableTruncatedPaths,
   }
+}
+
+/**
+ * Pages on disk that cite this source, as prompt lines. The wiki index only
+ * holds recent pages, so without this a re-ingest can't see what it wrote
+ * before and recreates those topics under new slugs.
+ */
+async function listPagesFromSource(projectPath: string, sourceIdentity: string): Promise<string[]> {
+  const expected = sourceReferenceIdentity(sourceIdentity).toLowerCase()
+  const lines: string[] = []
+  const walk = async (nodes: readonly FileNode[]): Promise<void> => {
+    for (const node of nodes) {
+      if (node.is_dir) {
+        await walk(node.children ?? [])
+      } else if (node.name.endsWith(".md")) {
+        const content = await tryReadFile(node.path)
+        if (!parseSources(content).some((s) => sourceReferenceIdentity(s).toLowerCase() === expected)) continue
+        const title = parseFrontmatter(content).frontmatter?.title
+        const relative = getRelativePath(node.path, projectPath)
+        lines.push(typeof title === "string" ? `- ${relative} — ${title}` : `- ${relative}`)
+      }
+    }
+  }
+  try {
+    await walk(await listDirectory(`${projectPath}/wiki`))
+  } catch (err) {
+    // The list only improves the prompt, so it must not fail the ingest.
+    console.warn("[ingest] Could not list existing source pages:", err)
+  }
+  return lines
+}
+
+const MAX_MENTIONED_PAGES = 300
+
+const namesRoughly = (s: string) => s.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+
+function countPhrase(text: string, phrase: string): number {
+  let count = 0
+  // Step back over the closing space, because neighbouring mentions share it.
+  for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + phrase.length - 1)) count++
+  return count
+}
+
+/**
+ * Ranks pages by how often the analysis names them, by title, slug or alias.
+ * Wrong matches only add a prompt line, and the model decides whether to reuse
+ * a page, so this can be loose. Short names must be exact all-caps acronyms,
+ * so "IMF" counts but "sec" inside ordinary text doesn't.
+ */
+export function rankPagesMentioned(
+  analysis: string,
+  pages: ReadonlyArray<{ line: string; slug: string; title?: string; aliases: string[] }>,
+): string[] {
+  const text = ` ${namesRoughly(analysis)} `
+  const words = new Set(analysis.match(/[\p{L}\p{N}]+/gu) ?? [])
+  const scored = pages.map((page) => {
+    const title = page.title ?? ""
+    const candidates = new Set(
+      [title, title.split(":")[0], title.replace(/\([^)]*\)/g, " "), page.slug, ...page.aliases]
+        .filter(Boolean),
+    )
+    let score = 0
+    for (const candidate of candidates) {
+      const name = namesRoughly(candidate)
+      if (name.length >= 4) score += countPhrase(text, ` ${name} `)
+      else if (/^[A-Z0-9]{2,3}$/.test(candidate) && words.has(candidate)) score += 1
+    }
+    return { line: page.line, score }
+  })
+  return scored
+    .filter((page) => page.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_MENTIONED_PAGES)
+    .map((page) => page.line)
+}
+
+/** Existing pages from other sources that the analysis names, as prompt lines. */
+async function listPagesMentioned(
+  projectPath: string,
+  sourceIdentity: string,
+  analysis: string,
+): Promise<string[]> {
+  const expected = sourceReferenceIdentity(sourceIdentity).toLowerCase()
+  const pages: Array<{ line: string; slug: string; title?: string; aliases: string[] }> = []
+  const walk = async (nodes: readonly FileNode[]): Promise<void> => {
+    for (const node of nodes) {
+      if (node.is_dir) {
+        await walk(node.children ?? [])
+        continue
+      }
+      if (!node.name.endsWith(".md")) continue
+      const relative = getRelativePath(node.path, projectPath)
+      if (relative.startsWith("wiki/sources/") || relative.startsWith("wiki/media/") || AGGREGATE_WIKI_PATHS.includes(relative as (typeof AGGREGATE_WIKI_PATHS)[number])) continue
+      const content = await tryReadFile(node.path)
+      if (parseSources(content).some((s) => sourceReferenceIdentity(s).toLowerCase() === expected)) continue
+      const frontmatter = parseFrontmatter(content).frontmatter
+      const title = typeof frontmatter?.title === "string" ? frontmatter.title : undefined
+      const aliases = Array.isArray(frontmatter?.aliases) ? frontmatter.aliases.map(String) : []
+      pages.push({
+        line: title ? `- ${relative} \u2014 ${title}` : `- ${relative}`,
+        slug: node.name.replace(/\.md$/, ""),
+        title,
+        aliases,
+      })
+    }
+  }
+  try {
+    await walk(await listDirectory(`${projectPath}/wiki`))
+  } catch (err) {
+    // The list only improves the prompt, so it must not fail the ingest.
+    console.warn("[ingest] Could not list mentioned pages:", err)
+  }
+  return rankPagesMentioned(analysis, pages)
 }
 
 function isOwnedOnlyBySource(content: string, sourceIdentity: string): boolean {
@@ -2503,6 +2823,8 @@ export function buildGenerationPrompt(
   overview?: string,
   sourceContent: string = "",
   sourceSummaryPath?: string,
+  existingSourcePages: string[] = [],
+  mentionedPages: string[] = [],
 ): string {
   // Use original filename (without extension) as the source summary page name
   const sourceBaseName = sourceFileName.replace(/\.[^.]+$/, "")
@@ -2625,6 +2947,23 @@ export function buildGenerationPrompt(
     "",
     purpose ? `## Wiki Purpose\n${purpose}` : "",
     index ? `## Current Wiki Index (preserve all existing entries, add new ones)\n${boundWikiIndexForPrompt(index)}` : "",
+    existingSourcePages.length > 0
+      ? [
+          "## Pages Already Generated From This Source",
+          "An earlier ingest of this source created the pages below. They may be missing from the index above.",
+          "When you cover one of these topics, emit its FILE block at this exact path with the same title. Do not create the same topic under a new path.",
+          "Pages you do not emit are left unchanged.",
+          boundWikiIndexForPrompt(existingSourcePages.join("\n")),
+        ].join("\n")
+      : "",
+    mentionedPages.length > 0
+      ? [
+          "## Existing Pages This Source May Overlap With",
+          "These pages already exist, and the analysis mentions their topics. They may be missing from the index above.",
+          "When you write about one of these same topics, emit its FILE block at this exact path with the same title, and the application merges your text into it. Do not create the same topic under a new path. Only reuse a page if it really is the same topic.",
+          ...mentionedPages,
+        ].join("\n")
+      : "",
     overview ? `## Current Overview (update this to reflect the new source)\n${overview}` : "",
     "",
     // ── OUTPUT FORMAT MUST BE THE LAST SECTION — models weight recent instructions highest ──
@@ -3237,6 +3576,72 @@ function buildChunkAnalysisUserPrompt(
   ].filter(Boolean).join("\n")
 }
 
+/** Groups consecutive chunks so each section's text fits in one prompt. A larger chunk stays alone. */
+export function groupChunksIntoSections(
+  chunks: ReadonlyArray<{ main: string }>,
+  notes: readonly string[],
+  maxChars: number,
+): LongSourceSection[] {
+  const sections: LongSourceSection[] = []
+  chunks.forEach((chunk, i) => {
+    const last = sections[sections.length - 1]
+    if (last && last.text.length + chunk.main.length + 2 <= maxChars) {
+      last.text += `\n\n${chunk.main}`
+      last.notes += `\n\n${notes[i] ?? ""}`
+    } else {
+      sections.push({ text: chunk.main, notes: notes[i] ?? "" })
+    }
+  })
+  return sections
+}
+
+export function buildLongSourceSectionPrompt(
+  sourceIdentity: string,
+  sectionNumber: number,
+  sectionTotal: number,
+  digest: string,
+  section: LongSourceSection,
+  emittedPaths: readonly string[],
+): string {
+  return [
+    `Source document to process: **${sourceIdentity}**`,
+    "",
+    `This long source is processed one section at a time. This is section ${sectionNumber} of ${sectionTotal}.`,
+    "",
+    "## Instructions for this section (these override the What to generate list)",
+    "- Emit FILE blocks for every entity, concept and schema-defined page this section treats in substance, including specific methods, models, indicators and techniques. Cover the section's material fully, not only its headline topics.",
+    "- This section's text decides what deserves a page. A subject does not need to be marked `Page-worthy: yes`, and the digest is not a limit. Do not create pages for things only mentioned in passing.",
+    "- When a topic already has a page, use its exact path and title and write only what this section adds; the application merges it. Skip that page if this section adds nothing new.",
+    "- Do not emit the source summary, wiki/log.md or REVIEW blocks. They are written after the last section.",
+    "- If nothing here deserves a page (for example a bibliography or an index), return an empty response.",
+    emittedPaths.length > 0
+      ? [
+          "",
+          "## Already emitted for this section",
+          "Your previous response hit the output limit after these files. Do not emit them again. Continue with the remaining pages:",
+          ...emittedPaths.map((path) => `- ${path}`),
+        ].join("\n")
+      : "",
+    "",
+    "## Document Digest (for consistent names and context only)",
+    "",
+    digest,
+    "",
+    "## Section Analysis Notes",
+    "",
+    section.notes,
+    "",
+    "## Section Text",
+    "",
+    section.text,
+    "",
+    "---",
+    "",
+    "Your response MUST begin with `---FILE:` as the very first characters, unless it is empty.",
+    "No preamble. No analysis prose. Start immediately.",
+  ].filter(Boolean).join("\n")
+}
+
 async function analyzeLongSourceInChunks(
   projectPath: string,
   llmConfig: LlmConfig,
@@ -3373,7 +3778,14 @@ async function analyzeLongSourceInChunks(
     trimLongText(analyses.join("\n\n"), Math.max(sourceBudget, LONG_SOURCE_CHUNK_ANALYSIS_MAX)),
   ].join("\n")
 
-  return { chunked: true, analysis, sourceContext, checkpointPath }
+  return {
+    chunked: true,
+    analysis,
+    sourceContext,
+    digest: globalDigest,
+    sections: groupChunksIntoSections(chunks, analyses, sourceBudget),
+    checkpointPath,
+  }
 }
 
 /**

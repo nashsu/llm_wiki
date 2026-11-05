@@ -200,7 +200,8 @@
         "too-large": "Exceeds the maximum file size",
         "unreadable": "Could not read the file",
         "copy-failed": "Could not copy the file",
-        "sensitive-config": "Withheld as a tool config file"
+        "sensitive-config": "Withheld as a tool config file",
+        "duplicate": "Already in sources"
       }
     },
     "openExternal": "Open in default app",
