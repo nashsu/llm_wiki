@@ -200,7 +200,8 @@
         "too-large": "超过文件大小上限",
         "unreadable": "无法读取文件",
         "copy-failed": "无法复制文件",
-        "sensitive-config": "已跳过工具配置文件"
+        "sensitive-config": "已跳过工具配置文件",
+        "duplicate": "已在原始资料中"
       }
     },
     "openExternal": "用默认应用打开",

@@ -5,8 +5,10 @@ const mocks = vi.hoisted(() => ({
   createDirectory: vi.fn(),
   deleteFile: vi.fn(),
   fileExists: vi.fn(),
+  getFileMd5: vi.fn(),
   getFileSize: vi.fn(),
   listDirectory: vi.fn(),
+  readFile: vi.fn(),
   preprocessFile: vi.fn(),
   enqueueBatch: vi.fn(),
 }))
@@ -19,8 +21,10 @@ vi.mock("@/commands/fs", async () => {
     createDirectory: mocks.createDirectory,
     deleteFile: mocks.deleteFile,
     fileExists: mocks.fileExists,
+    getFileMd5: mocks.getFileMd5,
     getFileSize: mocks.getFileSize,
     listDirectory: mocks.listDirectory,
+    readFile: mocks.readFile,
     preprocessFile: mocks.preprocessFile,
   }
 })
@@ -43,8 +47,10 @@ beforeEach(() => {
   mocks.createDirectory.mockResolvedValue(undefined)
   mocks.deleteFile.mockResolvedValue(undefined)
   mocks.fileExists.mockResolvedValue(false)
+  mocks.getFileMd5.mockImplementation(async (path: string) => `md5 of ${path}`)
   mocks.getFileSize.mockResolvedValue(1024)
   mocks.listDirectory.mockResolvedValue([])
+  mocks.readFile.mockRejectedValue(new Error("not found"))
   mocks.preprocessFile.mockResolvedValue("")
   mocks.enqueueBatch.mockResolvedValue(["task"])
 })
@@ -428,6 +434,78 @@ describe("source import skip reporting", () => {
       ...overrides,
     } as never
   }
+
+  describe("a file already in sources", () => {
+    const existing = "/project/raw/sources/books/Old Name.pdf"
+
+    beforeEach(() => {
+      mocks.listDirectory.mockImplementation(async (path: string) =>
+        path === "/project/raw/sources"
+          ? [{
+              name: "books",
+              path: "/project/raw/sources/books",
+              is_dir: true,
+              children: [{ name: "Old Name.pdf", path: existing, is_dir: false }],
+            }]
+          : [{ name: "New Name.pdf", path: "/external/books/New Name.pdf", is_dir: false }],
+      )
+      mocks.getFileMd5.mockImplementation(async (path: string) =>
+        path.endsWith("Name.pdf") ? "same bytes" : `md5 of ${path}`,
+      )
+    })
+
+    function markIngested(identity: string) {
+      mocks.readFile.mockImplementation(async (path: string) => {
+        if (path !== "/project/.llm-wiki/ingest-cache.json") throw new Error("not found")
+        return JSON.stringify({ entries: { [identity]: { hash: "h", timestamp: 1, filesWritten: [] } } })
+      })
+    }
+
+    it("skips a renamed copy of an ingested source in a folder import", async () => {
+      markIngested("books/Old Name.pdf")
+
+      const result = await importSourceFolder(project, "/external/books", llm, watchConfig())
+
+      expect(result.imported).toEqual([])
+      expect(result.skipped).toEqual([
+        { name: "New Name.pdf", reason: "duplicate", detail: "books/Old Name.pdf" },
+      ])
+      expect(mocks.copyFile).not.toHaveBeenCalled()
+      expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    })
+
+    it("queues the existing copy instead when it was never ingested", async () => {
+      const result = await importSourceFolder(project, "/external/books", llm, watchConfig())
+
+      expect(result.imported).toEqual([])
+      expect(mocks.copyFile).not.toHaveBeenCalled()
+      expect(mocks.enqueueBatch).toHaveBeenCalledWith("p1", [
+        { sourcePath: existing, folderContext: "books" },
+      ])
+    })
+
+    it("imports a file of the same size with different content", async () => {
+      mocks.getFileMd5.mockImplementation(async (path: string) => `md5 of ${path}`)
+
+      const result = await importSourceFolder(project, "/external/books", llm, watchConfig())
+
+      expect(result.imported).toEqual(["/project/raw/sources/books/New Name.pdf"])
+      expect(result.skipped).toEqual([])
+    })
+
+    it("does not make a numbered copy when the same file is picked again", async () => {
+      markIngested("books/Old Name.pdf")
+
+      const result = await importSourceFiles(project, ["/downloads/Old Name.pdf"], llm, watchConfig())
+
+      expect(result.imported).toEqual([])
+      expect(result.skipped).toEqual([
+        { name: "Old Name.pdf", reason: "duplicate", detail: "books/Old Name.pdf" },
+      ])
+      expect(mocks.copyFile).not.toHaveBeenCalled()
+      expect(mocks.enqueueBatch).not.toHaveBeenCalled()
+    })
+  })
 
   it("reports an oversized file instead of dropping it silently", async () => {
     mocks.getFileSize.mockResolvedValue(149696996)
