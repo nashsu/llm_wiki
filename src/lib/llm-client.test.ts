@@ -181,6 +181,7 @@ describe("streamChat — buffered streaming responses", () => {
     mockHttpFetch
       .mockResolvedValueOnce(new Response(JSON.stringify({
         type: "error",
+        // Illustrative wording; the retry keys on "temperature" + "deprecated".
         error: { type: "invalid_request_error", message: "`temperature` is deprecated for this model." },
       }), { status: 400 }))
       .mockResolvedValueOnce(new Response([
