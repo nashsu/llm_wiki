@@ -37,8 +37,25 @@ function capabilities(
   }
 }
 
+/**
+ * Claude models whose only thinking-on mode is `thinking: {type: "adaptive"}`
+ * plus `output_config.effort`: Opus/Sonnet 4.6+, every Claude 5.x model
+ * (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, ...) and the
+ * Fable/Mythos line. Claude 5.x and Opus 4.7+ reject the legacy
+ * `{type: "enabled", budget_tokens}` shape with HTTP 400.
+ */
 function isClaude46OrLater(model: string): boolean {
-  return /claude-(?:opus|sonnet|haiku)-4[-_.]?(?:[6-9]|\d{2,})(?:[-_.]|$)/i.test(model)
+  return /claude-(?:(?:opus|sonnet|haiku)-(?:4[-_.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})|fable|mythos)(?:[-_.]|$)/i.test(model)
+}
+
+/**
+ * Claude models that reject non-default `temperature` / `top_p` / `top_k` on
+ * every request, with or without thinking: Opus 4.7/4.8, every Claude 5.x
+ * model and the Fable/Mythos line. Sonnet/Opus 4.6 and older still accept
+ * them when thinking is off.
+ */
+function isClaudeWithoutSamplingParams(model: string): boolean {
+  return /claude-(?:opus-(?:4[-_.]?(?:[7-9]|[1-9]\d)|[5-9]|\d{2,})|(?:sonnet|haiku)-(?:[5-9]|\d{2,})|fable|mythos)(?:[-_.]|$)/i.test(model)
 }
 
 function isGemini25Pro(model: string): boolean {
@@ -142,6 +159,10 @@ export function resolveIngestReasoning(config: LlmConfig): ReasoningConfig {
 
 export function isAdaptiveAnthropicModel(config: LlmConfig): boolean {
   return config.provider === "anthropic" && isClaude46OrLater(config.model)
+}
+
+export function rejectsAnthropicSamplingParams(config: LlmConfig): boolean {
+  return config.provider === "anthropic" && isClaudeWithoutSamplingParams(config.model)
 }
 
 export function isGeminiThinkingLevelModel(config: LlmConfig): boolean {

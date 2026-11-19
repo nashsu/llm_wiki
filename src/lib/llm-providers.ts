@@ -10,6 +10,7 @@ import {
   isGeminiThinkingLevelModel,
   isOpenRouterEndpoint,
   normalizeReasoningForProvider,
+  rejectsAnthropicSamplingParams,
 } from "@/lib/reasoning-capabilities"
 
 /**
@@ -640,6 +641,14 @@ function buildAnthropicBodyWithReasoning(
   streaming = true,
 ): Record<string, unknown> {
   const body = buildAnthropicBody(messages, overrides, streaming)
+  // Opus 4.7+ and Claude 5.x reject non-default sampling knobs on every
+  // request, even with thinking off (HTTP 400). Structured ingest always
+  // passes temperature=0.1, so strip them before the early return below.
+  if (rejectsAnthropicSamplingParams(config)) {
+    delete body.temperature
+    delete body.top_p
+    delete body.top_k
+  }
   const reasoning = effectiveReasoning(config, overrides)
   if (reasoning.mode === "auto" || reasoning.mode === "off") return body
 

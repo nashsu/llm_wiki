@@ -1101,14 +1101,27 @@ fn apply_google_reasoning(body: &mut Value, config: &LlmConfig) {
     }
 }
 
+/// Claude models that take `thinking: {type: "adaptive"}` + effort: 4.6+,
+/// every Claude 5.x model and the Fable/Mythos line. Claude 5.x rejects the
+/// legacy `{type: "enabled", budget_tokens}` shape with HTTP 400.
 fn is_claude_46_or_later(model: &str) -> bool {
     let lower = model.to_ascii_lowercase();
-    ["claude-opus-4-", "claude-sonnet-4-", "claude-haiku-4-"]
+    if lower.starts_with("claude-fable") || lower.starts_with("claude-mythos") {
+        return true;
+    }
+    ["claude-opus-", "claude-sonnet-", "claude-haiku-"]
         .iter()
         .find_map(|prefix| lower.strip_prefix(prefix))
-        .and_then(|tail| tail.split(['-', '_', '.']).next())
-        .and_then(|version| version.parse::<u32>().ok())
-        .is_some_and(|version| version >= 6)
+        .and_then(|tail| {
+            let mut parts = tail.split(['-', '_', '.']);
+            let major = parts.next()?.parse::<u32>().ok()?;
+            let minor = parts
+                .next()
+                .and_then(|version| version.parse::<u32>().ok())
+                .unwrap_or(0);
+            Some((major, minor))
+        })
+        .is_some_and(|(major, minor)| major >= 5 || (major == 4 && minor >= 6))
 }
 
 fn is_openai_reasoning_model(config: &LlmConfig) -> bool {
@@ -1617,6 +1630,40 @@ mod tests {
             body.get("output_config"),
             Some(&json!({ "effort": "medium" }))
         );
+    }
+
+    #[test]
+    fn claude_5x_uses_adaptive_thinking_without_budget_tokens() {
+        for model in [
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-haiku-5-5",
+            "claude-opus-5",
+            "claude-fable-5-2",
+        ] {
+            let mut cfg = config("anthropic");
+            cfg.model = model.to_string();
+            cfg.reasoning = Some(LlmReasoningConfig {
+                mode: Some("high".to_string()),
+                budget_tokens: None,
+            });
+            let client = LlmClient::new(cfg).unwrap();
+            let body = client.anthropic_like_body("system", "user", &[], false);
+            assert_eq!(
+                body.get("thinking"),
+                Some(&json!({ "type": "adaptive" })),
+                "{model}"
+            );
+            assert!(!body.to_string().contains("budget_tokens"), "{model}");
+        }
+    }
+
+    #[test]
+    fn pre_46_claude_keeps_budget_tokens() {
+        assert!(!is_claude_46_or_later("claude-sonnet-4-5-20250929"));
+        assert!(!is_claude_46_or_later("claude-haiku-4-5"));
+        assert!(!is_claude_46_or_later("claude-3-5-sonnet-latest"));
+        assert!(is_claude_46_or_later("claude-sonnet-4-6"));
     }
 
     #[test]

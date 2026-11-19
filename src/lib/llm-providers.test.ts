@@ -964,3 +964,95 @@ describe("reasoning controls", () => {
     expect(body.reasoning_effort).toBeUndefined()
   })
 })
+
+/**
+ * Claude 5.x on the first-party Anthropic provider (issues #824, #176).
+ * Overrides mirror structured ingest: temperature=0.1, the ingest
+ * reasoning setting, and an explicit max_tokens.
+ */
+describe("Anthropic request bodies for Claude 4.6 and 5.x", () => {
+  const ingestOverrides = (mode: "off" | "high" | "medium" | "max" | "custom") => ({
+    temperature: 0.1,
+    max_tokens: 16_384,
+    reasoning: mode === "custom" ? { mode, budgetTokens: 4096 } : { mode },
+  })
+  const build = (model: string, mode: "off" | "high" | "medium" | "max" | "custom") =>
+    getProviderConfig(mkConfig({ provider: "anthropic", model })).buildBody(
+      [{ role: "user", content: "hi" }],
+      ingestOverrides(mode),
+    ) as Record<string, unknown>
+
+  it("keeps Sonnet 4.6 with reasoning off unchanged (temperature kept, no thinking)", () => {
+    const body = build("claude-sonnet-4-6", "off")
+    expect(body.temperature).toBe(0.1)
+    expect(body.thinking).toBeUndefined()
+    expect(body.output_config).toBeUndefined()
+    expect(body.max_tokens).toBe(16_384)
+  })
+
+  it("uses adaptive thinking without temperature for Sonnet 4.6 with reasoning on", () => {
+    const body = build("claude-sonnet-4-6", "high")
+    expect(body.thinking).toEqual({ type: "adaptive" })
+    expect(body.output_config).toEqual({ effort: "high" })
+    expect(body.temperature).toBeUndefined()
+  })
+
+  for (const model of ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-opus-5", "claude-sonnet-5"]) {
+    it(`${model}: reasoning off sends no thinking field and no temperature`, () => {
+      const body = build(model, "off")
+      expect(body.thinking).toBeUndefined()
+      expect(body.output_config).toBeUndefined()
+      expect(body.temperature).toBeUndefined()
+      expect(body.top_p).toBeUndefined()
+      expect(body.top_k).toBeUndefined()
+      expect(body.max_tokens).toBe(16_384)
+    })
+
+    it(`${model}: reasoning on uses adaptive thinking, never budget_tokens`, () => {
+      for (const mode of ["high", "medium", "max"] as const) {
+        const body = build(model, mode)
+        expect(body.thinking).toEqual({ type: "adaptive" })
+        expect(JSON.stringify(body)).not.toContain("budget_tokens")
+        expect(body.output_config).toEqual({ effort: mode })
+        expect(body.temperature).toBeUndefined()
+      }
+      // A stale custom budget (no longer offered for adaptive models) falls
+      // back to auto instead of producing a budget_tokens request.
+      const stale = build(model, "custom")
+      expect(JSON.stringify(stale)).not.toContain("budget_tokens")
+      expect(stale.temperature).toBeUndefined()
+    })
+  }
+
+  it("strips sampling params on Opus 4.7 even with reasoning off", () => {
+    const body = build("claude-opus-4-7", "off")
+    expect(body.thinking).toBeUndefined()
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("keeps the legacy budget_tokens shape and temperature for pre-4.6 models", () => {
+    for (const model of ["claude-sonnet-4-5-20250929", "claude-haiku-4-5"]) {
+      const off = build(model, "off")
+      expect(off.thinking).toBeUndefined()
+      expect(off.temperature).toBe(0.1)
+
+      const on = build(model, "high")
+      expect(on.thinking).toEqual({ type: "enabled", budget_tokens: 8192 })
+      expect(on.temperature).toBeUndefined()
+    }
+  })
+
+  it("does not strip temperature on custom Anthropic-wire endpoints (handled by retry)", () => {
+    const cfg = mkConfig({
+      provider: "custom",
+      apiMode: "anthropic_messages",
+      customEndpoint: "https://proxy.example.com/anthropic",
+      model: "claude-sonnet-5-5",
+    })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      ingestOverrides("off"),
+    ) as Record<string, unknown>
+    expect(body.temperature).toBe(0.1)
+  })
+})

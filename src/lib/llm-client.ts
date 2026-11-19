@@ -190,10 +190,15 @@ function shouldRetryWithoutTemperature(
   errorDetail: string,
   requestOverrides?: RequestOverrides,
 ): boolean {
-  if (config.provider !== "custom" || requestOverrides?.temperature === undefined) return false
+  // Anthropic is included as a safety net for Claude models newer than the
+  // ones `rejectsAnthropicSamplingParams` knows about: Claude 5.x answers
+  // HTTP 400 "`temperature` is deprecated for this model".
+  if (config.provider !== "custom" && config.provider !== "anthropic") return false
+  if (requestOverrides?.temperature === undefined) return false
   if (status !== 400 && status !== 422) return false
   const detail = errorDetail.toLowerCase()
   return detail.includes("temperature") && (
+    detail.includes("deprecated") ||
     detail.includes("unsupported") ||
     detail.includes("not support") ||
     detail.includes("unknown") ||
