@@ -164,6 +164,74 @@ describe("streamChat — buffered streaming responses", () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
+  // Claude 4.6 still accepts temperature, so the body builder keeps it; the
+  // mocked 400 stands in for a future Claude model the builder does not know.
+  const anthropicStreamingCfg: LlmConfig = {
+    ...cfg,
+    provider: "anthropic",
+    apiKey: "test-key",
+    model: "claude-sonnet-4-6",
+  }
+
+  function anthropicSseText(text: string): string {
+    return `data: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } })}`
+  }
+
+  it("retries the Anthropic provider without temperature when the model rejects it", async () => {
+    mockHttpFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        type: "error",
+        // Illustrative wording; the retry keys on "temperature" + "deprecated".
+        error: { type: "invalid_request_error", message: "`temperature` is deprecated for this model." },
+      }), { status: 400 }))
+      .mockResolvedValueOnce(new Response([
+        anthropicSseText("retried"),
+        `data: ${JSON.stringify({ type: "message_stop" })}`,
+      ].join("\n\n"), { status: 200 }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      anthropicStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+      undefined,
+      { temperature: 0.1, max_tokens: 512 },
+    )
+
+    expect(mockHttpFetch).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(mockHttpFetch.mock.calls[0][1]?.body)).temperature).toBe(0.1)
+    const retryBody = JSON.parse(String(mockHttpFetch.mock.calls[1][1]?.body))
+    expect(retryBody.temperature).toBeUndefined()
+    expect(retryBody.max_tokens).toBe(512)
+    expect(onToken).toHaveBeenCalledWith("retried")
+    expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it("does not retry the Anthropic provider for 400s unrelated to temperature", async () => {
+    mockHttpFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      type: "error",
+      error: { type: "invalid_request_error", message: "max_tokens: 999999 > 128000, which is the maximum allowed" },
+    }), { status: 400 }))
+    const onToken = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamChat(
+      anthropicStreamingCfg,
+      [{ role: "user", content: "hi" }],
+      { onToken, onDone, onError },
+      undefined,
+      { temperature: 0.1, max_tokens: 999_999 },
+    )
+
+    expect(mockHttpFetch).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
   it("cancels a still-open response body after an SSE endpoint error", async () => {
     let bodyCancelled = false
     const body = new ReadableStream<Uint8Array>({
