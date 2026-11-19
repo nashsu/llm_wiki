@@ -17,6 +17,7 @@ const UI_LANGUAGES = [
   { value: "it", label: "Italiano" },
   { value: "zh", label: "中文" },
   { value: "ru", label: "Русский" },
+  { value: "pt-BR", label: "Português (Brasil)" },
 ]
 
 const THEMES = [
