@@ -4,10 +4,10 @@ version = "0.6.13"
 description = "LLM Wiki - A personal knowledge base for LLM concepts"
 authors = []
 edition = "2021"
-# AnyDoc and its archive/spreadsheet dependencies require Rust 1.88. Declaring
-# the floor here gives contributors an immediate toolchain error instead of a
-# late, platform-dependent dependency compilation failure.
-rust-version = "1.88"
+# tauri-plugin-http >= 2.8.3 (non-ASCII response header ByteString fix) and
+# AnyDoc require Rust 1.90. Declaring the floor here gives contributors an
+# immediate toolchain error instead of a late dependency compilation failure.
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -32,7 +32,7 @@ chrono = { version = "0.4", features = ["clock"] }
 tauri-plugin-dialog = "2.7.1"
 pdfium-render = "0.9"
 tauri-plugin-store = "2.4.2"
-tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
+tauri-plugin-http = { version = "2.9.0", features = ["unsafe-headers"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tiny_http = "0.12"
 zip = "2"

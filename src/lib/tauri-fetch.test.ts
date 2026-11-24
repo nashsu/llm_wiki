@@ -128,4 +128,16 @@ describe("isFetchNetworkError", () => {
     const err = new Error("there was a network error while connecting")
     expect(isFetchNetworkError(err)).toBe(true)
   })
+
+  it("rejects WebIDL / header / URL construction TypeErrors so they are not masked as network errors", () => {
+    expect(
+      isFetchNetworkError(
+        new TypeError(
+          "Cannot convert argument to a ByteString because the character at index 6 has a value of 65288 which is greater than 255.",
+        ),
+      ),
+    ).toBe(false)
+    expect(isFetchNetworkError(new TypeError("Failed to construct 'Headers': Invalid value"))).toBe(false)
+    expect(isFetchNetworkError(new TypeError("Invalid URL"))).toBe(false)
+  })
 })
