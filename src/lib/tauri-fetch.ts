@@ -88,6 +88,9 @@ export function getHttpFetch(): Promise<typeof globalThis.fetch> {
   return pluginFetchPromise
 }
 
+const NON_NETWORK_TYPE_ERROR_RE =
+  /ByteString|Failed to construct '(?:Headers|Request|Response|URL)'|Failed to parse URL|Invalid (?:header|URL)|Header\b.*\binvalid|valid HTTP header/i
+
 /**
  * Detect fetch-level network failures across Tauri's different webview
  * backends. Each platform phrases the same failure class differently:
@@ -104,8 +107,8 @@ export function getHttpFetch(): Promise<typeof globalThis.fetch> {
 export function isFetchNetworkError(err: unknown): boolean {
   if (!(err instanceof Error)) return false
   if (err.name === "AbortError") return false
-  // Chromium / Edge WebView2
-  if (err.name === "TypeError") return true
+  // Chromium / Edge WebView2 (exclude WebIDL / header / URL construction errors)
+  if (err.name === "TypeError") return !NON_NETWORK_TYPE_ERROR_RE.test(err.message)
   // WebKit (macOS / Linux GTK)
   if (err.message === "Load failed") return true
   // Chromium mid-stream drop
