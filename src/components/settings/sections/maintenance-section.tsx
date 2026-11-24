@@ -42,6 +42,7 @@ import {
   type FileHistorySettings,
   type FileHistoryStats,
 } from "@/commands/fs"
+import { runOkfExport } from "@/lib/okf-export-run"
 import { addToRecentProjects } from "@/lib/project-store"
 
 interface GroupUiEntry {
@@ -212,6 +213,22 @@ export function MaintenanceSection() {
     try {
       await invoke("export_project_archive", { projectPath: project.path, destination })
       setProjectToolStatus(t("settings.sections.maintenance.projectData.exported", { path: destination }))
+    } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
+  }, [project, t])
+
+  const handleExportOkf = useCallback(async () => {
+    if (!project) return
+    const destination = await open({ directory: true, multiple: false, createDirectories: true })
+    if (!destination || Array.isArray(destination)) return
+    setProjectToolBusy(true)
+    try {
+      const result = await runOkfExport(project.path, destination)
+      setProjectToolStatus(
+        t("settings.sections.maintenance.projectData.exportedOkf", {
+          path: result.directory,
+          pages: result.conceptCount,
+        }) + (result.warnings.length > 0 ? ` (${result.warnings.join("; ")})` : ""),
+      )
     } catch (error) { setProjectToolStatus(String(error)) } finally { setProjectToolBusy(false) }
   }, [project, t])
 
@@ -403,6 +420,7 @@ export function MaintenanceSection() {
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void handleRebuildIndex()} disabled={!project || projectToolBusy}>{t("settings.sections.maintenance.projectData.rebuild")}</Button>
           <Button variant="outline" onClick={() => void handleExportProject()} disabled={!project || projectToolBusy}><Archive className="h-4 w-4" />{t("settings.sections.maintenance.projectData.export")}</Button>
+          <Button variant="outline" onClick={() => void handleExportOkf()} disabled={!project || projectToolBusy}>{t("settings.sections.maintenance.projectData.exportOkf")}</Button>
           <Button variant="outline" onClick={() => void handleImportProject()} disabled={projectToolBusy}>{t("settings.sections.maintenance.projectData.import")}</Button>
         </div>
         {projectToolStatus && <p className="text-xs text-muted-foreground">{projectToolStatus}</p>}
