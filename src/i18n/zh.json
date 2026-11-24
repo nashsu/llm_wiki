@@ -918,9 +918,11 @@
           "description": "根据现有页面重建导航，或完整迁移项目及其隐藏的处理状态。",
           "rebuild": "重建索引",
           "export": "导出项目",
+          "exportOkf": "导出 OKF v0.2 知识包",
           "import": "导入项目",
           "rebuilt": "已使用 {{pages}} 个页面、{{groups}} 个分组重建索引。",
           "exported": "项目已导出到 {{path}}",
+          "exportedOkf": "OKF v0.2 知识包已导出到 {{path}}（概念数：{{pages}}）",
           "imported": "已导入 {{name}}，请切换项目后打开。"
         },
         "history": {

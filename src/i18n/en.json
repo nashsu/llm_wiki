@@ -918,9 +918,11 @@
           "description": "Rebuild navigation from existing pages, or move a complete project including its hidden processing state.",
           "rebuild": "Rebuild index",
           "export": "Export project",
+          "exportOkf": "Export OKF v0.2 bundle",
           "import": "Import project",
           "rebuilt": "Rebuilt index with {{pages}} pages in {{groups}} groups.",
           "exported": "Project exported to {{path}}",
+          "exportedOkf": "Exported OKF v0.2 bundle to {{path}} (concepts: {{pages}})",
           "imported": "Imported {{name}}. Switch projects to open it."
         },
         "history": {
