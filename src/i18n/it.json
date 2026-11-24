@@ -918,9 +918,11 @@
           "description": "Ricostruisci la navigazione dalle pagine esistenti, oppure sposta un progetto completo insieme al suo stato di elaborazione nascosto.",
           "rebuild": "Ricostruisci l'indice",
           "export": "Esporta il progetto",
+          "exportOkf": "Esporta bundle OKF v0.2",
           "import": "Importa un progetto",
           "rebuilt": "Indice ricostruito con {{pages}} pagine in {{groups}} gruppi.",
           "exported": "Progetto esportato in {{path}}",
+          "exportedOkf": "Bundle OKF v0.2 esportato in {{path}} (concetti: {{pages}})",
           "imported": "{{name}} importato. Cambia progetto per aprirlo."
         },
         "history": {
