@@ -882,6 +882,42 @@ describe("reasoning controls", () => {
     expect(body.temperature).toBeUndefined()
   })
 
+  it("uses adaptive thinking for Claude Sonnet 5.5", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-5-5" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "medium" }, temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.thinking).toEqual({ type: "adaptive" })
+    expect(body.output_config).toEqual({ effort: "medium" })
+    expect(body.temperature).toBeUndefined()
+  })
+
+  it("drops sampling knobs for Claude 4.7+ even without a reasoning setting", () => {
+    for (const model of ["claude-sonnet-5-5", "claude-opus-4-7"]) {
+      const cfg = mkConfig({ provider: "anthropic", model })
+      const body = getProviderConfig(cfg).buildBody(
+        [{ role: "user", content: "hi" }],
+        { reasoning: { mode: "auto" }, temperature: 0.1, top_p: 0.9 },
+      ) as Record<string, unknown>
+
+      expect(body.thinking).toBeUndefined()
+      expect(body.temperature).toBeUndefined()
+      expect(body.top_p).toBeUndefined()
+    }
+  })
+
+  it("keeps sampling knobs for Claude Sonnet 4.6 without reasoning", () => {
+    const cfg = mkConfig({ provider: "anthropic", model: "claude-sonnet-4-6" })
+    const body = getProviderConfig(cfg).buildBody(
+      [{ role: "user", content: "hi" }],
+      { reasoning: { mode: "auto" }, temperature: 0.1 },
+    ) as Record<string, unknown>
+
+    expect(body.temperature).toBe(0.1)
+  })
+
   it("uses thinkingLevel rather than token budgets for Gemini 3", () => {
     const cfg = mkConfig({ provider: "google", model: "gemini-3-pro-preview" })
     const body = getProviderConfig(cfg).buildBody(
