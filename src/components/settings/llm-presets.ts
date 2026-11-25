@@ -65,10 +65,11 @@ export const LLM_PRESETS: LlmPreset[] = [
     label: "Anthropic (Claude)",
     hint: "Official Claude API",
     provider: "anthropic",
-    defaultModel: "claude-sonnet-4-5-20250929",
+    defaultModel: "claude-sonnet-5-5",
     // Cross-referenced with hermes-agent/hermes_cli/models.py:233-242.
     // Both shortened and dated aliases work on api.anthropic.com.
     suggestedModels: [
+      "claude-sonnet-5-5",
       "claude-opus-4-7",
       "claude-opus-4-6",
       "claude-sonnet-4-6",

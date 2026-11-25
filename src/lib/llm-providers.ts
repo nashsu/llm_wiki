@@ -7,6 +7,7 @@ import {
 } from "@/lib/azure-openai"
 import {
   isAdaptiveAnthropicModel,
+  rejectsAnthropicSampling,
   isGeminiThinkingLevelModel,
   isOpenRouterEndpoint,
   normalizeReasoningForProvider,
@@ -640,6 +641,13 @@ function buildAnthropicBodyWithReasoning(
   streaming = true,
 ): Record<string, unknown> {
   const body = buildAnthropicBody(messages, overrides, streaming)
+  // Claude 4.7+ (including Sonnet 5.5) returns a 400 for non-default
+  // sampling knobs, and structured ingest passes temperature=0.1.
+  if (rejectsAnthropicSampling(config)) {
+    delete body.temperature
+    delete body.top_p
+    delete body.top_k
+  }
   const reasoning = effectiveReasoning(config, overrides)
   if (reasoning.mode === "auto" || reasoning.mode === "off") return body
 

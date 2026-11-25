@@ -38,7 +38,12 @@ function capabilities(
 }
 
 function isClaude46OrLater(model: string): boolean {
-  return /claude-(?:opus|sonnet|haiku)-4[-_.]?(?:[6-9]|\d{2,})(?:[-_.]|$)/i.test(model)
+  return /claude-(?:opus|sonnet|haiku)-(?:4[-_.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})(?:[-_.]|$)/i.test(model)
+}
+
+// Claude 4.7 and later reject non-default temperature/top_p/top_k with a 400.
+function isClaude47OrLater(model: string): boolean {
+  return /claude-(?:opus|sonnet|haiku)-(?:4[-_.]?(?:[7-9]|\d{2,})|[5-9]|\d{2,})(?:[-_.]|$)/i.test(model)
 }
 
 function isGemini25Pro(model: string): boolean {
@@ -142,6 +147,10 @@ export function resolveIngestReasoning(config: LlmConfig): ReasoningConfig {
 
 export function isAdaptiveAnthropicModel(config: LlmConfig): boolean {
   return config.provider === "anthropic" && isClaude46OrLater(config.model)
+}
+
+export function rejectsAnthropicSampling(config: LlmConfig): boolean {
+  return config.provider === "anthropic" && isClaude47OrLater(config.model)
 }
 
 export function isGeminiThinkingLevelModel(config: LlmConfig): boolean {
